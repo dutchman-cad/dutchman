@@ -14,7 +14,7 @@ pub const SCHEMA_VERSION: u64 = 1;
 
 /// Where a newer copy of the policy is published. The request carries no query and nothing
 /// about any file.
-pub const REFRESH_URL: &str = "https://dutchman-cad.github.io/report-policy.json";
+pub const REFRESH_URL: &str = "https://dutchmancad.xyz/report-policy.json";
 
 const BUNDLED: &str = include_str!("../assets/report-policy.json");
 

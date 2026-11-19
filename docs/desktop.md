@@ -132,13 +132,17 @@ folders are listed with their estimates too. Estimates below 0.1 GB show **under
 and times below 60 seconds show **under a minute**, just as in the CLI. **M GB of memory free** appears
 once when the machine's free memory can be read. On a Mac this counts memory the system can give back
 (not in use by apps, system or compression), not only the few pages it keeps empty. These are estimates, not limits or promises; an unavailable estimate
-leaves no label. Planning and estimation run in the background.
+leaves no label. An estimate of five minutes or more, or of more than half the free memory
+(8 GB when that is unknown), is shown in the warning colour. Planning and estimation run in the
+background.
 
 Pressing Convert starts the conversion at once; there is no memory dialog. The estimate in the
 file row and box comes from the file's size and can be far off either way, so it never
 refuses or delays a conversion. Dutchman measures memory while it converts and stops with a
 clear message if the computer really runs out. When the estimate was above free memory, the
-result card's **memory** Info note says so. Preset descriptions appear on hover or keyboard
+result card's **memory** Info note says so. **Stop** starts no further file and ends the
+isolated converter and its children promptly; it reads **Stopping…** until then, and that file shows
+**Not started**. Preset descriptions appear on hover or keyboard
 focus in the preset selector. The **Convert and check history even if memory is low** control
 in Advanced stays.
 
@@ -215,20 +219,74 @@ app's minimum, 520 by 420 points, is ignored, and the window opens at its defaul
 
 With no saved size, the window opens centred at 1180 by 800 points, or 90% of the screen where
 that is smaller, which fits the whole main screen with the **Advanced** choices open and nothing
-scrolled. From 1100 points wide, **Designs** and **Output folder** stand in a left column and
-**Results** in a right column. Results that do not fit scroll inside their own column, and a
-long list of designs scrolls inside **Designs**; the rest of the screen stays in place. Below
-1100 points the main screen is one column, **Designs**, **Output folder**, then **Results**,
-and scrolls as one page (down to the 520 point minimum).
+scrolled. From 1100 points wide, **Designs** and **Output folder** stand in a left column, with
+**Is there a problem? Is something missing?** in the room under them, and **Results** in a right
+column. Results that do not fit scroll inside their own column, the left column scrolls on to
+the report panel when the window is short, and a long list of designs scrolls inside **Designs**;
+the rest of the screen stays in place. Below 1100 points the main screen is one column,
+**Designs**, **Output folder**, **Results**, then the report panel, and scrolls as one page
+(down to the 520 point minimum).
 
 ## Reporting a problem
 
 The window's title and top row show its version beside **Dutchman Convert**, for example
-**v0.2.6**; a nightly shows its nightly version. **Report a problem**, at the top right beside the
-**System / Day / Night** theme switch, opens the
+**v0.2.6**; a nightly shows its nightly version. `dutchman-gui --version` and
+`dutchman-gui --help` print and exit without opening a window (on Windows, read the version
+with `dutchman --version`).
+
+**Is there a problem? Is something missing?** is always in the window: at the bottom left,
+under **Output folder**, in a wide window, and at the end of the page in a narrow one. It is
+there before a run, while files convert, and after, whatever the cards say: Dutchman never
+decides for you that a result has no problem. **Report a problem**, at the top right beside
+the **System / Day / Night** theme switch, brings the same panel into view.
+
+The panel is about one file: the first that needs attention, or the one chosen. With several
+results, **About** chooses another; **Report this file…** on any finished card chooses that
+card's file and brings the panel into view. Its numbered cards are the way to reach us, Discord
+first:
+
+1. **Join our Discord server**: **Open invite** opens the invite. Already in? Skip this step.
+2. **DM Dutchy**: **Copy and open DM** copies a message and opens Dutchy's DM. A file within
+   Discord's upload limit is dragged in, and its folder opens for that; for a larger one, Dutchy
+   replies with a private upload link. See
+   [Send the file privately](troubleshooting.md#send-the-file-privately).
+3. **Please add a STEP export**: advice, not a button. A STEP export of the same design lets us
+   check every part. It is left out for a STEP file.
+
+Each card says on itself what its button did, for example "Copied. Paste it into the DM, say
+what's wrong, then drag the file in." The copied message says what happened, then has one line
+of details for Dutchy, then a last line for your own words:
+
+```text
+Dutchman converted my file, but something is wrong or missing.
+Details for Dutchy: Dutchman 0.3.0 couldn't convert my file. Error: converted-with-problem. Report id: <id>. Size: 0.1 MB. STEP: unknown. Run log: <log name>. It contains no names or contents from the design.
+What's wrong or missing:
+```
+
+The details line keeps its fixed wording so Dutchy's automatic upload links work. A failed
+file's message is that details line, with its error code, then "Anything else we should know:".
+Before any file has finished, or while one is still converting, the message names only the
+version and how long it has been running.
+
+**Anonymous report** and **GitHub issue** are secondary buttons directly below the three steps.
+**Anonymous report** opens the review for a direct upload to the cloud inbox; nothing is sent
+until you review it and click Send. **GitHub issue** is the public backup. It opens the
 [A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
-form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a
-window (on Windows, read the version with `dutchman --version`).
+form in your browser with Dutchman's version, your system and the error's stage, upstream and
+code filled in, and copies the file's anonymous report, which names no file and no folder.
+Paste it into the form's **Anonymous report for this file** box and read it before you submit.
+Never attach the design; a link to a file that is already public is welcome. The link stays
+under 2,000 characters so GitHub opens it while you are signed in. For converted files, the
+form says that the result is wrong and asks what differs from the original. With no finished
+file, it opens the empty form.
+
+**More** also offers **Anonymous report** and **GitHub issue**, plus **Ask your AI
+about this file**, and, for a failed file, **Diagnose this file**. The review opens in the panel,
+under its steps, not in another window. **Send the whole file privately** in it goes back to the
+steps; with a saved bundle, **Send this bundle privately** makes the DM step show the bundle's
+folder instead of the original's. The panel names the selected bundle and uses its size
+for the same drag-or-upload-link route that the copied DM uses. **Get updates on Discord** copies a claim code to paste on its
+own in Dutchy's DM, after joining the server.
 
 Each result card shows its run's log path as a small "Run log:" line (hover it for the whole path),
 then **Show this run's log** and **Copy log to…**, available when
@@ -242,22 +300,12 @@ Log names include UTC date and time, Dutchman version and result, for example
 completed runs use `converted`, `failed` or `stopped`. **Open diagnostics folder** opens the
 folder containing the newest 50 logs, including older time-only names.
 
-**Review and send report** names this run's log automatically and lets you show or copy it.
+**Anonymous report** names this run's log automatically and lets you show or copy it.
 The log contains no names or contents from the design. Send uploads only the summary or
-bundle described in that review; the log stays local. The private-send card also shows
-this log, and the copied Discord DM names it so you can attach it without guessing which
-file belongs to the run. An older log's version is shown as an advisory notice, such as
-"This log is from Dutchman 0.2.5; this is 0.2.6." It never blocks conversion.
-
-When a file converts with any loss (history not kept or only partly kept, features flattened
-or blocked, parts unplaced, colours dropped), its card has a **Report this file…** button.
-It opens **Something wrong? Report this file** and brings it into view. A clean result has no
-button, but the same section is there, closed, if it looks wrong anyway. Choose
-**Review and send report** to review the exact metadata before sending an anonymous
-summary, or follow the same private-send steps as a failed card to send the original.
-**Diagnose this file** stays on failed cards: it narrows reproducible conversion failures,
-not visual problems in a converted result. **Add matching STEP** can check a converted
-file locally against an export.
+bundle described in that review; the log stays local. The copied Discord DM names the same
+log so you can attach it without guessing which file belongs to the run. An older log's
+version is shown as an advisory notice, such as "This log is from Dutchman 0.2.5; this is
+0.2.6." It never blocks conversion.
 
 Descriptions are not supported in the anonymous report envelope yet. Describe what is
 wrong in the private DM or GitHub form, leaving out private names and paths. Converted
@@ -265,28 +313,14 @@ summaries use the signature `converted-with-problem` and contain no design geome
 they never reuse an earlier failure's bundle. The review shows the exact metadata,
 including sharing choices, and nothing is sent until **Send** is clicked.
 
-On a failed card, these other ways are folded under **Help us fix it**, below **Review and send
-report**, so the whole card fits the window; a converted result has them under **Something
-wrong? Report this file**. To send a file privately, follow the steps on the card:
-join the Discord server, then **Copy and open DM** copies a message and opens Dutchy's
-DM. For a converted result, the copied message starts with a note that the result is
-wrong, followed by the standard routing card with `Error: converted-with-problem`.
-The routing card keeps its fixed wording so automatic upload links work.
-A file within Discord's upload limit is dragged in, and its folder opens for that; for a
-larger one, Dutchy replies with a private upload link. See
-[Send the file privately](troubleshooting.md#send-the-file-privately).
+A result with partial history shows its status word in the warning colour, not the success
+colour. Errors that name a web address show it as a link. **Diagnose this file** narrows
+reproducible conversion failures, not visual problems in a converted result; its window opens
+below the top row. **Add matching STEP** can check a converted file locally against an export.
 
-**Report anonymously on GitHub** sends no file and no names. It opens the same form in your
-browser with Dutchman's version, your system and the error's stage, upstream and code filled
-in, and copies the file's anonymous report, which names no file and no folder. Paste it into
-the form's **Anonymous report for this file** box and read it before you submit. Never attach
-the design; a link to a file that is already public is welcome. The link stays under 2,000
-characters so GitHub opens it while you are signed in. For converted files, the form says
-that the result is wrong and asks what differs from the original.
-
-The card takes the invite, the limits, and the message from a small policy built into the app.
+The panel takes the invite, the limits, and the message from a small policy built into the app.
 Once a day at most, where update checks run, the app reads a newer copy from
-<https://dutchman-cad.github.io/report-policy.json> in the background. The request says nothing
+<https://dutchmancad.xyz/report-policy.json> in the background. The request says nothing
 about your files. `DUTCHMAN_UPDATE_CHECK=0`, turning off automatic update checks, and source
 builds all stop it, and the built-in copy is used.
 
@@ -464,10 +498,10 @@ source and matching STEP or converted geometry side by side. These are whole-des
 views. On a file check, click **Target part N** to save the report target. Comparison
 body numbers still need local resolution to the correct assembly part.
 
-Failed-file cards and expanded converted-file reporting sections offer **Review and send report**. Review the part roles and exact
-sizes; bundles contain geometry. The public-test permission is separate and unticked.
-Extraction is not supported yet: choose anonymous summary, or use the private-send
-card for the whole file. Send/retry always requires a click. If the endpoint does
+**Anonymous report**, under **More** in **Is there a problem? Is something missing?**,
+reviews the part roles and exact sizes; bundles contain geometry. The public-test permission is
+separate and unticked. Extraction is not supported yet: choose anonymous summary, or send the
+whole file privately with the panel's Discord steps. Send/retry always requires a click. If the endpoint does
 not answer, the report remains in the output folder under `reports/<id>`.
 
 ## Assembly placements

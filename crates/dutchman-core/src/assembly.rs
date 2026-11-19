@@ -3119,8 +3119,8 @@ fn slice(
             }
         }
     }
-    // A base feature's own body, kept by the source as a history body when a later feature
-    // changes it, comes along with the base feature.
+    // A history body comes along with its producing or consuming feature. Its topology
+    // stays nested, separate from the component's final geometry.
     if history {
         let nests: Vec<&str> = slices
             .nests
@@ -4359,6 +4359,87 @@ mod tests {
         );
         assert_eq!(other.ir.model.sketches.len(), 1);
         assert_eq!(other.ir.geometry.bodies.len(), 1);
+    }
+
+    #[test]
+    fn a_component_keeps_the_history_body_its_split_consumed() {
+        let part = with_history(true);
+        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let split = "synthetic:test:feature#split";
+        let body_id = wire["geometry"]["bodies"][0]["id"].clone();
+        wire["model"]["features"].as_array_mut().unwrap().push(json!({
+            "id": split, "ordinal": 2, "outputs": [body_id], "suppressed": false,
+            "dependencies": [], "source_properties": {}, "source_content": [],
+            "definition": {"kind": "operation", "value": {"kind": "split_body", "value": {
+                "targets": {"kind": "native", "value": "synthetic target"},
+                "tool": {"kind": "faces", "value": {"kind": "native", "value": "synthetic tool"}}
+            }}}
+        }));
+        let mut topology = serde_json::Map::new();
+        topology.insert("body".to_owned(), wire["geometry"]["bodies"][0].clone());
+        for arena in [
+            "regions", "shells", "faces", "loops", "coedges", "edges", "vertices", "surfaces",
+            "curves", "pcurves", "points",
+        ] {
+            topology.insert(arena.to_owned(), wire["geometry"][arena].clone());
+        }
+        let body = |id: &str, consumed_by: &Value| {
+            json!({
+                "id": id,
+                "consumed_by": consumed_by,
+                "state": {"ordinal": 1, "identifier": 7},
+                "topology": topology,
+            })
+        };
+        wire["model"]["history_bodies"] = json!([
+            body("synthetic:history-body:block#h0", &json!(split)),
+            body(
+                "synthetic:history-body:other#h1",
+                &json!("synthetic:copy:feature#other")
+            ),
+        ]);
+        let part = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..part
+        };
+        let assembly = local_assembly(&part).unwrap().unwrap();
+        let ids = |part: &Model| {
+            let wire = serde_json::to_value(&part.ir).unwrap();
+            wire["model"]["history_bodies"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|row| row["id"].as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            assembly.parts[0].ir.model.history_bodies[0].topology,
+            part.ir.model.history_bodies[0].topology
+        );
+        assert_eq!(assembly.parts[0].ir.geometry.bodies.len(), 1);
+        assert_eq!(ids(&assembly.parts[0]), ["synthetic:history-body:block#h0"]);
+        assert_eq!(ids(&assembly.parts[1]), ["synthetic:history-body:other#h1"]);
+        // Both index representations carry consumed bodies without expanding their topology
+        // into the document used to discover component ownership.
+        let expanded = serde_json::to_value(&part.ir).unwrap();
+        let text = serde_json::to_string(&part.ir).unwrap();
+        let packed = slicing::Packed::read(&text).unwrap();
+        let document = packed.document().unwrap();
+        let index = slicing::Index::packed(&packed, &document).unwrap();
+        let bodies: Vec<&str> = part.ir.model.product_definitions[0]
+            .bodies
+            .iter()
+            .map(|id| id.as_str())
+            .collect();
+        let owner = HistoryOwner::Definition(part.ir.model.product_definitions[0].id.as_str());
+        let value = only(&part, &expanded, &bodies, owner, "part".to_owned()).unwrap();
+        let compact = only_indexed(&part, &index, &bodies, owner, "part".to_owned()).unwrap();
+        assert_eq!(ids(&value), ["synthetic:history-body:block#h0"]);
+        assert_eq!(ids(&compact), ids(&value));
+        assert_eq!(
+            compact.ir.model.history_bodies[0].topology,
+            part.ir.model.history_bodies[0].topology
+        );
     }
 
     /// The fixture's history split between component `Layout`, which builds the sketch, and

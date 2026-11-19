@@ -135,6 +135,15 @@ tool, change the version and both checksums for each architecture together. The 
 (and their checksums) and adds version-less copies like the other assets. Changes under
 `packaging/linux/` receive the full build in the merge queue or a manual full run.
 
+The `plugin` job builds the SolidCraft plugin once, on Linux: `dutchman-plugin` for
+`wasm32-unknown-unknown` with the size settings in `.cargo/config.toml`, wrapped by
+`scripts/package-plugin.sh` into `dutchman-plugin-X.Y.Z.zip` (the manifest stamped with the
+version, and the component) with its `.sha256`. It then converts the public fixtures with the
+packaged component in Wasmtime and uploads the zip as the `dutchman-X.Y.Z-plugin` artifact.
+`release.yml` requires it and adds the version-less `dutchman-plugin.zip`. A change to
+`crates/dutchman-plugin/plugin.json` or `.cargo/config.toml` starts the full build on a pull
+request. See [the plugin notes](plugin.md).
+
 For just the Linux x86_64 tarball and its checksum, dispatch with `targets: linux-x86_64`: `gh workflow run release-build.yml --ref <branch> -f targets=linux-x86_64`.
 
 A full build makes each platform's archive

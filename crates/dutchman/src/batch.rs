@@ -925,7 +925,8 @@ pub fn run_each(
 }
 
 /// [`run_each`] with each file in its own process started from `program`, so a stop for low
-/// memory or a crash ends that file and not the program running the batch.
+/// memory or a crash ends that file and not the program running the batch. Setting `stop`
+/// starts no further file and immediately terminates those converting.
 pub fn run_isolated(
     work: &[Job],
     options: &ConvertOptions,
@@ -945,7 +946,15 @@ pub fn run_isolated(
         stop,
         |job, index| {
             let callback = |event| on_event(Event::Progress(index, event));
-            convert_isolated_job_with_progress(program, job, options, &limits, None, &callback)
+            // Explicit Stop ends the process tree without waiting for application shutdown.
+            convert_isolated_job_with_stop(
+                program,
+                job,
+                options,
+                &limits,
+                Some(worker::StopSignal::Cancel(stop)),
+                &callback,
+            )
         },
         &on_event,
     );
@@ -1186,9 +1195,27 @@ pub fn convert_isolated_job_with_progress(
     stop: Option<&AtomicBool>,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
+    convert_isolated_job_with_stop(
+        program,
+        job,
+        options,
+        limits,
+        stop.map(worker::StopSignal::Shutdown),
+        on_progress,
+    )
+}
+
+fn convert_isolated_job_with_stop(
+    program: &Path,
+    job: &Job,
+    options: &ConvertOptions,
+    limits: &Limits,
+    stop: Option<worker::StopSignal<'_>>,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Value {
     let started = Instant::now();
     let mut report = make_folder(job).unwrap_or_else(|| {
-        worker::convert_isolated_with_progress(program, job, options, limits, stop, on_progress)
+        worker::convert_isolated_with_stop(program, job, options, limits, stop, on_progress)
     });
     report::conversion_choices(&mut report, &job.input, options);
     if let Some(fields) = report.as_object_mut() {
@@ -1197,8 +1224,13 @@ pub fn convert_isolated_job_with_progress(
             json!(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
         );
     }
+    // Stop applies to the whole job, including its optional STEP recovery. Starting that
+    // recovery now would restart work the user has cancelled.
+    if stop.is_some_and(worker::StopSignal::requested) {
+        return report;
+    }
     with_fallback(job, report, |fallback| {
-        convert_isolated_job_with_progress(program, fallback, options, limits, stop, on_progress)
+        convert_isolated_job_with_stop(program, fallback, options, limits, stop, on_progress)
     })
 }
 
@@ -1218,6 +1250,82 @@ fn make_folder(job: &Job) -> Option<Value> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    /// Stop must reach the already-running child as well as preventing the next job.
+    #[cfg(unix)]
+    #[test]
+    fn stopping_an_isolated_batch_ends_the_current_file_promptly() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("slow-worker");
+        std::fs::write(&program, "#!/bin/sh\nexec sleep 120\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let input = dir.path().join("synthetic.f3d");
+        std::fs::write(&input, []).unwrap();
+        let fallback = input.with_extension("step");
+        std::fs::write(&fallback, []).unwrap();
+        let jobs: Vec<_> = (0..2)
+            .map(|index| Job {
+                project_files: None,
+                fallback: Some(fallback.clone()),
+                input: input.clone(),
+                output: dir.path().join(format!("synthetic-{index}.sc")),
+                replace: true,
+                search: PartSearch::default(),
+            })
+            .collect();
+        let stop = AtomicBool::new(false);
+        let events = Mutex::new(Vec::new());
+        let started = Instant::now();
+        run_isolated(
+            &jobs,
+            &ConvertOptions {
+                no_verify: true,
+                ..Default::default()
+            },
+            &program,
+            1,
+            &stop,
+            |event| {
+                if matches!(event, Event::Started(0)) {
+                    stop.store(true, Ordering::Relaxed);
+                }
+                events.lock().unwrap().push(event);
+            },
+        );
+        let elapsed = started.elapsed();
+        eprintln!("Stopped isolated batch after {elapsed:?}");
+        let events = events.into_inner().unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, Event::Started(_)))
+                .count(),
+            1
+        );
+        let finished: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Finished(index, report) => Some((index, report)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(finished.len(), 1);
+        assert_eq!(*finished[0].0, 0);
+        assert!(
+            finished[0].1.get("native_failure").is_none(),
+            "Stop started a STEP fallback"
+        );
+        assert!(
+            finished[0].1["error"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with(worker::CANCELLED),
+            "{:?}",
+            finished[0].1
+        );
+        assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+    }
 
     fn project_zip(path: &Path, entries: &[(&str, &[u8])]) {
         let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());

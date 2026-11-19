@@ -109,7 +109,17 @@ A plugin host must open a design archive with its STEP blobs, evaluate it with `
 that CLI eval returns), and dispatch `timeline.roll_to`, `document.inspect`,
 `model.edges` and `model.faces`. Edge results include names, endpoints, midpoints and
 lengths; face results include names, areas, sample points and optional planar normals.
-It must enforce deadlines, bound responses, isolate evaluations from the user's open
+The front end retains the typed full target through writer preparation, including the
+geometry-only fallback; it never reparses the report's display-only minor as a release.
+Closed-circle blends also request `inspect.measure` with an edge item (body, replay index,
+and midpoint). Its item must include `round`, `center`, `axis`, `radius`, `length_mm`, and
+`circumference` or `arc_length`. A failed carrier query leaves ordinary edge/face proofs
+available and refuses only closed circles.
+Measured inference also runs `timeline.suppress`, `inspect.compare` and `sketch.inspect`; a
+host without complete finite body measurements, surface comparison results and both face counts
+refuses new final-shape inferences. `sketch.inspect` reports region centroids without proven
+interior selections, so inference beyond the source's explicit loop boundaries is refused.
+The host must enforce deadlines, bound responses, isolate evaluations from the user's open
 design and serialize engine access if needed. The `Send + Sync` contract also permits
 native assembly workers to share an evaluator.
 
@@ -251,7 +261,15 @@ revolves; unresolved or ambiguous boundaries are blockers. Otherwise unresolved 
 selections try at most two candidates through the normal feature mapper, selected neutral curves
 and the whole carrier. A writer callback admits each only after the existing source body check,
 or the complete shape comparison at the final body-building feature, confirms its replay;
-planning has no callback and keeps the blocker. Every admitted candidate has a named loss.
+planning has no callback and keeps the blocker. Every admitted candidate has a named loss. When
+neither is confirmed, measured inference (`history/infer.rs`) maps every region of the sketch the
+pick can name by explicit loop boundaries (bounded, see fusion.md) and asks the same callback to
+measure each; discovery with only centroid selectors is refused. One 120 s feature deadline covers
+discovery, mapping and evaluation, including `sketch.inspect`, and discards late results. Exactly one
+match is kept and the feature's outcome carries `Inferred`. The callback loads the source's solid
+beside a one-body replay at the last body-building feature for `inspect.compare`'s surface
+distance. The last blend whose input edges fail their proof is measured the same way over nearby
+rebuilt edges, from `prove_blends`.
 Curves that bound a selected trimmed sketch region stay solid (not
 construction), so SolidCraft splits the sketch there and sweeps that region, not the merged
 area around it. Complete-loop extrudes whose regions those curves subdivide use an editable
@@ -319,7 +337,7 @@ Constant-radius fillets and equal-setback chamfers keep editable history when th
 feature input topology supplies edge midpoints, tangents, and endpoints, and each midpoint
 can be proven to pick exactly one edge of the pre-feature body, whatever history builds it.
 SolidCraft itself rebuilds that body: Dutchman replays the mapped history in `solidcraft-cli`
-in a batch (two runs within the check's time limit), up to the last feature a blend
+in a batch (two base runs and an optional circular-carrier pass within the check's time limit), up to the last feature a blend
 starts after, and reads the edges each blend starts from. When one blend selects edges
 on several bodies, it emits one blend per body with identical parameters, in the order
 of the bodies' first selected edges. The names share the source name with numbered
@@ -327,10 +345,22 @@ suffixes, as for multiple radius groups; the report keeps one mapped source outc
 select every emitted part of the blend.
 Later blends replay the expanded history before their edges are proven. Without `solidcraft-cli`, or when the replay fails or runs out
 of time, blends are refused, saying why. SolidCraft reports each edge's ends, midpoint and
-length but no tangent, so an input edge must be a line or a circular arc; its midpoint must
+length but no tangent. For an open line or circular arc, its midpoint must
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
 either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
-splits into pieces, closed edges and other curves are refused. Equal two-distance chamfers also map; distance-and-angle chamfers map at
+splits into pieces and other non-circular curves are refused. Closed input circles map for
+explicit targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
+stored circle with exact centre, axis, radius and full-turn parameter range; historical
+samples cannot establish circularity. Stored topology must identify one earlier named owning
+body, and only that body supplies replay candidates. Missing carrier or ownership evidence,
+ellipses, and transformed source carriers are refused. Each rebuilt piece must lie on its
+plane and radius, with mesh length between the sample chords and the circular arc. An extra
+`inspect.measure` pass confirms the circular carrier's centre, axis, radius, and analytic
+length; it cannot certify a circle from its two seam samples alone. Sorted
+angular intervals must cover exactly one turn without gaps or overlaps on exactly one body.
+An overlapping candidate without carrier metadata on the selected body also blocks the proof.
+Picks use the proven pieces' midpoints, independently of the source seam. Other closed
+curves retain a named refusal; older targets keep the original geometry. Equal two-distance chamfers also map; distance-and-angle chamfers map at
 45 degrees on perpendicular faces. Unequal distances and other angles lack a source
 reference-face ordering and are refused specifically. Variable fillets lack a proven
 chain direction. Final-body edge selections never stand in for input geometry.
@@ -555,3 +585,18 @@ Debug builds accept `DUTCHMAN_TEST_SLOW_PART=<design name>` to hold one named pa
 preparation for six seconds, long enough for a real five-second heartbeat. Release builds
 do not read it. The running-step GUI screenshot case uses injected snapshots at 0 s,
 61 s, 120 s and 121 s through the normal card renderer in both themes.
+
+For target 0.44 and newer, the spatial sketch mapper writes `wire_constraints`
+for the neutral relations the pinned CADIR exposes and SolidCraft can solve.
+Endpoint proximity alone never creates a relation.
+Assembly relocation renames their dimension parameters alongside planar ones;
+replay recovery clears both constraint lists before retrying solved geometry.
+Extrudes of explicitly resolved spatial loops use a planar copy in the
+source profile frame, admitted through the existing source body comparison
+callback. No native selection strings are interpreted. Older targets use the
+previous spatial mapper output and profile refusals.
+
+`dutchman-plugin` is the WebAssembly component front end, built for `wasm32-unknown-unknown`
+against SolidCraft's `craft:plugin` importer interface (no WASI). Its single ABI adapter
+streams host file capabilities into `dutchman_core::source`, then uses the normal SolidCraft
+writer. See [plugin architecture, contract and sandbox constraints](plugin.md).

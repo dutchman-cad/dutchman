@@ -5,10 +5,10 @@
 
 Converts Fusion, Inventor, SolidWorks, FreeCAD, CATIA, NX, Rhino, Creo View, ACIS, and STEP designs into SolidCraft designs, keeping editable features where they map.
 
-<a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=Dutchman%20Convert%20in%20Day%20theme%3A%20a%20CC0%20FreeCAD%20bracket%20converted%2C%20with%20its%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="Dutchman Convert in Day theme: a CC0 FreeCAD bracket converted, with its mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png#gh-light-mode-only" width="100%"></a>
-<a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-night.png&alt=Dutchman%20Convert%20in%20Night%20theme%3A%20the%20same%20CC0%20bracket%20conversion%20and%20its%20result%20card"><img alt="Dutchman Convert in Night theme: the same CC0 bracket conversion and its result card" src="docs/images/readme-result-night.png#gh-dark-mode-only" width="100%"></a>
+<a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=Dutchman%20Convert%20in%20Day%20theme%3A%20a%20CC0%20FreeCAD%20bracket%20converted%2C%20with%20its%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="Dutchman Convert in Day theme: a CC0 FreeCAD bracket converted, with its mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png#gh-light-mode-only" width="100%"></a>
+<a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-night.png&alt=Dutchman%20Convert%20in%20Night%20theme%3A%20the%20same%20CC0%20bracket%20conversion%20and%20its%20result%20card"><img alt="Dutchman Convert in Night theme: the same CC0 bracket conversion and its result card" src="docs/images/readme-result-night.png#gh-dark-mode-only" width="100%"></a>
 
-See it first: [converted designs in your browser](https://dutchman-cad.github.io/demo/), including two complete 3D printers.
+See it first: [converted designs in your browser](https://dutchmancad.xyz/demo/), including two complete 3D printers.
 
 ## Download
 
@@ -45,16 +45,18 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 ## How to use it
 
 1. **Drop files or folders in.** Or choose **Add files…**, then choose an output folder.
+   For a public Fusion or Google Drive file, paste its share link and choose **Add link**.
+   Saved `.url` and `.webloc` shortcuts can be dropped too; see the [share link guide](docs/guide.md#public-share-links).
 
-   <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-drop-day.png&alt=Start%20screen%20with%20the%20drop%20area%20and%20Add%20files%20button"><img alt="Start screen with the drop area and Add files button" src="docs/images/readme-drop-day.png" width="100%"></a>
+   <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-drop-day.png&alt=Start%20screen%20with%20the%20drop%20area%20and%20Add%20files%20button"><img alt="Start screen with the drop area and Add files button" src="docs/images/readme-drop-day.png" width="100%"></a>
 
 2. **Pick Fast, Standard, or Full.** Fast keeps the shape; Standard keeps history, sketches, and joints within the memory you have free; Full keeps everything that maps. The estimate shows memory and time before you start.
 
-   <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-preset-day.png&alt=A%20CC0%20bracket%20queued%20with%20Standard%20selected%20and%20a%20live%20memory%20and%20time%20estimate"><img alt="A CC0 bracket queued with Standard selected and a live memory and time estimate" src="docs/images/readme-preset-day.png" width="100%"></a>
+   <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-preset-day.png&alt=A%20CC0%20bracket%20queued%20with%20Standard%20selected%20and%20a%20live%20memory%20and%20time%20estimate"><img alt="A CC0 bracket queued with Standard selected and a live memory and time estimate" src="docs/images/readme-preset-day.png" width="100%"></a>
 
 3. **Convert, then Open in SolidCraft.** The result card says what came across and what didn't. Your design is a `.sc` file.
 
-   <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>
+   <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>
 
 ## What's new in 0.2.10
 
@@ -88,6 +90,7 @@ list is in [How a history is checked](docs/history.md#verification-tolerances).
 dutchman part.f3d                          # writes part.sc beside it
 dutchman convert part.f3d out.sc --preset fast
 dutchman inspect part.ipt                  # what would carry across, without writing
+dutchman contents part.ipt                 # bodies, features, parameters and what maps
 dutchman convert-all project/ --out-dir converted/
 ```
 
@@ -140,12 +143,14 @@ A design Dutchman can't finish reading is stopped after 20 minutes with no progr
 
 ## Report a file that fails or converts wrong
 
-Make a small public test file from a [fixtures recipe](https://dutchman-cad.github.io/fixtures/),
+Make a small public test file from a [fixtures recipe](https://dutchmancad.xyz/fixtures/),
 or please send a file that converts wrong, with a STEP export of the exact same design, to Dutchy in
 [Discord](https://discord.gg/yTcseBEdeu). Send only designs you have the right to send; we keep them private and use them only to fix the converter.
 
-Converted cards have a closed **Something wrong? Report this file** section. Expand it
-for **Review and send report** and the private-send steps. The anonymous review shows
+The desktop app always shows **Is there a problem? Is something missing?** at the bottom left:
+join the Discord server, then DM Dutchy. The secondary pills
+**Anonymous report** and **GitHub issue** sit directly below the three steps, and also appear
+under **More**. The anonymous report review shows
 exactly which metadata will be sent; descriptions go in the private DM or GitHub form.
 The CLI's `dutchman report` and MCP's `report_preview` / `report_submit` also support
 converted-file summaries. See [Reporting a problem](docs/guide.md#report-consent).
@@ -168,6 +173,7 @@ and uses the bundled command line for focused follow-up. No server setup is need
 | Tool | Arguments | Returns |
 |---|---|---|
 | `inspect` | `input` | `dutchman.inspect/1` |
+| `contents` | `input` | `dutchman.contents/1` |
 | `convert` | `input`, `output`, and the convert options ([all arguments](docs/mcp.md#tools)) | `dutchman.convert/1` |
 | `convert_all` | `inputs` (files and folders), `out_dir`, and optionally `jobs` and the convert options | `dutchman.convert-all/1` |
 | `formats` | none | `dutchman.formats/1` |
@@ -200,7 +206,7 @@ For other clients:
 - [Getting started](docs/guide.md): install, a first conversion, the loss report, and opening the result.
 - [Install](docs/install.md): Homebrew, Scoop, release archives and checksums, Docker, nightly, and source.
 - [The desktop app](docs/desktop.md): presets, estimates, the SolidCraft version pill, and updates.
-- [The command line](docs/command-line.md): options, `inspect`, whole folders, and watching a folder.
+- [The command line](docs/command-line.md): options, `inspect`, `contents`, whole folders, and watching a folder.
 - [Choosing what to keep](docs/presets.md): Fast, Standard, Full, and the memory and time estimate.
 - [Troubleshooting](docs/troubleshooting.md): common problems and diagnostic logs.
 - [Find what breaks in a large private file](docs/diagnose.md): `dutchman diagnose` ranks the failing, slow and large parts by number, and `--part` converts one.
@@ -233,3 +239,5 @@ For other clients:
 ## Licence
 
 Dutchman is pure Rust, licensed under the [Apache License, Version 2.0](LICENSE). Native files are read by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps them onto [SolidCraft](https://github.com/tangency-labs/solidcraft).
+
+[Dutchman in SolidCraft](docs/solidcraft-plugin.md): a plugin that opens Fusion, Inventor, SolidWorks, and FreeCAD files in SolidCraft with editable history (SolidCraft 0.44 or newer, desktop only for now); [how it is built](docs/plugin.md).

@@ -156,3 +156,23 @@ in code from `cadmpeg_ir::examples::unit_cube`: a 10 mm box with a 2 mm vertical
 fillet and a top-face hole, and a 10 mm plate with two separate 2 mm through holes. Their
 feature input samples are authored from those lines, quarter-circle arcs, and circles.
 No native design file or external model is used or stored for these tests.
+
+The `spatial_044_*` history tests in `dutchman-solidcraft/tests/history.rs` build
+neutral CADIR in code on cadmpeg's public synthetic unit cube. They use a square,
+a skew quadrilateral, independent spatial lines, points and an arc; no native
+CAD file or third-party geometry was added for them.
+
+Closed-circle blend regressions in `dutchman-solidcraft/tests/history.rs` use authored
+CADIR only, including a hidden synthetic historical wire with exact circular or elliptical
+carrier geometry. Writer unit tests cover coincident rims on two bodies and an ellipse
+whose source samples coincide with a circle while its replay seam moves independently.
+
+### Stand up fillet regression
+
+`freecad-1.1.4-P04/P04a.FCStd` is the unchanged CC0-1.0 CAD Fixture Recipes P04a
+model from the public fixtures project at commit `200abefef33bd206a362e5166f61e07e326e633a`,
+`generated/freecad-1.1.4/P04a.FCStd` (booklet 1.30, FreeCAD 1.1.4).
+SHA-256: `86a50bb953ba0e6b5e963657dac5173ba297e2f813faca82057a1fca71ede876`.
+It is an authored 20 × 30 × 10 mm pad with one R2 vertical-edge fillet: volume
+5991.41592654 mm³, bounds (-10, -15, 0) to (10, 15, 10) mm, from that set's
+`manifest.json`. The component harness maps and replays its fillet with Stand up.
