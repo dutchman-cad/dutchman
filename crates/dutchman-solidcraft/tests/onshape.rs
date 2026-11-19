@@ -11,6 +11,29 @@ use dutchman_solidcraft::{SolidCraftEvaluator, SolidCraftVersion, SolidCraftWrit
 use serde_json::{json, Value};
 
 fn model(name: &str) -> (Model, Report) {
+    if name == "sketch-axis-revolve" {
+        return synthetic_bundle_named("revolve", |response| {
+            response["features"][0]["entities"]
+                .as_array_mut()
+                .unwrap()
+                .push(
+                    json!({"btType":"BTMSketchCurveSegment-155", "entityId":"sketch-axis",
+                    "isConstruction":true, "startParam":0.0, "endParam":0.01,
+                    "geometry":{"btType":"BTCurveGeometryLine-117", "dirY":1.0}}),
+                );
+            let axis = response["features"][1]["parameters"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|p| p["parameterId"] == "axis")
+                .unwrap();
+            axis["queries"] = json!([{"queryString": concat!(
+                "query=qCompressed(1.0,\"%M5Sa$entityTypeS4$EDGESb$historyTypeS8$CREATION",
+                "Sb$operationIdA1S12$Ring sketch.wireOpS9$queryTypeSd$SKETCH_ENTITY",
+                "Se$sketchEntityIdSb$sketch-axis\",id);"
+            )}]);
+        });
+    }
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
         "../dutchman-core/tests/fixtures/onshape-{name}.onshape-bundle"
     ));
@@ -156,7 +179,8 @@ impl SolidCraftEvaluator for Measurements {
 fn each_bundle_converts_with_expected_history_rows_and_losses() {
     for (name, kinds) in [
         ("plate-fillet", vec!["sketch", "extrude", "fillet"]),
-        ("revolve", vec!["sketch", "revolve"]),
+        ("revolve", vec!["sketch", "native"]),
+        ("sketch-axis-revolve", vec!["sketch", "revolve"]),
         ("hole", vec!["sketch", "extrude", "sketch", "hole"]),
         (
             "hole-forms",
@@ -209,15 +233,24 @@ fn each_bundle_converts_with_expected_history_rows_and_losses() {
             assert_eq!(holes[2]["depth"], "6 mm");
             assert_eq!(holes[2]["thread_depth"], "5 mm");
         }
-        if name == "unsupported" {
+        if matches!(name, "unsupported" | "revolve") {
             assert_eq!(
                 outcome.features.last().unwrap().status,
                 FeatureStatus::Blocked
             );
             assert!(report.losses().iter().any(|loss| loss.code.as_deref()
                 == Some("onshape/history.not-supported")
-                && loss.detail.contains("custom FeatureScript")));
+                && loss.detail.contains(if name == "unsupported" {
+                    "custom FeatureScript"
+                } else {
+                    "producer"
+                })));
             assert_ne!(outcome.check, Check::Verified);
+            assert!(doc["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["type"] == "import"));
         } else {
             assert!(
                 outcome
@@ -273,8 +306,14 @@ fn onshape_blends_blend_only_their_listed_edges() {
     // Onshape lists every edge a fillet blends (its tangent chain resolved, or propagation
     // off), so SolidCraft must not extend the pick along tangent edges of its own.
     let (source, mut report) = model("plate-fillet");
+    let host = Arc::new(Measurements {
+        step: source.source_step.clone().unwrap(),
+        calls: Mutex::default(),
+        mismatch: "",
+    });
     let mut output = Vec::new();
     SolidCraftWriter::new()
+        .evaluator(host)
         .target_version(Some(SolidCraftVersion::default()))
         .write(&source, &mut output, &mut report)
         .unwrap();
@@ -314,14 +353,36 @@ fn real_solidcraft_replays_the_synthetic_bodies_against_the_step_exports() {
         eprintln!("Set SOLIDCRAFT_CLI to replay Onshape fixture histories");
         return;
     };
-    for name in ["plate-fillet", "revolve", "hole", "hole-forms", "variables"] {
+    for name in [
+        "plate-fillet",
+        "revolve",
+        "sketch-axis-revolve",
+        "hole",
+        "hole-forms",
+        "variables",
+    ] {
         let (model, mut report) = if name == "variables" {
             variable_model()
         } else {
             model(name)
         };
         let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
-        writer.write(&model, &mut Vec::new(), &mut report).unwrap();
+        let mut output = Vec::new();
+        writer.write(&model, &mut output, &mut report).unwrap();
+        if name == "revolve" {
+            // This older fixture stores an axis edge but no body feature producing it.
+            // Its STEP export remains usable; that edge cannot establish editable history.
+            assert_ne!(report.outcome().unwrap().check, Check::Verified);
+            assert!(report.losses().iter().any(|loss| loss.code.as_deref()
+                == Some("onshape/history.not-supported")
+                && loss.detail.contains("producer")));
+            assert!(document(&output)["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["type"] == "import"));
+            continue;
+        }
         assert_eq!(
             report.outcome().unwrap().check,
             Check::Verified,
@@ -1084,7 +1145,28 @@ fn stored_thin_controls_replay_the_directed_source_circle() {
                     json!({"parameterId":"thickness2","expression":"0 mm"}),
                 ]);
             });
-            assert_eq!(model.ir.design.features.len(), 1, "{:?}", report.losses());
+            // The design scope retains the sketch's native timeline row beside the
+            // typed thin extrusion; the model history supplies its decoded sketch.
+            assert_eq!(model.ir.design.features.len(), 2, "{:?}", report.losses());
+            let design = serde_json::to_value(&model.ir.design.features).unwrap();
+            assert_eq!(design[0]["definition"]["operation"]["kind"], "native");
+            assert_eq!(design[1]["definition"]["operation"]["kind"], "extrude");
+            assert_eq!(
+                model
+                    .ir
+                    .design
+                    .features
+                    .iter()
+                    .map(|feature| &feature.id)
+                    .collect::<Vec<_>>(),
+                model
+                    .ir
+                    .model
+                    .features
+                    .iter()
+                    .map(|feature| &feature.id)
+                    .collect::<Vec<_>>()
+            );
             let host = Arc::new(Measurements {
                 step: model.source_step.clone().unwrap(),
                 calls: Mutex::default(),
