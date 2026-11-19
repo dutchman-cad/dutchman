@@ -233,6 +233,9 @@ enum Command {
         /// names, paths or geometry, safe to share (see docs/report-anon.md).
         #[arg(long, value_name = "FILE")]
         report_anon: Option<PathBuf>,
+        /// Write only counts and fixed categories to --report-anon.
+        #[arg(long, requires = "report_anon", conflicts_with_all = ["report_salt", "report_key"])]
+        report_counts: bool,
         /// The salt for the anonymous report's file ids (32 hex digits), to get the same ids as
         /// an earlier run (default: a new one, printed when the run ends).
         #[arg(long, value_name = "HEX", requires = "report_anon")]
@@ -272,6 +275,9 @@ enum Command {
         /// names, paths or geometry, safe to share (see docs/report-anon.md).
         #[arg(long, value_name = "FILE")]
         report_anon: Option<PathBuf>,
+        /// Write only counts and fixed categories to --report-anon.
+        #[arg(long, requires = "report_anon", conflicts_with_all = ["report_salt", "report_key"])]
+        report_counts: bool,
         /// The salt for the anonymous report's file ids (32 hex digits), to get the same ids as
         /// an earlier run (default: a new one, printed when the run ends).
         #[arg(long, value_name = "HEX", requires = "report_anon")]
@@ -761,6 +767,7 @@ fn main() -> ExitCode {
             stop_at_feature,
             log,
             report_anon,
+            report_counts,
             report_salt,
             report_key,
             json,
@@ -805,7 +812,13 @@ fn main() -> ExitCode {
                 eprintln!("dutchman: --page requires --to dxf");
                 return ExitCode::from(2);
             }
-            let mut anon = match anon_request(report_anon, report_salt, report_key, &mut options) {
+            let mut anon = match anon_request(
+                report_anon,
+                report_salt,
+                report_key,
+                report_counts,
+                &mut options,
+            ) {
                 Ok(anon) => anon,
                 Err(code) => return code,
             };
@@ -963,6 +976,7 @@ fn main() -> ExitCode {
             max_memory,
             journal,
             report_anon,
+            report_counts,
             report_salt,
             report_key,
             mut options,
@@ -983,7 +997,13 @@ fn main() -> ExitCode {
             for job in preview.jobs {
                 memory_cli(&job.input, &options, json, quiet);
             }
-            let anon = match anon_request(report_anon, report_salt, report_key, &mut options) {
+            let anon = match anon_request(
+                report_anon,
+                report_salt,
+                report_key,
+                report_counts,
+                &mut options,
+            ) {
                 Ok(anon) => anon,
                 Err(code) => return code,
             };
@@ -1380,6 +1400,7 @@ fn anon_request(
     report_anon: Option<PathBuf>,
     report_salt: Option<String>,
     report_key: Option<PathBuf>,
+    counts: bool,
     options: &mut ConvertOptions,
 ) -> Result<Option<anon::Request>, ExitCode> {
     let salt = match report_salt.as_deref().map(anon::Salt::parse).transpose() {
@@ -1404,6 +1425,7 @@ fn anon_request(
         path,
         salt: Some(salt),
         key: report_key,
+        counts,
     }))
 }
 
@@ -1413,6 +1435,13 @@ fn anon_notice(
     written: Result<anon::Salt, String>,
 ) -> Result<(), ExitCode> {
     match written {
+        Ok(_) if request.counts => {
+            eprintln!(
+                "dutchman: counts report written to {}. Review it before sharing.",
+                request.path.display()
+            );
+            Ok(())
+        }
         Ok(salt) => {
             eprintln!(
                 "dutchman: anonymous report written to {}. Its file ids use the salt {}: \

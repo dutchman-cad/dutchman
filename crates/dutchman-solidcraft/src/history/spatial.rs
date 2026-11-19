@@ -251,14 +251,16 @@ fn entity_geometry(entity: &str, geometry: &Value, builder: &mut Builder) -> Res
         "arc" => {
             let circle = Circle::read(geometry)?;
             let a = number(geometry.get("start_angle")).ok_or("an arc without a start angle")?;
-            let mut b = number(geometry.get("end_angle")).ok_or("an arc without an end angle")?;
-            while b <= a {
-                b += std::f64::consts::TAU;
+            let b = number(geometry.get("end_angle")).ok_or("an arc without an end angle")?;
+            let sweep = b - a;
+            if !sweep.is_finite() || sweep.abs() > std::f64::consts::TAU + 1e-9 {
+                return Err("multi-turn 3D sketch arcs are not supported yet".to_owned());
             }
-            if b - a >= std::f64::consts::TAU - 1e-9 {
+            if sweep == 0.0 || sweep.abs() >= std::f64::consts::TAU - 1e-9 {
                 for half in 0..2 {
-                    let from = a + f64::from(half) * std::f64::consts::PI;
-                    circle.arc(entity, from, from + std::f64::consts::PI, builder);
+                    let step = if sweep < 0.0 { -1.0 } else { 1.0 } * std::f64::consts::PI;
+                    let from = a + f64::from(half) * step;
+                    circle.arc(entity, from, from + step, builder);
                 }
             } else {
                 circle.arc(entity, a, b, builder);
@@ -331,9 +333,9 @@ impl Circle {
         })
     }
 
-    /// An exact arc from parameter `from` to `to` (counterclockwise about the normal).
+    /// An exact arc following the signed parameter interval from `from` to `to`.
     fn arc(&self, entity: &str, from: f64, to: f64, builder: &mut Builder) {
-        let segments = ((to - from).to_degrees() / ARC_STEP)
+        let segments = ((to - from).abs().to_degrees() / ARC_STEP)
             .ceil()
             .clamp(8.0, 720.0) as usize;
         let pts: Vec<V3> = (0..=segments)
@@ -342,7 +344,7 @@ impl Circle {
         let (start, end) = (self.at(from), self.at(to));
         let arc = json!({
             "center": self.center,
-            "normal": self.normal,
+            "normal": if to < from { self.normal.map(|v| -v) } else { self.normal },
             "radius": self.radius,
             "start": start,
             "end": end,
@@ -507,4 +509,50 @@ fn spline_point(
         total += weighted;
     }
     (total > 0.0 && total.is_finite()).then(|| sum.map(|s| s / total))
+}
+
+#[cfg(test)]
+mod sketch_arc_tests {
+    use super::*;
+
+    #[test]
+    fn signed_arcs_keep_fit_midpoints_polylines_and_oriented_normals() {
+        for normal in [-1.0, 1.0] {
+            for sweep in [
+                -std::f64::consts::FRAC_PI_2,
+                std::f64::consts::FRAC_PI_2,
+                -std::f64::consts::PI,
+                -std::f64::consts::TAU,
+            ] {
+                let geometry = json!({"kind":"arc","center":{"x":0.0,"y":0.0,"z":0.0},
+                    "normal":{"x":0.0,"y":0.0,"z":normal},
+                    "reference_direction":{"x":1.0,"y":0.0,"z":0.0},
+                    "radius":3.0,"start_angle":0.0,"end_angle":sweep});
+                let circle = Circle::read(&geometry).unwrap();
+                let mut builder = Builder::default();
+                entity_geometry("arc", &geometry, &mut builder).unwrap();
+                let count = builder.wires.len();
+                assert_eq!(
+                    count,
+                    if sweep.abs() == std::f64::consts::TAU {
+                        2
+                    } else {
+                        1
+                    }
+                );
+                for (i, wire) in builder.wires.iter().enumerate() {
+                    let a = sweep * i as f64 / count as f64;
+                    let b = sweep * (i + 1) as f64 / count as f64;
+                    for (j, angle) in [a, (a + b) / 2.0, b].into_iter().enumerate() {
+                        let expected = circle.at(angle);
+                        for (axis, value) in expected.into_iter().enumerate() {
+                            assert!((wire["fit"][j][axis].as_f64().unwrap() - value).abs() < 1e-9);
+                        }
+                    }
+                    assert_eq!(wire["arc"]["normal"][2], normal * sweep.signum());
+                    assert!(wire["pts"].as_array().unwrap().len() > 40);
+                }
+            }
+        }
+    }
 }

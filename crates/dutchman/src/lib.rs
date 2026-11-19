@@ -14,6 +14,7 @@ pub const BUILD_VERSION: &str = match option_env!("DUTCHMAN_NIGHTLY_VERSION") {
 pub mod anon;
 pub mod batch;
 pub mod choices;
+pub mod counts;
 pub mod diagnose;
 pub mod diagnostics;
 pub mod doctor;

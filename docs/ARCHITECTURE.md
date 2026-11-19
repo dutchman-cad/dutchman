@@ -326,9 +326,12 @@ stages; ordered chains of feature-pattern stages containing mirrors (target Soli
 10,000 instances per pattern or chain;
 mirrors of earlier features across a
 plane; body mirror patterns and body combines (join, cut or intersect, optionally keeping
-the tools) of bodies named by earlier features; and removals of such bodies. A body the final
-model leaves out, which cadmpeg names by the feature that generated it, takes the name the
-new-body extrude that made it gives it. Shells and drafts wait on input face geometry
+the tools) of bodies named by earlier features; and removals of such bodies (target SolidCraft
+0.40 or newer). A body mirror joins its copies to the bodies it mirrors when the bodies it
+outputs are exactly those bodies. A body the final model leaves out, which cadmpeg names by
+the feature that generated it, takes the name the new-body extrude that made it gives it. A
+body selected in the feature's own input state is the one body named so far when that state
+holds exactly one body. Shells and drafts wait on input face geometry
 (their faces are known only on the final body, which the feature has changed);
 modeled threads and threads without resolved metric size, extent, and cylindrical face
 geometry, and shape-replacing mirrors are not supported yet. Features are

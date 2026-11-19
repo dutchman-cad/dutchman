@@ -1873,3 +1873,46 @@ mod proof_prefix_tests {
         assert!(through_last(&history, &[9]).is_none());
     }
 }
+
+#[cfg(test)]
+mod mesh_only_tests {
+    use super::*;
+
+    /// A model whose only geometry is a mesh has nothing SolidCraft can take.
+    #[test]
+    fn a_mesh_only_model_writes_no_design() {
+        use cadmpeg_ir::math::Point3;
+        use cadmpeg_ir::tessellation::{Tessellation, TessellationId, TessellationMesh};
+        let point = |x: f64, y: f64, z: f64| Point3 { x, y, z };
+        let mesh = TessellationMesh::List {
+            vertices: vec![
+                point(0.0, 0.0, 0.0),
+                point(10.0, 0.0, 0.0),
+                point(0.0, 10.0, 0.0),
+                point(0.0, 0.0, 10.0),
+            ],
+            triangles: vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]],
+        };
+        let mut ir = cadmpeg_ir::CadIr::empty();
+        ir.model.tessellations.push(
+            Tessellation::new(
+                TessellationId::mint("f3d:model:tessellation#1").unwrap(),
+                mesh,
+                Vec::new(),
+            )
+            .unwrap(),
+        );
+        let model = Model {
+            ir,
+            fidelity: None,
+            name: "mesh".to_owned(),
+            source_file: Some("mesh.f3d".to_owned()),
+            assembly: None,
+            source_step: None,
+        };
+        let mut out = Vec::new();
+        let result = SolidCraftWriter::default().write(&model, &mut out, &mut Report::default());
+        assert!(matches!(result, Err(Error::NoGeometry(_))), "{result:?}");
+        assert!(out.is_empty());
+    }
+}

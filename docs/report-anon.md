@@ -143,3 +143,15 @@ The exact codes above are allow-listed; arbitrary `dutchman/appearance.*` string
 accepted as categories. Assignments kept as body colours, uniform face colours or individual
 face colours are not counted as dropped. Multiple dropped assignments count individually,
 even when they share a target. Ordinary conversion reports retain their human explanations.
+
+
+## Counts-only anonymous reports
+
+Use `--report-counts --report-anon FILE` with `convert` or `convert-all` to write
+`dutchman.report-counts/1`. For MCP `convert_all`, set `report_counts: true` and
+`report_anon` to the destination. This opt-in profile holds counts and fixed categories;
+it has no messages, file IDs, names, paths, dimensions or geometry. It cannot use
+`report_salt` or `report_key`. Source version bands remain `unknown` when unavailable.
+Review the exact file before sharing. This option writes locally and does not authorize
+sending; retain the existing user confirmation before sharing a report.
+See the counts-only schema in [JSON reports](json.md).

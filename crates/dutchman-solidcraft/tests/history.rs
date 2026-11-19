@@ -333,9 +333,13 @@ fn spatial_sweep_history(change: impl FnOnce(&mut Vec<Value>, &mut Value)) -> Mo
 
 #[test]
 fn a_spatial_sketch_becomes_a_3d_sketch_and_a_sweep_follows_its_curves() {
+    // Wire constraints are written from SolidCraft 0.44, so the target is named rather than
+    // taken from whichever SolidCraft the test run finds.
     let (document, report) = convert(
         &spatial_sweep_history(|_, _| {}),
-        &SolidCraftWriter::new().verification(Verification::Off),
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some("0.44.0".parse().unwrap())),
     );
     let features = document["features"].as_array().unwrap();
     let rail = features
@@ -2813,6 +2817,67 @@ fn a_revolve_about_a_line_of_its_sketch_keeps_that_line() {
 }
 
 #[test]
+fn surface_revolves_of_open_curve_chains_take_them_as_curves() {
+    let quarter = json!({"kind": "symmetric",
+        "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}});
+    let picked = |entities: Value| {
+        let quarter = quarter.clone();
+        changed_ring(move |construction| {
+            construction["value"]["solid"] = json!(false);
+            construction["value"]["extent"] = quarter;
+            construction["value"]["profile"] = json!({"kind": "sketch_entities",
+                "value": {"sketch": SKETCH, "entities": entities}});
+        })
+    };
+    // One open line: the outer wall of the ring, x = 10 on the sketch.
+    let model = picked(json!(["f3d:model:sketch-entity#2"]));
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let revolve = &document["features"][1];
+    assert_eq!(revolve["type"], "surface_revolve");
+    assert!(revolve.get("profiles").is_none(), "{revolve}");
+    assert_eq!(
+        revolve["curves"].as_array().map(Vec::len),
+        Some(1),
+        "{revolve}"
+    );
+    if let Some(cli) = solidcraft() {
+        let boxes = bounds(&cli, &written(&model).0);
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        let (min, max) = boxes[0];
+        // A quarter of a radius-10 cylinder wall, symmetric about the sketch, z 0..10.
+        assert!((max[0] - 10.0).abs() < 1e-6, "{boxes:?}");
+        assert!(
+            min[2].abs() < 1e-6 && (max[2] - 10.0).abs() < 1e-6,
+            "{boxes:?}"
+        );
+        assert!((min[1] + max[1]).abs() < 1e-6 && max[1] > 0.0, "{boxes:?}");
+    }
+
+    // The four lines of the rectangle close a profile: it stays a profile.
+    let model = picked(json!([
+        "f3d:model:sketch-entity#1",
+        "f3d:model:sketch-entity#2",
+        "f3d:model:sketch-entity#3",
+        "f3d:model:sketch-entity#4"
+    ]));
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let revolve = &document["features"][1];
+    assert!(revolve.get("curves").is_none(), "{revolve}");
+    assert_eq!(revolve["profiles"]["type"], "curves", "{revolve}");
+}
+
+#[test]
 fn surface_revolves_short_of_a_full_turn_map() {
     let quarter = json!({"kind": "symmetric",
         "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}});
@@ -3557,7 +3622,9 @@ fn curved_hole_placements_outside_the_face_or_inside_its_existing_hole_are_refus
     for (rounded, at) in [(true, [0.1, 0.1, 10.0]), (false, [3.0, 5.0, 10.0])] {
         let (_, report) = convert(
             &curved_hole(rounded, directed(at, [0.0, 0.0, -1.0])),
-            &SolidCraftWriter::new().verification(Verification::Off),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some("0.40.0".parse().unwrap())),
         );
         assert_eq!(
             report.outcome().unwrap().features[3].reason.as_deref(),
@@ -3569,21 +3636,23 @@ fn curved_hole_placements_outside_the_face_or_inside_its_existing_hole_are_refus
 
 #[test]
 fn curved_hole_entries_keep_older_targets_open_with_a_named_blocker() {
-    let (_, report) = convert(
-        &curved_hole(false, directed([7.0, 5.0, 10.0], [0.0, 0.0, -1.0])),
-        &SolidCraftWriter::new()
-            .verification(Verification::Off)
-            .target_version(Some("0.39.0".parse().unwrap())),
-    );
-    let reason = report.outcome().unwrap().features[3]
-        .reason
-        .as_deref()
-        .unwrap();
-    assert!(
-        reason.contains("need SolidCraft 0.40.0 or newer")
-            && reason.contains("target SolidCraft 0.39.0"),
-        "{reason}"
-    );
+    for target in ["0.18.2", "0.39.0"] {
+        let (_, report) = convert(
+            &curved_hole(false, directed([7.0, 5.0, 10.0], [0.0, 0.0, -1.0])),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(target.parse().unwrap())),
+        );
+        let reason = report.outcome().unwrap().features[3]
+            .reason
+            .as_deref()
+            .unwrap();
+        assert!(
+            reason.contains("need SolidCraft 0.40.0 or newer")
+                && reason.contains(&format!("target SolidCraft {target}")),
+            "{reason}"
+        );
+    }
 }
 
 #[test]
@@ -3592,7 +3661,8 @@ fn curved_hole_entries_require_replay_even_when_the_plane_is_known() {
         &curved_hole(false, directed([7.0, 5.0, 10.0], [0.0, 0.0, -1.0])),
         &SolidCraftWriter::new()
             .verification(Verification::Off)
-            .replay(Verification::Off),
+            .replay(Verification::Off)
+            .target_version(Some("0.40.0".parse().unwrap())),
     );
     let reason = report.outcome().unwrap().features[3]
         .reason
@@ -3604,9 +3674,26 @@ fn curved_hole_entries_require_replay_even_when_the_plane_is_known() {
     );
 }
 
+/// Circular entry boundaries need replay support from SolidCraft 0.40 or newer.
+fn curved_hole_cli() -> Option<PathBuf> {
+    let cli = solidcraft()?;
+    let version = std::process::Command::new(&cli)
+        .arg("--version")
+        .output()
+        .unwrap();
+    let text = String::from_utf8(version.stdout).unwrap();
+    let version: dutchman_solidcraft::SolidCraftVersion =
+        text.split_whitespace().last().unwrap().parse().unwrap();
+    if version < "0.40.0".parse().unwrap() {
+        eprintln!("skipped: circular entry boundary replay needs SolidCraft 0.40.0 or newer");
+        return None;
+    }
+    Some(cli)
+}
+
 #[test]
 fn solidcraft_replays_curved_hole_entries_after_a_vertical_fillet_or_through_hole() {
-    let Some(cli) = solidcraft() else { return };
+    let Some(cli) = curved_hole_cli() else { return };
     for rounded in [true, false] {
         for placement in [
             directed([7.0, 5.0, 10.0], [0.0, 0.0, -1.0]),
@@ -3634,7 +3721,7 @@ fn solidcraft_replays_curved_hole_entries_after_a_vertical_fillet_or_through_hol
 
 #[test]
 fn solidcraft_replays_a_later_curved_hole_after_signing_a_bottom_entry_axis() {
-    let Some(cli) = solidcraft() else { return };
+    let Some(cli) = curved_hole_cli() else { return };
     let model = curved_hole(false, axis_through([7.0, 5.0, -2.0], [0.0, 0.0, 1.0]));
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     // Same source boundary orientation as the top, but on the bottom plane: replay
@@ -3695,7 +3782,7 @@ fn solidcraft_replays_a_later_curved_hole_after_signing_a_bottom_entry_axis() {
 
 #[test]
 fn solidcraft_refuses_curved_hole_entries_with_wrong_side_or_unproven_boundaries() {
-    let Some(cli) = solidcraft() else { return };
+    let Some(cli) = curved_hole_cli() else { return };
     let model = curved_hole(false, directed([7.0, 5.0, 10.0], [0.0, 0.0, 1.0]));
     let (_, report) = written_with(&model, &replaying(&cli));
     assert!(
@@ -16709,4 +16796,130 @@ fn body_mirror_outputs_name_consumed_generated_boolean_tools() {
         Check::Verified,
         "{report:?}"
     );
+}
+
+/// Code-built clockwise rounded plate (32 × 20, radius 3) and two capsule holes
+/// (radius 1, straight length 4), extruded 5 mm. The carrier cube is unused with
+/// verification off; expected measurements below come from these source sketch dimensions.
+fn clockwise_rounded_plate(flipped: bool) -> Model {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let mut model = cube_with_history(5.0, whole_sketch(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let arc = |key, center: [f64; 2], radius, start, end| {
+        entity(
+            key,
+            json!({"kind":"arc","center":{"u":center[0],"v":center[1]},
+            "radius":radius,"start_angle":start,"end_angle":end}),
+        )
+    };
+    let mut entities = vec![
+        arc(1, [3.0, 3.0], 3.0, -FRAC_PI_2, -PI),
+        line(2, [0.0, 3.0], [0.0, 17.0]),
+        arc(3, [3.0, 17.0], 3.0, PI, FRAC_PI_2),
+        line(4, [3.0, 20.0], [29.0, 20.0]),
+        arc(5, [29.0, 17.0], 3.0, FRAC_PI_2, 0.0),
+        line(6, [32.0, 17.0], [32.0, 3.0]),
+        arc(7, [29.0, 3.0], 3.0, 0.0, -FRAC_PI_2),
+        line(8, [29.0, 0.0], [3.0, 0.0]),
+    ];
+    let ring = |keys: Vec<u32>| {
+        keys.into_iter()
+            .map(|key| json!({"entity":format!("f3d:model:sketch-entity#{key}"),"reversed":false}))
+            .collect::<Vec<_>>()
+    };
+    let mut profiles = vec![ring((1..=8).collect())];
+    for (key, x) in [(9, 10.0), (13, 22.0)] {
+        entities.extend([
+            line(key, [x - 1.0, 8.0], [x - 1.0, 12.0]),
+            arc(key + 1, [x, 12.0], 1.0, PI, 0.0),
+            line(key + 2, [x + 1.0, 12.0], [x + 1.0, 8.0]),
+            arc(key + 3, [x, 8.0], 1.0, 0.0, -PI),
+        ]);
+        profiles.push(ring((key..key + 4).collect()));
+    }
+    wire["model"]["sketch_entities"] = json!(entities);
+    wire["model"]["sketch_constraints"] = json!([]);
+    wire["model"]["sketches"][0]["profiles"] = json!(profiles);
+    if flipped {
+        wire["model"]["sketches"][0]["placement"]["frame"]["normal"]["z"] = json!(-1.0);
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn clockwise_rounded_corners_and_slot_arcs_keep_source_sweeps_and_midpoints() {
+    use std::f64::consts::TAU;
+    for flipped in [false, true] {
+        let model = clockwise_rounded_plate(flipped);
+        let source = serde_json::to_value(&model.ir).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("2 of 2 features rebuilt"),
+            "{report:?}"
+        );
+        let sketch = &document["features"][0]["sketch"];
+        let arcs: Vec<_> = sketch["curves"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["type"] == "arc")
+            .collect();
+        let sources: Vec<_> = source["model"]["sketch_entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["geometry"]["kind"] == "arc")
+            .collect();
+        assert_eq!(arcs.len(), 8);
+        for (curve, source) in arcs.into_iter().zip(sources) {
+            let geometry = &source["geometry"];
+            let center = [
+                geometry["center"]["u"].as_f64().unwrap(),
+                geometry["center"]["v"].as_f64().unwrap(),
+            ];
+            let point = |key: &str| {
+                let p = &sketch["points"][curve[key].as_u64().unwrap() as usize];
+                [p["pos"][0].as_f64().unwrap(), p["pos"][1].as_f64().unwrap()]
+            };
+            let angle = |p: [f64; 2]| (p[1] - center[1]).atan2(p[0] - center[0]);
+            let a = angle(point("a"));
+            let sweep = (angle(point("b")) - a).rem_euclid(TAU);
+            let start = geometry["start_angle"].as_f64().unwrap();
+            let end = geometry["end_angle"].as_f64().unwrap();
+            assert!((sweep - (end - start).abs()).abs() < 1e-9, "{curve}");
+            let mid = a + sweep / 2.0;
+            let source_mid = (start + end) / 2.0;
+            assert!((mid.cos() - source_mid.cos()).abs() < 1e-9);
+            assert!((mid.sin() - source_mid.sin()).abs() < 1e-9);
+        }
+    }
+}
+
+#[test]
+fn clockwise_rounded_plate_replays_with_source_face_count_area_and_volume() {
+    let Some(cli) = solidcraft() else { return };
+    let pi = std::f64::consts::PI;
+    let source_area = 32.0 * 20.0 - (4.0 - pi) * 9.0 - 2.0 * (8.0 + pi);
+    let source_perimeter = 96.0 + 10.0 * pi;
+    for flipped in [false, true] {
+        let result = evaluated(&cli, &written(&clockwise_rounded_plate(flipped)).0);
+        assert_eq!(result["bodies"].as_array().unwrap().len(), 1);
+        assert_eq!(result["total"]["faces"], 18, "{result}");
+        let body = &result["bodies"][0];
+        for (key, expected) in [
+            ("volume_mm3", source_area * 5.0),
+            ("area_mm2", 2.0 * source_area + 5.0 * source_perimeter),
+        ] {
+            let actual = body[key].as_f64().unwrap();
+            // Same relative tolerance used by the existing curved-profile replay tests.
+            assert!(
+                (actual - expected).abs() / expected < 1e-3,
+                "{key}: {actual} vs {expected}"
+            );
+        }
+    }
 }

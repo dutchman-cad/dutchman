@@ -634,11 +634,11 @@ struct Context<'a> {
     pattern_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
-    /// Trial names that must be discarded unless the complete source body check passes.
-    confirming_consumed_bodies: bool,
     /// Bodies an earlier feature makes that the final model leaves out, under their names:
     /// ((CADIR producing feature id, feature-local body id), name).
     generated_bodies: Vec<((String, String), String)>,
+    /// Trial names that must be discarded unless the complete source body check passes.
+    confirming_consumed_bodies: bool,
     default_bodies: BTreeMap<String, String>,
     /// Region of each explicitly named imported shape.
     imported_regions: BTreeMap<String, String>,
@@ -706,8 +706,8 @@ impl<'a> Context<'a> {
             pattern_features: BTreeMap::new(),
             pattern_replay_required: false,
             named_bodies: Vec::new(),
-            confirming_consumed_bodies: false,
             generated_bodies: Vec::new(),
+            confirming_consumed_bodies: false,
             default_bodies: BTreeMap::new(),
             imported_regions: BTreeMap::new(),
             unwritten_bodies: BTreeSet::new(),
@@ -724,25 +724,6 @@ impl<'a> Context<'a> {
             inferred: None,
             measured: false,
         }
-    }
-
-    /// The body names already given: those of named source bodies and of bodies an earlier
-    /// feature makes that the final model leaves out. Every body-name allocator reserves
-    /// against both, so a name selects one body.
-    fn taken_body_names(&self) -> BTreeSet<String> {
-        self.named_bodies
-            .iter()
-            .map(|(_, name)| name.clone())
-            .chain(self.generated_bodies.iter().map(|(_, name)| name.clone()))
-            .collect()
-    }
-
-    /// Forgets the bodies a feature consumes, so no later feature can select them, whether
-    /// a named source body or a generated one bears the name.
-    fn forget_bodies(&mut self, names: &[String]) {
-        self.named_bodies.retain(|(_, name)| !names.contains(name));
-        self.generated_bodies
-            .retain(|(_, name)| !names.contains(name));
     }
 
     /// The timeline name `feature` keeps: its own, numbered when an earlier feature has it,
@@ -794,6 +775,15 @@ impl<'a> Context<'a> {
             rows
         });
         rows.get(id).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether a body the history makes already has this name.
+    fn body_name_taken(&self, name: &str) -> bool {
+        self.named_bodies
+            .iter()
+            .map(|(_, known)| known)
+            .chain(self.generated_bodies.iter().map(|(_, known)| known))
+            .any(|known| known == name)
     }
 
     /// A row of a CADIR arena by id.
@@ -2785,126 +2775,26 @@ mod tests {
         assert_eq!(err, "no feature in the history builds geometry");
     }
 
-    /// A Mirror then a Remove of the body that `f:first` makes and the final model omits.
-    fn mirror_and_remove(ctx: &mut Context) -> (Result<Mapped, String>, Result<Mapped, String>) {
-        let generated = json!({"kind": "generated", "value": {
-            "bodies": [{"feature": "f:first", "local_id": "1"}], "native": "n"}});
-        let mirror = json!({"id": "f:mirror", "ordinal": 3, "name": "Mirror 1",
-            "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {
-                "seeds": [{"kind": "bodies", "value": generated}],
-                "pattern": {"kind": "mirror", "plane_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
-                    "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}}}}});
-        let remove = json!({"id": "f:remove", "ordinal": 4, "name": "Remove 1",
-            "definition": {"kind": "operation", "value": {"kind": "delete_body", "value": {
-                "bodies": generated, "mode": "delete_selected"}}}});
-        let mut features = Vec::new();
-        let mirrored = map_feature(&mirror, ctx, &mut Report::default(), &mut features);
-        let removed = map_feature(&remove, ctx, &mut Report::default(), &mut features);
-        (mirrored, removed)
-    }
-
-    #[test]
-    fn a_body_the_final_model_omits_keeps_its_name_from_later_bodies() {
-        let model = json!({"bodies": [{"id": "body#2"}], "feature_result_topologies": [
-            {"id": "r", "output_of": "f:first", "members": [{"kind": "body", "id": "1"}]}]});
-        let mut ctx = Context::testing(&model);
-        let first = json!({"id": "f:first", "name": "Extrude 1"});
-        let second = json!({"id": "f:second", "name": "Extrude 2", "outputs": ["body#2"]});
-        assert_eq!(
-            extrude::body_names(&first, &mut ctx, "new_body"),
-            Some(vec!["Body 1".to_owned()])
-        );
-        assert_eq!(
-            extrude::body_names(&second, &mut ctx, "new_body"),
-            Some(vec!["Body 2".to_owned()])
-        );
-        let (Ok(Mapped::Feature(mirrored)), Ok(Mapped::Feature(removed))) =
-            mirror_and_remove(&mut ctx)
-        else {
-            panic!("the mirror and the removal map");
-        };
-        assert_eq!(mirrored["bodies"], json!(["Body 1"]));
-        assert_eq!(removed["bodies"], json!(["Body 1"]));
-
-        // A source body named like the generated body makes the name ambiguous.
-        let model = json!({"bodies": [{"id": "body#2", "name": "Body 1"}],
-            "feature_result_topologies": [
-                {"id": "r", "output_of": "f:first", "members": [{"kind": "body", "id": "1"}]}]});
-        let mut ctx = Context::testing(&model);
-        extrude::body_names(&first, &mut ctx, "new_body");
-        extrude::body_names(&second, &mut ctx, "new_body");
-        let (mirrored, removed) = mirror_and_remove(&mut ctx);
-        assert_eq!(
-            mirrored.err(),
-            Some("its body name is not unique".to_owned())
-        );
-        assert_eq!(
-            removed.err(),
-            Some("its body name is not unique".to_owned())
-        );
-    }
-
-    #[test]
-    fn a_generated_body_a_combine_uses_up_is_no_longer_selectable() {
-        let model = json!({"bodies": [{"id": "body#2"}], "feature_result_topologies": [
-            {"id": "r", "output_of": "f:first", "members": [{"kind": "body", "id": "1"}]}]});
-        let mut ctx = Context::testing(&model);
-        extrude::body_names(
-            &json!({"id": "f:first", "name": "Extrude 1"}),
-            &mut ctx,
-            "new_body",
-        );
-        extrude::body_names(
-            &json!({"id": "f:second", "name": "Extrude 2", "outputs": ["body#2"]}),
-            &mut ctx,
-            "new_body",
-        );
-        let generated = json!({"kind": "generated", "value": {
-            "bodies": [{"feature": "f:first", "local_id": "1"}], "native": "n"}});
-        let combine = json!({"id": "f:combine", "ordinal": 3, "name": "Combine 1",
-            "definition": {"kind": "operation", "value": {"kind": "combine", "value": {
-                "operands": {"target": {"kind": "bodies", "value": ["body#2"]}, "tools": generated},
-                "op": "join", "keep_tools": false}}}});
-        let mut features = Vec::new();
-        let Ok(Mapped::Feature(combined)) =
-            map_feature(&combine, &mut ctx, &mut Report::default(), &mut features)
-        else {
-            panic!("the combine maps");
-        };
-        assert_eq!(combined["tools"], json!(["Body 1"]));
-        let (mirrored, removed) = mirror_and_remove(&mut ctx);
-        let reason = "it selects a body made by an earlier feature that did not name it";
-        assert_eq!(mirrored.err().as_deref(), Some(reason));
-        assert_eq!(removed.err().as_deref(), Some(reason));
-    }
-
-    #[test]
-    fn a_removal_maps_from_the_opens_in_floor() {
-        let model = json!({"features": [], "feature_result_topologies": [
-            {"id": "r", "output_of": "f:first", "members": [{"kind": "body", "id": "1"}]}]});
-        for version in ["0.18.2", "0.30.1", "0.40.0"] {
-            let mut ctx = Context::testing(&model);
-            ctx.target_version = version.parse().unwrap();
-            extrude::body_names(
-                &json!({"id": "f:first", "name": "Extrude 1"}),
-                &mut ctx,
-                "new_body",
-            );
-            let (_, removed) = mirror_and_remove(&mut ctx);
-            let Ok(Mapped::Feature(removed)) = removed else {
-                panic!("the removal maps at {version}");
-            };
-            assert_eq!(removed["type"], "remove");
-            assert_eq!(removed["bodies"], json!(["Body 1"]));
-        }
+    /// A v11 feature row whose operation is `kind` with payload `value`.
+    fn op_row(
+        id: &str,
+        ordinal: u64,
+        name: &str,
+        kind: &str,
+        value: Value,
+        outputs: Value,
+    ) -> Value {
+        json!({"id": id, "ordinal": ordinal, "name": name, "suppressed": false,
+            "definition": {"kind": "operation", "value": {"kind": kind, "value": value}},
+            "dependencies": [], "source_properties": {}, "source_content": [], "outputs": outputs})
     }
 
     #[test]
     fn a_body_the_final_model_omits_is_named_mirrored_and_removed() {
         let model = json!({"features": [], "feature_result_topologies": [
             {"id": "r", "output_of": "f:extrude", "members": [{"kind": "body", "id": "1"}]}]});
-        let mut ctx = Context::new(&model);
-        let extrude = json!({"id": "f:extrude", "name": "Extrude 1"});
+        let mut ctx = Context::testing(&model);
+        let extrude = json!({"id": "f:extrude", "name": "Extrude 1", "outputs": []});
         assert_eq!(
             extrude::body_names(&extrude, &mut ctx, "new_body"),
             Some(vec!["Body 1".to_owned()])
@@ -2912,20 +2802,31 @@ mod tests {
         let generated = json!({"kind": "generated", "value": {
             "bodies": [{"feature": "f:extrude", "local_id": "1"}], "native": "n"}});
         let mut features = Vec::new();
-        let mirror = json!({"id": "f:mirror", "ordinal": 3, "name": "Mirror 1",
-            "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {
-                "seeds": [{"kind": "bodies", "value": generated}],
+        let mirror = op_row(
+            "f:mirror",
+            3,
+            "Mirror 1",
+            "pattern",
+            json!({"seeds": [{"kind": "bodies", "value": generated}],
                 "pattern": {"kind": "mirror", "plane_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
-                    "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}}}}});
+                    "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}}),
+            json!(["copy"]),
+        );
         let Ok(Mapped::Feature(mapped)) =
             map_feature(&mirror, &mut ctx, &mut Report::default(), &mut features)
         else {
             panic!("the mirror maps");
         };
         assert_eq!(mapped["bodies"], json!(["Body 1"]));
-        let remove = json!({"id": "f:remove", "ordinal": 4, "name": "Remove 1",
-            "definition": {"kind": "operation", "value": {"kind": "delete_body", "value": {
-                "bodies": generated, "mode": "delete_selected"}}}});
+        assert_eq!(mapped["combine"], json!(false));
+        let remove = op_row(
+            "f:remove",
+            4,
+            "Remove 1",
+            "delete_body",
+            json!({"bodies": generated, "mode": "delete_selected"}),
+            json!([]),
+        );
         let Ok(Mapped::Feature(mapped)) =
             map_feature(&remove, &mut ctx, &mut Report::default(), &mut features)
         else {
@@ -2935,14 +2836,133 @@ mod tests {
         assert_eq!(mapped["bodies"], json!(["Body 1"]));
         assert_eq!(
             map_feature(&remove, &mut ctx, &mut Report::default(), &mut features).err(),
-            Some("it selects a body made by an earlier feature that did not name it".to_owned())
+            Some("its generated body has no earlier mapped producer".to_owned())
         );
-        let keep = json!({"id": "f:keep", "ordinal": 5, "name": "Keep 1",
-            "definition": {"kind": "operation", "value": {"kind": "delete_body", "value": {
-                "bodies": generated, "mode": "keep_selected"}}}});
+        let keep = op_row(
+            "f:keep",
+            5,
+            "Keep 1",
+            "delete_body",
+            json!({"bodies": generated, "mode": "keep_selected"}),
+            json!([]),
+        );
         assert_eq!(
             map_feature(&keep, &mut ctx, &mut Report::default(), &mut features).err(),
             Some("removing every body except the selected ones is not supported yet".to_owned())
+        );
+        ctx.target_version = "0.30.0".parse().unwrap();
+        assert_eq!(
+            map_feature(&remove, &mut ctx, &mut Report::default(), &mut features).err(),
+            Some(
+                "removing a body is written for SolidCraft 0.40 or newer (target 0.30)".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn a_generated_body_name_is_not_given_to_a_later_body() {
+        let model = json!({"features": [], "bodies": [{"id": "b", "name": null}],
+            "feature_result_topologies": [
+                {"id": "r", "output_of": "f:first", "members": [{"kind": "body", "id": "1"}]}]});
+        let mut ctx = Context::testing(&model);
+        let first = json!({"id": "f:first", "outputs": []});
+        let later = json!({"id": "f:later", "outputs": ["b"]});
+        assert_eq!(
+            extrude::body_names(&first, &mut ctx, "new_body"),
+            Some(vec!["Body 1".to_owned()])
+        );
+        assert_eq!(
+            extrude::body_names(&later, &mut ctx, "new_body"),
+            Some(vec!["Body 2".to_owned()])
+        );
+    }
+
+    #[test]
+    fn a_mirror_of_the_one_body_in_its_input_state_joins_when_it_outputs_that_body() {
+        let state = |id: &str, of: &str, bodies: Value| {
+            json!({"id": id, "input_of": of, "bodies": bodies, "faces": [], "edges": [],
+                "vertices": [], "edge_geometry": []})
+        };
+        let model = json!({"features": [], "bodies": [{"id": "c", "name": null}],
+            "feature_input_topologies": [
+            state("one", "f:mirror", json!(["one:1"])),
+            state("two", "f:two", json!(["two:1", "two:2"])),
+            state("other", "f:else", json!(["other:1"]))]});
+        let mut ctx = Context::testing(&model);
+        ctx.named_bodies.push(("b".into(), "Body 1".into()));
+        let seed = |state: &str, body: &str| {
+            json!([{"kind": "bodies", "value": {"kind": "historical",
+                "value": {"state": state, "bodies": [body], "native": "n"}}}])
+        };
+        let plane = json!({"kind": "mirror", "plane_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "plane_normal": {"x": 0.0, "y": -1.0, "z": 0.0}});
+        let mirror = |id: &str, seeds: Value, outputs: Value| {
+            op_row(
+                id,
+                2,
+                "Mirror 1",
+                "pattern",
+                json!({"seeds": seeds, "pattern": plane.clone()}),
+                outputs,
+            )
+        };
+        let mut features = Vec::new();
+        let mut run = |row: &Value, ctx: &mut Context| match map_feature(
+            row,
+            ctx,
+            &mut Report::default(),
+            &mut features,
+        ) {
+            Ok(Mapped::Feature(mapped)) => Ok(mapped),
+            Ok(_) => Err("built nothing".to_owned()),
+            Err(reason) => Err(reason),
+        };
+        let joined = run(
+            &mirror("f:mirror", seed("one", "one:1"), json!(["b"])),
+            &mut ctx,
+        )
+        .unwrap();
+        assert_eq!(joined["bodies"], json!(["Body 1"]));
+        assert_eq!(joined["combine"], json!(true));
+        let copied = run(
+            &mirror("f:mirror", seed("one", "one:1"), json!(["c"])),
+            &mut ctx,
+        )
+        .unwrap();
+        assert_eq!(copied["combine"], json!(false));
+        assert_eq!(copied["body_names"], json!(["Body 2"]));
+        let removed = modify::remove(
+            &json!({"id": "f:remove"}),
+            &json!({"mode": "delete_selected", "bodies": {"kind": "bodies", "value": ["c"]}}),
+            &mut ctx,
+        )
+        .unwrap();
+        assert_eq!(removed["bodies"], copied["body_names"]);
+        assert_eq!(
+            run(
+                &mirror("f:two", seed("two", "two:1"), json!(["b"])),
+                &mut ctx
+            )
+            .unwrap_err(),
+            "a body from an earlier history state is not supported yet when that state holds \
+             several bodies"
+        );
+        assert_eq!(
+            run(
+                &mirror("f:mirror", seed("other", "other:1"), json!(["b"])),
+                &mut ctx
+            )
+            .unwrap_err(),
+            "its input body state belongs to another feature"
+        );
+        ctx.named_bodies.push(("d".into(), "Body 2".into()));
+        assert_eq!(
+            run(
+                &mirror("f:mirror", seed("one", "one:1"), json!(["b"])),
+                &mut ctx
+            )
+            .unwrap_err(),
+            "its one input body is not the one body an earlier feature named"
         );
     }
 

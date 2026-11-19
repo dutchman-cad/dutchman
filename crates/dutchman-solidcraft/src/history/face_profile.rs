@@ -220,12 +220,15 @@ impl Proof {
                     } else {
                         (*end, *start)
                     };
+                    let start = angle(from);
+                    let end = angle(to);
+                    let end = if end < start { end + TAU } else { end };
                     json!({
                         "kind": "arc",
                         "center": at(*center),
                         "radius": radius,
-                        "start_angle": angle(from),
-                        "end_angle": angle(to),
+                        "start_angle": start,
+                        "end_angle": end,
                     })
                 }
             };

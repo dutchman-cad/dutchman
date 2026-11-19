@@ -504,10 +504,19 @@ fn turned(entity: &Value, turn: [f64; 4]) -> Option<Value> {
         }
         "arc" => {
             let center = at(geometry.get("center"))?;
-            let (s, e) = (
-                angle(geometry.get("start_angle")?.as_f64()?),
-                angle(geometry.get("end_angle")?.as_f64()?),
-            );
+            let start = geometry.get("start_angle")?.as_f64()?;
+            let end = geometry.get("end_angle")?.as_f64()?;
+            let s = angle(start);
+            let e = angle(end);
+            // Keep the signed interval across the seam while preserving the independently
+            // transformed endpoints whenever they already describe the right interval.
+            let sweep = (end - start) * (a * d - b * c).signum();
+            let turns = ((s + sweep - e) / std::f64::consts::TAU).round();
+            let e = if turns == 0.0 {
+                e
+            } else {
+                e + turns * std::f64::consts::TAU
+            };
             geometry.insert("center".to_owned(), center);
             geometry.insert("start_angle".to_owned(), json!(s));
             geometry.insert("end_angle".to_owned(), json!(e));
@@ -590,7 +599,7 @@ pub(crate) struct Curve {
     pub(crate) id: String,
     /// The SolidCraft curve family, including ellipses, splines and conics.
     pub(crate) kind: &'static str,
-    /// The point indices of its stored start, end and centre, where it has them.
+    /// Point indices of the source start, end and centre, where it has them.
     pub(crate) start: Option<usize>,
     pub(crate) end: Option<usize>,
     pub(crate) center: Option<usize>,
@@ -895,6 +904,15 @@ impl Builder {
                     json!({"type": "arc", "c": c, "a": a, "b": b}),
                     &[],
                 );
+                // CADIR angles retain their signed sweep in sketch coordinates. SolidCraft
+                // arcs always run CCW from a to b. Reverse only the emitted endpoints:
+                // source endpoint references and constraint loci still name the original ends.
+                if end < start {
+                    if let Some(fields) = self.curves.last_mut().and_then(Value::as_object_mut) {
+                        fields.insert("a".to_owned(), json!(b));
+                        fields.insert("b".to_owned(), json!(a));
+                    }
+                }
             }
             "nurbs" if rational_conic(geometry.get("curve")).is_some() => {
                 let (start, apex, end, rho) = rational_conic(geometry.get("curve"))
@@ -1743,6 +1761,64 @@ mod tests {
         assert_eq!(pos(&curve["a"]), [40.0, 20.0]);
         let end = pos(&curve["b"]);
         assert!(distance(end, [-20.0, 20.0]) < 1e-9, "{end:?}");
+    }
+
+    #[test]
+    fn signed_quarter_arcs_keep_their_midpoints_and_source_endpoint_loci() {
+        use std::f64::consts::{FRAC_PI_2, TAU};
+        let mut builder = Builder::default();
+        for (id, start, end) in [
+            ("cw", 0.0, -FRAC_PI_2),
+            ("ccw", 0.0, FRAC_PI_2),
+            ("major", 0.0, -3.0 * FRAC_PI_2),
+            ("seam", 7.0, 6.0),
+        ] {
+            let mut arc = entity(json!({"kind":"arc", "center":{"u":4.0,"v":5.0},
+                "radius":3.0,"start_angle":start,"end_angle":end}));
+            arc["id"] = json!(id);
+            arc["endpoint_refs"] = json!([format!("{id}-start"), format!("{id}-end")]);
+            builder.entity(&arc, &mut Report::default()).unwrap();
+            let curve = builder.curves.last().unwrap();
+            let at = |key: &str| builder.positions[curve[key].as_u64().unwrap() as usize];
+            let a = at("a");
+            let b = at("b");
+            let angle = |p: P2| (p[1] - 5.0).atan2(p[0] - 4.0);
+            let sweep = (angle(b) - angle(a)).rem_euclid(TAU);
+            assert!((sweep - (end - start).abs()).abs() < 1e-9);
+            let mid = angle(a) + sweep / 2.0;
+            let source_mid = (start + end) / 2.0;
+            assert!(distance([mid.cos(), mid.sin()], [source_mid.cos(), source_mid.sin()]) < 1e-9);
+            let Shape::Curve(mapped) = &builder.shapes[id] else {
+                panic!("missing curve")
+            };
+            let source_start = builder.positions[mapped.start.unwrap()];
+            let source_end = builder.positions[mapped.end.unwrap()];
+            assert!(
+                distance(
+                    source_start,
+                    [4.0 + 3.0 * start.cos(), 5.0 + 3.0 * start.sin()]
+                ) < 1e-9
+            );
+            assert!(distance(source_end, [4.0 + 3.0 * end.cos(), 5.0 + 3.0 * end.sin()]) < 1e-9);
+        }
+    }
+
+    #[test]
+    fn sketch_arc_plane_turns_preserve_signed_sweeps_across_the_seam() {
+        let source = entity(json!({"kind":"arc","center":{"u":0.0,"v":0.0},
+            "radius":2.0,"start_angle":3.0,"end_angle":4.0}));
+        for (turn, sign) in [([0.0, 1.0, -1.0, 0.0], 1.0), ([1.0, 0.0, 0.0, -1.0], -1.0)] {
+            let moved = turned(&source, turn).unwrap();
+            let geometry = &moved["geometry"];
+            let start = geometry["start_angle"].as_f64().unwrap();
+            let end = geometry["end_angle"].as_f64().unwrap();
+            assert!((end - start - sign).abs() < 1e-9);
+            let mid = (start + end) / 2.0;
+            let [a, b, c, d] = turn;
+            let source_mid: f64 = 3.5;
+            assert!((mid.cos() - (a * source_mid.cos() + c * source_mid.sin())).abs() < 1e-9);
+            assert!((mid.sin() - (b * source_mid.cos() + d * source_mid.sin())).abs() < 1e-9);
+        }
     }
 
     #[test]

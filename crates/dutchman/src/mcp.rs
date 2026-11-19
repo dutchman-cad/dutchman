@@ -319,6 +319,7 @@ fn tools() -> Value {
         "journal".to_owned(),
         json!({"type": "string", "description": "Absolute path of a file recording each file's result as it finishes. Files already recorded there, unchanged since, are not converted again, so a stopped run carries on."}),
     );
+    all.insert("report_counts".into(), json!({"type":"boolean", "description":"Use counts and fixed categories only at report_anon. Review before sharing; no salt or key."}));
     all.insert(
         "report_anon".to_owned(),
         json!({"type": "string", "description": "Absolute path to also write an anonymous report to: counts, causes and timings with no file names, paths or geometry, safe to share (docs/report-anon.md). The result's report_anon gives its path and the salt of its file ids, which stays private."}),
@@ -786,6 +787,7 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
                 "max_memory_mb",
                 "journal",
                 "report_anon",
+                "report_counts",
                 "report_salt",
                 "report_key",
             ][..],
@@ -810,8 +812,19 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
         None | Some(Value::Null) => Ok(None),
         Some(_) => path(arguments, key).map(Some),
     };
+    let counts = flag(arguments, "report_counts", false)?;
+    if counts
+        && (optional("report_anon")?.is_none()
+            || arguments.contains_key("report_salt")
+            || arguments.contains_key("report_key"))
+    {
+        return Err(
+            "report_counts needs report_anon and cannot use report_salt or report_key".into(),
+        );
+    }
     let mut anon = match optional("report_anon")? {
         Some(path) => Some(crate::anon::Request {
+            counts,
             path,
             salt: match arguments.get("report_salt") {
                 None | Some(Value::Null) => None,
@@ -862,7 +875,11 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
         if let Some(fields) = report.as_object_mut() {
             fields.insert(
                 "report_anon".to_owned(),
-                json!({"path": request.path.display().to_string(), "salt": salt.hex()}),
+                if counts {
+                    json!({"path": request.path.display().to_string(), "profile": "counts"})
+                } else {
+                    json!({"path": request.path.display().to_string(), "salt": salt.hex()})
+                },
             );
         }
     }

@@ -235,6 +235,8 @@ pub fn report(
 /// Where to write an anonymous report, and with what salt.
 #[derive(Clone, Debug)]
 pub struct Request {
+    /// Use the counts-only profile, without file ids or a private key.
+    pub counts: bool,
     /// The report's file.
     pub path: PathBuf,
     /// The salt for its file ids; a new one when `None`.
@@ -346,7 +348,17 @@ fn write_run(
         Some(salt) => salt.clone(),
         None => Salt::random()?,
     };
-    let (anon, key) = report(batch, inputs, out_dir, &salt, run);
+    let (anon, key) = if request.counts {
+        if request.key.is_some() {
+            return Err("Counts reports do not use a private key.".into());
+        }
+        (
+            serde_json::to_value(crate::counts::report(batch)).map_err(|err| err.to_string())?,
+            BTreeMap::new(),
+        )
+    } else {
+        report(batch, inputs, out_dir, &salt, run)
+    };
     let save = |path: &Path, value: &Value| {
         let text = serde_json::to_string_pretty(value).map_err(|err| err.to_string())?;
         std::fs::write(path, text + "\n").map_err(|err| format!("{}: {err}", path.display()))

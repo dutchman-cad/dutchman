@@ -61,8 +61,10 @@ Voron placements and Docker images run after merge on main, nightly, on tags and
 Platform-only breaks are caught on main right after merge instead of before.
 The required `ci-result` enforces the Linux set before merge and the full matrix elsewhere;
 unexpected skips fail it. A failing main check opens or updates one main CI issue, which closes
-when the current main commit is green. Release tags must pass the full CI matrix on their exact
-commit before packaging or creating a release. To run everything on a branch before queueing,
+when a newer main run is green. Reports follow the newest completed push run of this workflow;
+moving main ahead while a run is still running does not discard its result. Release tags must
+pass the full CI matrix on their exact commit before packaging or creating a release. To run
+everything on a branch before queueing,
 use `gh workflow run ci.yml --ref <branch>`; opt into release archives with `-f release-builds=true`.
 Packaging paths and the former `release-build` label do not start full builds on PRs.
 To run a round trip locally, put a SolidCraft release's `solidcraft-cli`

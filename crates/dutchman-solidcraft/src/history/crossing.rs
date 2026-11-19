@@ -668,7 +668,7 @@ fn samples_at(entity: &Value, refined: bool) -> Option<Vec<P2>> {
             let (start, sweep, count) = if kind == "arc" {
                 let start = number(geometry.get("start_angle"))?;
                 let end = number(geometry.get("end_angle"))?;
-                let sweep = (end - start).rem_euclid(std::f64::consts::TAU);
+                let sweep = end - start;
                 (start, sweep, ARC_SAMPLES)
             } else {
                 (0.0, std::f64::consts::TAU, CIRCLE_SAMPLES)
@@ -1292,8 +1292,7 @@ pub(super) fn sampled_loop_ring(
         if refined {
             let geometry = entity.get("geometry")?;
             let sweep = if geometry.get("kind")?.as_str()? == "arc" {
-                (number(geometry.get("end_angle"))? - number(geometry.get("start_angle"))?)
-                    .rem_euclid(std::f64::consts::TAU)
+                (number(geometry.get("end_angle"))? - number(geometry.get("start_angle"))?).abs()
             } else {
                 std::f64::consts::TAU
             };
@@ -1427,8 +1426,8 @@ impl Piece {
                 Some(Piece::Arc(
                     super::sketch::p2(geometry.get("center"))?,
                     number(geometry.get("radius"))?,
-                    start,
-                    (end - start).rem_euclid(std::f64::consts::TAU),
+                    start.min(end),
+                    (end - start).abs(),
                 ))
             }
             "circle" => Some(Piece::Arc(
@@ -2084,6 +2083,21 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn sketch_clockwise_arc_sampling_and_intersections_use_the_source_side() {
+        let entity = json!({"geometry":{"kind":"arc","center":{"u":0.0,"v":0.0},
+            "radius":3.0,"start_angle":0.0,"end_angle":-std::f64::consts::FRAC_PI_2}});
+        let points = samples(&entity).unwrap();
+        assert!(points.iter().all(|p| p[0] >= -EPS && p[1] <= EPS));
+        let piece = Piece::of(&entity).unwrap();
+        let middle = 3.0 / 2.0_f64.sqrt();
+        assert!(piece.holds_angle_of([middle, -middle], EPS));
+        assert!(!piece.holds_angle_of([middle, middle], EPS));
+        let hits = meetings(piece, Piece::Line([2.0, -4.0], [2.0, 4.0]), EPS);
+        assert_eq!(hits.len(), 1);
+        assert!(hits.first().unwrap()[1] < 0.0);
+    }
 
     #[test]
     fn narrow_gap_points_stay_strictly_inside_in_both_scan_directions() {

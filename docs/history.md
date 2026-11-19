@@ -290,7 +290,9 @@ whole carrier circle lies on that side. Reversing the source axis reverses the s
 They also keep symmetric angles, equal angles on two sides, and full turns, including unequal
 sides that add up to a full turn. An axis that is a line of the profile's sketch stays that
 line; an edge or datum axis becomes a fixed line in the sketch plane. Surface revolves keep
-their symmetric history short of a full turn. Unproven one-sided sweep sides, one-sided
+their symmetric history short of a full turn, from closed profiles or from picked sketch curves
+that form open chains (a single line, say); a pick mixing open chains and closed loops stops
+the history. Unproven one-sided sweep sides, one-sided
 partial surface sweeps, unequal partial two-sided angles, ends at a face, vertex, or body,
 full-turn surface revolves, and faces built other than
 the way FreeCAD's default (bullseye) face maker builds them stop the history, and the report

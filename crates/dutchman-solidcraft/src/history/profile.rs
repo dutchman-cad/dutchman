@@ -1166,10 +1166,67 @@ fn sketch_to_mapped<'a>(sketch: &Value, mapped: &'a Mapped) -> Option<impl Fn(P2
 
 /// Profiles bounded by the selected curves: each connected group of them is one loop.
 fn entities(entities: Option<&Value>, mapped: &Mapped) -> Result<Value, String> {
+    curves(
+        groups(entities, mapped)?
+            .into_iter()
+            .map(|(_, curves)| curves)
+            .collect(),
+    )
+}
+
+/// The open curve chains a surface feature's profile picks, as SolidCraft curve ids, when it
+/// picks sketch entities that form only open chains; `None` when it picks a closed profile or
+/// anything else. A pick mixing open chains and closed loops is refused.
+pub(super) fn open_chains(
+    profile: Option<&Value>,
+    ctx: &Context,
+) -> Result<Option<(String, Vec<String>)>, String> {
+    let Some(profile) = profile.map(planar) else {
+        return Ok(None);
+    };
+    if profile.get("kind").and_then(Value::as_str) != Some("sketch_entities") {
+        return Ok(None);
+    }
+    let value = profile.get("value").unwrap_or(&Value::Null);
+    let sketch = value
+        .get("sketch")
+        .and_then(Value::as_str)
+        .ok_or("its profile sketch is malformed")?;
+    let mapped = ctx
+        .sketches
+        .get(sketch)
+        .ok_or("its sketch is not an earlier mapped sketch")?;
+    let groups = groups(value.get("entities"), mapped)?;
+    // A chain is closed when each of its end points joins two of its curves; a closed curve
+    // (a circle) has no end points.
+    let closed = |points: &[usize]| {
+        points
+            .iter()
+            .all(|p| points.iter().filter(|q| *q == p).count() == 2)
+    };
+    let open = groups.iter().filter(|(points, _)| !closed(points)).count();
+    if open == 0 {
+        return Ok(None);
+    }
+    if open < groups.len() {
+        return Err(
+            "a profile mixing open curve chains and closed loops is not mapped yet".to_owned(),
+        );
+    }
+    let curves = groups.into_iter().flat_map(|(_, curves)| curves).collect();
+    Ok(Some((sketch.to_owned(), curves)))
+}
+
+/// A chain of picked curves: its end point indices (one per curve end) and its SolidCraft
+/// curve ids, in selection order.
+type Chain = (Vec<usize>, Vec<String>);
+
+/// The picked entities, joined into chains where they share end points.
+fn groups(entities: Option<&Value>, mapped: &Mapped) -> Result<Vec<Chain>, String> {
     let entities = entities
         .and_then(Value::as_array)
         .ok_or("its profile entities are malformed")?;
-    let mut groups: Vec<(Vec<usize>, Vec<String>)> = Vec::new();
+    let mut groups: Vec<Chain> = Vec::new();
     for entity in entities {
         let id = entity
             .as_str()
@@ -1205,7 +1262,7 @@ fn entities(entities: Option<&Value>, mapped: &Mapped) -> Result<Value, String> 
             }
         }
     }
-    curves(groups.into_iter().map(|(_, curves)| curves).collect())
+    Ok(groups)
 }
 
 #[cfg(test)]

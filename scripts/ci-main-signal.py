@@ -20,8 +20,12 @@ def api(path, payload=None, paginate=False):
 
 
 def update(results, repo, sha, run_id, request=api):
-    if request(f"repos/{repo}/commits/main")["sha"] != sha:
-        return  # Report only the current main commit; older runs may finish later.
+    pages = request(
+        f"repos/{repo}/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed",
+        paginate=True,
+    )
+    if any(int(run["id"]) > int(run_id) for page in pages for run in page["workflow_runs"]):
+        return  # A newer completed main run already supplies the current result.
     failed = sorted(job for job, value in results.items()
                     if value["result"] != "success"
                     and not (job == "test-arm-again" and value["result"] == "skipped")

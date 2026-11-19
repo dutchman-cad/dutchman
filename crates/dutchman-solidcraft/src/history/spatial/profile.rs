@@ -437,6 +437,27 @@ mod tests {
     }
 
     #[test]
+    fn sketch_arc_projection_keeps_both_senses_with_opposite_normals() {
+        for normal in [-1.0, 1.0] {
+            for sweep in [-std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2] {
+                let (geometry, reversed) = frame()
+                    .geometry(&json!({"kind":"arc",
+                    "center":{"x":2.0,"y":3.0,"z":4.0},"normal":{"x":0.0,"y":normal,"z":0.0},
+                    "reference_direction":{"x":1.0,"y":0.0,"z":0.0},"radius":5.0,
+                    "start_angle":0.0,"end_angle":sweep}))
+                    .unwrap();
+                assert_eq!(reversed, normal < 0.0);
+                let start = geometry["start_angle"].as_f64().unwrap();
+                let end = geometry["end_angle"].as_f64().unwrap();
+                assert!((end - start - sweep).abs() < 1e-9);
+                let midpoint = (start + end) / 2.0;
+                assert!((midpoint.cos() - (sweep / 2.0).cos()).abs() < 1e-9);
+                assert!((midpoint.sin() - normal * (sweep / 2.0).sin()).abs() < 1e-9);
+            }
+        }
+    }
+
+    #[test]
     fn opposite_arc_normals_reverse_the_boundary_use() {
         let (arc,reversed) = frame().geometry(&json!({"kind":"arc","center":{"x":2.0,"y":3.0,"z":4.0},"normal":{"x":0.0,"y":-1.0,"z":0.0},"reference_direction":{"x":1.0,"y":0.0,"z":0.0},"radius":5.0,"start_angle":0.0,"end_angle":std::f64::consts::FRAC_PI_2})).unwrap();
         assert!(reversed);

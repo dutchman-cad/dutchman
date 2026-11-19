@@ -427,6 +427,8 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// Removals of whole bodies (`remove`).
+    RemoveBody,
     /// Earlier body snapshots used by editable history.
     HistoryBody,
     /// Coplanar input faces used as a Split Body tool.
@@ -444,6 +446,7 @@ impl VersionGate {
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::HistoryBody | Self::SplitFaces => SolidCraftVersion::V0_40_0,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
+            Self::RemoveBody => SolidCraftVersion::V0_40_0,
             Self::ScopedBodies => SolidCraftVersion::V0_44_0,
             Self::ClosedCircleBlend => SolidCraftVersion::V0_44_1,
         }

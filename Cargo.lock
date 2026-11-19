@@ -1646,6 +1646,7 @@ version = "0.2.10"
 dependencies = [
  "aho-corasick",
  "base64 0.22.1",
+ "cadmpeg-ir",
  "clap",
  "ctrlc",
  "dutchman-core",
