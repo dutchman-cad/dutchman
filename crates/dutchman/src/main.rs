@@ -250,6 +250,9 @@ enum Command {
         /// names, paths or geometry, safe to share (see docs/report-anon.md).
         #[arg(long, value_name = "FILE")]
         report_anon: Option<PathBuf>,
+        /// Write only counts and fixed categories to --report-anon.
+        #[arg(long, requires = "report_anon", conflicts_with_all = ["report_salt", "report_key"])]
+        report_counts: bool,
         /// The salt for the anonymous report's file ids (32 hex digits), to get the same ids as
         /// an earlier run (default: a new one, printed when the run ends).
         #[arg(long, value_name = "HEX", requires = "report_anon")]
@@ -289,6 +292,9 @@ enum Command {
         /// names, paths or geometry, safe to share (see docs/report-anon.md).
         #[arg(long, value_name = "FILE")]
         report_anon: Option<PathBuf>,
+        /// Write only counts and fixed categories to --report-anon.
+        #[arg(long, requires = "report_anon", conflicts_with_all = ["report_salt", "report_key"])]
+        report_counts: bool,
         /// The salt for the anonymous report's file ids (32 hex digits), to get the same ids as
         /// an earlier run (default: a new one, printed when the run ends).
         #[arg(long, value_name = "HEX", requires = "report_anon")]
@@ -314,6 +320,24 @@ enum Command {
         /// Print the listing as a Markdown table, as the README and docs/formats.md show it.
         #[arg(long, conflicts_with = "json")]
         markdown: bool,
+    },
+    /// List a native CAD file's bodies, features and parameters, and what Dutchman can map of
+    /// each feature, without converting or writing anything.
+    Contents {
+        /// The native design file to read.
+        input: PathBuf,
+        /// The project folder an assembly's part files are searched in when they are not at
+        /// their stored paths (default: the nearest folder above the assembly holding an
+        /// Inventor .ipj, else two folders up).
+        #[arg(long, value_name = "DIR")]
+        project: Option<PathBuf>,
+        /// Another folder to search, with its subfolders, for part files the project folder
+        /// does not hold; may be given more than once.
+        #[arg(long = "search", value_name = "DIR")]
+        search: Vec<PathBuf>,
+        /// Print one machine-readable report on stdout instead of the text listing.
+        #[arg(long)]
+        json: bool,
     },
     /// Show what converting a native CAD file would carry across, without writing anything.
     Inspect {
@@ -454,6 +478,11 @@ fn main() -> ExitCode {
     let verbose = cli.verbose;
     let quiet = cli.quiet;
     let yes = cli.yes;
+    // `contents` runs out of line from a reference: this function's frame is already near
+    // Windows' 1 MiB main-thread stack in debug builds, and must not grow.
+    if matches!(cli.command, Command::Contents { .. }) {
+        return contents_command(&cli.command, quiet, verbose);
+    }
     match cli.command {
         Command::Onshape {
             command: OnshapeCommand::Login,
@@ -798,6 +827,7 @@ fn main() -> ExitCode {
             stop_at_feature,
             log,
             report_anon,
+            report_counts,
             report_salt,
             report_key,
             json,
@@ -842,7 +872,13 @@ fn main() -> ExitCode {
                 eprintln!("dutchman: --page requires --to dxf");
                 return ExitCode::from(2);
             }
-            let mut anon = match anon_request(report_anon, report_salt, report_key, &mut options) {
+            let mut anon = match anon_request(
+                report_anon,
+                report_salt,
+                report_key,
+                report_counts,
+                &mut options,
+            ) {
                 Ok(anon) => anon,
                 Err(code) => return code,
             };
@@ -1000,6 +1036,7 @@ fn main() -> ExitCode {
             max_memory,
             journal,
             report_anon,
+            report_counts,
             report_salt,
             report_key,
             mut options,
@@ -1020,7 +1057,13 @@ fn main() -> ExitCode {
             for job in preview.jobs {
                 memory_cli(&job.input, &options, json, quiet);
             }
-            let anon = match anon_request(report_anon, report_salt, report_key, &mut options) {
+            let anon = match anon_request(
+                report_anon,
+                report_salt,
+                report_key,
+                report_counts,
+                &mut options,
+            ) {
                 Ok(anon) => anon,
                 Err(code) => return code,
             };
@@ -1117,6 +1160,8 @@ fn main() -> ExitCode {
             verbose,
             quiet,
         ),
+        // Handled before this match, by reference (see above).
+        Command::Contents { .. } => ExitCode::from(2),
         Command::Formats { json, markdown } => {
             if json {
                 print_json(&formats::json());
@@ -1415,6 +1460,7 @@ fn anon_request(
     report_anon: Option<PathBuf>,
     report_salt: Option<String>,
     report_key: Option<PathBuf>,
+    counts: bool,
     options: &mut ConvertOptions,
 ) -> Result<Option<anon::Request>, ExitCode> {
     let salt = match report_salt.as_deref().map(anon::Salt::parse).transpose() {
@@ -1439,6 +1485,7 @@ fn anon_request(
         path,
         salt: Some(salt),
         key: report_key,
+        counts,
     }))
 }
 
@@ -1448,6 +1495,13 @@ fn anon_notice(
     written: Result<anon::Salt, String>,
 ) -> Result<(), ExitCode> {
     match written {
+        Ok(_) if request.counts => {
+            eprintln!(
+                "dutchman: counts report written to {}. Review it before sharing.",
+                request.path.display()
+            );
+            Ok(())
+        }
         Ok(salt) => {
             eprintln!(
                 "dutchman: anonymous report written to {}. Its file ids use the salt {}: \
@@ -1689,6 +1743,61 @@ fn inspect(
     }
     let losses = json::losses(&inspection.report);
     print_losses(losses.as_array().map_or(&[][..], Vec::as_slice), verbose);
+    ExitCode::SUCCESS
+}
+
+/// Runs `dutchman contents`; any other command is a usage error.
+#[inline(never)]
+fn contents_command(command: &Command, quiet: bool, verbose: bool) -> ExitCode {
+    let Command::Contents {
+        input,
+        project,
+        search,
+        json,
+    } = command
+    else {
+        return ExitCode::from(2);
+    };
+    let search = dutchman::PartSearch {
+        threads: 0,
+        part_positions: dutchman_core::PartPositions::Smart,
+        project: project.clone(),
+        also: search.clone(),
+    };
+    contents(input, &search, *json, quiet, verbose)
+}
+
+fn contents(
+    input: &Path,
+    search: &dutchman::PartSearch,
+    as_json: bool,
+    quiet: bool,
+    verbose: bool,
+) -> ExitCode {
+    let progress = dutchman::progress::StderrProgress::new(quiet, as_json, verbose);
+    let result =
+        dutchman::contents_with_progress(input, search, &|event| progress.report(input, event));
+    progress.finish();
+    let report = match result {
+        Ok(report) => report,
+        Err(err) => {
+            if as_json {
+                print_json(&json::error(json::CONTENTS, json::input(input), &err));
+            } else {
+                eprintln!("dutchman: {err}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    if as_json {
+        print_json(&report);
+        return ExitCode::SUCCESS;
+    }
+    for line in json::contents_lines(&report) {
+        println!("{line}");
+    }
+    let losses = report.get("losses").and_then(Value::as_array);
+    print_losses(losses.map_or(&[][..], Vec::as_slice), verbose);
     ExitCode::SUCCESS
 }
 

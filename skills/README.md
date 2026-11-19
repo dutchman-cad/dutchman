@@ -12,7 +12,7 @@ the assistant when to load it.
 It teaches the assistant to:
 
 - check the format, and say plainly what to do with formats Dutchman does not convert
-- inspect a file before converting it
+- inspect a file before converting it, and list its bodies, features and parameters
 - check the result in SolidCraft instead of trusting the reply alone
 - explain the loss report in plain words
 - keep the user's designs on the user's machine

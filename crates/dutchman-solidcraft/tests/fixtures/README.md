@@ -83,3 +83,9 @@ extrusion, and the later resolved sketch, exercise partial history conversion.
 The end-to-end test requires `dutchman-core/freecad`. Workspace tests enable it through the
 CLI; a standalone adapter test can pass `--features dutchman-core/freecad`. Set
 `SOLIDCRAFT_CLI` to check replay and body visibility too.
+
+Closed circular blend regressions in `tests/history.rs` are constructed entirely in code
+from cadmpeg's synthetic unit cube with authored CADIR history: a cylinder with a filleted
+rim, a block with a chamfered through-hole rim, and a connected pair of straight top edges.
+Source seams are varied independently of SolidCraft's rebuilt seams. No native CAD files
+are added for these tests.

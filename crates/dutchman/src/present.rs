@@ -95,11 +95,7 @@ pub const REPORT_CONVERTED: &str = "Something wrong? Report this file";
 pub const SEND_CONVERTED_INTRO: &str =
     "If the converted result has lost features, wrong placement or missing colours, help us fix it:";
 
-pub const REPORT_HELP: &str =
-    "If the file opens in the app that made it, this is a bug in Dutchman: \
-                     report it on GitHub. The form opens filled in with the error and an \
-                     anonymous report that names no file; read it before you submit, and \
-                     never attach the design.";
+pub const REPORT_HELP: &str = "Opens a prefilled GitHub issue under your GitHub username.";
 pub const MISSING_HELP: &str =
     "Choose the folder that holds them, or one of them, to convert this file again \
              searching there too.";
@@ -130,7 +126,7 @@ pub fn report_link(report: &Value, anonymous: &Value) -> ReportLink {
 }
 
 /// The secondary way to report a failed file: nothing of the file, no names.
-pub const REPORT_BUTTON: &str = "Report anonymously on GitHub";
+pub const REPORT_BUTTON: &str = "GitHub issue";
 /// The folded section of a failed card that holds the other ways to send the file.
 pub const SEND_FOLD: &str = "Help us fix it";
 pub const SEND_INTRO: &str =
