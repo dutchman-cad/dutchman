@@ -369,9 +369,32 @@ pub struct PartHistory {
     pub reapplied: usize,
 }
 
+/// The features a source row produced in the saved design.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FeatureOutput {
+    /// Final feature ids, in output timeline order. Empty when no feature was written.
+    pub ids: Vec<u64>,
+    /// How the link was established; never inferred from a feature's name.
+    pub method: OutputMatch,
+}
+
+/// Evidence for a source-to-output link.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OutputMatch {
+    /// Recorded while the writer emitted the feature, including any id rebasing.
+    Emitted,
+    /// No independently produced feature survives in the saved design.
+    #[default]
+    NoOutput,
+    /// This report describes a plan; no design was saved.
+    NotWritten,
+}
+
 /// What became of one source feature.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FeatureOutcome {
+    /// Link to the features retained in the saved design.
+    pub output: FeatureOutput,
     /// Its name in the source, when it has one.
     pub name: Option<String>,
     /// Its kind in cadmpeg's model (`extrude`, `sketch`, …).
@@ -392,6 +415,45 @@ pub struct FeatureOutcome {
     /// A base feature written with its body as the design ends, which later features re-apply
     /// to.
     pub final_body: bool,
+    /// It mapped with a selection the source does not record, which Dutchman inferred: never
+    /// an exact reading of the source.
+    pub inferred: Option<Inferred>,
+}
+
+/// How a selection the source does not record was inferred: candidates rebuilt in the target
+/// and measured against the source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Inferred {
+    /// What was inferred.
+    pub selection: InferredSelection,
+    /// The candidates measured.
+    pub candidates: usize,
+    /// Of those, the ones that matched the source: the one kept.
+    pub matches: usize,
+    /// What the kept candidate was measured against.
+    pub against: InferredAgainst,
+    /// The largest distance between the kept candidate's surface and the source's, in
+    /// nanometres, when the two solids were compared directly.
+    pub deviation_nm: Option<u64>,
+}
+
+/// The selection a feature's source leaves out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InferredSelection {
+    /// The sketch profile region an extrude, revolve or loft sweeps.
+    ProfileRegion,
+    /// The edges a fillet or chamfer rounds.
+    Edges,
+}
+
+/// What an inferred candidate was measured against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InferredAgainst {
+    /// The source's final solid: volume, area, box and, for one body, the distance between
+    /// the surfaces.
+    OriginalShape,
+    /// The bodies the source stores right after the feature: where each one is.
+    StoredBodies,
 }
 
 /// Whether a source feature mapped.

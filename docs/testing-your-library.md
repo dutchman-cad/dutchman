@@ -149,9 +149,10 @@ see which of your files it is. [The report's fields](report-anon.md) are all des
 
 ## 5. Report what you found
 
-**One failed or wrongly converted file, from the app.** Failed cards have
-**Review and send report**. On a converted card, first expand
-**Something wrong? Report this file** for the same review and private-send steps.
+**One failed or wrongly converted file, from the app.** Every finished card has
+**Report this file…**, which chooses the file in **Is there a problem? Is something
+missing?** at the bottom left. There, join the Discord server and DM Dutchy, or open
+**More** for **Anonymous report**.
 The review shows the exact anonymous metadata. There is no free-text description in
 this envelope yet; describe the problem in the private DM or GitHub form instead. You see what the
 report holds and choose before anything goes. No GitHub or Discord account is needed, and the app

@@ -199,7 +199,7 @@ Constant-radius fillets and equal-setback chamfers keep editable history when th
 feature input topology supplies edge midpoints, tangents, and endpoints, and each midpoint
 can be proven to pick exactly one edge of the pre-feature body, whatever history builds it.
 SolidCraft itself rebuilds that body: Dutchman replays the mapped history in `solidcraft-cli`
-in a batch (two runs within the check's time limit), up to the last feature a blend
+in a batch (two base runs and an optional circular-carrier pass within the check's time limit), up to the last feature a blend
 starts after, and reads the edges each blend starts from. If the picks span several
 bodies, each body gets its own blend with the same parameters, in the order its edges
 first appear. Names share the source name with numbered suffixes, as for radius groups;
@@ -207,12 +207,24 @@ the report still records one mapped source feature. Later feature patterns and m
 select every emitted part of the blend. Later blends replay the expanded
 history before their edges are proven. Without `solidcraft-cli`, or when the replay fails or runs out
 of time, blends are refused, saying why. SolidCraft reports each edge's ends, midpoint and
-length but no tangent, so an input edge must be a line or a circular arc; its midpoint must
+length but no tangent. For an open line or circular arc, its midpoint must
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
 either order) and length; a straight one must lie along the input tangent. SolidCraft measures
 a curved edge along the polyline it draws, so a rebuilt arc's length must lie between its chord
 and the input arc's length. Arcs SolidCraft
-splits into pieces, closed edges and other curves are refused. A refusal says which part of the
+splits into pieces and other non-circular curves are refused. Closed input circles map for
+explicit targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
+stored circle with exact centre, axis, radius and full-turn parameter range; historical
+samples cannot establish circularity. Stored topology must identify one earlier named owning
+body, and only that body supplies replay candidates. Missing carrier or ownership evidence,
+ellipses, and transformed source carriers are refused. Each rebuilt piece must lie on its
+plane and radius, with mesh length between the sample chords and the circular arc. An extra
+`inspect.measure` pass confirms the circular carrier's centre, axis, radius, and analytic
+length; it cannot certify a circle from its two seam samples alone. Sorted
+angular intervals must cover exactly one turn without gaps or overlaps on exactly one body.
+An overlapping candidate without carrier metadata on the selected body also blocks the proof.
+Picks use the proven pieces' midpoints, independently of the source seam. Other closed
+curves retain a named refusal; older targets keep the original geometry. A refusal says which part of the
 proof failed: no rebuilt edge through the midpoint (with how far the nearest rebuilt edge is, which
 tells a rebuilt body that differs from the source from a rounding gap), more than one, or one with
 other ends, another length, another kind of curve or another direction. Equal two-distance chamfers also map; distance-and-angle chamfers map at
@@ -228,6 +240,16 @@ carried by resolved sketch placements, pattern axes, or another resolved datum. 
 resolved placement or binder source geometry remains a blocker, with its reason in the report.
 These Info notes remain when another feature or a replay mismatch flattens the history.
 A body inside a hidden container is hidden even when its own flag says it is shown.
+
+Fusion Split Body keeps editable history when its tool is a resolved datum plane or
+input faces whose boundaries prove they lie on one plane. The faces' plane extends through
+the target body. Curved or noncoplanar tools, incomplete input selections, and final-body
+face selections receive specific refusal reasons; conversion keeps the original geometry.
+A body kept only earlier in the timeline is imported from the source's history body before
+the Split. When a Base Feature already imported that same body, the Split reuses it.
+The new Split history body imports and input-face tools need SolidCraft 0.40 or newer.
+Existing Base Feature imports retain their version support.
+Older targets keep the original geometry with a named version reason; existing datum-plane splits remain available. Targeting an installed 0.25–0.39 release also shows the usual older-version notice.
 
 FreeCAD fillets and chamfers can supply input edges from their base feature's stored shape.
 Those edges must belong to one hidden result of an earlier dependency, and still pass the
@@ -273,7 +295,9 @@ whole carrier circle lies on that side. Reversing the source axis reverses the s
 They also keep symmetric angles, equal angles on two sides, and full turns, including unequal
 sides that add up to a full turn. An axis that is a line of the profile's sketch stays that
 line; an edge or datum axis becomes a fixed line in the sketch plane. Surface revolves keep
-their symmetric history short of a full turn. Unproven one-sided sweep sides, one-sided
+their symmetric history short of a full turn, from closed profiles or from picked sketch curves
+that form open chains (a single line, say); a pick mixing open chains and closed loops stops
+the history. Unproven one-sided sweep sides, one-sided
 partial surface sweeps, unequal partial two-sided angles, ends at a face, vertex, or body,
 full-turn surface revolves, and faces built other than
 the way FreeCAD's default (bullseye) face maker builds them stop the history, and the report
@@ -444,3 +468,26 @@ A trimmed profile region, including a revolve's, is selected by a point inside i
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
+When neither confirms, Dutchman measures every region of the sketch the selection can name (up to
+24) in SolidCraft against the source, and keeps the feature only when exactly one region matches;
+the loss `history/profile-region-measured` says so. A last fillet or chamfer whose edges can't be
+proven is measured the same way, choosing among the rebuilt edges within 2 mm of each source edge.
+Such features are marked `inferred` in the JSON report, never exact. A tie, or no match, keeps
+the feature blocked.
+
+New measured inference requires finite volume, area, complete bounds and derived placement
+for every source and replayed body, plus both face counts and the surface result. The earlier
+two-reading comparison is unchanged. Centroid-only region discovery is refused: centroids do
+not prove selections for nonconvex regions or distinguish a concentric annulus and disc. Region
+discovery, mapping and measurements share one 120 s feature deadline; late results are refused.
+
+## Stored body fallback
+
+When a new-body extrude, revolve, sweep or loft cannot map, Dutchman can keep its
+stored result as an Import named after the feature and continue the later history.
+It uses the history body produced by that feature first. A final-model body is used
+only when no later active feature changes it. Joins, cuts and intersections never use
+this fallback: replacing them would discard earlier body history. No geometry is
+reconstructed from an unavailable sketch. The feature is `mapped`, written as an Import, and
+`history/body-fallback-imported` reports the lost recipe as Degraded. Later features
+and verification use the imported body as usual.

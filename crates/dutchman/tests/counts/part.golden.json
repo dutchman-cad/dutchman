@@ -1,0 +1,72 @@
+{
+  "schema": "dutchman.report-counts/1",
+  "converter_version": [
+    0,
+    0,
+    0
+  ],
+  "files": [
+    {
+      "source_format": "fusion_archive",
+      "source_version_band": "unknown",
+      "document": "part",
+      "verification": "verified",
+      "timing": "seconds",
+      "converted": true,
+      "count": 1
+    }
+  ],
+  "features": [
+    {
+      "kind": "sketch",
+      "outcome": "mapped",
+      "reason": "not_needed",
+      "count": 1
+    },
+    {
+      "kind": "sweep",
+      "outcome": "stopped",
+      "reason": "replay",
+      "count": 1
+    },
+    {
+      "kind": "fillet",
+      "outcome": "changed",
+      "reason": "inferred",
+      "count": 1
+    },
+    {
+      "kind": "shell",
+      "outcome": "dropped",
+      "reason": "left_out",
+      "count": 1
+    },
+    {
+      "kind": "native",
+      "outcome": "changed",
+      "reason": "reapplied",
+      "count": 1
+    },
+    {
+      "kind": "extrude",
+      "outcome": "mapped",
+      "reason": "none",
+      "count": 1
+    },
+    {
+      "kind": "loft",
+      "outcome": "stopped",
+      "reason": "mapping_limit",
+      "count": 1
+    }
+  ],
+  "features_by_kind": {
+    "sketch": 1,
+    "sweep": 1,
+    "fillet": 1,
+    "shell": 1,
+    "native": 1,
+    "extrude": 1,
+    "loft": 1
+  }
+}

@@ -520,7 +520,7 @@ fn needs_split(ctx: &Context, sketch: &str, index: &Value, ring: &[String]) -> b
 }
 
 /// Source entities belonging to this sketch.
-fn sketch_entities<'a>(ctx: &'a Context, sketch: &str) -> Vec<&'a Value> {
+pub(super) fn sketch_entities<'a>(ctx: &'a Context, sketch: &str) -> Vec<&'a Value> {
     ctx.arena("sketch_entities")
         .iter()
         .filter(|entity| entity.get("sketch").and_then(Value::as_str) == Some(sketch))
@@ -912,6 +912,32 @@ fn region_points(
     sketch: &str,
     mapped: &Mapped,
 ) -> Option<Vec<P2>> {
+    let original = region_points_at(regions, ctx, sketch, mapped, false);
+    if let Some(points) = &original {
+        if let Some(points) = points.iter().copied().collect::<Option<Vec<_>>>() {
+            return Some(points);
+        }
+    }
+    let refined = region_points_at(regions, ctx, sketch, mapped, true)?;
+    refined
+        .into_iter()
+        .enumerate()
+        .map(|(index, point)| {
+            original
+                .as_ref()
+                .and_then(|points| points.get(index).copied().flatten())
+                .or(point)
+        })
+        .collect()
+}
+
+fn region_points_at(
+    regions: &[Value],
+    ctx: &Context,
+    sketch: &str,
+    mapped: &Mapped,
+    refined: bool,
+) -> Option<Vec<Option<P2>>> {
     let entities = sketch_entities(ctx, sketch);
     fn boundary(region: &Value) -> Option<&[Value]> {
         region
@@ -966,13 +992,15 @@ fn region_points(
                 .is_some_and(|id| used.contains(id))
         })
         .collect();
-    let error = super::crossing::boundary_error(&used_entities)?;
-    let mut resolved = if boundaries.is_empty() {
-        Vec::new()
+    let (resolved, mut error) = if boundaries.is_empty() {
+        (Vec::new(), 0.0)
     } else {
-        super::crossing::trimmed_rings(&boundaries, &entities)?
+        super::crossing::sampled_trimmed_rings(&boundaries, &entities, refined)?
+    };
+    if !refined {
+        error = super::crossing::boundary_error(&used_entities)?;
     }
-    .into_iter();
+    let mut resolved = resolved.into_iter();
     let mut rings = Vec::with_capacity(regions.len());
     let mut holes = Vec::with_capacity(regions.len());
     for region in regions {
@@ -991,7 +1019,12 @@ fn region_points(
             }
             Some("loops") => {
                 let members = source_members(ctx, sketch, region.get("outer")?).ok()?;
-                rings.push(super::crossing::loop_ring(members, &entities)?);
+                let (ring, bound) =
+                    super::crossing::sampled_loop_ring(members, &entities, refined)?;
+                if refined {
+                    error = error.max(bound);
+                }
+                rings.push(ring);
                 holes.push(
                     region
                         .get("holes")
@@ -1000,13 +1033,31 @@ fn region_points(
                         .flatten()
                         .map(|hole| {
                             let members = source_members(ctx, sketch, hole).ok()?;
-                            super::crossing::loop_ring(members, &entities)
+                            let (ring, bound) =
+                                super::crossing::sampled_loop_ring(members, &entities, refined)?;
+                            if refined {
+                                error = error.max(bound);
+                            }
+                            Some(ring)
                         })
                         .collect::<Option<Vec<_>>>()?,
                 );
             }
             _ => return None,
         }
+    }
+    // These sampled rings contain only lines, circles and arcs. A line moves by at
+    // most the largest defining-point displacement; a circle by its centre's.
+    // An arc's centre moves by d and its radius by at most 2d (both its centre
+    // and endpoint can move). Thus 3d bounds the emitted boundary displacement,
+    // including endpoint-reference merges farther apart than the position tolerance.
+    // Add this to sampling/closure error, rather than taking their maximum.
+    if refined {
+        let displacement = mapped.point_displacement * 3.0;
+        if !displacement.is_finite() || displacement < 0.0 {
+            return None;
+        }
+        error += displacement;
     }
     let frame = sketch_to_mapped(ctx.row("sketches", sketch)?, mapped)?;
     let mut points = Vec::with_capacity(rings.len());
@@ -1021,8 +1072,12 @@ fn region_points(
                 .filter(|other| super::crossing::ring_area(other) < area)
                 .map(Vec::as_slice),
         );
-        let point = super::crossing::interior_point(ring, &others, error)?;
-        points.push(frame(point));
+        let point = if refined {
+            super::crossing::narrow_interior_point(ring, &others, error)
+        } else {
+            super::crossing::interior_point(ring, &others, error)
+        };
+        points.push(point.map(&frame));
     }
     Some(points)
 }
@@ -1111,10 +1166,67 @@ fn sketch_to_mapped<'a>(sketch: &Value, mapped: &'a Mapped) -> Option<impl Fn(P2
 
 /// Profiles bounded by the selected curves: each connected group of them is one loop.
 fn entities(entities: Option<&Value>, mapped: &Mapped) -> Result<Value, String> {
+    curves(
+        groups(entities, mapped)?
+            .into_iter()
+            .map(|(_, curves)| curves)
+            .collect(),
+    )
+}
+
+/// The open curve chains a surface feature's profile picks, as SolidCraft curve ids, when it
+/// picks sketch entities that form only open chains; `None` when it picks a closed profile or
+/// anything else. A pick mixing open chains and closed loops is refused.
+pub(super) fn open_chains(
+    profile: Option<&Value>,
+    ctx: &Context,
+) -> Result<Option<(String, Vec<String>)>, String> {
+    let Some(profile) = profile.map(planar) else {
+        return Ok(None);
+    };
+    if profile.get("kind").and_then(Value::as_str) != Some("sketch_entities") {
+        return Ok(None);
+    }
+    let value = profile.get("value").unwrap_or(&Value::Null);
+    let sketch = value
+        .get("sketch")
+        .and_then(Value::as_str)
+        .ok_or("its profile sketch is malformed")?;
+    let mapped = ctx
+        .sketches
+        .get(sketch)
+        .ok_or("its sketch is not an earlier mapped sketch")?;
+    let groups = groups(value.get("entities"), mapped)?;
+    // A chain is closed when each of its end points joins two of its curves; a closed curve
+    // (a circle) has no end points.
+    let closed = |points: &[usize]| {
+        points
+            .iter()
+            .all(|p| points.iter().filter(|q| *q == p).count() == 2)
+    };
+    let open = groups.iter().filter(|(points, _)| !closed(points)).count();
+    if open == 0 {
+        return Ok(None);
+    }
+    if open < groups.len() {
+        return Err(
+            "a profile mixing open curve chains and closed loops is not mapped yet".to_owned(),
+        );
+    }
+    let curves = groups.into_iter().flat_map(|(_, curves)| curves).collect();
+    Ok(Some((sketch.to_owned(), curves)))
+}
+
+/// A chain of picked curves: its end point indices (one per curve end) and its SolidCraft
+/// curve ids, in selection order.
+type Chain = (Vec<usize>, Vec<String>);
+
+/// The picked entities, joined into chains where they share end points.
+fn groups(entities: Option<&Value>, mapped: &Mapped) -> Result<Vec<Chain>, String> {
     let entities = entities
         .and_then(Value::as_array)
         .ok_or("its profile entities are malformed")?;
-    let mut groups: Vec<(Vec<usize>, Vec<String>)> = Vec::new();
+    let mut groups: Vec<Chain> = Vec::new();
     for entity in entities {
         let id = entity
             .as_str()
@@ -1150,7 +1262,7 @@ fn entities(entities: Option<&Value>, mapped: &Mapped) -> Result<Value, String> 
             }
         }
     }
-    curves(groups.into_iter().map(|(_, curves)| curves).collect())
+    Ok(groups)
 }
 
 #[cfg(test)]
@@ -1231,6 +1343,7 @@ mod tests {
             origin: [0.0; 3],
             x_dir: [1.0, 0.0, 0.0],
             y_dir: [0.0, 1.0, 0.0],
+            point_displacement: 0.0,
             points: Vec::new(),
             shapes,
         }

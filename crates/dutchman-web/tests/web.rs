@@ -765,7 +765,7 @@ async fn a_failed_file_offers_the_private_steps_with_its_message() {
         "https://discord.com/users/",
         "Drag the file in (the file you picked).",
         "Please add a STEP export",
-        "Report anonymously on GitHub",
+        "GitHub issue",
     ] {
         assert!(page.contains(wanted), "{wanted}: {page}");
     }

@@ -242,6 +242,16 @@ fillet and a top-face hole, and a 10 mm plate with two separate 2 mm through hol
 feature input samples are authored from those lines, quarter-circle arcs, and circles.
 No native design file or external model is used or stored for these tests.
 
+The `spatial_044_*` history tests in `dutchman-solidcraft/tests/history.rs` build
+neutral CADIR in code on cadmpeg's public synthetic unit cube. They use a square,
+a skew quadrilateral, independent spatial lines, points and an arc; no native
+CAD file or third-party geometry was added for them.
+
+Closed-circle blend regressions in `dutchman-solidcraft/tests/history.rs` use authored
+CADIR only, including a hidden synthetic historical wire with exact circular or elliptical
+carrier geometry. Writer unit tests cover coincident rims on two bodies and an ellipse
+whose source samples coincide with a circle while its replay seam moves independently.
+
 ### Stand up fillet regression
 
 `freecad-1.1.4-P04/P04a.FCStd` is the unchanged CC0-1.0 CAD Fixture Recipes P04a
