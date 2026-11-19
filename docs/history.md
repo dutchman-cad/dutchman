@@ -232,6 +232,25 @@ chain direction. A fillet with several radius groups becomes one SolidCraft blen
 in the source's order; a later group's straight edge may be shorter than the source edge where
 an earlier group rounded its end. Final-body edge selections never stand in for input geometry.
 
+For targets 0.44 and newer, a sweep path can name connected topological edges from its
+own input state. Resolved edges are preserved only from one hidden earlier dependency
+result before that geometry is removed. A wire owned by an earlier mapped sketch resolves
+to that sketch only when every edge matches one entire emitted curve by its endpoints,
+midpoint, tangent and length. Other paths use the blend edge proof, check connectivity in
+source order, and bind the whole path to one rebuilt body. Closed chains assembled from
+open edges remain refused until their start and traversal direction can be proven.
+Exact curve measurements are requested only for consumers that need them; a measurement
+limit or failure preserves earlier straight-edge blends.
+Later edge consumers replay after this binding. Topological guide rails remain unsupported;
+SolidCraft's rail representation requires sketch curves. Paths without proven earlier
+input geometry and older targets keep specific refusals.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
+
 Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note
 `helper not converted: nothing uses it`. Used datum points and coordinate systems can be
 carried by resolved sketch placements, pattern axes, or another resolved datum. A used helper without the required

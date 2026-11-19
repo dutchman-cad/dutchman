@@ -72,11 +72,14 @@ pub(crate) struct Pending {
     pub(super) extra: Option<usize>,
     /// An earlier group of the same source blend may have shortened its straight edges.
     pub(super) trimmed: bool,
+    /// These edges form a sweep path on one actual body.
+    pub(super) path: bool,
 }
 
 impl Pending {
     pub(crate) fn needs_circle_carriers(&self) -> bool {
         self.edges.iter().any(|edge| near(edge.ends.0, edge.ends.1))
+            || (self.path && self.edges.iter().any(|edge| !edge.straight))
     }
 }
 
@@ -92,6 +95,66 @@ pub(super) struct Input {
     straight: bool,
     /// Authoritative closed source circle and its owning replay body.
     circle: Option<(Circle, String)>,
+}
+
+impl Input {
+    pub(super) fn is_closed(&self) -> bool {
+        self.circle.is_some()
+    }
+
+    /// An entire line or arc of the already mapped owning sketch, in model coordinates.
+    /// Matching only ends would confuse the two arcs between the same vertices.
+    pub(super) fn matches_sketch_curve(
+        &self,
+        mapped: &Mapped,
+        curve: &super::sketch::Curve,
+    ) -> bool {
+        if !curve.pieces.is_empty() || self.is_closed() {
+            return false;
+        }
+        let at = |index: Option<usize>| {
+            index
+                .and_then(|index| mapped.points.get(index))
+                .map(|(_, point)| mapped.world(*point))
+        };
+        let (Some(start), Some(end)) = (at(curve.start), at(curve.end)) else {
+            return false;
+        };
+        if !same(self.ends, (start, end)) {
+            return false;
+        }
+        if curve.kind == "line" && self.straight {
+            return same_length(self.length, distance(start, end))
+                && on_segment(self.point, (start, end))
+                && parallel(sub(end, start), self.tangent);
+        }
+        if curve.kind != "arc" || self.straight {
+            return false;
+        }
+        let (Some(center), Some(normal)) = (at(curve.center), unit(mapped.normal)) else {
+            return false;
+        };
+        let (a, b) = (sub(start, center), sub(end, center));
+        let radius = distance(start, center);
+        let Some(along) = unit(a) else { return false };
+        let turn = dot(cross(a, b), normal)
+            .atan2(dot(a, b))
+            .rem_euclid(std::f64::consts::TAU);
+        let mid = add(
+            center,
+            scale(
+                add(
+                    scale(along, (turn / 2.0).cos()),
+                    scale(cross(normal, along), (turn / 2.0).sin()),
+                ),
+                radius,
+            ),
+        );
+        (distance(end, center) - radius).abs() <= TOLERANCE
+            && near(self.point, mid)
+            && same_length(self.length, radius * turn)
+            && parallel(cross(normal, sub(mid, center)), self.tangent)
+    }
 }
 
 pub(super) fn map(
@@ -222,6 +285,7 @@ fn group(
         face: None,
         extra: None,
         trimmed,
+        path: false,
     };
     if weighted {
         report.push(
@@ -234,7 +298,7 @@ fn group(
 }
 
 /// Input edges selected in the blend's own feature input topology, with their midpoints.
-fn historical(
+pub(super) fn historical(
     feature: &Value,
     selection: &Value,
     ctx: &Context,
@@ -300,6 +364,11 @@ fn historical(
         if near(point, ends.0) || near(point, ends.1) {
             return Err(INPUT_SOURCE.to_owned());
         }
+        if near(ends.0, ends.1)
+            && selection.get("kind").and_then(Value::as_str) == Some("historical_edges")
+        {
+            return Err("sweep paths on closed or ambiguous input edge chains need a proven start and traversal direction, which is not supported yet".to_owned());
+        }
         let input = if near(ends.0, ends.1) {
             if !crate::VersionGate::ClosedCircleBlend.supported(ctx.target_version) {
                 return Err(
@@ -357,6 +426,51 @@ fn historical(
         points.push(point);
     }
     Ok((inputs, points))
+}
+
+/// Establish one open traversal in source order. Carriers may run against traversal;
+/// closed chains and multiple successful starts need a source traversal we cannot save yet.
+pub(super) fn connected(inputs: &[Input]) -> Result<(), String> {
+    const TRAVERSAL: &str = "sweep paths on closed or ambiguous input edge chains need a proven start and traversal direction, which is not supported yet";
+    let Some(first) = inputs.first() else {
+        return Err(
+            "its selected input edges do not form a connected path in source order".to_owned(),
+        );
+    };
+    if inputs.iter().any(Input::is_closed) {
+        return Err(TRAVERSAL.to_owned());
+    }
+    if inputs.len() == 1 {
+        return Ok(());
+    }
+    let mut starts = 0usize;
+    let mut closed = false;
+    for (start, mut at) in [(first.ends.0, first.ends.1), (first.ends.1, first.ends.0)] {
+        let mut visited = vec![start, at];
+        let mut success = true;
+        for input in inputs.iter().skip(1) {
+            at = if near(at, input.ends.0) && !near(at, input.ends.1) {
+                input.ends.1
+            } else if near(at, input.ends.1) && !near(at, input.ends.0) {
+                input.ends.0
+            } else {
+                success = false;
+                break;
+            };
+            closed |= visited.iter().any(|point| near(at, *point));
+            visited.push(at);
+        }
+        if success {
+            starts = starts.saturating_add(1);
+        }
+    }
+    if closed || starts > 1 {
+        Err(TRAVERSAL.to_owned())
+    } else if starts == 1 {
+        Ok(())
+    } else {
+        Err("its selected input edges do not form a connected path in source order".to_owned())
+    }
 }
 
 /// Edges an extrusion or a sheet-metal base flange generated from its sketch, as cadmpeg names
@@ -587,7 +701,14 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
             if !same(input.ends, (edge.start, edge.end)) {
                 return Err(INPUT_ENDS.to_owned());
             }
-            if !same_length(edge.length, input.length) {
+            let rebuilt_length = if pending.path && !input.straight {
+                measured_arc_length(edge).ok_or(
+                    "its curved input path edge has no proven rebuilt circular arc measurement yet",
+                )?
+            } else {
+                edge.length
+            };
+            if !same_length(rebuilt_length, input.length) {
                 return Err(INPUT_LENGTH.to_owned());
             }
         }
@@ -607,6 +728,16 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
     if chosen.is_empty() {
         return Err(INPUT.to_owned());
     }
+    if pending.path
+        && chosen
+            .first()
+            .is_some_and(|(body, _)| chosen.iter().any(|(other, _)| body != other))
+    {
+        return Err(
+            "its input edge path crosses several rebuilt bodies, which is not supported yet"
+                .to_owned(),
+        );
+    }
     let mut selections: Vec<Selection> = Vec::new();
     for ((body, _), point) in chosen.iter().zip(picks) {
         let name = bodies.get(*body).map(|(name, _)| name).ok_or(INPUT)?;
@@ -620,6 +751,19 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
         }
     }
     Ok(selections)
+}
+
+fn measured_arc_length(edge: &ReplayedEdge) -> Option<f64> {
+    let measured = edge.circle.as_ref().filter(|circle| !circle.whole)?;
+    let normal = unit(measured.axis)?;
+    [edge.start, edge.mid, edge.end]
+        .into_iter()
+        .all(|point| {
+            let radial = sub(point, measured.center);
+            dot(radial, normal).abs() <= TOLERANCE
+                && (distance(point, measured.center) - measured.radius).abs() <= TOLERANCE
+        })
+        .then_some(measured.length)
 }
 
 /// An exact stored source circle, never a circle fitted to historical samples.
@@ -1175,6 +1319,7 @@ mod tests {
             face: None,
             extra: None,
             trimmed: false,
+            path: false,
         }
     }
 

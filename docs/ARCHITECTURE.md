@@ -114,7 +114,7 @@ geometry-only fallback; it never reparses the report's display-only minor as a r
 Closed-circle blends also request `inspect.measure` with an edge item (body, replay index,
 and midpoint). Its item must include `round`, `center`, `axis`, `radius`, `length_mm`, and
 `circumference` or `arc_length`. A failed carrier query leaves ordinary edge/face proofs
-available and refuses only closed circles.
+available. Closed circles and curved body-edge sweep paths require successful carrier measurements.
 Measured inference also runs `timeline.suppress`, `inspect.compare` and `sketch.inspect`; a
 host without complete finite body measurements, surface comparison results and both face counts
 refuses new final-shape inferences. `sketch.inspect` reports region centroids without proven
@@ -234,6 +234,13 @@ an occurrence, so those stay apart.
 Unused construction helpers need no target feature. Later active consumers carry resolved
 datum frames in sketches, pattern axes, and later datum constructions; unresolved helper
 uses remain blockers.
+
+Histories using the new topological sweep paths retain the
+original as the visible model unless their full comparison succeeds. Their mapped
+features remain in a hidden editable component, including in assemblies. The original
+may have no sound volume to compare; an unverified replay must not expose an earlier
+local frame in place of its final positioned body. This applies with verification off
+too; ordinary histories retain their existing verification behavior.
 
 At the first blocking feature, the editable timeline stops. Earlier features and
 independently resolved sketches are kept in a hidden component, followed by the original
@@ -369,6 +376,16 @@ curves retain a named refusal; older targets keep the original geometry. Equal t
 45 degrees on perpendicular faces. Unequal distances and other angles lack a source
 reference-face ordering and are refused specifically. Variable fillets lack a proven
 chain direction. Final-body edge selections never stand in for input geometry.
+
+For targets 0.44 and newer, a sweep path can name connected topological edges from its
+own input state. Resolved edges are preserved only from one hidden earlier dependency
+result before that geometry is removed. A wire owned by an earlier mapped sketch resolves
+to that sketch only when every edge matches one entire emitted curve by its endpoints,
+midpoint, tangent and length. Other paths use the blend edge proof, check connectivity in
+source order, and bind the whole path to one rebuilt body.
+Later edge consumers replay after this binding. Topological guide rails remain unsupported;
+SolidCraft's rail representation requires sketch curves. Paths without proven earlier
+input geometry and older targets keep specific refusals.
 
 Selected straight profile loops that cross or retrace their own curves are split at
 intersections into bounded regions for selection. The sketch keeps its original curves and

@@ -16,6 +16,7 @@ mod crossing;
 mod datum;
 mod delete_face;
 mod dof;
+mod edge_path;
 mod extrude;
 mod face_profile;
 mod faces;
@@ -80,6 +81,8 @@ pub(crate) struct History {
     pub(crate) next_id: u64,
     /// New pattern instance sets must fall back if an attempted replay cannot finish.
     pub(crate) pattern_replay_required: bool,
+    /// Newly mapped topological picks cannot replace the original after an inconclusive check.
+    pub(crate) topological_replay_required: bool,
     /// Source features that became SolidCraft features or needed none.
     pub(crate) mapped: usize,
     /// Of those, the ones that needed no feature: a component insert, a joint, a default plane.
@@ -88,7 +91,7 @@ pub(crate) struct History {
     pub(crate) reapplied: usize,
     /// Active source features.
     pub(crate) total: usize,
-    /// Blends whose input edges wait for SolidCraft's replay of the history before them
+    /// Features whose input edges or faces wait for SolidCraft's replay before them
     /// ([`prove_blends`]); until then each has no body.
     pub(crate) blends: Vec<blend::Pending>,
     /// Ids of sketch features whose source sketch is hidden in the source.
@@ -367,6 +370,9 @@ impl History {
             };
             for key in ["id", "sketch", "path_sketch"] {
                 if let Some(id) = fields.get(key).and_then(Value::as_u64) {
+                    if key == "path_sketch" && id == 0 {
+                        continue;
+                    }
                     fields.insert(key.to_owned(), Value::from(id.saturating_add(offset)));
                 }
             }
@@ -539,7 +545,7 @@ impl History {
                     }
                 }
             }
-            for key in ["target", "body"] {
+            for key in ["target", "body", "path_body"] {
                 if let Some(value) = feature.get_mut(key) {
                     if let Some(old) = value.as_str() {
                         *value = Value::String(rename(old));
@@ -632,6 +638,7 @@ struct Context<'a> {
     /// All features making a composite pattern's instance set, including its seeds.
     pattern_features: BTreeMap<String, Vec<String>>,
     pattern_replay_required: bool,
+    topological_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
     /// Bodies an earlier feature makes that the final model leaves out, under their names:
@@ -650,7 +657,7 @@ struct Context<'a> {
     builds: bool,
     /// The sheet thicknesses (mm) its sheet-metal features use, each with its rule's name.
     sheet_rules: Vec<(f64, String)>,
-    /// Blends and face profiles mapped so far, waiting for SolidCraft's replay to prove them.
+    /// Blends, sweep paths and face profiles waiting for SolidCraft's replay to prove them.
     blends: Vec<blend::Pending>,
     /// Features the feature being mapped needs before it (a sketch of a face's boundary).
     extra: Vec<Value>,
@@ -705,6 +712,7 @@ impl<'a> Context<'a> {
             consumed_bends: std::collections::BTreeSet::new(),
             pattern_features: BTreeMap::new(),
             pattern_replay_required: false,
+            topological_replay_required: false,
             named_bodies: Vec::new(),
             generated_bodies: Vec::new(),
             confirming_consumed_bodies: false,
@@ -1521,6 +1529,7 @@ fn map_into(
         .collect();
     history.next_id = ctx.next_id;
     history.pattern_replay_required = ctx.pattern_replay_required;
+    history.topological_replay_required = ctx.topological_replay_required;
     history.blends = std::mem::take(&mut ctx.blends);
     Ok(history)
 }
@@ -1729,6 +1738,8 @@ fn split_blend(
 enum Proven {
     /// The blend is proven and emitted, with this many additional per-body operations.
     Bodies(usize),
+    /// A sweep path bound to the unique earlier body carrying all its edges.
+    Path,
     /// A face profile's sketch rewritten on the other side of its plane, if it had to be.
     Sketch(Option<Value>),
     /// A hole axis signed to enter the proven face.
@@ -1775,7 +1786,11 @@ pub(crate) fn prove_blends(
     let mut inserted = 0usize;
     for (index, (pending, marker)) in blends.iter().zip(&after).enumerate() {
         let proven = match (marker, &replayed) {
-            (None, _) => Err("no feature before it builds a body to blend".to_owned()),
+            (None, _) => Err(if pending.path {
+                "no feature before it builds a body carrying its path".to_owned()
+            } else {
+                "no feature before it builds a body to blend".to_owned()
+            }),
             (Some(_), Err(why)) => Err(format!(
                 "its input edges are found only on SolidCraft's replay of the history before \
                  it, and there is none: {why}"
@@ -1786,6 +1801,18 @@ pub(crate) fn prove_blends(
                 match at {
                     Some(Ok(replay)) => match &pending.face {
                         None => blend::prove(pending, &replay.bodies).and_then(|selections| {
+                            if pending.path {
+                                let [selection] = selections.as_slice() else {
+                                    return Err("its input edge path crosses several rebuilt bodies, which is not supported yet".to_owned());
+                                };
+                                let fields = history.features
+                                    .get_mut(pending.feature.saturating_add(inserted))
+                                    .and_then(Value::as_object_mut)
+                                    .ok_or("the mapped sweep is missing")?;
+                                fields.insert("path_body".to_owned(), json!(selection.body));
+                                fields.insert("path_edges".to_owned(), json!(selection.points));
+                                return Ok(Proven::Path);
+                            }
                             let added = selections.len().saturating_sub(1);
                             split_blend(
                                 history,
@@ -1853,9 +1880,13 @@ pub(crate) fn prove_blends(
             proven => proven,
         };
         match proven {
-            Ok(Proven::Bodies(added)) => {
+            Ok(proven @ (Proven::Bodies(_) | Proven::Path)) => {
+                let (added, path) = match proven {
+                    Proven::Bodies(added) => (added, false),
+                    _ => (0, true),
+                };
                 inserted = inserted.saturating_add(added);
-                if added > 0 && index.saturating_add(1) < blends.len() {
+                if (added > 0 || path) && index.saturating_add(1) < blends.len() {
                     // Later blends must see all per-body operations, including earlier
                     // radius groups. Their original last IDs remain rollback markers.
                     let remaining: Vec<u64> = after
@@ -1867,7 +1898,7 @@ pub(crate) fn prove_blends(
                     let faces = blends
                         .iter()
                         .skip(index.saturating_add(1))
-                        .any(|p| p.face.is_some());
+                        .any(|pending| pending.face.is_some());
                     replayed = replay(history, &remaining, faces);
                     step = 0;
                 }
@@ -1899,7 +1930,7 @@ pub(crate) fn prove_blends(
                         let faces = blends
                             .iter()
                             .skip(index.saturating_add(1))
-                            .any(|p| p.face.is_some());
+                            .any(|pending| pending.face.is_some());
                         replayed = replay(history, &remaining, faces);
                         step = 0;
                     }

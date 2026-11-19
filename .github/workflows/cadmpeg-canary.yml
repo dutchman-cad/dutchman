@@ -75,7 +75,10 @@ jobs:
             echo "First error lines:"
             echo
             echo '```'
-            grep -E -A4 '^(error|warning: unused)' check.log | grep -v '^warning' | head -n 40
+            # check.log keeps cargo's colour codes for the run log; strip them so lines start with
+            # "error" for the grep.
+            sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g' check.log \
+              | grep -E -A4 '^(error|warning: unused)' | grep -v '^warning' | head -n 40
             echo '```'
           } > body.md
           if [ -z "$number" ]; then

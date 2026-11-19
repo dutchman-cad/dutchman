@@ -268,6 +268,22 @@ Call `inspect` with `input`. It writes nothing. Read:
 - `history.features`: each feature's `status`; a `blocked` one has a `reason`.
 - `losses`: everything that will not carry across intact.
 
+For SolidCraft 0.44 and newer, a sweep can follow a connected chain of proven historical
+input edges on one body. Closed chains made from open edges also remain refused until
+their start and traversal can be proven. If exact curve measurements are unavailable,
+earlier straight-edge blends remain editable. Body-edge proofs need SolidCraft replay
+and cannot be proven with
+verification off. A stored sketch wire can instead resolve to its own earlier sketch after
+matching every entire curve by its source geometry.
+Topological guide rails, unproven edges and older targets retain the original geometry
+with a named blocker. Explain that reason without guessing an edge of the final body.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
+
 Sweep histories support twist, end scale, supported orientations, and one guide rail, with
 single-curve whole sketches accepted as paths or rails. A blocked sweep's reason names
 unsupported corner transitions, section interpolation, tangent-path extension or

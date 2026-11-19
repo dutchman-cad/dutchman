@@ -598,6 +598,7 @@ mod history_tests {
             sheet_rules: Vec::new(),
             next_id: 3,
             pattern_replay_required: false,
+            topological_replay_required: false,
             mapped: 2,
             not_needed: 0,
             reapplied: 0,

@@ -391,7 +391,24 @@ fn quiet_when_stdout_closes() {
     }));
 }
 
+/// Stack for the thread that runs the command line. Windows gives a program's main thread
+/// 1 MiB, which parsing the command line, building the help and a conversion's deepest
+/// recursion can exceed (`0xC0000409`); other platforms give 8 MiB. Every platform gets the same.
+const CLI_STACK: usize = 64 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    match std::thread::Builder::new()
+        .name("dutchman".into())
+        .stack_size(CLI_STACK)
+        .spawn(run_cli)
+    {
+        // A panic was already reported by the panic hook; exit as Rust does for one.
+        Ok(thread) => thread.join().unwrap_or(ExitCode::from(101)),
+        Err(_) => run_cli(),
+    }
+}
+
+fn run_cli() -> ExitCode {
     if let Some(code) = worker::run_if_worker() {
         return code;
     }

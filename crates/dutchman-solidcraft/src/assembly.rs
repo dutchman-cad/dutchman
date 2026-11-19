@@ -1443,7 +1443,9 @@ impl Builder<'_> {
                     );
                     Check::Verified
                 }
-                verify::Outcome::Unverified(why) if self.writer.keep_unverified_hidden() => {
+                verify::Outcome::Unverified(why)
+                    if self.writer.keep_unverified_history_hidden(&history) =>
+                {
                     self.report.push_at(
                         Stage::SolidCraft,
                         Severity::Degraded,
