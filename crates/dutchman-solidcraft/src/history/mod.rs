@@ -653,7 +653,7 @@ struct Context<'a> {
     /// Whether a feature that builds geometry has been mapped.
     builds: bool,
     /// The sheet thicknesses (mm) its sheet-metal features use, each with its rule's name.
-    sheet_rules: Vec<(f64, String)>,
+    sheet_rules: Vec<sheet::SheetRule>,
     /// Blends, sweep paths and face profiles waiting for SolidCraft's replay to prove them.
     blends: Vec<blend::Pending>,
     /// Features the feature being mapped needs before it (a sketch of a face's boundary).
@@ -832,15 +832,42 @@ impl<'a> Context<'a> {
 
     /// The name of the sheet rule of `thickness` mm, made the first time it is asked for.
     fn sheet_rule(&mut self, thickness: f64) -> String {
-        if let Some((_, name)) = self
-            .sheet_rules
-            .iter()
-            .find(|(known, _)| (known - thickness).abs() < 1e-9)
-        {
-            return name.clone();
+        self.sheet_rule_of(thickness, None, None)
+    }
+
+    /// The name of the sheet rule of `thickness` mm with the given bend radius and K-factor
+    /// (SolidCraft's defaults where `None`), made the first time it is asked for.
+    fn sheet_rule_of(
+        &mut self,
+        thickness: f64,
+        radius: Option<f64>,
+        k_factor: Option<f64>,
+    ) -> String {
+        let same = |a: Option<f64>, b: Option<f64>| match (a, b) {
+            (None, None) => true,
+            (Some(a), Some(b)) => (a - b).abs() < 1e-9,
+            _ => false,
+        };
+        if let Some(known) = self.sheet_rules.iter().find(|known| {
+            (known.thickness - thickness).abs() < 1e-9
+                && same(known.radius, radius)
+                && same(known.k_factor, k_factor)
+        }) {
+            return known.name.clone();
         }
-        let name = format!("Sheet {thickness} mm");
-        self.sheet_rules.push((thickness, name.clone()));
+        let mut name = format!("Sheet {thickness} mm");
+        if let Some(radius) = radius {
+            name.push_str(&format!(" R{radius}"));
+        }
+        if let Some(k_factor) = k_factor {
+            name.push_str(&format!(" K{k_factor}"));
+        }
+        self.sheet_rules.push(sheet::SheetRule {
+            thickness,
+            radius,
+            k_factor,
+            name: name.clone(),
+        });
         name
     }
 
@@ -1512,7 +1539,7 @@ fn map_into(
     history.sheet_rules = ctx
         .sheet_rules
         .iter()
-        .map(|(thickness, name)| sheet::rule(name, *thickness))
+        .map(sheet::SheetRule::value)
         .collect();
     history.next_id = ctx.next_id;
     history.pattern_replay_required = ctx.pattern_replay_required;
@@ -2212,6 +2239,9 @@ fn map_feature(
         Some("hole") => hole::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("sheet_metal_base_flange") => {
             sheet::base_flange(feature, definition, ctx).map(Mapped::Feature)
+        }
+        Some("sheet_metal_contour_flange") => {
+            sheet::contour_flange(feature, definition, ctx).map(Mapped::Feature)
         }
         Some("sheet_metal_edge_flange") => {
             sheet::edge_flange(feature, definition, ctx, preceding).map(Mapped::Feature)

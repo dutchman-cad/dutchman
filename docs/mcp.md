@@ -153,8 +153,10 @@ map on an unchanged simple polygonal base, including L-shaped and notched sheets
 the actual straight profile edge. Curved, open, crossing, disconnected, or collinear base edges
 and base profiles with holes or partial regions remain blocked for attachments.
 Unsupported flange dimensions or selections, and hems,
-appear as the first blocked feature's reason; the conversion keeps the geometry. K-factor and
-relief use the target rule defaults.
+appear as the first blocked feature's reason; the conversion keeps the geometry. Contour
+flanges map from an open chain of sketch lines and arcs with one blind normal sweep and
+material on either side; their thickness, bend radius and supplied K-factor form a rule.
+Other contour forms report their specific reason. Relief settings use the target defaults.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain

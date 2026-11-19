@@ -268,7 +268,7 @@ impl<'a> Trial<'a> {
         prefix.sheet_rules = trial
             .sheet_rules
             .iter()
-            .map(|(thickness, name)| super::sheet::rule(name, *thickness))
+            .map(super::sheet::SheetRule::value)
             .collect();
         Some(Trial {
             ctx: trial,
@@ -562,7 +562,7 @@ fn solidcraft_regions(
     prefix.sheet_rules = ctx
         .sheet_rules
         .iter()
-        .map(|(thickness, name)| super::sheet::rule(name, *thickness))
+        .map(super::sheet::SheetRule::value)
         .collect();
     let remaining = MEASURE_BUDGET.saturating_sub(started.elapsed());
     if remaining.is_zero() {
