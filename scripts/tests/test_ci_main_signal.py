@@ -10,12 +10,21 @@ spec.loader.exec_module(signal)
 
 
 class MainSignalTests(unittest.TestCase):
-    def report(self, failed=False, issue=None, sha="abc", main="abc", run="100", arm_retry=False, arm_result="failure"):
+    def report(self, failed=False, issue=None, sha="abc", main="abc", run="100",
+               arm_retry=False, arm_result="failure", completed=(), completed_pages=None):
         calls = []
         def api(path, payload=None, paginate=False):
             calls.append((path, payload))
             if path.endswith("/commits/main"):
                 return {"sha": main}
+            if "/actions/workflows/" in path:
+                self.assertEqual(
+                    path,
+                    "repos/owner/repo/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed",
+                )
+                self.assertTrue(paginate)
+                return [{"workflow_runs": [{"id": run_id} for run_id in page]}
+                        for page in (completed_pages if completed_pages is not None else [completed])]
             if paginate:
                 return [[issue] if issue else []]
             return {}
@@ -56,6 +65,27 @@ class MainSignalTests(unittest.TestCase):
         for arm_result in ("failure", "cancelled"):
             self.assertEqual(self.report(arm_retry=True, arm_result=arm_result), [])
 
-    def test_stale_commit_or_run_cannot_overwrite_current_signal(self):
-        self.assertEqual(self.report(failed=True, main="new"), [])
-        self.assertEqual(self.report(issue=self.issue(run="101")), [])
+    def test_moved_head_without_newer_completed_run_reports_failure(self):
+        for issue in (None, self.issue()):
+            with self.subTest(issue=issue):
+                calls = self.report(failed=True, main="new", issue=issue, completed=(90, 100))
+                self.assertEqual(len(calls), 1)
+                self.assertIn("Commit: `abc`", calls[0][1]["body"])
+                self.assertIn("<!-- run-id: 100 -->", calls[0][1]["body"])
+
+    def test_newer_completed_run_skips_reporting(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                self.assertEqual(
+                    self.report(failed=failed, issue=self.issue(), completed=(101, 100)), [],
+                )
+
+    def test_older_run_cannot_overwrite_newer_issue_result(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                self.assertEqual(self.report(failed=failed, issue=self.issue(run="101")), [])
+
+    def test_newer_completed_run_on_later_page_skips_reporting(self):
+        self.assertEqual(
+            self.report(failed=True, completed_pages=[(90, 100), (101,)]), [],
+        )

@@ -248,6 +248,8 @@ fn actual_request_bounds_tls_and_slow_body_with_remaining_budget() {
                     _ => return,
                 }
             };
+            // macOS/BSD: an accepted socket inherits the listener's non-blocking mode.
+            socket.set_nonblocking(false).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();

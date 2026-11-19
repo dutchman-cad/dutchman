@@ -220,12 +220,15 @@ impl Proof {
                     } else {
                         (*end, *start)
                     };
+                    let start = angle(from);
+                    let end = angle(to);
+                    let end = if end < start { end + TAU } else { end };
                     json!({
                         "kind": "arc",
                         "center": at(*center),
                         "radius": radius,
-                        "start_angle": angle(from),
-                        "end_angle": angle(to),
+                        "start_angle": start,
+                        "end_angle": end,
                     })
                 }
             };
@@ -281,6 +284,43 @@ fn points_on(
         points.push(point_in(face, planar_only)?);
     }
     Ok(points)
+}
+
+/// The one plane every face `value` selects lies on, as a point on the first face and the
+/// plane's unit normal (its side is not known from the boundaries). Faces that do not all lie
+/// on one plane are refused.
+pub(super) fn coplanar_faces(
+    feature: &Value,
+    value: &Value,
+    ctx: &Context,
+) -> Result<(V3, V3), String> {
+    let ids = value
+        .get("faces")
+        .and_then(Value::as_array)
+        .filter(|ids| !ids.is_empty() && ids.len() <= FACES)
+        .ok_or("its face selection is empty or exceeds the face limit")?;
+    let mut faces = Vec::new();
+    let mut total = 0usize;
+    for (index, id) in ids.iter().enumerate() {
+        if ids.iter().take(index).any(|previous| previous == id) {
+            return Err("its splitting face is selected more than once".to_owned());
+        }
+        // Tool faces may meet at an edge. Read each boundary independently so the
+        // disjoint-profile rule for extrusions does not reject adjacent coplanar tools.
+        let one = json!({"state": value.get("state"), "faces": [id]});
+        let boundary = boundaries(feature, &one, ctx)?;
+        let [face] = boundary.as_slice() else {
+            return Err(BAD.to_owned());
+        };
+        total = total.saturating_add(face.edges.len());
+        if total > EDGES {
+            return Err("its faces have more boundary edges than the face limit".to_owned());
+        }
+        plane(&boundary, &samples(face))?;
+        faces.extend(boundary);
+    }
+    let points: Vec<V3> = faces.iter().flat_map(samples).collect();
+    plane(&faces, &points).map_err(|_| "its faces are not planar together".to_owned())
 }
 
 /// A point inside the one planar face `value` selects, clear of its edges and its holes, and
@@ -1562,6 +1602,8 @@ mod tests {
             end: [10.0, 0.0, 0.0],
             length: TAU * 10.0,
             name: "cap".to_owned(),
+            index: None,
+            circle: None,
         };
         let cap = ReplayedFace {
             name: "cap".to_owned(),
@@ -1627,6 +1669,8 @@ mod tests {
             mid: at(mid),
             length,
             name: "f".to_owned(),
+            index: None,
+            circle: None,
         }
     }
 

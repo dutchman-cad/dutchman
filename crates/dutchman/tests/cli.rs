@@ -582,6 +582,75 @@ fn inspect_json_names_what_blocks_a_solidworks_history() {
 }
 
 #[test]
+fn contents_json_lists_bodies_features_and_parameters() {
+    let out = dutchman(&[
+        "contents",
+        "--json",
+        &fixture("design_sketch_constraints.f3d"),
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let report = json_of(&out);
+    assert_eq!(report["schema"], "dutchman.contents/1");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["bodies"]["count"], 1);
+    assert_eq!(report["bodies"]["items"][0]["kind"], "sheet");
+    assert_eq!(report["features"]["count"], 1);
+    let feature = &report["features"]["items"][0];
+    assert_eq!(feature["kind"], "sketch");
+    assert_eq!(feature["verdict"], "mapped");
+    assert_eq!(feature["suppressed"], false);
+    assert_eq!(report["features"]["verdicts"]["mapped"], 1);
+    assert_eq!(report["features"]["verdicts"]["not_supported_yet"], 0);
+    assert_eq!(report["parameters"]["count"], 2);
+    for parameter in report["parameters"]["items"].as_array().unwrap() {
+        for key in ["part", "name", "value", "unit", "expression", "feature"] {
+            assert!(parameter.get(key).is_some(), "{key}: {parameter}");
+        }
+    }
+
+    let solidworks = json_of(&dutchman(&[
+        "contents",
+        "--json",
+        &fixture("body_history.sldprt"),
+    ]));
+    let features: Vec<_> = solidworks["features"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (
+                f["name"].as_str().unwrap(),
+                f["kind"].as_str().unwrap(),
+                f["verdict"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        features,
+        [
+            ("Boss", "extrude", "not_supported_yet"),
+            ("Profile", "native", "after_blocker")
+        ]
+    );
+    assert_eq!(
+        solidworks["features"]["items"][0]["reason"],
+        "unresolved profiles are not mapped yet"
+    );
+
+    let text = dutchman(&["contents", &fixture("generated_unit_cube.f3d")]);
+    assert_eq!(text.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        stdout.starts_with("Fusion archive (.f3d): 1 body, 0 features, 0 parameters; "),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("no feature history maps: the design carries no feature history"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn inspect_prints_a_text_summary() {
     let out = dutchman(&["inspect", &fixture("generated_unit_cube.f3d")]);
     assert_eq!(out.status.code(), Some(0));
@@ -1647,6 +1716,9 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
             stdout.matches("Want to help").count(),
             usize::from(option.is_none())
         );
+        if option.is_none() {
+            assert!(stdout.contains("https://dutchmancad.xyz/fixtures/"));
+        }
         assert!(!stdout.contains("unknown format"));
         assert!(!output.exists());
         let mut args = vec![
@@ -1670,6 +1742,7 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
                 .find(|l| l.starts_with("Want to help"))
                 .unwrap();
             assert!(pitch.starts_with("Want to help Dutchman read Creo better?"));
+            assert!(pitch.contains("https://dutchmancad.xyz/fixtures/"));
             assert!(!pitch.contains("first") && !pitch.contains("second"));
         }
     }

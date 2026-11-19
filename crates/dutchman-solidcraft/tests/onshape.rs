@@ -1100,6 +1100,30 @@ fn derived_design_writes_insert_design_links_and_keeps_boolean_editable() {
 }
 
 #[test]
+fn derived_boolean_requires_captured_results() {
+    let (mut source, mut report) = model("derived");
+    source.ir.model.feature_result_topologies.clear();
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .target_version(Some(SolidCraftVersion::V0_44_0))
+        .verification(Verification::Off)
+        .write(&source, &mut bytes, &mut report)
+        .unwrap();
+    assert!(!document(&bytes)["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|feature| feature["type"] == "combine"));
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("captured earlier feature result")),
+        "{report:?}"
+    );
+}
+
+#[test]
 fn derived_companion_conversion_losses_are_reported_under_the_insert() {
     let (mut source, mut report) = model("derived");
     let mut wire = serde_json::to_value(&source.ir).unwrap();

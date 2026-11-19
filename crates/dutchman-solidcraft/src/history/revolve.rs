@@ -45,7 +45,17 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     // The fuse order and the single-face policy do not change the result of a revolve that
     // was built: the order only swaps the fuse operands, and the policy only rejects a
     // profile of several faces.
-    let (sketch_id, profiles) = profile(construction.get("profile"), ctx)?;
+    // A surface turned from open curve chains: SolidCraft takes them as `curves`, not as
+    // profiles, which must be closed.
+    let open = if surface {
+        super::profile::open_chains(construction.get("profile"), ctx)?
+    } else {
+        None
+    };
+    let (sketch_id, profiles) = match &open {
+        Some((sketch, _)) => (sketch.clone(), Value::Null),
+        None => profile(construction.get("profile"), ctx)?,
+    };
     let sketch = ctx
         .sketches
         .get(&sketch_id)
@@ -104,6 +114,10 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         if surface {
             fields.remove("operation");
             fields.remove("convention");
+        }
+        if let Some((_, curves)) = open {
+            fields.remove("profiles");
+            fields.insert("curves".to_owned(), json!(curves));
         }
         if symmetric {
             fields.insert("symmetric".to_owned(), json!(true));

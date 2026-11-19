@@ -40,6 +40,8 @@ impl Mock {
                         _ => return,
                     }
                 };
+                // macOS/BSD: an accepted socket inherits the listener's non-blocking mode.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
@@ -466,6 +468,8 @@ fn actual_http_timeout_is_bounded() {
                 _ => return,
             }
         };
+        // macOS/BSD: an accepted socket inherits the listener's non-blocking mode.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
@@ -632,6 +636,8 @@ fn total_deadline_removes_scratch_while_body_is_still_streaming() {
                 Err(error) => panic!("Mock accept failed: {error}"),
             }
         };
+        // macOS/BSD: an accepted socket inherits the listener's non-blocking mode.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();

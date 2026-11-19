@@ -1,0 +1,25 @@
+{
+  "results": [
+    {
+      "ok": true,
+      "input": {
+        "format": "inventor_assembly",
+        "path": "/private/assembly.iam"
+      },
+      "assembly": {
+        "parts": 2
+      },
+      "verification": {
+        "status": "partial"
+      },
+      "elapsed_ms": 60000
+    },
+    {
+      "ok": false,
+      "input": {
+        "format": "unknown-secret-format"
+      },
+      "elapsed_ms": 3600000
+    }
+  ]
+}
