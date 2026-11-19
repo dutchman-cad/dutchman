@@ -4,20 +4,40 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Write};
 fn fixture(name: &str) -> Vec<u8> {
-    std::fs::read(
+    let bytes = std::fs::read(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/onshape-{name}.onshape-bundle")),
     )
-    .unwrap()
+    .unwrap();
+    if name != "revolve" {
+        return bytes;
+    }
+    // Quantity controls use an explicit source-sketch axis, so they test quantity
+    // admission independently of missing historical-producer data in the old bundle.
+    edit(&bytes, |path, response| {
+        if !path.ends_with("features.json") {
+            return;
+        }
+        let sketch = response["features"][0]["featureId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        response["features"][0]["entities"].as_array_mut().unwrap().push(json!({"btType":"BTMSketchCurveSegment-155","entityId":"quantity-axis","isConstruction":true,"geometry":{"btType":"BTCurveGeometryLine-117","dirY":1.0},"startParam":0.0,"endParam":0.015}));
+        let query = json!({"entityType":"EDGE","historyType":"CREATION","queryType":"SKETCH_ENTITY","operationId":[format!("{sketch}.wireOp")],"sketchEntityId":"quantity-axis"});
+        let encoded =
+            serde_json::to_string(&format!("%{}", super::tests::compact(&query))).unwrap();
+        parameter(&mut response["features"][1], "axis")["queries"] =
+            json!([{"queryString":format!("query=qCompressed(1.0,{encoded},id);")}]);
+    })
 }
-fn loss(result: &ResultModel, code: &str) -> bool {
+pub(super) fn loss(result: &ResultModel, code: &str) -> bool {
     result
         .report()
         .losses()
         .iter()
         .any(|l| l.code.as_deref() == Some(code))
 }
-fn kind(wire: &Value, ordinal: usize) -> &Value {
+pub(super) fn kind(wire: &Value, ordinal: usize) -> &Value {
     &wire["model"]["features"][ordinal]["definition"]["value"]["kind"]
 }
 pub(crate) fn members(bytes: &[u8], edit: impl FnOnce(&mut BTreeMap<String, Vec<u8>>)) -> Vec<u8> {
@@ -84,6 +104,21 @@ pub(super) fn wire(result: &ResultModel) -> Value {
         .as_array_mut()
         .unwrap()
         .sort_by_key(|f| f["ordinal"].as_u64());
+    let order: BTreeMap<String, u64> = wire["model"]["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|feature| {
+            (
+                feature["id"].as_str().unwrap().to_owned(),
+                feature["ordinal"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    wire["design"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .sort_by_key(|feature| order.get(feature["id"].as_str().unwrap()).copied());
     wire
 }
 pub(super) fn validate(result: ResultModel) {
@@ -588,14 +623,23 @@ fn caller_context_bounds_json_and_history_before_step() {
         };
         let arena = DecodeArena::new();
         let (ctx, _) = DecodeContext::from_root_bytes(&bytes, &arena, &policy).unwrap();
-        let error = super::read(
+        let mut report = crate::Report::default();
+        let result = super::read(
             &ctx,
             std::path::Path::new("synthetic.onshape-bundle"),
             &bytes,
-            &mut crate::Report::default(),
+            &mut report,
             None,
-        )
-        .unwrap_err();
+        );
+        if resource == "storage" {
+            assert!(result.is_ok());
+            assert!(report
+                .losses()
+                .iter()
+                .any(|loss| loss.code.as_deref() == Some("onshape/member.not-supported")));
+            continue;
+        }
+        let error = result.unwrap_err();
         let message = error.to_string();
         assert!(
             message.contains(match resource {

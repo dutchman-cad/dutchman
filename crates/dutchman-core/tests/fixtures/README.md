@@ -223,3 +223,15 @@ explicit tangent relations, a concave polygon, straight-sided boxes and an
 annulus. Missing and contradictory controls are removed or changed in memory.
 The very long tangent-line control uses invented coordinates to test numerical
 conditioning. These constructions copy no private model geometry or identifiers.
+
+The re-review regressions in `src/onshape/rereview.rs` build bundle ZIPs and JSON
+records directly in Rust from the public response shapes. Generic line sketches,
+points, a straight edge and a planar face exercise dependency transitions, operand
+order, scopes, thread termination, midpoint admission and permissive recovery.
+Additional thin tests extend the generated default-plane bundle in memory with a
+synthetic producer and rollback states. No new binary fixture or private design
+identifier is used.
+
+The older revolve bundle's deterministic axis has no earlier body-producing feature.
+It now intentionally retains a named Native history record; the new code-built tests
+supply a separate producer to prove the supported historical-axis case.

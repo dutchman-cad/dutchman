@@ -245,10 +245,28 @@ fn boolean_field(row: &Value, key: &str) -> Mapping<bool> {
 fn suppression(feature: &Value) -> Mapping<bool> {
     Ok(boolean_field(feature, "suppressed")? | boolean_field(feature, "parentSuppressed")?)
 }
-fn reserve_history<T>(rows: &mut Vec<T>, count: usize) -> Result<(), Error> {
-    rows.try_reserve(count)
-        .map_err(|_| Error::Decode("Onshape history allocation failed".into()))
+fn reserve_history<T>(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    rows: &mut Vec<T>,
+    count: usize,
+) -> Result<(), Error> {
+    rows.try_reserve(count).map_err(|_| {
+        let resource = cadmpeg_core::decode::ResourceLimit::allocation_failed(
+            cadmpeg_core::decode::ResourceDimension::RetainedBytes,
+            ctx.policy().limits.max_retained_bytes,
+            cadmpeg_core::decode::u64_from_index(count).saturating_mul(
+                cadmpeg_core::decode::u64_from_index(std::mem::size_of::<T>()),
+            ),
+            "Onshape history allocation",
+        );
+        Error::Decode(format!(
+            "{} during {}",
+            cadmpeg_core::CodecError::ResourceLimit(resource),
+            resource.operation
+        ))
+    })
 }
+
 fn admit_history(
     ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     feature: &Value,
@@ -259,38 +277,38 @@ fn admit_history(
             .map(<[Value]>::len)
             .map_err(Error::Decode)
     };
-    let entities = count("entities")?;
-    let constraints = count("constraints")?;
-    let parameters = count("parameters")?;
-    let auxiliary = constraints
-        .checked_mul(3)
-        .ok_or_else(|| Error::Decode("history count overflow".into()))?;
+    let mut entities = count("entities")?;
+    let mut constraints = 0usize;
+    let mut parameters =
+        usize::from(feature.get("featureType").and_then(Value::as_str) != Some("newSketch"));
+    let overflow = || Error::Decode("history count overflow".into());
+    for row in optional_rows(feature, "constraints").map_err(Error::Decode)? {
+        if let Ok(output) = sketch::constraint_output(row) {
+            entities = entities.checked_add(output.entities).ok_or_else(overflow)?;
+            constraints = constraints
+                .checked_add(output.constraints)
+                .ok_or_else(overflow)?;
+            parameters = parameters
+                .checked_add(output.parameters)
+                .ok_or_else(overflow)?;
+        }
+    }
     let total = entities
-        .checked_add(auxiliary)
+        .checked_add(constraints)
         .and_then(|n| n.checked_add(parameters))
         .and_then(|n| n.checked_add(2))
-        .ok_or_else(|| Error::Decode("history count overflow".into()))?;
+        .ok_or_else(overflow)?;
     ctx.charge_entities(
         cadmpeg_core::decode::u64_from_index(total),
         "Onshape history admission",
     )
-    .map_err(|error| Error::Decode(error.to_string()))?;
-    reserve_history(&mut model.features, 1)?;
-    reserve_history(&mut model.sketches, 1)?;
-    reserve_history(
-        &mut model.sketch_entities,
-        entities
-            .checked_add(constraints)
-            .ok_or_else(|| Error::Decode("history count overflow".into()))?,
-    )
-    .map_err(|error| Error::Decode(error.to_string()))?;
-    reserve_history(&mut model.sketch_constraints, constraints)?;
-    reserve_history(
-        &mut model.parameters,
-        parameters
-            .checked_add(constraints)
-            .ok_or_else(|| Error::Decode("history count overflow".into()))?,
-    )?;
+    .map_err(crate::decode::onshape_failure)?;
+    reserve_history(ctx, &mut model.features, 1)?;
+    reserve_history(ctx, &mut model.sketches, 1)?;
+    reserve_history(ctx, &mut model.sketch_entities, entities)?;
+    reserve_history(ctx, &mut model.sketch_constraints, constraints)?;
+    reserve_history(ctx, &mut model.parameters, parameters)?;
+    reserve_history(ctx, &mut model.feature_input_topologies, 1)?;
     Ok(())
 }
 
@@ -301,7 +319,7 @@ pub(super) fn read(
     report: &mut Report,
     progress: Option<&Progress<'_>>,
 ) -> Result<Model, Error> {
-    let bundle = Bundle::open(ctx, bytes)?;
+    let mut bundle = Bundle::open(ctx, bytes)?;
     let manifest = bundle.json("manifest.json")?;
     if manifest.get("schema").and_then(Value::as_str) != Some(SCHEMA) {
         return Err(Error::Decode(
@@ -318,8 +336,9 @@ pub(super) fn read(
         )),
     }
     let document = manifest.get("document").unwrap_or(&Value::Null);
-    let mid = text(document, "microversion").map_err(Error::Decode)?;
-    bundle.validate_microversions(mid)?;
+    let mid = text(document, "microversion")
+        .map_err(Error::Decode)?
+        .to_owned();
     let elements = rows(manifest, "elements").map_err(Error::Decode)?;
     if elements.len() != 1
         || elements
@@ -333,7 +352,7 @@ pub(super) fn read(
     let element = elements
         .first()
         .ok_or_else(|| Error::Decode("Onshape bundle has no Part Studio".into()))?;
-    let eid = text(element, "id").map_err(Error::Decode)?;
+    let eid = text(element, "id").map_err(Error::Decode)?.to_owned();
     if !eid
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
@@ -343,47 +362,88 @@ pub(super) fn read(
         ));
     }
     let prefix = format!("partstudios/{eid}");
-    let response = bundle.json(&format!("{prefix}/features.json"))?;
-    microversion(response, "sourceMicroversion", mid).map_err(Error::Decode)?;
-    let features = rows(response, "features").map_err(Error::Decode)?;
+    bundle.validate_microversions(&mid);
     bundle.admit_topology(ctx)?;
-    let inputs = topology::Inputs::new(&bundle, &prefix, mid, features).map_err(Error::Decode)?;
+    bundle.admit_records();
+    bundle.report_losses(report);
+    let features = match bundle
+        .json(&format!("{prefix}/features.json"))
+        .map_err(|e| e.to_string())
+        .and_then(|response| rows(response, "features"))
+    {
+        Ok(features) => features,
+        Err(reason) => {
+            loss(
+                report,
+                "Onshape history",
+                &reason,
+                false,
+                "onshape/history.not-supported",
+            );
+            &[]
+        }
+    };
+    let inputs = topology::Inputs::new(&bundle, &prefix, &mid, features).map_err(Error::Decode)?;
     let step_path = format!("{prefix}/export.step");
+    let empty = || Model {
+        ir: cadmpeg_ir::CadIr::empty(),
+        fidelity: None,
+        name: path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Onshape sketches")
+            .to_owned(),
+        source_file: path.file_name().map(|s| s.to_string_lossy().into_owned()),
+        assembly: None,
+        source_step: None,
+    };
     let mut model = if bundle.contains(&step_path) {
         let source = bundle.bytes(&step_path)?;
-        // Exact final bodies and comparison reference, never historical picks.
-        let mut model = crate::decode::onshape_step(ctx, path, source, report, progress)?;
-        model.source_step = Some(String::from_utf8(source.to_vec()).map_err(|_| {
-            Error::Decode("Onshape STEP export is not UTF-8; fetch a new bundle".into())
-        })?);
-        part_studio_bodies(&mut model);
-        model
-    } else if !features.is_empty()
-        && features.iter().all(|feature| {
-            suppression(feature) == Ok(true)
-                || matches!(
-                    feature.get("featureType").and_then(Value::as_str),
-                    Some("newSketch" | "assignVariable")
-                )
-        })
-    {
-        Model {
-            ir: cadmpeg_ir::CadIr::empty(),
-            fidelity: None,
-            name: path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Onshape sketches")
-                .to_owned(),
-            source_file: path.file_name().map(|s| s.to_string_lossy().into_owned()),
-            assembly: None,
-            source_step: None,
+        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::decode::onshape_step(ctx, path, source, report, progress)
+        }))
+        .unwrap_or_else(|_| {
+            Err(Error::Decode(
+                "the Onshape STEP member decoder failed unexpectedly; fetch a new bundle".into(),
+            ))
+        });
+        match decoded {
+            Ok(mut model) => {
+                model.source_step = match String::from_utf8(source.to_vec()) {
+                    Ok(text) => Some(text),
+                    Err(_) => {
+                        loss(
+                            report,
+                            "Onshape STEP export",
+                            "the STEP text is not UTF-8; fetch a new bundle",
+                            false,
+                            "onshape/member.not-supported",
+                        );
+                        None
+                    }
+                };
+                part_studio_bodies(&mut model);
+                model
+            }
+            Err(error) => {
+                if let Some(resource) = ctx.resource_refusal() {
+                    return Err(Error::Decode(format!(
+                        "{error} during {}",
+                        resource.operation
+                    )));
+                }
+                loss(
+                    report,
+                    "Onshape STEP export",
+                    &error.to_string(),
+                    false,
+                    "onshape/member.not-supported",
+                );
+                empty()
+            }
         }
     } else {
-        return Err(Error::Decode(
-            "Onshape bundle has body-building features but no STEP export; fetch a new bundle"
-                .into(),
-        ));
+        empty()
     };
     // One body creator followed by modifying operations has an unambiguous final
     // body identity. This binds writer body names, including through-all cuts.
@@ -423,16 +483,62 @@ pub(super) fn read(
     } else {
         std::collections::BTreeMap::new()
     };
-    let mut previous = None;
+    if features
+        .iter()
+        .any(|feature| features::value(feature, "bodyType") == Some("THIN"))
+    {
+        ctx.charge_entities(
+            cadmpeg_core::decode::u64_from_index(features.len().saturating_add(2)),
+            "Onshape design admission",
+        )
+        .map_err(crate::decode::onshape_failure)?;
+        reserve_history(ctx, &mut model.ir.design.features, features.len())?;
+        reserve_history(ctx, &mut model.ir.design.containers, 1)?;
+        reserve_history(ctx, &mut model.ir.design.scopes, 1)?;
+    }
     let mut seen = std::collections::BTreeSet::new();
     let mut unresolved_variables = std::collections::BTreeSet::new();
     for (ordinal, feature) in features.iter().enumerate() {
-        let native = text(feature, "featureId").map_err(Error::Decode)?;
-        if !seen.insert(native) {
-            return Err(Error::Decode(
-                "Onshape feature ids repeat; fetch a new bundle".into(),
-            ));
-        }
+        let native = match text(feature, "featureId") {
+            Ok(native) if seen.insert(native) => native,
+            _ => {
+                if feature.get("featureType").and_then(Value::as_str) == Some("assignVariable")
+                    && suppression(feature) != Ok(true)
+                {
+                    unresolved_variables.extend(
+                        model
+                            .ir
+                            .model
+                            .parameters
+                            .iter()
+                            .filter(|parameter| parameter.owner.is_none())
+                            .map(|parameter| parameter.name.clone()),
+                    );
+                    if let Ok(parameters) = optional_rows(feature, "parameters") {
+                        unresolved_variables.extend(
+                            parameters
+                                .iter()
+                                .filter(|parameter| {
+                                    parameter.get("parameterId").and_then(Value::as_str)
+                                        == Some("name")
+                                })
+                                .filter_map(|parameter| {
+                                    parameter.get("value").and_then(Value::as_str)
+                                })
+                                .map(str::to_owned),
+                        );
+                    }
+                }
+                loss(
+                    report,
+                    &format!("Onshape feature at index {ordinal}"),
+                    "the feature id is missing or repeated; fetch a new bundle",
+                    model.source_step.is_some(),
+                    "onshape/history.not-supported",
+                );
+                continue;
+            }
+        };
         let feature_id = id("feature", native);
         let name = feature
             .get("name")
@@ -442,7 +548,7 @@ pub(super) fn read(
         let bindings: Vec<_> =
             if feature.get("featureType").and_then(Value::as_str) == Some("assignVariable") {
                 optional_rows(feature, "parameters")
-                    .map_err(Error::Decode)?
+                    .unwrap_or_default()
                     .iter()
                     .filter(|p| p.get("parameterId").and_then(Value::as_str) == Some("name"))
                     .filter_map(|p| p.get("value").and_then(Value::as_str))
@@ -463,7 +569,17 @@ pub(super) fn read(
                 }
             }
         }
-        admit_history(ctx, feature, &mut model.ir.model)?;
+        // Malformed record counts are local; caller budget/allocation failures stay fatal.
+        let admission = ["entities", "constraints", "parameters"]
+            .into_iter()
+            .try_for_each(|key| optional_rows(feature, key).map(|_| ()));
+        if admission.is_ok() {
+            admit_history(ctx, feature, &mut model.ir.model)?;
+        } else {
+            ctx.charge_entities(1, "Onshape native feature admission")
+                .map_err(crate::decode::onshape_failure)?;
+            reserve_history(ctx, &mut model.ir.model.features, 1)?;
+        }
         let sizes = (
             model.ir.model.sketches.len(),
             model.ir.model.sketch_entities.len(),
@@ -472,8 +588,10 @@ pub(super) fn read(
             model.ir.model.feature_input_topologies.len(),
             model.ir.design.features.len(),
         );
-        let dependencies: Vec<_> = previous.iter().cloned().collect();
-        let mapped = if let Err(reason) = &suppressed {
+        let mut dependencies = Vec::<String>::new();
+        let mapped = if let Err(reason) = admission {
+            Err(reason)
+        } else if let Err(reason) = &suppressed {
             Err(reason.clone())
         } else if suppressed == Ok(true) {
             Ok(definition(
@@ -494,9 +612,17 @@ pub(super) fn read(
                     definition.clone(),
                 )
                 .map_err(|e| format!("the resolved construction is not supported yet ({e})"))?;
+                dependencies = features::dependencies(
+                    feature,
+                    &definition,
+                    ordinal,
+                    &inputs,
+                    &model.ir.model,
+                )?;
                 if features::value(feature, "bodyType") == Some("THIN")
                     && feature.get("featureType").and_then(Value::as_str) == Some("extrude")
                 {
+                    thin::owner(&model.ir)?;
                     let design = thin::feature(
                         feature,
                         &definition,
@@ -518,12 +644,22 @@ pub(super) fn read(
                         Some("newSketch" | "assignVariable")
                     )
                 {
-                    features::report_evaluated_variables(feature, &model.ir.model, report)
-                        .map_err(Error::Decode)?;
+                    if let Err(reason) =
+                        features::report_evaluated_variables(feature, &model.ir.model, report)
+                    {
+                        loss(
+                            report,
+                            name,
+                            &reason,
+                            model.source_step.is_some(),
+                            "onshape/history.not-supported",
+                        );
+                    }
                 }
                 definition
             }
             Err(reason) => {
+                dependencies.clear();
                 model.ir.model.sketches.truncate(sizes.0);
                 model.ir.model.sketch_entities.truncate(sizes.1);
                 model.ir.model.sketch_constraints.truncate(sizes.2);
@@ -579,8 +715,19 @@ pub(super) fn read(
                 unresolved_variables.remove(*name);
             }
         }
-        let mut source_properties =
-            features::source_properties(feature, &definition).map_err(Error::Decode)?;
+        let mut source_properties = match features::source_properties(feature, &definition) {
+            Ok(properties) => properties,
+            Err(reason) => {
+                loss(
+                    report,
+                    name,
+                    &reason,
+                    model.source_step.is_some(),
+                    "onshape/history.not-supported",
+                );
+                json!({})
+            }
+        };
         if definition.pointer("/value/kind").and_then(Value::as_str) == Some("extrude")
             && definition
                 .pointer("/value/value/extent/kind")
@@ -607,26 +754,84 @@ pub(super) fn read(
             .cloned()
             .collect();
         let mut row = json!({"id": feature_id, "ordinal": ordinal, "name": name, "dependencies": dependencies, "source_properties": source_properties, "source_content": [], "outputs": outputs, "definition": definition});
-        if let Ok(suppressed) = suppressed {
-            row.as_object_mut()
-                .ok_or_else(|| Error::Decode("feature row is missing".into()))?
-                .insert("suppressed".into(), json!(suppressed));
+        if let (Ok(suppressed), Some(row)) = (suppressed, row.as_object_mut()) {
+            row.insert("suppressed".into(), json!(suppressed));
         }
-        push(&mut model.ir.model.features, row).map_err(Error::Decode)?;
-        if suppressed != Ok(true) {
-            previous = Some(feature_id);
+        if let Err(reason) = push(&mut model.ir.model.features, row) {
+            loss(
+                report,
+                name,
+                &reason,
+                model.source_step.is_some(),
+                "onshape/history.not-supported",
+            );
         }
     }
-    annotate(&mut model, features)?;
+    if !model.ir.design.features.is_empty() {
+        let mut refused: std::collections::BTreeSet<_> = model
+            .ir
+            .design
+            .features
+            .iter()
+            .map(|feature| feature.id.clone())
+            .collect();
+        if let Err(reason) = thin::install_scope(&mut model.ir, report) {
+            model.ir.design = Default::default();
+            for feature in &mut model.ir.model.features {
+                if refused.contains(&feature.id)
+                    || feature
+                        .dependencies
+                        .iter()
+                        .any(|dependency| refused.contains(dependency))
+                {
+                    refused.insert(feature.id.clone());
+                    if let Ok(native) = serde_json::from_value(definition(
+                        "native",
+                        json!({"kind":format!("Onshape design scope: {reason}"),"parameters":{}}),
+                    )) {
+                        feature.evaluation =
+                            cadmpeg_ir::features::FeatureEvaluation::from_definition(native);
+                    }
+                    feature.dependencies = Default::default();
+                    loss(
+                        report,
+                        feature.id.as_str(),
+                        &reason,
+                        model.source_step.is_some(),
+                        "onshape/history.not-supported",
+                    );
+                }
+            }
+        }
+    }
+    annotate(&mut model, features, report);
     model.ir.finalize();
     Ok(model)
 }
 
-fn annotate(model: &mut Model, features: &[Value]) -> Result<(), Error> {
+fn annotation_result<T, E: std::fmt::Display>(
+    result: Result<T, E>,
+    report: &mut Report,
+    subject: &str,
+    has_step: bool,
+) {
+    if let Err(error) = result {
+        loss(
+            report,
+            subject,
+            &error.to_string(),
+            has_step,
+            "onshape/history.not-supported",
+        );
+    }
+}
+
+fn annotate(model: &mut Model, features: &[Value], report: &mut Report) {
     use cadmpeg_ir::annotations::AnnotationBuilder;
     use cadmpeg_ir::Exactness;
+    let has_step = model.source_step.is_some();
     let Some(fidelity) = model.fidelity.as_mut() else {
-        return Ok(());
+        return;
     };
     let mut annotations = AnnotationBuilder::resume(std::mem::take(&mut fidelity.annotations));
     for topology in &model.ir.model.feature_input_topologies {
@@ -637,31 +842,53 @@ fn annotate(model: &mut Model, features: &[Value]) -> Result<(), Error> {
             entity.geometry.definition(),
             cadmpeg_ir::sketches::SketchGeometryDefinition::Point { .. }
         ) {
-            annotations
-                .field_exactness(entity.id(), "geometry", Exactness::Derived)
-                .map_err(|error| Error::Decode(error.to_string()))?;
+            annotation_result(
+                annotations.field_exactness(entity.id(), "geometry", Exactness::Derived),
+                report,
+                entity.id().as_str(),
+                has_step,
+            );
         }
     }
     for parameter in &model.ir.model.parameters {
         if !parameter.dependencies.is_empty() || parameter.expression.contains('(') {
-            annotations
-                .field_exactness(&parameter.id, "value", Exactness::Derived)
-                .map_err(|error| Error::Decode(error.to_string()))?;
+            annotation_result(
+                annotations.field_exactness(&parameter.id, "value", Exactness::Derived),
+                report,
+                parameter.id.as_str(),
+                has_step,
+            );
         }
     }
     for feature in &model.ir.model.features {
-        annotations
-            .field_exactness(&feature.id, "definition", Exactness::Derived)
-            .map_err(|error| Error::Decode(error.to_string()))?;
-        annotations
-            .field_exactness(&feature.id, "dependencies", Exactness::Derived)
-            .map_err(|error| Error::Decode(error.to_string()))?;
-        annotations
-            .field_exactness(&feature.id, "outputs", Exactness::Derived)
-            .map_err(|error| Error::Decode(error.to_string()))?;
+        annotation_result(
+            annotations.field_exactness(&feature.id, "definition", Exactness::Derived),
+            report,
+            feature.id.as_str(),
+            has_step,
+        );
+        annotation_result(
+            annotations.field_exactness(&feature.id, "dependencies", Exactness::Derived),
+            report,
+            feature.id.as_str(),
+            has_step,
+        );
+        annotation_result(
+            annotations.field_exactness(&feature.id, "outputs", Exactness::Derived),
+            report,
+            feature.id.as_str(),
+            has_step,
+        );
     }
-    for source in features {
-        let native = text(source, "featureId").map_err(Error::Decode)?;
+    for (ordinal, source) in features.iter().enumerate() {
+        let Ok(native) = text(source, "featureId") else {
+            continue;
+        };
+        if !model.ir.model.features.iter().any(|feature| {
+            feature.id.as_str() == id("feature", native) && feature.ordinal == ordinal as u64
+        }) {
+            continue;
+        }
         let sketch_id = id("sketch", native);
         if model
             .ir
@@ -670,7 +897,19 @@ fn annotate(model: &mut Model, features: &[Value]) -> Result<(), Error> {
             .iter()
             .any(|s| s.id.as_str() == sketch_id)
         {
-            let queries = features::queries(source, "sketchPlane").map_err(Error::Decode)?;
+            let queries = match features::queries(source, "sketchPlane") {
+                Ok(queries) => queries,
+                Err(reason) => {
+                    loss(
+                        report,
+                        native,
+                        &reason,
+                        has_step,
+                        "onshape/history.not-supported",
+                    );
+                    continue;
+                }
+            };
             let inferred = queries.iter().all(|q| {
                 q.get("deterministicIds")
                     .and_then(Value::as_array)
@@ -684,8 +923,8 @@ fn annotate(model: &mut Model, features: &[Value]) -> Result<(), Error> {
                                 })
                         })
             });
-            annotations
-                .field_exactness(
+            annotation_result(
+                annotations.field_exactness(
                     &sketch_id,
                     "placement",
                     if inferred {
@@ -693,20 +932,32 @@ fn annotate(model: &mut Model, features: &[Value]) -> Result<(), Error> {
                     } else {
                         Exactness::Derived
                     },
-                )
-                .map_err(|error| Error::Decode(error.to_string()))?;
+                ),
+                report,
+                sketch_id.as_str(),
+                has_step,
+            );
         }
         if source.get("suppressed").is_none() && source.get("parentSuppressed").is_none() {
-            annotations
-                .field_exactness(id("feature", native), "suppressed", Exactness::Inferred)
-                .map_err(|error| Error::Decode(error.to_string()))?;
+            annotation_result(
+                annotations.field_exactness(
+                    id("feature", native),
+                    "suppressed",
+                    Exactness::Inferred,
+                ),
+                report,
+                id("feature", native).as_str(),
+                has_step,
+            );
         }
     }
     fidelity.annotations = annotations.build();
-    Ok(())
 }
 
 #[cfg(test)]
 mod review;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod rereview;

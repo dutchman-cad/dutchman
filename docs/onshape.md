@@ -1,5 +1,27 @@
 # Onshape bundles
 
+Onshape history dependencies follow consumed operands in their stored order. Deterministic
+body, face and edge selections need a unique earlier producer proved by rollback
+transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+Every present scope query list is validated, while an empty list keeps implicit scope.
+Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
+A record the reader cannot convert becomes a named loss and the remaining records continue.
+Unreadable or oversized members use `onshape/member.not-supported`; malformed features
+remain Native with `onshape/history.not-supported`. Container admission and exhausted
+caller resource budgets can still stop conversion. Inspect the reported losses before
+relying on editable history.
+
+Thin design features require one product scope owning the stored bodies, an ordered
+container with one membership per feature, and a current state at its last member.
+Explicit wall flags and stored line directions or closed-carrier senses determine
+left/right sides for open walls and inside/outside for closed walls. Equal offsets
+become their summed symmetric thickness. Other model timeline operations remain
+native design members (`onshape/design.operation-native`); their decoded construction
+remains in model history. Missing proof data keeps the named thin-feature loss.
+Sketch midpoint admission reserves one carrier and three relations per midpoint
+before construction, including when several midpoints share a sketch.
+
+
 Dutchman reads a local `.onshape-bundle` containing one Part Studio at one pinned
 microversion. Conversion is offline. No account, API keys, network connection, or
 Onshape installation is used by this reader.
@@ -71,14 +93,18 @@ properties identify symmetric parameters measured over the total span. Readers
 without these capabilities retain their previous default output.
 
 Thin extrusions map explicit sketch-curve selections from `wallShape` in the stored
-`MODEL` domain. `midplane`, `oppositeDirection` and the active thickness values
-must be present and consistent. Symmetric walls use `thickness` and do not need an
-inactive wall-side flag; directed walls use `flipWall`, `thickness1` and `thickness2`. Clockwise source carriers retain their stored
-side when normalized to the neutral curve direction; mixed directions that cannot
-share one side remain a named loss. Modifying operations must select the sole body
-at that feature's rollback through `booleanScope`; NEW has no Boolean targets.
-Missing or contradictory data retains `onshape/extrude.thin-not-supported` and final
-STEP geometry. No area or sampled point chooses a side or a body.
+`MODEL` domain. `midplane`, `flipWall`, `oppositeDirection` and the active thickness
+values must be present and consistent. Symmetric walls use `thickness`; equal
+`thickness1` and `thickness2` offsets use their summed symmetric thickness. Stored
+line directions and closed-carrier senses determine the side. Modifying operations
+must select the sole body at that feature's rollback through `booleanScope`; NEW
+has no Boolean targets. Missing or contradictory data retains
+`onshape/extrude.thin-not-supported` and final STEP geometry. No area or sampled
+point chooses a side or a body.
+
+Open, one-sided walls retain directed left/right construction in the reader.
+Writing those directional sides to SolidCraft is not supported yet; inspect the
+conversion's history reason and retain its final STEP geometry.
 
 Quantity expressions are evaluated with their dimensions over the complete expression,
 including fractions and arithmetic. A numeric fallback requires an explicit supported

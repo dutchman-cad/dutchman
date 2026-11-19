@@ -76,7 +76,7 @@ fn kinds(model: &Model) -> Vec<String> {
 fn synthetic_bundles_retain_the_expected_cadir_rows_and_final_step() {
     for (name, expected) in [
         ("plate-fillet", vec!["sketch", "extrude", "fillet"]),
-        ("revolve", vec!["sketch", "revolve"]),
+        ("revolve", vec!["sketch", "native"]),
         ("hole", vec!["sketch", "extrude", "sketch", "hole"]),
         ("unsupported", vec!["sketch", "extrude", "native"]),
     ] {
@@ -101,7 +101,11 @@ fn synthetic_bundles_retain_the_expected_cadir_rows_and_final_step() {
         }
         assert_eq!(
             wire["model"]["features"][1]["outputs"],
-            json!([model.ir.geometry.bodies[0].id])
+            if name == "revolve" {
+                json!([])
+            } else {
+                json!([model.ir.geometry.bodies[0].id])
+            }
         );
         assert!(model
             .source_step
@@ -118,13 +122,17 @@ fn synthetic_bundles_retain_the_expected_cadir_rows_and_final_step() {
                     .is_some_and(|s| s.starts_with("onshape/"))
             })
             .collect();
-        if name == "unsupported" {
+        if matches!(name, "unsupported" | "revolve") {
             assert_eq!(losses.len(), 1);
             assert_eq!(
                 losses[0].code.as_deref(),
                 Some("onshape/history.not-supported")
             );
-            assert!(losses[0].detail.contains("custom FeatureScript"));
+            assert!(losses[0].detail.contains(if name == "unsupported" {
+                "custom FeatureScript"
+            } else {
+                "producer"
+            }));
         } else {
             assert!(losses.is_empty(), "{name}: {losses:?}");
         }
@@ -134,7 +142,7 @@ fn synthetic_bundles_retain_the_expected_cadir_rows_and_final_step() {
 #[test]
 fn built_in_plane_queries_preserve_quoted_identity() {
     for (plane, expected) in [
-        ("Top", vec!["sketch", "revolve"]),
+        ("Top", vec!["sketch", "native"]),
         ("T op", vec!["native", "native"]),
     ] {
         let bytes = changed(&fixture("revolve"), |path, value| {
@@ -205,13 +213,6 @@ fn unresolved_edges_never_fall_back_to_final_topology_or_another_rollback() {
                 *value = json!([1]);
             }
         });
-        if failure == "microversion" {
-            assert!(read(&bytes)
-                .unwrap_err()
-                .to_string()
-                .contains("pinned microversion"));
-            continue;
-        }
         let (model, report) = read(&bytes).unwrap();
         assert_eq!(kinds(&model), ["sketch", "extrude", "native"]);
         assert!(model.ir.model.feature_input_topologies.is_empty());
@@ -259,7 +260,12 @@ fn wrong_magic_schema_and_microversion_are_refused() {
                 }
             }
         });
-        assert!(read(&bytes).is_err(), "{failure}");
+        if matches!(failure, "microversion" | "duplicate") {
+            let (_, report) = read(&bytes).unwrap();
+            assert!(!report.losses().is_empty(), "{failure}");
+        } else {
+            assert!(read(&bytes).is_err(), "{failure}");
+        }
     }
     assert_eq!(
         Format::from_path(&PathBuf::from("Plate.ONSHAPE-BUNDLE")),
@@ -324,7 +330,7 @@ fn unsupported_sketch_constraints_keep_exact_curves_with_a_named_loss() {
         }
     });
     let (model, report) = read(&bytes).unwrap();
-    assert_eq!(kinds(&model), ["sketch", "revolve"]);
+    assert_eq!(kinds(&model), ["sketch", "native"]);
     assert_eq!(model.ir.model.sketch_entities.len(), 4);
     assert_eq!(model.ir.model.sketch_constraints.len(), 1);
     assert!(report.losses().iter().any(|loss| loss.code.as_deref()
@@ -621,12 +627,7 @@ fn circles_arcs_and_simple_splines_remain_exact_sketch_entities() {
         }
     });
     let (model, report) = read(&bytes).unwrap();
-    assert_eq!(
-        kinds(&model),
-        ["sketch", "revolve"],
-        "{:?}",
-        report.losses()
-    );
+    assert_eq!(kinds(&model), ["sketch", "native"], "{:?}", report.losses());
     let wire = timeline(&model);
     let entities = wire["model"]["sketch_entities"].as_array().unwrap();
     assert_eq!(
@@ -1020,10 +1021,9 @@ fn missing_step_does_not_bypass_body_history_validation() {
         output.write_all(&data).unwrap();
     }
     let bytes = output.finish().unwrap().into_inner();
-    assert!(read(&bytes)
-        .unwrap_err()
-        .to_string()
-        .contains("body-building features but no STEP"));
+    let (model, _) = read(&bytes).unwrap();
+    assert_eq!(kinds(&model), ["sketch", "extrude", "fillet"]);
+    assert!(model.source_step.is_none());
 }
 
 #[test]

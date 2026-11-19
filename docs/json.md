@@ -1,5 +1,18 @@
 # Machine-readable reports
 
+Onshape history dependencies follow consumed operands in their stored order. Deterministic
+body, face and edge selections need a unique earlier producer proved by rollback
+transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+Every present scope query list is validated, while an empty list keeps implicit scope.
+Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
+A record the reader cannot convert becomes a named loss and the remaining records continue.
+Unreadable or oversized members use `onshape/member.not-supported`; malformed features
+remain Native with `onshape/history.not-supported`. Container admission and exhausted
+caller resource budgets can still stop conversion. Inspect the reported losses before
+relying on editable history.
+Open, one-sided thin walls retain directed left/right data in the reader; writing
+those sides is not supported yet, so the final STEP geometry remains.
+
 The desktop app also accepts pasted files, paths, Onshape links, and confirmed HTTPS
 downloads; see [pasting files and links](desktop.md#paste-files-and-links). This adds no CLI
 flags, MCP tools, or report fields.
@@ -7,7 +20,7 @@ flags, MCP tools, or report fields.
 Onshape bundles add the format identifier `onshape_bundle` and extension
 `onshape-bundle` to the existing format fields and listings. Existing report
 schemas and fields are unchanged. Reader losses use
-`onshape/history.not-supported` for a feature that stops history and
+`onshape/history.not-supported` for a feature retained as Native and
 `onshape/sketch.constraint-not-supported` for a dropped relation whose solved
 curves remain, and `onshape/history.part-not-matched` (subject `part names`) when a
 Part Studio's parts cannot all be matched to the features that made them. Constraint
@@ -1418,3 +1431,8 @@ no SolidCraft parameter can keep driven (for example a fillet radius or hole siz
 written as its evaluated value with a Degraded `onshape/history.variable-evaluated`
 loss at stage `map` naming the value. Suppressed features, including parent-suppressed
 features, do not produce these losses. Report fields and schema versions are unchanged.
+
+`onshape/member.not-supported` identifies a skipped member, body topology table or
+sketch-information record, with that record as its subject. `onshape/design.operation-native`
+identifies a native design timeline member whose decoded operation remains in model history.
+Both are Degraded losses at stage `map`; report fields and schema versions are unchanged.

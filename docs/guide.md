@@ -1,5 +1,18 @@
 # Getting started
 
+Onshape history dependencies follow consumed operands in their stored order. Deterministic
+body, face and edge selections need a unique earlier producer proved by rollback
+transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+Every present scope query list is validated, while an empty list keeps implicit scope.
+Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
+A record the reader cannot convert becomes a named loss and the remaining records continue.
+Unreadable or oversized members use `onshape/member.not-supported`; malformed features
+remain Native with `onshape/history.not-supported`. Container admission and exhausted
+caller resource budgets can still stop conversion. Inspect the reported losses before
+relying on editable history.
+Open, one-sided thin walls retain directed left/right data in the reader; writing
+those sides is not supported yet, so the final STEP geometry remains.
+
 Onshape sketch constraint losses name the source constraint kind and why it could not
 be mapped. The solved sketch geometry remains; inspect these losses even when body
 verification succeeds. Origin coincidences and midpoint construction carriers retain

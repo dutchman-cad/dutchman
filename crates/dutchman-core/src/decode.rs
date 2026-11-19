@@ -73,11 +73,10 @@ pub(crate) fn decode_with_progress(
         if format == Format::OnshapeBundle {
             let arena = DecodeArena::new();
             let policy = policy();
-            let (ctx, _) = DecodeContext::from_root_bytes(bytes, &arena, &policy)
-                .map_err(|error| Error::Decode(error.to_string()))?;
+            let (ctx, _) =
+                DecodeContext::from_root_bytes(bytes, &arena, &policy).map_err(onshape_failure)?;
             let result = crate::onshape::read(&ctx, path, bytes, report, progress);
-            ctx.finish_session()
-                .map_err(|error| Error::Decode(error.to_string()))?;
+            ctx.finish_session().map_err(onshape_failure)?;
             let mut model = result?;
             with_fallback(&mut model.ir, report, &policy, bytes.len() as u64)?;
             return Ok(model);
@@ -99,6 +98,15 @@ pub(crate) fn decode_with_progress(
             format.name()
         )))
     })
+}
+
+#[cfg(feature = "onshape")]
+pub(crate) fn onshape_failure(error: CodecError) -> Error {
+    let message = match &error {
+        CodecError::ResourceLimit(resource) => format!("{error} during {}", resource.operation),
+        _ => error.to_string(),
+    };
+    Error::Decode(message)
 }
 
 /// Decode a bundle's STEP member in its parent's resource session and panic guard.
@@ -984,6 +992,23 @@ fn design_name(path: &Path) -> String {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "onshape")]
+    #[test]
+    fn onshape_resource_refusal_keeps_the_caller_operation() {
+        let mut policy = policy();
+        policy.limits.max_entities = 2;
+        let arena = DecodeArena::new();
+        let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
+        assert!(ctx
+            .charge_entities(3, "synthetic Onshape asset admission")
+            .is_err());
+        let error = onshape_failure(ctx.finish_session().unwrap_err()).to_string();
+        assert!(
+            error.contains("Entities") && error.contains("synthetic Onshape asset admission"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn recovery_advice_is_for_unreadable_containers_not_missing_capabilities() {

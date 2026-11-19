@@ -52,7 +52,7 @@ fn read(bytes: &[u8]) -> (Value, Report) {
 
 // A deliberately simple literal encoder, independent of the fixture generator's
 // dictionary/reference encoder. Only synthetic records pass through this helper.
-fn compact(value: &Value) -> String {
+pub(super) fn compact(value: &Value) -> String {
     match value {
         Value::String(s) => format!("S{:x}${s}", s.len()),
         Value::Number(n) => {
@@ -1504,6 +1504,19 @@ fn a_variable_revolve_angle_becomes_a_parameter_the_revolve_owns() {
             "180 deg",
         )],
         |response| {
+            let native = response["features"][0]["featureId"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            response["features"][0]["entities"].as_array_mut().unwrap().push(json!({"btType":"BTMSketchCurveSegment-155","entityId":"angle-axis","isConstruction":true,"geometry":{"btType":"BTCurveGeometryLine-117","dirY":1.0},"startParam":0.0,"endParam":0.015}));
+            let query = json!({"entityType":"EDGE","historyType":"CREATION","queryType":"SKETCH_ENTITY","operationId":[format!("{native}.wireOp")],"sketchEntityId":"angle-axis"});
+            let axis = response["features"][1]["parameters"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|p| p["parameterId"] == "axis")
+                .unwrap();
+            replace_query(&mut axis["queries"][0], &query);
             let parameters = response["features"][1]["parameters"]
                 .as_array_mut()
                 .unwrap();
@@ -1804,7 +1817,7 @@ fn stored_thin_bundle(
     operation: &str,
     missing: Option<&str>,
 ) -> Vec<u8> {
-    super::review::edit(FIXTURE, |path, response| {
+    let bytes = super::review::edit(FIXTURE, |path, response| {
         if path.ends_with("features.json") {
             response["features"].as_array_mut().unwrap().truncate(2);
             let sketch = response["features"][0]["featureId"]
@@ -1815,10 +1828,6 @@ fn stored_thin_bundle(
                 .as_str()
                 .unwrap()
                 .to_owned();
-            response["features"][0]["entities"]
-                .as_array_mut()
-                .unwrap()
-                .truncate(1);
             response["features"][0]["constraints"] = json!([]);
             if reverse {
                 let geometry = &mut response["features"][0]["entities"][0]["geometry"];
@@ -1856,6 +1865,32 @@ fn stored_thin_bundle(
         if path.ends_with("bodydetails/1.json") && operation != "NEW" {
             response["bodies"] = json!([{"id":"body","faces":[],"edges":[],"vertices":[]}]);
         }
+    });
+    super::review::members(&bytes, |members| {
+        let path = "partstudios/studio/features.json";
+        let mut features: Value = serde_json::from_slice(&members[path]).unwrap();
+        let native = features["features"][0]["featureId"].clone();
+        let producer = json!({"featureType":"extrude","featureId":"stored-producer","parameters":[
+            {"parameterId":"bodyType","value":"SOLID"},{"parameterId":"operationType","value":"NEW"},
+            {"parameterId":"entities","queries":[{"btType":"BTMIndividualSketchRegionQuery-140","featureId":native}]},
+            {"parameterId":"endBound","value":"BLIND"},{"parameterId":"depth","expression":"2 mm"}]});
+        features["features"]
+            .as_array_mut()
+            .unwrap()
+            .insert(1, producer);
+        members.insert(path.into(), serde_json::to_vec(&features).unwrap());
+        members.insert(
+            "partstudios/studio/bodydetails/index.json".into(),
+            b"[0,1,2]".to_vec(),
+        );
+        members.insert(
+            "partstudios/studio/bodydetails/1.json".into(),
+            br#"{"bodies":[]}"#.to_vec(),
+        );
+        members.insert(
+            "partstudios/studio/bodydetails/2.json".into(),
+            br#"{"bodies":[{"id":"body","faces":[],"edges":[],"vertices":[]}]}"#.to_vec(),
+        );
     })
 }
 #[test]
@@ -1867,15 +1902,15 @@ fn stored_thin_scope_and_controls_map_a_typed_design() {
                     super::review::decode(&stored_thin_bundle(reverse, flip, operation, None));
                 let wire = super::review::wire(&result);
                 assert_eq!(
-                    wire["model"]["features"][1]["definition"]["value"]["kind"],
+                    wire["model"]["features"][2]["definition"]["value"]["kind"],
                     "extrude",
                     "{:?}",
                     result.report().losses()
                 );
-                let design = &wire["design"]["features"][0]["definition"]["operation"]["value"];
+                let design = &wire["design"]["features"][2]["definition"]["operation"]["value"];
                 assert_eq!(
                     design["output"]["body"]["thickness"]["value"]["side"]["kind"],
-                    if flip { "inside" } else { "outside" }
+                    if flip { "left" } else { "right" }
                 );
                 assert_eq!(design["direction"]["reversed"]["value"], reverse);
                 super::review::validate(result);
@@ -1883,6 +1918,105 @@ fn stored_thin_scope_and_controls_map_a_typed_design() {
         }
     }
 }
+#[test]
+fn thin_current_state_membership_sides_and_missing_product_scope_are_proved() {
+    for datum in [
+        "open",
+        "equal",
+        "closed",
+        "missing-sense",
+        "missing-product",
+    ] {
+        let bytes = super::review::edit(
+            &stored_thin_bundle(false, false, "NEW", None),
+            |path, response| {
+                if !path.ends_with("features.json") {
+                    return;
+                }
+                if datum == "equal" {
+                    super::review::parameter(&mut response["features"][2], "thickness2")
+                        ["expression"] = json!("1 mm");
+                }
+                if matches!(datum, "closed" | "missing-sense") {
+                    response["features"][0]["entities"]
+                        .as_array_mut()
+                        .unwrap()
+                        .truncate(1);
+                    let entity = &mut response["features"][0]["entities"][0];
+                    entity["btType"] = json!("BTMSketchCurve-4");
+                    entity["geometry"] = json!({"btType":"BTCurveGeometryCircle-115","radius":0.005,"clockwise":false});
+                    if datum == "missing-sense" {
+                        entity["geometry"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("clockwise");
+                    }
+                }
+            },
+        );
+        let bytes = if datum == "missing-product" {
+            super::review::members(&bytes, |members| {
+                members.remove("partstudios/studio/export.step");
+            })
+        } else {
+            bytes
+        };
+        let result = super::review::decode(&bytes);
+        let output = super::review::wire(&result);
+        if datum.starts_with("missing") {
+            assert_eq!(
+                output["model"]["features"][2]["definition"]["value"]["kind"],
+                "native"
+            );
+            assert!(result
+                .report()
+                .losses()
+                .iter()
+                .any(|loss| loss.code.as_deref() == Some("onshape/extrude.thin-not-supported")));
+        } else {
+            let design = &output["design"];
+            assert_eq!(design["scopes"].as_array().unwrap().len(), 1);
+            assert_eq!(design["containers"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                design["containers"][0]["value"]["members"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                3
+            );
+            let last = &design["features"][2]["id"];
+            assert_eq!(
+                design["scopes"][0]["current"][0]["at"]["value"]["value"],
+                *last
+            );
+            let bodies: Vec<_> = result
+                .ir()
+                .geometry
+                .bodies
+                .iter()
+                .map(|body| body.id.clone())
+                .collect();
+            assert_eq!(design["scopes"][0]["current"][0]["bodies"], json!(bodies));
+            let thickness = &design["features"][2]["definition"]["operation"]["value"]["output"]
+                ["body"]["thickness"];
+            if datum == "equal" {
+                assert_eq!(thickness["kind"], "symmetric");
+                assert_eq!(thickness["value"]["value"], json!(2.0));
+            } else {
+                assert_eq!(
+                    thickness["value"]["side"]["kind"],
+                    if datum == "closed" {
+                        "outside"
+                    } else {
+                        "right"
+                    }
+                );
+            }
+        }
+        super::review::validate(result);
+    }
+}
+
 #[test]
 fn missing_thin_scope_side_thickness_or_direction_refuses_with_named_loss() {
     for missing in [
@@ -1897,7 +2031,7 @@ fn missing_thin_scope_side_thickness_or_direction_refuses_with_named_loss() {
         let result = super::review::decode(&stored_thin_bundle(false, false, "ADD", Some(missing)));
         let wire = super::review::wire(&result);
         assert_eq!(
-            wire["model"]["features"][1]["definition"]["value"]["kind"], "native",
+            wire["model"]["features"][2]["definition"]["value"]["kind"], "native",
             "{missing}"
         );
         assert!(result.ir().design.features.is_empty());
@@ -1914,7 +2048,7 @@ fn missing_thin_scope_side_thickness_or_direction_refuses_with_named_loss() {
     let bytes = super::review::edit(
         &stored_thin_bundle(false, false, "ADD", None),
         |path, response| {
-            if path.ends_with("bodydetails/1.json") {
+            if path.ends_with("bodydetails/2.json") {
                 response["bodies"]
                     .as_array_mut()
                     .unwrap()
@@ -1924,7 +2058,7 @@ fn missing_thin_scope_side_thickness_or_direction_refuses_with_named_loss() {
     );
     let result = super::review::decode(&bytes);
     assert_eq!(
-        super::review::wire(&result)["model"]["features"][1]["definition"]["value"]["kind"],
+        super::review::wire(&result)["model"]["features"][2]["definition"]["value"]["kind"],
         "native"
     );
     assert!(result
@@ -1995,15 +2129,15 @@ fn exact_conic_intersections_map_closed_lenses_and_refuse_missing_intervals() {
 }
 
 #[test]
-fn stored_symmetric_thickness_maps_without_an_inactive_wall_side() {
+fn stored_symmetric_thickness_maps_with_explicit_wall_controls() {
     for present in [true, false] {
         let bytes = super::review::edit(
-            &stored_thin_bundle(false, false, "NEW", Some("flipWall")),
+            &stored_thin_bundle(false, false, "NEW", None),
             |path, response| {
                 if !path.ends_with("features.json") {
                     return;
                 }
-                let feature = &mut response["features"][1];
+                let feature = &mut response["features"][2];
                 super::review::parameter(feature, "midplane")["value"] = json!(true);
                 if present {
                     feature["parameters"]
@@ -2016,14 +2150,14 @@ fn stored_symmetric_thickness_maps_without_an_inactive_wall_side() {
         let result = super::review::decode(&bytes);
         let wire = super::review::wire(&result);
         assert_eq!(
-            wire["model"]["features"][1]["definition"]["value"]["kind"],
+            wire["model"]["features"][2]["definition"]["value"]["kind"],
             if present { "extrude" } else { "native" },
             "{:?}",
             result.report().losses()
         );
         if present {
             assert_eq!(
-                wire["design"]["features"][0]["definition"]["operation"]["value"]["output"]["body"]
+                wire["design"]["features"][2]["definition"]["operation"]["value"]["output"]["body"]
                     ["thickness"]["kind"],
                 "symmetric"
             );
@@ -2155,11 +2289,15 @@ fn sketch_information_bundle(case: &str, cap: bool, tilted: bool) -> Vec<u8> {
         if cap {
             let feature_path = "partstudios/studio/features.json";
             let mut features: Value = serde_json::from_slice(&members[feature_path]).unwrap();
+            let producer = features["features"][1]["featureId"]
+                .as_str()
+                .unwrap()
+                .to_owned();
             let query = &mut features["features"][2]["parameters"][0]["queries"][0];
             replace_query(
                 query,
                 &json!({"entityType":"FACE","historyType":"CREATION",
-                "queryType":"CAP_FACE","operationId":["extrude.opExtrude"],"isStart":false}),
+                "queryType":"CAP_FACE","operationId":[format!("{producer}.opExtrude")],"isStart":false}),
             );
             members.insert(feature_path.into(), serde_json::to_vec(&features).unwrap());
         }
@@ -2174,7 +2312,9 @@ fn sketch_information_places_face_and_cap_sketches_from_stored_axes_only() {
             let wire = super::review::wire(&result);
             assert_eq!(
                 wire["model"]["features"][2]["definition"]["value"]["kind"],
-                "sketch"
+                "sketch",
+                "cap={cap}, tilted={tilted}: {:?}",
+                result.report().losses()
             );
             let frame = &wire["model"]["sketches"]
                 .as_array()
@@ -2242,7 +2382,10 @@ fn sketch_information_microversion_must_match_the_bundle() {
         &sketch_information_bundle("wrong-microversion", false, false),
         &mut report,
     );
-    assert!(result.err().unwrap().to_string().contains("microversion"));
+    assert!(result.is_ok());
+    assert!(report.losses().iter().any(|loss| loss.code.as_deref()
+        == Some("onshape/member.not-supported")
+        && loss.detail.contains("microversion")));
 }
 
 #[test]
@@ -2263,7 +2406,10 @@ fn sketch_information_row_count_is_bounded() {
         &bytes,
         &mut report,
     );
-    assert!(result.err().unwrap().to_string().contains("row limit"));
+    assert!(result.is_ok());
+    assert!(report.losses().iter().any(|loss| loss.code.as_deref()
+        == Some("onshape/member.not-supported")
+        && loss.detail.contains("row limit")));
 }
 
 #[test]

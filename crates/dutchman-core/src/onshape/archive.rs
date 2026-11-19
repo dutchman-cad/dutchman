@@ -15,6 +15,7 @@ const EXPANDED_BYTES: u64 = 256 << 20;
 pub(super) struct Bundle {
     members: BTreeMap<String, Vec<u8>>,
     json: BTreeMap<String, Value>,
+    failures: BTreeMap<String, String>,
 }
 
 fn failure(detail: impl std::fmt::Display) -> Error {
@@ -39,10 +40,23 @@ impl Bundle {
             return Err(failure("the member count exceeds the bundle limit"));
         }
         let mut members = BTreeMap::new();
+        let mut failures = BTreeMap::new();
         let mut remaining = EXPANDED_BYTES;
         for i in 0..zip.len() {
-            let mut member = zip.by_index(i).map_err(failure)?;
-            let name = member.name().map_err(failure)?.into_owned();
+            let mut member = match zip.by_index(i) {
+                Ok(member) => member,
+                Err(error) => {
+                    failures.insert(format!("member {i}"), error.to_string());
+                    continue;
+                }
+            };
+            let name = match member.name() {
+                Ok(name) => name.into_owned(),
+                Err(error) => {
+                    failures.insert(format!("member {i}"), error.to_string());
+                    continue;
+                }
+            };
             if name.contains('\\')
                 || name.split('/').any(|part| {
                     part.is_empty() || part == "." || part == ".." || part.contains(':')
@@ -53,35 +67,53 @@ impl Bundle {
                     zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated
                 )
             {
-                return Err(failure(
-                    "a member name or compression method is not supported yet",
-                ));
+                failures.insert(
+                    name,
+                    "the member name or compression method is not supported yet".into(),
+                );
+                continue;
             }
             let limit = if name.ends_with(".json") {
                 JSON_BYTES.min(remaining)
             } else {
                 remaining
             };
-            if member.size() > limit {
+            if member.size() > remaining {
                 return Err(failure("the expanded data exceeds the bundle limit"));
             }
+            if member.size() > limit {
+                failures.insert(name, "the expanded data exceeds the JSON size limit".into());
+                continue;
+            }
             ctx.retain_bytes(member.size(), "Onshape expanded member")
-                .map_err(|error| Error::Decode(error.to_string()))?;
+                .map_err(crate::decode::onshape_failure)?;
             let mut data = Vec::new();
             data.try_reserve(usize::try_from(member.size()).map_err(failure)?)
                 .map_err(failure)?;
-            member
-                .by_ref()
-                .take(limit + 1)
-                .read_to_end(&mut data)
-                .map_err(failure)?;
+            if let Err(error) = member.by_ref().take(limit + 1).read_to_end(&mut data) {
+                failures.insert(name, format!("the member cannot be read ({error})"));
+                continue;
+            }
             if data.len() as u64 > limit {
-                return Err(failure("the expanded data exceeds the bundle limit"));
+                if data.len() as u64 > remaining {
+                    return Err(failure("the expanded data exceeds the bundle limit"));
+                }
+                failures.insert(name, "the expanded data exceeds the JSON size limit".into());
+                continue;
             }
             remaining = remaining.saturating_sub(data.len() as u64);
-            if members.insert(name, data).is_some() {
-                return Err(failure("a member name occurs more than once"));
+            if failures.contains_key(&name) || members.contains_key(&name) {
+                members.remove(&name);
+                failures.insert(name, "the member name occurs more than once".into());
+            } else {
+                members.insert(name, data);
             }
+        }
+        for name in failures.keys() {
+            members.remove(name);
+        }
+        if let Some(reason) = failures.get("manifest.json") {
+            return Err(failure(format!("manifest.json: {reason}")));
         }
         let parse = |path: &str| -> Result<Value, Error> {
             let data = members
@@ -89,7 +121,7 @@ impl Bundle {
                 .ok_or_else(|| failure(format!("{path} is missing")))?;
             let text = std::str::from_utf8(data).map_err(failure)?;
             ctx.parse_json_value(text, "Onshape JSON member")
-                .map_err(|error| Error::Decode(error.to_string()))
+                .map_err(crate::decode::onshape_failure)
         };
         let manifest = parse("manifest.json")?;
         let prefix = manifest
@@ -102,10 +134,40 @@ impl Bundle {
                 .as_deref()
                 .is_some_and(|prefix| schema_response(name, prefix))
             {
-                json.insert(name.clone(), parse(name)?);
+                // Syntax is member-local. Resource refusals retain the caller's budget.
+                let data = members
+                    .get(name)
+                    .ok_or_else(|| failure("the member is missing"))?;
+                let parsed = match std::str::from_utf8(data) {
+                    Ok(text) => match ctx.parse_json_value(text, "Onshape JSON member") {
+                        Ok(value) => Ok(value),
+                        Err(error) => {
+                            if let Some(resource) = ctx.resource_refusal() {
+                                return Err(Error::Decode(format!(
+                                    "{error} during {}",
+                                    resource.operation
+                                )));
+                            }
+                            Err(error.to_string())
+                        }
+                    },
+                    Err(error) => Err(error.to_string()),
+                };
+                match parsed {
+                    Ok(value) => {
+                        json.insert(name.clone(), value);
+                    }
+                    Err(reason) => {
+                        failures.insert(name.clone(), reason);
+                    }
+                }
             }
         }
-        Ok(Self { members, json })
+        Ok(Self {
+            members,
+            json,
+            failures,
+        })
     }
 
     pub fn bytes(&self, path: &str) -> Result<&[u8], Error> {
@@ -124,73 +186,180 @@ impl Bundle {
             .get(path)
             .ok_or_else(|| failure(format!("{path} is missing")))
     }
-    pub(super) fn validate_microversions(&self, expected: &str) -> Result<(), Error> {
-        for value in self.json.values() {
+    pub(super) fn validate_microversions(&mut self, expected: &str) {
+        self.json.retain(|path, value| {
             for key in ["sourceMicroversion", "microversionId"] {
-                super::microversion(value, key, expected).map_err(Error::Decode)?;
+                if let Err(reason) = super::microversion(value, key, expected) {
+                    self.failures.insert(path.clone(), reason);
+                    return false;
+                }
+            }
+            true
+        });
+    }
+    pub(super) fn admit_records(&mut self) {
+        for (path, response) in &mut self.json {
+            if path.ends_with("bodydetails/index.json") {
+                let entries = response
+                    .as_array()
+                    .or_else(|| response.get("indices").and_then(Value::as_array));
+                if entries.is_none_or(|rows| {
+                    let mut seen = std::collections::BTreeSet::new();
+                    rows.len() > super::ROWS
+                        || rows.iter().any(|row| {
+                            let ordinal = row
+                                .as_u64()
+                                .and_then(|value| usize::try_from(value).ok())
+                                .or_else(|| {
+                                    row.as_str()?.strip_suffix(".json")?.parse::<usize>().ok()
+                                });
+                            ordinal.is_none_or(|ordinal| !seen.insert(ordinal))
+                        })
+                }) {
+                    self.failures.insert(
+                        path.clone(),
+                        "the rollback index list is missing or not supported yet".into(),
+                    );
+                }
+            }
+            if path.contains("/bodydetails/") && !path.ends_with("/index.json") {
+                if let Some(bodies) = response.get_mut("bodies").and_then(Value::as_array_mut) {
+                    for (current, body) in bodies.iter().enumerate() {
+                        let supported = super::text(body, "id").is_ok()
+                            && ["faces", "edges", "vertices"]
+                                .into_iter()
+                                .all(|key| super::optional_rows(body, key).is_ok());
+                        if !supported {
+                            self.failures.insert(
+                                format!("{path} body {current}"),
+                                "the body topology tables are missing or exceed the row limit"
+                                    .into(),
+                            );
+                        }
+                        // Keep the unadmitted body as unknown evidence. Dropping it
+                        // could falsely prove absence or turn a multi-body scope into one.
+                    }
+                } else {
+                    self.failures.insert(
+                        path.clone(),
+                        "the body topology list is missing or not supported yet".into(),
+                    );
+                }
+            }
+            if path.ends_with("/sketches.json") {
+                if let Some(sketches) = response.get_mut("sketches").and_then(Value::as_array_mut) {
+                    let mut ordinal = 0usize;
+                    let mut seen = std::collections::BTreeSet::new();
+                    sketches.retain(|sketch| {
+                        let current = ordinal;
+                        ordinal = ordinal.saturating_add(1);
+                        let native = super::text(sketch, "featureId");
+                        let supported = native.is_ok();
+                        if native.is_ok_and(|native| !seen.insert(native.to_owned())) {
+                            self.failures.insert(
+                                format!("{path} sketch {current}"),
+                                "the sketch information repeats a feature id".into(),
+                            );
+                        }
+                        if !supported {
+                            self.failures.insert(
+                                format!("{path} sketch {current}"),
+                                "the sketch information has no feature id".into(),
+                            );
+                        }
+                        supported
+                    });
+                } else {
+                    self.failures.insert(
+                        path.clone(),
+                        "the sketch information list is missing or not supported yet".into(),
+                    );
+                }
             }
         }
-        Ok(())
+    }
+    pub(super) fn report_losses(&self, report: &mut crate::Report) {
+        for (path, reason) in &self.failures {
+            report.push_coded(
+                crate::Severity::Degraded,
+                path,
+                "onshape/member.not-supported",
+                format!("{reason}; skipped this record; fetch a new bundle to recover it"),
+            );
+        }
     }
     pub(super) fn admit_topology(
-        &self,
+        &mut self,
         ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     ) -> Result<(), Error> {
         let mut count = 0usize;
+        let mut refused = Vec::new();
         for (path, response) in &self.json {
-            if path.ends_with("/sketches.json") {
-                if let Some(sketches) = response.get("sketches").and_then(Value::as_array) {
-                    if sketches.len() > super::ROWS {
-                        return Err(failure("sketch information exceeds the row limit"));
+            let before = count;
+            let local = (|| -> Result<(), Error> {
+                if path.ends_with("/sketches.json") {
+                    if let Some(sketches) = response.get("sketches").and_then(Value::as_array) {
+                        if sketches.len() > super::ROWS {
+                            return Err(failure("sketch information exceeds the row limit"));
+                        }
+                        count = count
+                            .checked_add(sketches.len())
+                            .ok_or_else(|| failure("sketch information count overflow"))?;
+                    }
+                }
+                if !path.contains("/bodydetails/") {
+                    return Ok(());
+                }
+                let Some(bodies) = response.get("bodies").and_then(Value::as_array) else {
+                    return Ok(());
+                };
+                let mut add = |length: usize| -> Result<(), Error> {
+                    if length > super::ROWS {
+                        return Err(failure("topology exceeds the row limit"));
                     }
                     count = count
-                        .checked_add(sketches.len())
-                        .ok_or_else(|| failure("sketch information count overflow"))?;
-                }
-            }
-            if !path.contains("/bodydetails/") {
-                continue;
-            }
-            let Some(bodies) = response.get("bodies").and_then(Value::as_array) else {
-                continue;
-            };
-            let mut add = |length: usize| -> Result<(), Error> {
-                if length > super::ROWS {
-                    return Err(failure("topology exceeds the row limit"));
-                }
-                count = count
-                    .checked_add(length)
-                    .ok_or_else(|| failure("topology count overflow"))?;
-                Ok(())
-            };
-            add(bodies.len())?;
-            for body in bodies {
-                for key in ["faces", "edges", "vertices"] {
-                    if let Some(rows) = body.get(key).and_then(Value::as_array) {
-                        add(rows.len())?;
+                        .checked_add(length)
+                        .ok_or_else(|| failure("topology count overflow"))?;
+                    Ok(())
+                };
+                add(bodies.len())?;
+                for body in bodies {
+                    for key in ["faces", "edges", "vertices"] {
+                        if let Some(rows) = body.get(key).and_then(Value::as_array) {
+                            add(rows.len())?;
+                        }
                     }
-                }
-                if let Some(faces) = body.get("faces").and_then(Value::as_array) {
-                    for face in faces {
-                        if let Some(loops) = face.get("loops").and_then(Value::as_array) {
-                            add(loops.len())?;
-                            for boundary in loops {
-                                if let Some(coedges) =
-                                    boundary.get("coedges").and_then(Value::as_array)
-                                {
-                                    add(coedges.len())?;
+                    if let Some(faces) = body.get("faces").and_then(Value::as_array) {
+                        for face in faces {
+                            if let Some(loops) = face.get("loops").and_then(Value::as_array) {
+                                add(loops.len())?;
+                                for boundary in loops {
+                                    if let Some(coedges) =
+                                        boundary.get("coedges").and_then(Value::as_array)
+                                    {
+                                        add(coedges.len())?;
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                Ok(())
+            })();
+            if let Err(error) = local {
+                count = before;
+                refused.push((path.clone(), error.to_string()));
             }
+        }
+        for (path, reason) in refused {
+            self.json.remove(&path);
+            self.failures.insert(path, reason);
         }
         ctx.charge_entities(
             cadmpeg_core::decode::u64_from_index(count),
             "Onshape topology admission",
         )
-        .map_err(|error| Error::Decode(error.to_string()))
+        .map_err(crate::decode::onshape_failure)
     }
 }
 

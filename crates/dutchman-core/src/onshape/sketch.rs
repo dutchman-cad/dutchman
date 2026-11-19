@@ -99,6 +99,16 @@ fn frame(
         json!({"origin": topology::point([0.0; 3]), "normal": topology::point(normal), "u_axis": topology::point(u_axis)}),
     )
 }
+pub(super) fn built_in_frame(feature: &Value) -> bool {
+    frame(
+        feature,
+        &cadmpeg_ir::CadIr::empty().model,
+        &|_| Err("historical face".into()),
+        &Ok(None),
+    )
+    .is_ok()
+}
+
 fn cap_frame(_query: &Value, _model: &Model) -> Mapping<Value> {
     Err("the cap face has no stored sketch attachment origin, normal and x axis".into())
 }
@@ -511,6 +521,27 @@ fn projected_origin(plane: &Value) -> Mapping<[f64; 2]> {
     Ok([0.0 - dot(origin, u), 0.0 - dot(origin, v)])
 }
 
+pub(super) struct ConstraintOutput {
+    pub entities: usize,
+    pub constraints: usize,
+    pub parameters: usize,
+}
+
+pub(super) fn constraint_output(constraint: &Value) -> Mapping<ConstraintOutput> {
+    let (entities, constraints, parameters) = match text(constraint, "constraintType")? {
+        "MIDPOINT" => (1, 3, 0),
+        "LENGTH" | "DISTANCE" | "RADIUS" | "DIAMETER" | "ANGLE" => (0, 1, 1),
+        "HORIZONTAL" | "VERTICAL" | "FIX" | "PARALLEL" | "PERPENDICULAR" | "TANGENT" | "EQUAL"
+        | "CONCENTRIC" | "COINCIDENT" => (0, 1, 0),
+        kind => return Err(format!("{kind} sketch constraints are not supported yet")),
+    };
+    Ok(ConstraintOutput {
+        entities,
+        constraints,
+        parameters,
+    })
+}
+
 fn constraint_row(
     constraint: &Value,
     native: &str,
@@ -520,6 +551,7 @@ fn constraint_row(
     model: &mut Model,
     unresolved: &BTreeSet<String>,
 ) -> Mapping<Value> {
+    constraint_output(constraint)?;
     let kind = text(constraint, "constraintType")?;
     let cid = id(
         "constraint",

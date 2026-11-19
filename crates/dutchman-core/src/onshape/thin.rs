@@ -1,27 +1,50 @@
-//! Thin-wall output in CADIR's typed design vocabulary. The model projection
-//! retains the same feature identity, profile and extent for existing readers.
-use cadmpeg_ir::document::Model;
-use serde_json::{json, Value};
-
-use super::{features, id, rows, text, topology, Mapping};
+// SPDX-License-Identifier: Apache-2.0
 use std::collections::{BTreeMap, BTreeSet};
 
+use cadmpeg_ir::{document::Model, CadIr};
+use serde_json::{json, Value};
+
+use super::{features, id, number, push, rows, text, topology, Mapping};
+
 pub(super) fn profile(profile: Value, model: &Model) -> Mapping<Value> {
-    if profile.get("kind").and_then(Value::as_str) != Some("sketch") {
+    if text(&profile, "kind")? != "sketch" {
         return Ok(profile);
     }
     let sketch = text(&profile, "value")?;
-    let mut entities = Vec::new();
-    for entity in &model.sketch_entities {
-        if entity.sketch.as_str() == sketch && !entity.construction {
-            let value =
-                serde_json::to_value(entity).map_err(|_| "the thin extrude curve is unreadable")?;
-            if value.pointer("/geometry/kind").and_then(Value::as_str) != Some("point") {
-                entities.push(entity.id().as_str());
-            }
-        }
-    }
+    let entities: Vec<_> = model
+        .sketch_entities
+        .iter()
+        .filter(|entity| {
+            entity.sketch.as_str() == sketch
+                && !entity.construction
+                && !matches!(
+                    entity.geometry.definition(),
+                    cadmpeg_ir::sketches::SketchGeometryDefinition::Point { .. }
+                )
+        })
+        .map(|entity| entity.id().as_str())
+        .collect();
     Ok(json!({"kind":"sketch_entities","value":{"sketch":sketch,"entities":entities}}))
+}
+
+pub(super) fn owner(ir: &CadIr) -> Mapping<cadmpeg_ir::ids::ProductDefinitionId> {
+    let [definition] = ir.model.product_definitions.as_slice() else {
+        return Err("thin construction needs one admitted Part Studio product scope".into());
+    };
+    if ir.model.occurrences.iter().any(|occurrence| {
+        !matches!(occurrence.parent, cadmpeg_ir::products::OccurrenceParent::Root {})
+            || !matches!(&occurrence.prototype, cadmpeg_ir::products::PrototypeReference::Local { definition: owner } if owner == &definition.id)
+    })
+        || definition.bodies.len() != ir.geometry.bodies.len()
+        || ir
+            .geometry
+            .bodies
+            .iter()
+            .any(|body| !definition.bodies.contains(&body.id))
+    {
+        return Err("thin construction product scope does not own the Part Studio bodies".into());
+    }
+    Ok(definition.id.clone())
 }
 
 pub(super) fn feature(
@@ -33,149 +56,236 @@ pub(super) fn feature(
     unresolved: &BTreeSet<String>,
 ) -> Mapping<Value> {
     if features::value(source, "domain") != Some("MODEL") {
-        return Err("the thin extrusion domain is missing or not MODEL".into());
+        return Err("thin construction has no stored MODEL domain".into());
     }
-    // The writer's all-targets projection is exact only for this proven sole body.
-    // NEW has no Boolean targets. Never infer a scope from the final STEP bodies.
+    let midplane = features::required_boolean(source, "midplane")?;
+    let flip = features::required_boolean(source, "flipWall")?;
+    let reversed = features::required_boolean(source, "oppositeDirection")?;
+    for key in ["hasExtrudeDirection", "startOffset"] {
+        if features::enabled(source, key)? {
+            return Err(format!("thin {key} construction is unresolved"));
+        }
+    }
     if features::value(source, "operationType") != Some("NEW") {
         inputs.load(ordinal, source)?.whole_body_scope(source)?;
     }
-    let midplane = features::required_boolean(source, "midplane")?;
-    let flipped = if midplane {
-        false
-    } else {
-        features::required_boolean(source, "flipWall")?
-    };
-    features::required_boolean(source, "oppositeDirection")?;
-    for key in ["hasExtrudeDirection", "startOffset"] {
-        if features::enabled(source, key)? {
-            return Err(format!("thin extrusion {key} is not supported yet"));
-        }
-    }
-    let extrude = definition
+    let operation = definition
         .pointer("/value/value")
-        .ok_or("the thin extrude definition is missing")?;
-    let profile = extrude
+        .ok_or("thin operation is missing")?;
+    let profile = operation
         .pointer("/profile/value/value")
-        .ok_or("the thin extrude needs explicit sketch curves")?;
+        .ok_or("thin construction needs explicit source curves")?;
     let entities = rows(profile, "entities")?;
-    let mut picks = Vec::new();
-    for entity in entities {
-        picks.push(json!({"target":{"kind":"sketch_entity","value":entity}}));
+    if entities.is_empty() {
+        return Err("thin construction has no source curves".into());
     }
-    if picks.is_empty() {
-        return Err("the thin extrude has no selected sketch curves".into());
-    }
-    let sketch = text(profile, "sketch")?;
-    let mut reversed = None;
-    let queries = rows(features::parameter(source, "wallShape")?, "queries")?
-        .iter()
-        .map(super::query::resolved)
-        .collect::<Mapping<Vec<_>>>()?;
-    let mut sources = BTreeMap::new();
-    for query in &queries {
-        let [operation] = rows(query, "operationId")? else {
-            return Err("the thin curve has multiple source operations".into());
-        };
-        let native_sketch = operation
-            .as_str()
-            .and_then(|s| s.strip_suffix(".wireOp"))
-            .ok_or("the thin curve source operation is missing")?;
-        let native_entity = text(query, "sketchEntityId")?;
-        if sources
-            .insert(
-                id("entity", &format!("{native_sketch}/{native_entity}")),
-                (native_sketch, native_entity),
-            )
-            .is_some()
+    let mut closed = false;
+    let mut clockwise = false;
+    let mut directed = BTreeMap::new();
+    for source_query in features::queries(source, "wallShape")? {
+        if source_query
+            .get("queryString")
+            .and_then(Value::as_str)
+            .is_some_and(|query| query.contains("qCompressed("))
         {
-            return Err("the thin profile repeats a stored directed curve selection".into());
+            let query = super::query::resolved(source_query)?;
+            let [operation] = rows(&query, "operationId")? else {
+                return Err("thin curve producer is unresolved".into());
+            };
+            let native = operation
+                .as_str()
+                .and_then(|operation| operation.strip_suffix(".wireOp"))
+                .ok_or("thin sketch producer is missing")?;
+            let source_id = text(&query, "sketchEntityId")?;
+            let key = id("entity", &format!("{native}/{source_id}"));
+            let entity = inputs.sketch_entity(native, source_id)?;
+            if directed.insert(key, entity).is_some() {
+                return Err("thin directed selections repeat".into());
+            }
+        } else {
+            let native = text(source_query, "featureId")?;
+            for entity in inputs.sketch_entities(native)? {
+                let key = id("entity", &format!("{native}/{}", text(entity, "entityId")?));
+                if directed.insert(key, entity).is_some() {
+                    return Err("thin directed selections repeat".into());
+                }
+            }
         }
     }
+
     for selected in entities {
-        let selected = selected.as_str().ok_or("a thin curve id is missing")?;
-        let entity = model
-            .sketch_entities
-            .iter()
-            .find(|e| e.id().as_str() == selected)
-            .ok_or("a thin curve has no solved geometry")?;
-        if entity.sketch.as_str() != sketch || entity.construction {
-            return Err("the thin profile selects another sketch or construction geometry".into());
-        }
-        let (native_sketch, native_entity) = sources
+        let selected = selected.as_str().ok_or("thin curve id is missing")?;
+        let entity = directed
             .get(selected)
-            .ok_or("the thin curve has no stored directed sketch selection")?;
-        let source_entity = inputs.sketch_entity(native_sketch, native_entity)?;
-        let geometry = source_entity
+            .ok_or("thin curve has no stored directed selection")?;
+        if super::boolean_field(entity, "isConstruction")? {
+            return Err("thin profile selects construction geometry".into());
+        }
+        let geometry = entity
             .get("geometry")
-            .ok_or("the thin curve direction is missing")?;
-        let clockwise = super::boolean_field(geometry, "clockwise")?;
-        if reversed.is_some_and(|previous| previous != clockwise) && !midplane {
-            return Err("mixed thin curve directions cannot share one stored wall side yet".into());
+            .ok_or("stored thin curve direction is missing")?;
+        match text(geometry, "btType")? {
+            "BTCurveGeometryLine-117" => {
+                let dx = super::coordinate(geometry, "dirX")?;
+                let dy = super::coordinate(geometry, "dirY")?;
+                if dx.hypot(dy) == 0.0
+                    || super::coordinate(entity, "startParam")?
+                        == super::coordinate(entity, "endParam")?
+                {
+                    return Err("stored thin line direction is degenerate".into());
+                }
+            }
+            "BTCurveGeometryCircle-115" | "BTCurveGeometryEllipse-1189"
+                if entity.get("btType").and_then(Value::as_str) == Some("BTMSketchCurve-4") =>
+            {
+                closed = true;
+                clockwise = geometry
+                    .get("clockwise")
+                    .and_then(Value::as_bool)
+                    .ok_or("stored thin curve sense is missing")?;
+            }
+            _ => return Err("stored thin curve direction is unresolved".into()),
         }
-        reversed = Some(clockwise);
     }
-    // Circle/ellipse canonicalization reverses clockwise source curves. Preserve
-    // the stored side relative to those curves; no area chooses the wall side.
-    let flipped = flipped ^ reversed.unwrap_or(false);
     let length = |key| -> Mapping<f64> {
-        let n = features::quantity(features::parameter(source, key)?, false, model, unresolved)?;
-        if n < 0.0 {
-            return Err(format!("thin extrusion {key} must not be negative"));
+        let value =
+            features::quantity(features::parameter(source, key)?, false, model, unresolved)?;
+        if value < 0.0 {
+            return Err("thin thickness is negative".into());
         }
-        Ok(n)
+        Ok(value)
     };
     let literal = |value| json!({"kind":"literal","value":value});
     let thickness = if midplane {
-        let thickness = length("thickness")?;
-        if thickness == 0.0 {
-            return Err("the thin extrusion has no positive wall thickness".into());
+        let value = length("thickness")?;
+        if value == 0.0 {
+            return Err("thin thickness is zero".into());
         }
-        json!({"kind":"symmetric","value":literal(thickness)})
+        json!({"kind":"symmetric","value":literal(value)})
     } else {
         let first = length("thickness1")?;
         let second = length("thickness2")?;
         if first == 0.0 && second == 0.0 {
-            return Err("the thin extrusion has no positive wall thickness".into());
+            return Err("thin thickness is zero".into());
         }
-        if second == 0.0 {
-            json!({"kind":"one_side","value":{"value":literal(first),"side":{"kind":if flipped {"inside"} else {"outside"}}}})
-        } else {
-            let (outside, inside) = if flipped {
+        let flip = flip ^ clockwise;
+        if first == second {
+            let total = first + second;
+            if !total.is_finite() {
+                return Err("thin thickness exceeds the finite range".into());
+            }
+            json!({"kind":"symmetric","value":literal(total)})
+        } else if entities.len() != 1 {
+            return Err("thin side over multiple curves is unresolved".into());
+        } else if second == 0.0 || first == 0.0 {
+            let (value, flip) = if first == 0.0 {
+                (second, !flip)
+            } else {
+                (first, flip)
+            };
+            let side = match (closed, flip) {
+                (true, false) => "outside",
+                (true, true) => "inside",
+                (false, false) => "right",
+                (false, true) => "left",
+            };
+            json!({"kind":"one_side","value":{"value":literal(value),"side":{"kind":side}}})
+        } else if closed {
+            let (outside, inside) = if flip {
                 (second, first)
             } else {
                 (first, second)
             };
             json!({"kind":"offsets","value":{"outside":literal(outside),"inside":literal(inside)}})
+        } else {
+            return Err("two-sided open thin offsets are unresolved".into());
         }
     };
-    let extent = extrude
-        .get("extent")
-        .ok_or("the thin extrude extent is missing")?;
+    let extent = operation.get("extent").ok_or("thin extent is missing")?;
     let termination = extent
         .pointer("/side/termination")
-        .ok_or("the thin extrude termination is missing")?;
+        .ok_or("thin termination is missing")?;
     let limit = match text(termination, "kind")? {
-        "blind" => json!({"kind":"amount","value":literal(super::number(termination,"length")?)}),
+        "blind" => json!({"kind":"amount","value":literal(number(termination,"length")?)}),
         "through_all" => json!({"kind":"through_all"}),
-        _ => return Err("thin extrudes with this bound are not supported yet".into()),
+        _ => return Err("thin termination is unresolved".into()),
     };
     let span = if text(extent, "kind")? == "symmetric" {
-        json!({"kind":"symmetric","amount":literal(super::number(termination,"length")?),"measure":"total"})
+        json!({"kind":"symmetric","amount":literal(number(termination,"length")?),"measure":"total"})
     } else {
         json!({"kind":"between","start":{"kind":"at_origin"},"end":limit})
     };
-    let op = text(extrude, "op")?;
+    let op = text(operation, "op")?;
     let boolean = if op == "new_body" {
         json!({"kind":"new_body"})
     } else {
         json!({"kind":"apply","op":{"kind":op},"targets":{"kind":"all"}})
     };
+    let picks: Vec<_> = entities
+        .iter()
+        .map(|entity| json!({"target":{"kind":"sketch_entity","value":entity}}))
+        .collect();
     Ok(
-        json!({"id":id("feature",text(source,"featureId")?),"definition":{"operation":{"kind":"extrude","value":{
+        json!({"id":id("feature",text(source,"featureId")?),"suppressed":{"kind":"literal","value":false},"definition":{"operation":{"kind":"extrude","value":{
         "profile":{"at":{"kind":"input"},"picks":{"kind":"named","value":picks}},
-        "direction":{"kind":"profile_normal","reversed":{"kind":"literal","value":extrude.pointer("/direction/kind").and_then(Value::as_str)==Some("reversed_profile_normal")}},
-        "origin":{"kind":"profile_plane"},"span":span,
+        "direction":{"kind":"profile_normal","reversed":{"kind":"literal","value":reversed}},"origin":{"kind":"profile_plane"},"span":span,
         "output":{"body":{"kind":"thin","thickness":thickness},"boolean":boolean},"native_options":{},"source_settings":{}}}}}),
     )
+}
+
+pub(super) fn install_scope(ir: &mut CadIr, report: &mut super::Report) -> Mapping<()> {
+    for source in &ir.model.features {
+        if ir
+            .design
+            .features
+            .iter()
+            .any(|feature| feature.id == source.id)
+        {
+            continue;
+        }
+        report.push_coded(crate::Severity::Degraded, source.id.as_str(), "onshape/design.operation-native",
+            "design timeline retains the native source operation; model history carries its decoded construction");
+        let mut row = json!({"id":source.id,"definition":{"operation":{"kind":"native","value":{"kind":"onshape:timeline-member","native_options":{},"source_settings":{}}}}});
+        let fields = row
+            .as_object_mut()
+            .ok_or("the design timeline row is missing")?;
+        if let Some(name) = source.name.as_ref().filter(|name| !name.trim().is_empty()) {
+            fields.insert("name".into(), json!(name));
+        }
+        if let Some(suppressed) = source.suppressed {
+            fields.insert(
+                "suppressed".into(),
+                json!({"kind":"literal","value":suppressed}),
+            );
+        }
+        push(&mut ir.design.features, row)?;
+    }
+    ir.design.features.sort_by_key(|feature| {
+        ir.model
+            .features
+            .iter()
+            .position(|source| source.id == feature.id)
+    });
+    let Some(last) = ir.design.features.last().map(|feature| feature.id.clone()) else {
+        return Ok(());
+    };
+    let definition = owner(ir)?;
+    let container = id("container", "Part Studio");
+    let bodies: Vec<_> = ir.geometry.bodies.iter().map(|body| &body.id).collect();
+    let members: Vec<_> = ir
+        .design
+        .features
+        .iter()
+        .map(|feature| json!({"kind":"feature","value":feature.id}))
+        .collect();
+    push(
+        &mut ir.design.containers,
+        json!({"kind":"ordered","value":{"id":container,"kind":"timeline","members":members,"folders":[],"rollback":{"kind":"end"}}}),
+    )?;
+    push(
+        &mut ir.design.scopes,
+        json!({"definition":definition,"roots":[container],"active_arrangements":[],"occurrences":{},
+        "current":[{"at":{"kind":"after","value":{"kind":"feature","value":last}},"bodies":bodies,"poses":[],"status":"current"}]}),
+    )?;
+    Ok(())
 }

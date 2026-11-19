@@ -135,6 +135,17 @@ pub(super) fn queries<'a>(feature: &'a Value, key: &str) -> Mapping<&'a [Value]>
     }
 }
 
+// Absence and an empty list are implicit scope; present malformed values are losses.
+pub(super) fn scope_queries<'a>(feature: &'a Value, key: &str) -> Mapping<&'a [Value]> {
+    if !rows(feature, "parameters")?
+        .iter()
+        .any(|p| p.get("parameterId").and_then(Value::as_str) == Some(key))
+    {
+        return Ok(&[]);
+    }
+    rows(parameter(feature, key)?, "queries")
+}
+
 pub(super) fn profile(
     feature: &Value,
     key: &str,
@@ -403,6 +414,201 @@ pub(super) fn report_evaluated_variables(
     Ok(())
 }
 
+pub(super) fn dependencies(
+    source: &Value,
+    definition: &Value,
+    ordinal: usize,
+    inputs: &topology::Inputs<'_>,
+    model: &Model,
+) -> Mapping<Vec<String>> {
+    let mut result = Vec::new();
+    if definition.pointer("/value/kind").and_then(Value::as_str) == Some("native") {
+        return Ok(result);
+    }
+    let operation = definition.pointer("/value/kind").and_then(Value::as_str);
+    if operation == Some("sketch") && sketch::built_in_frame(source) {
+        return Ok(result);
+    }
+    let reference = |native: &str| -> Mapping<String> {
+        inputs.unique_feature(native, ordinal)?;
+        let feature = id("feature", native);
+        if model.features.iter().any(|f| {
+            f.id.as_str() == feature
+                && f.ordinal < ordinal as u64
+                && serde_json::to_value(f).is_ok_and(|f| {
+                    f.pointer("/definition/value/kind").and_then(Value::as_str) != Some("native")
+                })
+        }) {
+            return Ok(feature);
+        }
+        Err(format!(
+            "feature dependency {native:?} is unresolved before this feature"
+        ))
+    };
+    let parameters = rows(source, "parameters")?;
+    let hole_profile = if parameters
+        .iter()
+        .any(|p| p.get("parameterId").and_then(Value::as_str) == Some("locations"))
+    {
+        "locations"
+    } else {
+        "entities"
+    };
+    for parameter in parameters {
+        let key = text(parameter, "parameterId")?;
+        if operation == Some("extrude")
+            && key == "endBound"
+            && value(source, "endBound") == Some("UP_TO_NEXT")
+        {
+            let faces = definition
+                .pointer("/value/value/extent/side/termination/face/value/faces")
+                .and_then(Value::as_array)
+                .ok_or("UP_TO_NEXT producer selection is missing")?;
+            for face in faces {
+                let producer = inputs.producer(
+                    ordinal,
+                    face.as_str().ok_or("UP_TO_NEXT target id is missing")?,
+                    topology::OperandKind::Face,
+                )?;
+                let feature = reference(&producer)?;
+                if !result.contains(&feature) {
+                    result.push(feature);
+                }
+            }
+            continue;
+        }
+        let consumed = match operation {
+            Some("sketch") => key == "sketchPlane",
+            Some("extrude") => {
+                key == if value(source, "bodyType") == Some("THIN") {
+                    "wallShape"
+                } else {
+                    "entities"
+                } || key == "endBoundEntityFace"
+                    && value(source, "endBound") == Some("UP_TO_SURFACE")
+                    || key == "booleanScope" && value(source, "operationType") != Some("NEW")
+            }
+            Some("revolve") => {
+                matches!(key, "entities" | "axis")
+                    || key == "booleanScope" && value(source, "operationType") != Some("NEW")
+            }
+            Some("fillet" | "chamfer") => key == "entities",
+            Some("hole") => key == "scope" || key == hole_profile,
+            _ => false,
+        };
+        if !consumed {
+            continue;
+        }
+        for source in rows(parameter, "queries")? {
+            let mut query = source.clone();
+            if source
+                .get("queryString")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.contains("qCompressed("))
+            {
+                let resolved = super::query::resolved(source)?;
+                for (key, value) in resolved
+                    .as_object()
+                    .ok_or("dependency query is not an object")?
+                {
+                    if query.get(key).is_some_and(|outer| outer != value) {
+                        return Err("feature dependency query fields contradict each other".into());
+                    }
+                    query
+                        .as_object_mut()
+                        .ok_or("dependency query is not an object")?
+                        .insert(key.clone(), value.clone());
+                }
+            }
+            let mut explicit = Vec::new();
+            if query.get("featureId").is_some() {
+                explicit.push(text(&query, "featureId")?.to_owned());
+            }
+            if query.get("operationId").is_some() {
+                for operation in rows(&query, "operationId")? {
+                    let (native, _) = operation
+                        .as_str()
+                        .and_then(|operation| operation.rsplit_once('.'))
+                        .ok_or("feature dependency operation is unresolved")?;
+                    explicit.push(native.to_owned());
+                }
+            }
+            let historical = match (operation, key) {
+                (Some("extrude" | "revolve"), "booleanScope") | (Some("hole"), "scope") => {
+                    Some(topology::OperandKind::Body)
+                }
+                (Some("sketch"), "sketchPlane") | (Some("extrude"), "endBoundEntityFace") => {
+                    Some(topology::OperandKind::Face)
+                }
+                (Some("fillet" | "chamfer"), "entities") => Some(topology::OperandKind::Edge),
+                (Some("revolve"), "axis")
+                    if query.get("queryType").and_then(Value::as_str) != Some("SKETCH_ENTITY") =>
+                {
+                    Some(topology::OperandKind::Edge)
+                }
+                _ => None,
+            };
+            let mut producers = Vec::new();
+            if let Some(kind) = historical.filter(|_| query.get("deterministicIds").is_some()) {
+                let ids = rows(&query, "deterministicIds")?;
+                if ids.is_empty() {
+                    return Err("feature dependency selection is empty".into());
+                }
+                for native in ids {
+                    let producer = inputs.producer(
+                        ordinal,
+                        native
+                            .as_str()
+                            .ok_or("feature dependency deterministic id must be a string")?,
+                        kind,
+                    )?;
+                    if explicit.iter().any(|named| named != &producer) {
+                        return Err(
+                            "feature dependency explicit producer contradicts stored topology"
+                                .into(),
+                        );
+                    }
+                    producers.push(producer);
+                }
+            } else {
+                producers = explicit;
+            }
+            if matches!(operation, Some("fillet" | "chamfer")) {
+                let groups = definition
+                    .pointer("/value/value/groups")
+                    .and_then(Value::as_array)
+                    .ok_or("feature dependency blend groups are missing")?;
+                for group in groups {
+                    let edges = group
+                        .pointer("/edges/value/edges")
+                        .and_then(Value::as_array)
+                        .ok_or("feature dependency final edge selection is missing")?;
+                    for edge in edges {
+                        let producer = inputs.producer(
+                            ordinal,
+                            edge.as_str().ok_or("selected edge id is missing")?,
+                            topology::OperandKind::Edge,
+                        )?;
+                        if !producers.contains(&producer) {
+                            producers.push(producer);
+                        }
+                    }
+                }
+            }
+            if producers.is_empty() {
+                return Err("feature dependency has no resolved producer".into());
+            }
+            for producer in producers {
+                let feature = reference(&producer)?;
+                if !result.contains(&feature) {
+                    result.push(feature);
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
 pub(super) fn map(
     feature: &Value,
     ordinal: usize,
@@ -460,12 +666,8 @@ pub(super) fn map(
     if enabled(feature, "symmetric")? && text(feature, "featureType")? != "extrude" {
         return Err("symmetric extents for this feature are not supported yet".into());
     }
-    let scoped = if parameter(feature, "booleanScope")
-        .ok()
-        .and_then(|p| p.get("queries"))
-        .and_then(Value::as_array)
-        .is_some_and(|queries| !queries.is_empty())
-    {
+    let scope = scope_queries(feature, "booleanScope")?;
+    let scoped = if !scope.is_empty() {
         let state = inputs.load(ordinal, feature)?;
         state.whole_body_scope(feature)?;
         Some(state)
@@ -741,12 +943,7 @@ fn hole(
         model,
         inputs,
     )?;
-    if parameter(feature, "scope")
-        .ok()
-        .and_then(|p| p.get("queries"))
-        .and_then(Value::as_array)
-        .is_some_and(|a| !a.is_empty())
-    {
+    if !scope_queries(feature, "scope")?.is_empty() {
         inputs
             .load(ordinal, feature)?
             .whole_body_scope_key(feature, "scope")?;
@@ -775,7 +972,7 @@ fn hole(
     if let (Some(standard), Some(fields)) = (standard, construction.as_object_mut()) {
         fields.insert(
             "specification".into(),
-            specification(feature, standard, tapped, through, model, unresolved)?,
+            specification(feature, standard, tapped, model, unresolved)?,
         );
     }
     let mut operation = json!({"profile": profile, "profile_filter": "points",
@@ -806,7 +1003,6 @@ fn specification(
     feature: &Value,
     standard: &Value,
     tapped: bool,
-    through: bool,
     model: &Model,
     unresolved: &BTreeSet<String>,
 ) -> Mapping<Value> {
@@ -848,7 +1044,7 @@ fn specification(
         }
         return Ok(clearance);
     }
-    let depth = if through || enabled(feature, "isTappedThrough")? {
+    let depth = if required_boolean(feature, "isTappedThrough")? {
         json!({"kind": "hole_depth"})
     } else {
         json!({"kind": "blind", "depth": length(feature, "tappedDepth", model, unresolved)?})

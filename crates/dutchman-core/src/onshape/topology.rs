@@ -52,6 +52,13 @@ pub(super) fn unit(v: [f64; 3]) -> Mapping<[f64; 3]> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum OperandKind {
+    Body,
+    Face,
+    Edge,
+}
+
 pub(super) struct State {
     pub row: Value,
     pub(super) faces: BTreeMap<String, Value>,
@@ -59,10 +66,9 @@ pub(super) struct State {
     complete_vertices: bool,
 }
 
-fn sketch_information<'a>(
-    bundle: &'a Bundle,
-    prefix: &str,
-) -> Mapping<Option<BTreeMap<&'a str, &'a Value>>> {
+type StoredSketches<'a> = Mapping<Option<BTreeMap<&'a str, Mapping<&'a Value>>>>;
+
+fn sketch_information<'a>(bundle: &'a Bundle, prefix: &str) -> StoredSketches<'a> {
     let path = format!("{prefix}/sketches.json");
     if !bundle.contains(&path) {
         return Ok(None);
@@ -72,11 +78,14 @@ fn sketch_information<'a>(
         .map_err(|_| "sketches.json is unreadable")?;
     let mut sketches = BTreeMap::new();
     for sketch in rows(response, "sketches")? {
-        if sketches
-            .insert(text(sketch, "featureId")?, sketch)
-            .is_some()
-        {
-            return Err("the stored sketch attachment information repeats a feature id".into());
+        let Ok(native) = text(sketch, "featureId") else {
+            continue;
+        };
+        if sketches.insert(native, Ok(sketch)).is_some() {
+            sketches.insert(
+                native,
+                Err("the stored sketch attachment information repeats a feature id".into()),
+            );
         }
     }
     Ok(Some(sketches))
@@ -86,9 +95,11 @@ pub(super) struct Inputs<'a> {
     bundle: &'a Bundle,
     prefix: &'a str,
     mid: &'a str,
-    indices: BTreeSet<usize>,
+    indices: Mapping<BTreeSet<usize>>,
     features: &'a [Value],
-    sketches: Mapping<Option<BTreeMap<&'a str, &'a Value>>>,
+    body_features: Vec<usize>,
+    provenance: std::cell::RefCell<Provenance<'a>>,
+    sketches: StoredSketches<'a>,
     pub(super) regions: std::cell::RefCell<super::regions::Recovery>,
 }
 
@@ -99,36 +110,53 @@ impl<'a> Inputs<'a> {
         mid: &'a str,
         features: &'a [Value],
     ) -> Mapping<Self> {
-        let index = bundle
-            .json(&format!("{prefix}/bodydetails/index.json"))
-            .map_err(|_| "bodydetails/index.json is missing or unreadable; fetch a new bundle")?;
-        let entries = index
-            .as_array()
-            .or_else(|| index.get("indices").and_then(Value::as_array))
-            .filter(|rows| rows.len() <= super::ROWS)
-            .ok_or("the bodydetails index is missing or exceeds the rollback limit")?;
-        let mut indices = BTreeSet::new();
-        for entry in entries {
-            let ordinal = if let Some(ordinal) = entry.as_u64() {
-                usize::try_from(ordinal)
-                    .map_err(|_| "a rollback index exceeds this platform's range")?
-            } else {
-                entry
-                    .as_str()
-                    .and_then(|path| path.strip_suffix(".json"))
-                    .and_then(|i| i.parse::<usize>().ok())
-                    .ok_or("a rollback index has no integer or file name")?
-            };
-            if !indices.insert(ordinal) {
-                return Err("the bodydetails index repeats a rollback index".into());
+        let indices = (|| -> Mapping<BTreeSet<usize>> {
+            let index = bundle
+                .json(&format!("{prefix}/bodydetails/index.json"))
+                .map_err(|_| {
+                    "bodydetails/index.json is missing or unreadable; fetch a new bundle"
+                })?;
+            let entries = index
+                .as_array()
+                .or_else(|| index.get("indices").and_then(Value::as_array))
+                .filter(|rows| rows.len() <= super::ROWS)
+                .ok_or("the bodydetails index is missing or exceeds the rollback limit")?;
+            let mut indices = BTreeSet::new();
+            for entry in entries {
+                let ordinal = if let Some(ordinal) = entry.as_u64() {
+                    usize::try_from(ordinal)
+                        .map_err(|_| "a rollback index exceeds this platform's range")?
+                } else {
+                    entry
+                        .as_str()
+                        .and_then(|path| path.strip_suffix(".json"))
+                        .and_then(|i| i.parse::<usize>().ok())
+                        .ok_or("a rollback index has no integer or file name")?
+                };
+                if !indices.insert(ordinal) {
+                    return Err("the bodydetails index repeats a rollback index".into());
+                }
             }
-        }
+            Ok(indices)
+        })();
         Ok(Self {
             bundle,
             prefix,
             mid,
             indices,
             features,
+            body_features: features
+                .iter()
+                .enumerate()
+                .filter(|(_, feature)| {
+                    !matches!(
+                        feature.get("featureType").and_then(Value::as_str),
+                        Some("newSketch" | "assignVariable")
+                    ) && super::suppression(feature) != Ok(true)
+                })
+                .map(|(i, _)| i)
+                .collect(),
+            provenance: std::cell::RefCell::default(),
             sketches: sketch_information(bundle, prefix),
             regions: std::cell::RefCell::default(),
         })
@@ -138,11 +166,31 @@ impl<'a> Inputs<'a> {
         let Some(sketches) = self.sketches.as_ref().map_err(Clone::clone)? else {
             return Ok(None);
         };
-        sketches.get(native).copied().map(Some).ok_or_else(|| {
-            "the stored sketch attachment frame is missing from sketches.json; fetch a new bundle".into()
-        })
+        sketches.get(native).ok_or("the stored sketch attachment frame is missing from sketches.json; fetch a new bundle")?.as_ref().copied().map(Some).map_err(Clone::clone)
     }
 
+    pub(super) fn unique_feature(&self, native: &str, ordinal: usize) -> Mapping<()> {
+        if self
+            .features
+            .iter()
+            .take(ordinal)
+            .filter(|feature| feature.get("featureId").and_then(Value::as_str) == Some(native))
+            .count()
+            != 1
+        {
+            return Err("the feature dependency producer id is missing or ambiguous".into());
+        }
+        Ok(())
+    }
+
+    pub(super) fn sketch_entities(&self, native: &str) -> Mapping<&[Value]> {
+        let source = self
+            .features
+            .iter()
+            .find(|source| source.get("featureId").and_then(Value::as_str) == Some(native))
+            .ok_or("the source sketch is missing")?;
+        rows(source, "entities")
+    }
     pub(super) fn sketch_entity(&self, sketch: &str, entity: &str) -> Mapping<&Value> {
         let sketch = self
             .features
@@ -156,15 +204,102 @@ impl<'a> Inputs<'a> {
     }
 
     pub(super) fn load(&self, ordinal: usize, feature: &Value) -> Mapping<State> {
-        if !self.indices.contains(&ordinal) {
+        if !self
+            .indices
+            .as_ref()
+            .map_err(Clone::clone)?
+            .contains(&ordinal)
+        {
             return Err(format!(
                 "bodydetails for rollback index {ordinal} is missing"
             ));
         }
         load(self.bundle, self.prefix, ordinal, self.mid, feature)
     }
+    pub(super) fn producer(
+        &self,
+        ordinal: usize,
+        native: &str,
+        kind: OperandKind,
+    ) -> Mapping<String> {
+        let mut provenance = self
+            .provenance
+            .try_borrow_mut()
+            .map_err(|_| "feature dependency provenance is already in use")?;
+        if let Some((index, reason)) = &provenance.failed {
+            if ordinal >= *index {
+                return Err(reason.clone());
+            }
+        }
+        if provenance.through.is_none_or(|through| through < ordinal) {
+            let lower = provenance
+                .through
+                .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
+            for index in self
+                .indices
+                .as_ref()
+                .map_err(Clone::clone)?
+                .range((lower, std::ops::Bound::Included(ordinal)))
+            {
+                let response: &'a Value = self
+                    .bundle
+                    .json(&format!("{}/bodydetails/{index}.json", self.prefix))
+                    .map_err(|_| "feature dependency rollback is unreadable")?;
+                let current = match operands(response) {
+                    Ok(current) => current,
+                    Err(reason) => {
+                        provenance.failed = Some((*index, reason.clone()));
+                        return Err(reason);
+                    }
+                };
+                provenance.observe(*index, current)?;
+            }
+        }
+        let history = provenance
+            .history
+            .get(&kind)
+            .and_then(|by_id| by_id.get(native))
+            .ok_or("feature dependency topology id has no rollback producer")?;
+        let position = history.partition_point(|transition| transition.at <= ordinal);
+        let interval = position
+            .checked_sub(1)
+            .and_then(|at| history.get(at))
+            .and_then(|transition| transition.interval.clone())
+            .ok_or("feature dependency topology producer is unresolved")?;
+        let first = self
+            .body_features
+            .partition_point(|feature| *feature < interval.start);
+        let end = self
+            .body_features
+            .partition_point(|feature| *feature < interval.end);
+        let candidates = self
+            .body_features
+            .get(first..end)
+            .ok_or("feature dependency rollback range is unresolved")?;
+        let [producer] = candidates else {
+            return Err(if candidates.is_empty() {
+                "feature dependency topology producer is unresolved"
+            } else {
+                "feature dependency topology producer is ambiguous"
+            }
+            .into());
+        };
+        Ok(text(
+            self.features
+                .get(*producer)
+                .ok_or("feature dependency producer is missing")?,
+            "featureId",
+        )?
+        .to_owned())
+    }
+
     pub(super) fn parts(&self, ordinal: usize) -> Mapping<BTreeMap<String, Option<String>>> {
-        if !self.indices.contains(&ordinal) {
+        if !self
+            .indices
+            .as_ref()
+            .map_err(Clone::clone)?
+            .contains(&ordinal)
+        {
             return Err(format!(
                 "bodydetails for rollback index {ordinal} is missing"
             ));
@@ -194,6 +329,173 @@ impl<'a> Inputs<'a> {
         }
         Ok(parts)
     }
+}
+
+struct Operand<'a> {
+    record: &'a Value,
+    boundary: Vec<(&'a str, usize)>,
+}
+
+const F64_EXACT_INTEGER_LIMIT: u64 = 9_007_199_254_740_992;
+
+fn stored_equal(first: &Value, second: &Value) -> bool {
+    if std::ptr::eq(first, second) {
+        return true;
+    }
+    match (first, second) {
+        (Value::Number(first), Value::Number(second)) => {
+            if first == second {
+                return true;
+            }
+            if first.is_f64() == second.is_f64() {
+                return false;
+            }
+            let integer = if first.is_f64() { second } else { first };
+            let magnitude = integer
+                .as_u64()
+                .or_else(|| integer.as_i64().map(i64::unsigned_abs));
+            magnitude.is_some_and(|value| value <= F64_EXACT_INTEGER_LIMIT)
+                && first.as_f64() == second.as_f64()
+        }
+        (Value::Array(first), Value::Array(second)) => {
+            first.len() == second.len()
+                && first
+                    .iter()
+                    .zip(second)
+                    .all(|(first, second)| stored_equal(first, second))
+        }
+        (Value::Object(first), Value::Object(second)) => {
+            first.len() == second.len()
+                && first.iter().all(|(key, value)| {
+                    second
+                        .get(key)
+                        .is_some_and(|other| stored_equal(value, other))
+                })
+        }
+        _ => first == second,
+    }
+}
+
+impl PartialEq for Operand<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.boundary == other.boundary && stored_equal(self.record, other.record)
+    }
+}
+
+type Operands<'a> = BTreeMap<OperandKind, BTreeMap<&'a str, Operand<'a>>>;
+
+struct Transition {
+    at: usize,
+    interval: Option<std::ops::Range<usize>>,
+}
+
+#[derive(Default)]
+struct Provenance<'a> {
+    through: Option<usize>,
+    previous: Operands<'a>,
+    history: BTreeMap<OperandKind, BTreeMap<&'a str, Vec<Transition>>>,
+    failed: Option<(usize, String)>,
+}
+
+impl<'a> Provenance<'a> {
+    fn observe(&mut self, at: usize, mut current: Operands<'a>) -> Mapping<()> {
+        for (kind, previous) in &self.previous {
+            for native in previous.keys() {
+                if current
+                    .get(kind)
+                    .and_then(|values| values.get(*native))
+                    .is_none()
+                {
+                    self.history
+                        .entry(*kind)
+                        .or_default()
+                        .entry(*native)
+                        .or_default()
+                        .push(Transition { at, interval: None });
+                }
+            }
+        }
+        for kind in [OperandKind::Edge, OperandKind::Face, OperandKind::Body] {
+            let Some(values) = current.get_mut(&kind) else {
+                continue;
+            };
+            for (native, value) in values {
+                for (edge, revision) in &mut value.boundary {
+                    *revision = self
+                        .history
+                        .get(&OperandKind::Edge)
+                        .and_then(|edges| edges.get(*edge))
+                        .and_then(|changes| changes.last())
+                        .ok_or("feature dependency boundary has no stored edge revision")?
+                        .at;
+                }
+                if self
+                    .previous
+                    .get(&kind)
+                    .and_then(|values| values.get(*native))
+                    != Some(value)
+                {
+                    self.history
+                        .entry(kind)
+                        .or_default()
+                        .entry(*native)
+                        .or_default()
+                        .push(Transition {
+                            at,
+                            interval: Some(self.through.unwrap_or(0)..at),
+                        });
+                }
+            }
+        }
+        self.previous = current;
+        self.through = Some(at);
+        Ok(())
+    }
+}
+
+fn operands(response: &Value) -> Mapping<Operands<'_>> {
+    let mut result = Operands::new();
+    let mut insert = |kind, native, record, boundary| -> Mapping<()> {
+        if result
+            .entry(kind)
+            .or_default()
+            .insert(native, Operand { record, boundary })
+            .is_some()
+        {
+            return Err("feature dependency topology id repeats within its kind".into());
+        }
+        Ok(())
+    };
+    for body in rows(response, "bodies")? {
+        insert(OperandKind::Body, text(body, "id")?, body, Vec::new())?;
+        let mut edges = BTreeMap::new();
+        for edge in optional_rows(body, "edges")? {
+            let native = text(edge, "id")?;
+            if edges.insert(native, edge).is_some() {
+                return Err("feature dependency topology repeats an edge".into());
+            }
+            insert(OperandKind::Edge, native, edge, Vec::new())?;
+        }
+        for face in optional_rows(body, "faces")? {
+            let mut boundary = BTreeMap::new();
+            for row in optional_rows(face, "loops")? {
+                for coedge in optional_rows(row, "coedges")? {
+                    let native = text(coedge, "edgeId")?;
+                    if !edges.contains_key(native) {
+                        return Err("feature dependency boundary edge is unresolved".into());
+                    }
+                    boundary.insert(native, 0usize);
+                }
+            }
+            insert(
+                OperandKind::Face,
+                text(face, "id")?,
+                face,
+                boundary.into_iter().collect(),
+            )?;
+        }
+    }
+    Ok(result)
 }
 
 fn load(
