@@ -15,7 +15,8 @@ class ArmRetryTests(unittest.TestCase):
     def gate(self, conclusion, notes="", api_failure=False):
         workflow = WORKFLOW.read_text()
         block = workflow.split("      - name: Retry only after a timeout or runner shutdown\n", 1)[1]
-        script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        # The script ends where the next step starts, whatever that step's first key.
+        script = textwrap.dedent(re.split(r"^      - ", block.split("        run: |\n", 1)[1], maxsplit=1, flags=re.M)[0])
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             gh = root / "gh"
