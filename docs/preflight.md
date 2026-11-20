@@ -5,6 +5,13 @@ output. The default target gets an evidence-backed history forecast when work
 fits the budgets. Exit 0 includes unknown results; exit 1 means the input could
 not be read. Unknown never means convertible.
 
+Pre-flight forecasts small parts. With the default 750 ms and 64 MiB budgets,
+large designs, including assemblies and `.f3z` archives over a few MB, commonly
+report unknown rather than a guess. Compressed file size alone cannot establish
+whether a design fits: decoding can exhaust the work budget or overrun the
+cooperative deadline. Unknown is the intended result when evidence cannot be
+collected within those budgets.
+
 There are two tiers:
 
 - `prefix` checks regular-file size, suffix policy and a bounded content prefix.

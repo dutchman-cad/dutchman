@@ -8,27 +8,45 @@ fn fixtures_use_only_input_and_build_facts() {
     let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let mut count = 0;
     let started = Instant::now();
-    let mut folders = vec![folder.clone()];
-    let mut files = Vec::new();
-    while let Some(current) = folders.pop() {
-        for entry in std::fs::read_dir(current).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                folders.push(path);
-            } else {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    for path in files {
-        if !path.is_file()
-            || path
-                .extension()
-                .is_none_or(|ext| ext == "md" || ext == "py" || ext == "rs")
-        {
-            continue;
-        }
+    // Enumerate source inputs explicitly: concurrent conversion tests may create
+    // output directories containing logs, reports and copies of native files.
+    // Never discover those artifacts by walking the shared fixture directory.
+    let inputs = [
+        "body_history.sldprt",
+        "cadmpeg-techdraw-dimensions.FCStd",
+        "cadmpeg-techdraw-variants.FCStd",
+        "cadmpeg-techdraw-views.FCStd",
+        "container_metadata.sldprt",
+        "container_metadata_only.f3d",
+        "core_design_product.FCStd",
+        "design_copy_paste.f3d",
+        "design_history.FCStd",
+        "design_sketch_constraints.f3d",
+        "freecad-1.1.4-A01/A01a.FCStd",
+        "freecad-1.1.4-A01/P01a.FCStd",
+        "freecad-1.1.4-A01/P02a.FCStd",
+        "freecad-1.1.4-N04/N04a.FCStd",
+        "freecad-1.1.4-N04/N04b.FCStd",
+        "freecad-1.1.4-P04/P04a.FCStd",
+        "generated_unit_cube.f3d",
+        "local_cubes.sldasm",
+        "nested_cubes.sldasm",
+        "onshape-default-plane-regions.onshape-bundle",
+        "onshape-derived.onshape-bundle",
+        "onshape-hole-forms.onshape-bundle",
+        "onshape-hole.onshape-bundle",
+        "onshape-plate-fillet.onshape-bundle",
+        "onshape-revolve.onshape-bundle",
+        "onshape-unsupported.onshape-bundle",
+        "placed_cubes.sldasm",
+        "product_assembly.FCStd",
+        "solidworks_cube.sldprt",
+        "synthetic_cube.ipt",
+        "techdraw-pages.FCStd",
+        "techdraw.FCStd",
+    ];
+    for input in inputs {
+        let path = folder.join(input);
         let result = scan(&path, Budget::default());
         let available =
             dutchman_core::Format::from_path(&path).is_some_and(dutchman_core::Format::can_convert);
@@ -51,6 +69,56 @@ fn fixtures_use_only_input_and_build_facts() {
     }
     assert!(count >= 10);
     println!("Scanned {count} fixtures in {:?}", started.elapsed());
+}
+
+#[test]
+fn recognised_suffix_refusals_follow_build_features() {
+    for (name, enabled) in [
+        ("part.FCStd", cfg!(feature = "freecad")),
+        ("part.onshape-bundle", cfg!(feature = "onshape")),
+    ] {
+        let result = scan_bytes(
+            Path::new(name),
+            b"not decoded by a prefix scan",
+            Budget::default(),
+        );
+        assert_eq!(
+            result.reason,
+            if enabled {
+                Reason::ReaderUnavailable
+            } else {
+                Reason::FormatNotSupported
+            },
+            "{name}"
+        );
+        assert_eq!(
+            result.predict("test-writer").outcome,
+            if enabled {
+                Prediction::Unknown
+            } else {
+                Prediction::Refused
+            },
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn an_unrecognised_suffix_and_inconclusive_prefix_remain_unknown() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dutchman.log");
+    let bytes = b"Conversion completed.\n";
+    std::fs::write(&path, bytes).unwrap();
+    for result in [
+        scan(&path, Budget::default()),
+        scan_bytes(&path, bytes, Budget::default()),
+    ] {
+        assert_eq!(result.format_hint, None);
+        assert_eq!(result.detected_codec, None);
+        assert_eq!(result.reason, Reason::ReaderUnavailable);
+        assert_eq!(result.readable, Readability::Unknown);
+        assert_eq!(result.predict("test-writer").outcome, Prediction::Unknown);
+    }
 }
 
 #[test]
