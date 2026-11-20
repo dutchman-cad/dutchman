@@ -295,6 +295,11 @@ that face's area (within 1 mm² or 3%, which absorbs arcs measured as fine polyg
 there. An extrude whose region cannot be checked this way stays kept and is marked
 `profile_unverified` in the JSON report (see [json.md](json.md)).
 
+Face extrusions on imported bases require a matching final source result after the
+input face is proved. An intermediate result, an unavailable check, or a measured
+mismatch keeps the final imported shape and reports
+`a face extrude on an imported base is not supported yet without a matching source result check`.
+
 History checks stay on by default and fit themselves to free memory. If a second build
 will not fit after reading the design, conversion still saves a usable original shape
 with retained history unverified; the card and report say

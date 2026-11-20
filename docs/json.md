@@ -412,6 +412,11 @@ A base feature written with its body as the design ends (`final_body`) isn't com
 source's stored state after it is the body before later features changed it.
 A base feature written with its own body as the source keeps it (a history body) is compared
 like any other feature.
+Face extrusions on imported bases require a matching final source result after the
+input face is proved. An intermediate result, an unavailable check, or a measured
+mismatch keeps the final imported shape and reports
+`a face extrude on an imported base is not supported yet without a matching source result check`.
+
 A mapped Split can emit an extra Import for its consumed history body; `history.features`
 still has one outcome per source feature. Unsupported splitting faces name the missing input
 geometry or nonplanar tool in `history.features[].reason`. No report fields or counts are

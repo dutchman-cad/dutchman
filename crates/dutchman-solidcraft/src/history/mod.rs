@@ -1442,6 +1442,14 @@ fn map_into(
                 ));
             }
             Ok(Mapped::Feature(mut mapped)) => {
+                if let Some(fields) = mapped.as_object_mut() {
+                    if fields.contains_key(extrude::BASE_FACE_RESULT) {
+                        fields.insert(
+                            extrude::BASE_FACE_RESULT.to_owned(),
+                            Value::Bool(last_builder == Some(position)),
+                        );
+                    }
+                }
                 history.mapped += 1;
                 let mut extras = Vec::new();
                 for mut extra in std::mem::take(&mut ctx.extra) {
@@ -2056,6 +2064,7 @@ pub(crate) fn prove_blends(
             }
             proven => proven,
         };
+        let admitted = proven.is_ok();
         match proven {
             Ok(proven @ (Proven::Bodies { .. } | Proven::Path)) => {
                 let (added, changed) = match proven {
@@ -2138,6 +2147,49 @@ pub(crate) fn prove_blends(
                 }
             }
             Err(reason) => {
+                if let Some(outcome) = mapping.features.get_mut(pending.outcome) {
+                    outcome.status = FeatureStatus::Blocked;
+                    outcome.reason = Some(reason.clone());
+                }
+                first.get_or_insert_with(|| {
+                    (pending.outcome, format!("{}: {reason}", pending.subject))
+                });
+            }
+        }
+        let at = pending.feature.saturating_add(inserted);
+        let result_proof = history
+            .features
+            .get_mut(at)
+            .and_then(Value::as_object_mut)
+            .and_then(|fields| fields.remove(extrude::BASE_FACE_RESULT))
+            .and_then(|value| value.as_bool());
+        if admitted && result_proof.is_some() {
+            // Matching the selected face on the imported base proves its boundary and
+            // outward side, but not that the base and the feature share the source's
+            // result frame. Never guess a translation or choose the opposite end face.
+            let final_state = result_proof == Some(true) && history.stop.is_none();
+            let fit = if final_state {
+                measure(history, infer::MEASURE_BUDGET)
+            } else {
+                infer::Fit::Unknown
+            };
+            let refusal = match fit {
+                infer::Fit::Matches(measure)
+                    if measure.deviation.is_some_and(|deviation| deviation.within()) => None,
+                infer::Fit::Matches(measure) if measure.deviation.is_some() => {
+                    measure.deviation.map(|deviation| format!(
+                        "a face extrude on an imported base is not supported yet without a matching source result check: surfaces differ by {:.6} mm",
+                        deviation.max
+                    ))
+                }
+                infer::Fit::Differs(why) => Some(format!(
+                    "a face extrude on an imported base is not supported yet without a matching source result check: {why}"
+                )),
+                infer::Fit::Unknown | infer::Fit::Matches(_) => Some(
+                    "a face extrude on an imported base is not supported yet without a matching source result check".to_owned()
+                ),
+            };
+            if let Some(reason) = refusal {
                 if let Some(outcome) = mapping.features.get_mut(pending.outcome) {
                     outcome.status = FeatureStatus::Blocked;
                     outcome.reason = Some(reason.clone());

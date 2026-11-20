@@ -9,6 +9,9 @@ use super::{name, Context};
 /// How close to the sketch normal (as a cosine) an explicit direction must be.
 const ALONG_NORMAL: f64 = 1.0 - 1e-9;
 
+/// A face on an imported base needs a result proof as well as an input-face proof.
+pub(super) const BASE_FACE_RESULT: &str = "_base_face_result";
+
 /// Maps an extrude feature whose operation is `definition`.
 pub(crate) fn map(
     feature: &Value,
@@ -257,6 +260,15 @@ pub(crate) fn map(
         "extent": extent,
         "operation": operation,
     });
+    if face_profile
+        && preceding
+            .iter()
+            .any(|feature| feature.get("type").and_then(Value::as_str) == Some("import"))
+    {
+        if let Some(fields) = out.as_object_mut() {
+            fields.insert(BASE_FACE_RESULT.to_owned(), Value::Bool(true));
+        }
+    }
     if let Some((_, thin)) = thin {
         if let Some(fields) = out.as_object_mut() {
             fields.insert("thin".to_owned(), thin);

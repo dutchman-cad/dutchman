@@ -744,7 +744,7 @@ impl SolidCraftWriter {
                         deviation,
                     })
                 }
-                Ok(verify::Outcome::Differs(_)) => Fit::Differs,
+                Ok(verify::Outcome::Differs(why)) => Fit::Differs(why),
                 Ok(verify::Outcome::Unverified(_)) | Err(_) => Fit::Unknown,
             };
         }
@@ -758,16 +758,15 @@ impl SolidCraftWriter {
                     .iter()
                     .all(|body| body.center.is_some() && body.size.is_some()) =>
             {
-                if verify::bodies_differ(Some(stored), Some(&bodies)).is_none() {
-                    Fit::Matches(Measure {
+                match verify::bodies_differ(Some(stored), Some(&bodies)) {
+                    None => Fit::Matches(Measure {
                         against: InferredAgainst::StoredBodies,
                         deviation: None,
-                    })
-                } else {
-                    Fit::Differs
+                    }),
+                    Some(why) => Fit::Differs(why),
                 }
             }
-            (verify::Outcome::Differs(_), _) => Fit::Differs,
+            (verify::Outcome::Differs(why), _) => Fit::Differs(why),
             _ => Fit::Unknown,
         }
     }

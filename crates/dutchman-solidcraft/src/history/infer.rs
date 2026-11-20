@@ -12,12 +12,12 @@ use dutchman_core::{Inferred, InferredAgainst, InferredSelection, Report, Severi
 use serde_json::{json, Value};
 
 /// What measuring one candidate's replay against the source found.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Fit {
     /// It matches within the check's tolerances.
     Matches(Measure),
     /// It replays, and does not match.
-    Differs,
+    Differs(String),
     /// It could not be measured (no SolidCraft, a timeout, nothing stored to compare with).
     Unknown,
 }
@@ -367,7 +367,7 @@ fn measured(
             Fit::Matches(measure) if measure.deviation.is_none_or(|d| d.within()) => {
                 found.push((trial, measure));
             }
-            Fit::Matches(_) | Fit::Differs => {}
+            Fit::Matches(_) | Fit::Differs(_) => {}
             // Nothing measured at all (planning, or no SolidCraft): the earlier refusal stands.
             Fit::Unknown if measured == 1 => return None,
             Fit::Unknown => unknown = true,
@@ -753,7 +753,7 @@ pub(super) fn edges(
             Fit::Matches(measure) if measure.deviation.is_none_or(|d| d.within()) => {
                 found.push((selections, measure));
             }
-            Fit::Matches(_) | Fit::Differs => {}
+            Fit::Matches(_) | Fit::Differs(_) => {}
             Fit::Unknown if index == 0 => return None,
             Fit::Unknown => unknown = true,
         }

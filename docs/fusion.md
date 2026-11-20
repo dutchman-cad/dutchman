@@ -109,6 +109,14 @@ mesh count, so the message names none.
 
 ## Parts and history
 
+A face extrusion on an imported base needs a matching source result as well as a
+proved input face. Matching a boundary and its outward side cannot establish that
+the historical base and the final body use the same frame. The writer checks a
+single-body result at the final body-building feature, including surface distance;
+a missing or differing result refuses the extrusion and retains the imported final
+shape. Intermediate face extrusions on imported bases are not supported yet when
+that result cannot be proved.
+
 As-built joints build no geometry and do not stop the part's feature history. Typed
 assembly-joint timeline rows also need no part feature, and neither do rows that copy a
 component or move it into another component (Copy/Paste and Cut/Paste of components): the

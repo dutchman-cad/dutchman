@@ -14948,6 +14948,83 @@ fn a_face_extrude_reapplied_to_a_base_body_stored_as_the_design_ends_is_refused(
     );
 }
 
+#[test]
+fn face_extrudes_on_imported_history_bases_require_matching_results() {
+    let Some(cli) = solidcraft() else { return };
+    for (inward, checked) in [(false, true), (true, true), (true, false)] {
+        let mut model = face_extrude(false, |definition| {
+            definition["extent"]["side"]["termination"]["length"] = json!(3.0);
+            if inward {
+                definition["direction"] = json!({"kind": "reversed_profile_normal"});
+            }
+        });
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let body = wire["geometry"]["bodies"][0]["id"].clone();
+        let base = &mut wire["model"]["features"][1];
+        base["definition"] = json!({"kind": "operation", "value": {
+            "kind": "base_feature", "value": {"bodies": {"kind": "resolved", "value": {
+                "bodies": [body], "native": "synthetic:base#1"
+            }}}
+        }});
+        let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+        wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
+        wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#2");
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let writer = SolidCraftWriter::new()
+            .replay(Verification::With(cli.clone()))
+            .verification(if checked {
+                Verification::With(cli.clone())
+            } else {
+                Verification::Off
+            });
+        let (document, report) = convert(&model, &writer);
+        let outcome = report
+            .outcome()
+            .unwrap()
+            .features
+            .iter()
+            .find(|feature| feature.name.as_deref() == Some("Face extrude"))
+            .unwrap();
+        if inward && checked {
+            assert_eq!(
+                outcome.status,
+                dutchman_core::FeatureStatus::Mapped,
+                "{report:?}"
+            );
+        } else {
+            assert_eq!(
+                outcome.status,
+                dutchman_core::FeatureStatus::Blocked,
+                "{report:?}"
+            );
+            assert!(
+                outcome.reason.as_deref().unwrap().contains(if checked {
+                    "matching source result check"
+                } else {
+                    "verification turned off"
+                }),
+                "inward={inward} checked={checked}: {report:?}"
+            );
+            if checked {
+                assert!(
+                    outcome.reason.as_deref().unwrap().contains("1.500 mm"),
+                    "{report:?}"
+                );
+            }
+            assert!(!document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|feature| { feature["name"] == "Face extrude" }));
+        }
+        assert!(document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|feature| { feature.get("_base_face_result").is_none() }));
+    }
+}
+
 /// The example cube (10 mm, built by the base extrude) with one more extrude that takes its
 /// top (`up`) or bottom face as it was before that extrude: a historical face, known only by
 /// the geometry of the edges around it. `change` edits the extrude's definition.
