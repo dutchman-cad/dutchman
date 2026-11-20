@@ -2201,3 +2201,7 @@ mod output_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/net.rs"]
+mod test_support;

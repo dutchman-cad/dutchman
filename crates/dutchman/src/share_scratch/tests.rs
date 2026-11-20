@@ -89,18 +89,7 @@ fn check(scenario: &str) {
     let (release, blocked) = std::sync::mpsc::channel();
     let server = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(10);
-        let mut socket = loop {
-            match listener.accept() {
-                Ok((socket, _)) => break socket,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    assert!(Instant::now() < deadline);
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Err(error) => panic!("Mock accept failed: {error}"),
-            }
-        };
-        // macOS/BSD: an accepted socket inherits the listener's non-blocking mode.
-        socket.set_nonblocking(false).unwrap();
+        let mut socket = crate::test_support::accept_blocking(&listener, deadline).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();

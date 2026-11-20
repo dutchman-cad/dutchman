@@ -1020,3 +1020,7 @@ mod option_tests {
         assert!(!fast.memory_stop && fast.without_history.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/net.rs"]
+mod test_support;
