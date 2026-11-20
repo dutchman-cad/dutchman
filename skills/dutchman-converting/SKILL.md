@@ -1277,6 +1277,13 @@ source geometry, which is not supported yet`. A numeric feature-local path alone
 does not prove which rebuilt edge to select. The editable prefix and original final
 geometry are retained; a generated reference with missing or blank fields is still refused.
 
+Variable-radius fillets with an unproven chain direction report `variable fillets need
+a proven chain direction: their radius stations are not bound to a source start vertex,
+which is not supported yet`. Mapping a radius law requires
+an ordered, directed input chain with its radius positions bound to that traversal.
+Carrier sample order alone does not supply that binding. The editable prefix and original
+final geometry are retained when the direction is unresolved.
+
 The SolidCraft plugin checks estimated memory and time before native decoding. When it
 says the design is too large to open inside SolidCraft, use the
 [Dutchman desktop app](https://github.com/dutchman-cad/dutchman/releases/latest) to save a

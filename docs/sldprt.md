@@ -144,3 +144,18 @@ resolved sketch-entity geometry reports `its generated edge identity has no reso
 source geometry, which is not supported yet`. A numeric feature-local path alone
 does not prove which rebuilt edge to select. The editable prefix and original final
 geometry are retained; a generated reference with missing or blank fields is still refused.
+
+Variable-radius fillets with an unproven chain direction report `variable fillets need
+a proven chain direction: their radius stations are not bound to a source start vertex,
+which is not supported yet`. Mapping a radius law requires
+an ordered, directed input chain with its radius positions bound to that traversal.
+Carrier sample order alone does not supply that binding. The editable prefix and original
+final geometry are retained when the direction is unresolved.
+
+In the public CC0 2023/2024 P04d and P04e parts, the variable fillet has one
+opaque generated-edge identity. P04d supplies radius stations `(0, 3 mm)` and
+`(1, 1 mm)`; P04e supplies `(0, 1 mm)` and `(1, 3 mm)`. The decoded model has
+no historical input topology, feature result topology, or design chain start
+selection connecting those stations to spatial endpoints. Feature parameter order
+and final-body edge order cannot establish that missing connection. These parts
+therefore retain the direction refusal; no editable variable fillet is claimed.

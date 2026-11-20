@@ -1311,6 +1311,13 @@ source geometry, which is not supported yet`. A numeric feature-local path alone
 does not prove which rebuilt edge to select. The editable prefix and original final
 geometry are retained; a generated reference with missing or blank fields is still refused.
 
+Variable-radius fillets with an unproven chain direction report `variable fillets need
+a proven chain direction: their radius stations are not bound to a source start vertex,
+which is not supported yet`. Mapping a radius law requires
+an ordered, directed input chain with its radius positions bound to that traversal.
+Carrier sample order alone does not supply that binding. The editable prefix and original
+final geometry are retained when the direction is unresolved.
+
 The CLI also provides `dutchman preflight <file> --json` for budgeted reading and
 history planning without writing a design. The default target gets a forecast;
 other targets and exhausted budgets return unknown. This is not an MCP tool.

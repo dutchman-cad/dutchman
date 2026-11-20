@@ -18730,6 +18730,107 @@ fn opaque_generated_edge_identities_are_supported_cadir_but_need_source_geometry
     }
 }
 
+/// Ordered edges and their endpoints do not bind radius parameter zero to a
+/// chain end. Neither carrier reversal nor missing endpoints may invent that binding.
+#[test]
+fn variable_fillet_without_radius_origin_keeps_source_geometry() {
+    for (reverse, endpoints) in [(false, false), (true, false), (false, true), (true, true)] {
+        let base = input_blend(
+            "fillet",
+            json!({"kind": "variable", "points": [
+            {"parameter": 0.0, "radius": 0.5},
+            {"parameter": 0.4, "radius": 1.5},
+            {"parameter": 1.0, "radius": 1.0}]}),
+            false,
+        );
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let m = &mut wire["model"];
+        m["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
+            json!(["near", "opposite"]);
+        m["feature_input_topologies"][0]["faces"] =
+            json!(["front", "left", "back", "right", "top"]);
+        let samples = m["feature_input_topologies"][0]["edge_geometry"]
+            .as_array_mut()
+            .unwrap();
+        // A connected, ordered open chain still has no radius-origin binding.
+        samples[1]["faces"] = json!(["front", "top"]);
+        samples[1]["interior"] = json!({"x": 5.0, "y": 0.0, "z": 10.0});
+        samples[1]["tangent"] = json!({"x": 1.0, "y": 0.0, "z": 0.0});
+        samples[1]["start"] = json!({"x": 0.0, "y": 0.0, "z": 10.0});
+        samples[1]["end"] = json!({"x": 10.0, "y": 0.0, "z": 10.0});
+        for sample in samples {
+            if !endpoints {
+                let row = sample.as_object_mut().unwrap();
+                row.remove("start");
+                row.remove("end");
+            }
+            if reverse {
+                for axis in ["x", "y", "z"] {
+                    sample["tangent"][axis] = json!(-sample["tangent"][axis].as_f64().unwrap());
+                }
+            }
+        }
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base
+        };
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report)
+                .contains("their radius stations are not bound to a source start vertex"),
+            "{report:?}"
+        );
+        assert_partial(&document, &report, 1);
+        assert!(!document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature["type"] == "fillet"));
+    }
+}
+
+/// An opaque producer edge and ordered endpoint radii supply neither input
+/// geometry nor a binding between a radius station and a spatial chain endpoint.
+#[test]
+fn variable_fillet_generated_edge_without_radius_origin_keeps_source_geometry() {
+    for (start, end) in [(3.0, 1.0), (1.0, 3.0)] {
+        let base = input_blend(
+            "fillet",
+            json!({"kind": "variable", "points": [
+                {"parameter": 0.0, "radius": start},
+                {"parameter": 1.0, "radius": end}]}),
+            false,
+        );
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        wire["model"]["feature_input_topologies"] = json!([]);
+        wire["model"]["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"] = json!({"kind": "generated", "value": {
+                "edges": [{"feature": "f3d:model:feature#2", "local_id": "synthetic-edge"}],
+                "native": "synthetic selection"}});
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base
+        };
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report)
+                .contains("their radius stations are not bound to a source start vertex"),
+            "{report:?}"
+        );
+        assert_partial(&document, &report, 1);
+        assert!(!document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature["type"] == "fillet"));
+    }
+}
+
 /// Invented annular blank with a curved side notch and a separate round cut
 /// contour in the revolve sketch, then an axial cut and a historical fillet pick.
 /// Only the rectangle is in the source profile table; both cut contours stay solid.

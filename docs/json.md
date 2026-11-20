@@ -1973,3 +1973,9 @@ source feature with a helper location sketch for SolidCraft 0.44.1 or newer. The
 does not increase source feature counts. Unsupported generated edge identities use
 `its generated edge identity has no resolved source geometry, which is not supported yet`
 as the existing history blocker reason. The report schema and field names are unchanged.
+
+Variable-radius fillets retain `variable fillets need a proven chain direction: their
+radius stations are not bound to a source start vertex, which is not supported yet` until
+the decoded selection binds their radius positions to an ordered, directed input chain.
+Carrier sample order alone does not supply that binding. The refusal retains the editable
+prefix and original final geometry; no report fields or schemas change.

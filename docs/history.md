@@ -246,7 +246,9 @@ bodies becomes one chamfer per body, and each is flipped on its own when SolidCr
 face (the one facing up most) would put the cut elsewhere on that body. A chamfer face the final body lost, an edge whose faces SolidCraft
 cannot tell apart (or, at a full circle, are not such a plane and cylinder), and SolidCraft
 cutting it elsewhere either way round are refused, saying which. Variable fillets lack a proven
-chain direction. A fillet with several radius groups becomes one SolidCraft blend per group,
+chain direction. Their radius positions need a binding to an ordered, directed input chain;
+carrier sample order alone does not establish that binding. A fillet with several radius
+groups becomes one SolidCraft blend per group,
 in the source's order; a later group's straight edge may be shorter than the source edge where
 an earlier group rounded its end. Final-body edge selections never stand in for input geometry.
 
