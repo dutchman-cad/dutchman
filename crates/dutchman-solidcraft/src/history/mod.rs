@@ -378,6 +378,15 @@ impl History {
                     fields.insert(key.to_owned(), Value::from(id.saturating_add(offset)));
                 }
             }
+            // Hole locations reference their sketch inside the points selection.
+            if let Some(sketch) = fields
+                .get_mut("points")
+                .and_then(|points| points.get_mut("sketch"))
+            {
+                if let Some(id) = sketch.as_u64() {
+                    *sketch = Value::from(id.saturating_add(offset));
+                }
+            }
             // A loft names the sketch of each section, and a sweep that of each rail.
             for key in ["sections", "rails"] {
                 let Some(Value::Array(rows)) = fields.get_mut(key) else {
@@ -2910,6 +2919,21 @@ mod tests {
             "Part_rise"
         );
         assert_eq!(history.features[0]["id"], 11);
+    }
+
+    #[test]
+    fn hole_location_sketch_follows_relocated_history() {
+        let mut history = History {
+            features: vec![
+                json!({"id":3,"type":"sketch"}),
+                json!({"id":4,"type":"hole","points":{"sketch":3,"ids":["p1"]}}),
+            ],
+            ..History::default()
+        };
+        history.relocate(10, 2, "Part", &mut Default::default());
+        assert_eq!(history.features[0]["id"], 13);
+        assert_eq!(history.features[1]["points"]["sketch"], 13);
+        assert_eq!(history.features[1]["points"]["ids"], json!(["p1"]));
     }
 
     #[test]

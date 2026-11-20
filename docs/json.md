@@ -1,5 +1,11 @@
 # Machine-readable reports
 
+Folder conversions retain paths relative to each input folder in the existing
+`results[].output.path` field: `in/ProjectA/part.f3d` writes
+`out/ProjectA/part.sc`. Same-named files in other subfolders have distinct paths.
+Linked design companions and desktop `.report.json` files stay beside each design.
+Reruns into an explicit output folder reuse these paths. Report schemas are unchanged.
+
 The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
 Folder and selection summaries use the highest per-file memory estimate and sum the displayed
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
@@ -661,6 +667,10 @@ Counterbores, countersinks, and chamfered entries with drill points map for Soli
 and newer; for an older target they report
 `SolidCraft holes take a drill point only on a plain drilled hole`: SolidCraft 0.21.0 ignores
 `tip_angle` on entry recesses. This uses the existing blocked feature and reason fields.
+
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
 
 Sheet-metal edge flanges with proven input-edge picks and supported dimensions report
 `mapped`. Attached rectangular plates and their paired bends can also report `mapped` on an
@@ -1973,6 +1983,41 @@ source feature with a helper location sketch for SolidCraft 0.44.1 or newer. The
 does not increase source feature counts. Unsupported generated edge identities use
 `its generated edge identity has no resolved source geometry, which is not supported yet`
 as the existing history blocker reason. The report schema and field names are unchanged.
+
+The [public fixture score workflow](fixture-score.md) wraps the conversion report
+in the fixture sweep result record (`exit`, `reopen_exit`, `report`, `evaluation`,
+`seconds`). Download skips add `skip_reason`; execution failures add
+`failure_reason`. These records are workflow artifacts, separate from CLI report
+schemas. `run.json` records the build and manifest provenance.
+
+Rebuild failures use existing report fields and schema versions. A failed history feature is
+`blocked`, with its name and refusal in `reason`; `partial` or `flattened` describes the
+retained prefix and final source shape. The final opening check adds `history/rebuild-failed`
+(Degraded) when it replaces a refused feature with the final source shape, or `geometry/import-failed` (Dropped) when the available final source shape also fails and omission is the last
+resort. Its detail says the body geometry is `MISSING` and names the part, feature, and
+refusal; the refused import and its dependent features are left out. Removed feature IDs are
+cleared from `history.features[].output_ids` and use `output_match: "no_output"` when none
+remain. A combined import can omit a whole part; the loss names the import feature and
+SolidCraft's reason. Geometry-only output uses `flattened` with the named omission as its
+reason. No successful verification is claimed for the removed history. A named failure that
+cannot be safely repaired stops conversion before the output is written. An evaluator error or
+nonzero exit without named failed features is unavailable verification: output is still written
+with `verification.status: "unverified"` and the reason. Disabled verification remains
+unverified.
+Linked components the file places but doesn't contain are reported as a Dropped `linked components`
+loss naming them, counted under `completeness.left_out`, and the design is `unverified`: its parts are
+not all there, whatever the replay says.
+The final opening check has its own time, at least 15 minutes, not what earlier checks left.
+When SolidCraft doesn't finish it, verification is `unverified` with the reason "Not verified:
+SolidCraft didn't finish checking the written design in N min".
+An Info loss `geometry/sheet-edges-split` names a refused STEP import whose edge uses beyond
+the first two receive identical edge records. The repaired blob is rechecked before any
+feature is omitted; source faces, curves, vertices, body names, and placements stay unchanged.
+Only an import that still fails after available repairs may be reported as MISSING.
+
+When no final source shape exists, `history/rebuild-failed` also describes retaining the
+editable prefix alone. Its reason names the failed feature, the omitted dependent features,
+and the rebuild error. The remaining design is checked again before writing.
 
 Variable-radius fillets retain `variable fillets need a proven chain direction: their
 radius stations are not bound to a source start vertex, which is not supported yet` until

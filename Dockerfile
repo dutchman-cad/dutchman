@@ -11,10 +11,12 @@ FROM rust:1.88-bookworm AS build
 ARG CARGO_BUILD_JOBS=default
 WORKDIR /src
 COPY . .
+# Bound both network stalls and the entire build, including dependency fetches.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p dutchman -p dutchman-web --bins \
+    CARGO_HTTP_TIMEOUT=60 CARGO_NET_RETRY=3 \
+    timeout --kill-after=30s 30m cargo build --release --locked -p dutchman -p dutchman-web --bins \
  && install -m 0755 target/release/dutchman target/release/dutchman-mcp target/release/dutchman-web /usr/local/bin/
 
 FROM debian:bookworm-slim
@@ -37,7 +39,7 @@ RUN --mount=type=bind,from=build,source=/usr/local/bin,target=/mnt/bin set -eu; 
       if [ -z "$SOLIDCRAFT_SHA256" ]; then echo "SOLIDCRAFT_SHA256 is needed with SOLIDCRAFT_VERSION" >&2; exit 1; fi; \
       apt-get update; apt-get install -y --no-install-recommends curl; \
       archive="solidcraft-${SOLIDCRAFT_VERSION}-linux-${arch}.tar.gz"; \
-      curl -fsSL -o "/tmp/$archive" "https://github.com/tangency-labs/solidcraft/releases/download/v${SOLIDCRAFT_VERSION}/$archive"; \
+      curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 --retry-max-time 600 -o "/tmp/$archive" "https://github.com/tangency-labs/solidcraft/releases/download/v${SOLIDCRAFT_VERSION}/$archive"; \
       echo "${SOLIDCRAFT_SHA256}  /tmp/$archive" | sha256sum -c -; \
       mkdir -p /opt/solidcraft; tar -xzf "/tmp/$archive" -C /opt/solidcraft --strip-components=1; \
       ln -s /opt/solidcraft/bin/solidcraft-cli /usr/local/bin/solidcraft-cli; \

@@ -1,0 +1,132 @@
+name: Public fixture score
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: Number of shards (1–256)
+        type: number
+        default: 12
+      manifest_url:
+        description: Public fixture manifest URL
+        type: string
+        default: https://progress.dutchmancad.xyz/scoreboard/public-files.json
+  schedule:
+    - cron: '0 7 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    container: debian:bookworm
+    env:
+      # rustup refuses a $HOME that differs from the container user's home.
+      HOME: /root
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      shards: ${{ steps.prepare.outputs.shards }}
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config python3
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+      # The commit the run was started on ("Use workflow from"), never a ref typed in as input.
+      - uses: actions/checkout@v7
+        with:
+          path: source
+      - uses: dtolnay/rust-toolchain@stable
+      # No shared build cache here: this job builds whichever ref was dispatched, and that code
+      # must never run beside a cache the default branch's jobs use.
+      - name: Freeze the manifest and record the build
+        id: prepare
+        env:
+          MANIFEST_URL: ${{ inputs.manifest_url || 'https://progress.dutchmancad.xyz/scoreboard/public-files.json' }}
+          SHARDS: ${{ inputs.shards || 12 }}
+        run: |
+          python3 harness/scripts/fixture-score.py prepare --manifest-url "$MANIFEST_URL" --shards "$SHARDS" --source source --out bundle
+          echo "shards=$SHARDS" >> "$GITHUB_OUTPUT"
+      - name: Build Dutchman once
+        working-directory: source
+        run: >
+          cargo build --release --locked -p dutchman --bin dutchman
+          --config profile.release.lto=false --config profile.release.codegen-units=16
+      - uses: actions/upload-artifact@v7
+        with:
+          name: public-score-build
+          path: |
+            source/target/release/dutchman
+            bundle/
+          if-no-files-found: error
+          retention-days: 14
+
+  shard:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: public-score-build
+          path: build
+      - name: Fetch SolidCraft 0.45 and verify its checksum
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          version=$(scripts/solidcraft-window.sh --fetch 0.45 "")
+          echo "SOLIDCRAFT_VERSION=$version" >> "$GITHUB_ENV"
+          echo "SOLIDCRAFT_CLI=$PWD/solidcraft-${version}-linux-x86_64/bin/solidcraft-cli" >> "$GITHUB_ENV"
+          chmod +x build/source/target/release/dutchman
+      - name: Convert and reopen every Nth public file
+        env:
+          INDEX: ${{ matrix.shard }}
+          SHARDS: ${{ needs.build.outputs.shards }}
+        run: |
+          python3 scripts/fixture-score.py shard --manifest build/bundle/manifest.json \
+            --index "$INDEX" --shards "$SHARDS" --binary build/source/target/release/dutchman \
+            --cli "$SOLIDCRAFT_CLI" --solidcraft "$SOLIDCRAFT_VERSION" --out results
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: public-shard-${{ matrix.shard }}
+          path: results/
+          if-no-files-found: error
+          retention-days: 14
+
+  collect:
+    needs: [build, shard]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: public-score-build
+          path: build
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: public-shard-*
+          merge-multiple: true
+          path: results
+      - name: Check completeness and record provenance
+        run: python3 scripts/fixture-score.py collect --bundle build/bundle --out results
+      - uses: actions/upload-artifact@v7
+        with:
+          name: public-results
+          path: results/
+          if-no-files-found: error
+          retention-days: 30

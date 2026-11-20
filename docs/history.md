@@ -297,12 +297,18 @@ metric thread label such as `M6x1`. For SolidCraft 0.40 and newer a left-hand th
 its hand, and a blind hole without an entry recess keeps its thread length; SolidCraft 0.43
 and newer also keep an ISO tolerance class such as `6H`. What doesn't carry across (a thread
 length in a through or recessed hole, or any of these on an older target) is listed in the
-report as Degraded. Taper, exit treatments, modeled threads, and entry
-recesses combined with drill points are not supported yet, and the report names the option.
+report as Degraded. Taper, exit treatments, and modeled threads are not supported yet,
+and the report names the option.
 A counterbore, countersink, or chamfered entry with a drill point keeps both for SolidCraft
 0.22.1 and newer. For an older target the reason is "SolidCraft holes take a drill point only
 on a plain drilled hole": SolidCraft 0.21.0 ignores `tip_angle` on counterbores and
 countersinks. Conversion keeps the original geometry.
+
+Holes ending at a proven earlier planar extrusion or box cap retain their drill point
+and supported entry recess. Fusion Extents To measures to the cylindrical shoulder,
+with the point extending beyond the face. Dutchman resolves the distance along the
+drilling direction after proving the target cap. A tip-measured CADIR bottom subtracts
+the conical height. Unresolved or unproven targets remain specific history blockers.
 
 A hole placed on a face of the model as it stood before the hole maps when that face is a plane
 the source's own extrusion just before the hole proves (its cap), or a whole cylinder drilled
@@ -540,3 +546,23 @@ this fallback: replacing them would discard earlier body history. No geometry is
 reconstructed from an unavailable sketch. The feature is `mapped`, written as an Import, and
 `history/body-fallback-imported` reports the lost recipe as Degraded. Later features
 and verification use the imported body as usual.
+
+When no final source shape is available, conversion keeps the editable history before the
+failed feature, leaves out its dependent suffix, and checks the remaining design again.
+The report names the omitted features and the rebuild reason. Conversion stops only if
+no usable history remains or the remaining design cannot be made to open.
+
+When SolidCraft reports a feature that fails to rebuild, conversion removes that feature and
+its dependent body history and keeps the final source shape with the editable prefix before the
+failure. The report names the feature and SolidCraft's reason, even when the source shape could
+not be measured. Before omission, refused STEP imports with excess shared edge uses get identical edge
+copies for uses beyond the first two and are rechecked. Faces, curves, vertices, names, and
+placements are retained; `geometry/sheet-edges-split` records the repair. A final opening
+check also covers geometry-only output, hidden history, and
+assemblies. If SolidCraft also refuses the available final source shape, omission is the last
+resort: `geometry/import-failed` says the body geometry is **MISSING** and names the feature
+and reason. A combined import may leave out the whole part. Review these losses before using
+the result. If a named failure cannot be removed, conversion stops without writing it. An
+evaluator error or nonzero exit without named failed features means verification is
+unavailable: the design is still written, marked unverified, with the reason. Verification
+turned off remains unchecked.

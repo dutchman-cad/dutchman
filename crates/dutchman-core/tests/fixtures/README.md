@@ -280,3 +280,12 @@ SHA-256: `86a50bb953ba0e6b5e963657dac5173ba297e2f813faca82057a1fca71ede876`.
 It is an authored 20 × 30 × 10 mm pad with one R2 vertical-edge fillet: volume
 5991.41592654 mm³, bounds (-10, -15, 0) to (10, 15, 10) mm, from that set's
 `manifest.json`. The component harness maps and replays its fillet with Stand up.
+
+`fusion-L01/` contains unchanged CC0-1.0 CAD Fixture Recipes files built in Fusion, published at
+<https://progress.dutchmancad.xyz/scoreboard/public-files.json> (recipes `L01-linked` and
+`L01-broken`): a 6000 mm³ block and a 392.7 mm³ pin placed as a second component.
+
+| File | Recipe and purpose | SHA-256 |
+|---|---|---|
+| `L01-linked.f3d` | L01-linked: the pin is a linked component whose design isn't in the file. | `0ece17bc408ee6a65f0d001c44d23d01aeb94f0de46d757e0a2b61e90fbd80e3` |
+| `L01-broken.f3d` | L01-broken: the same assembly with the link broken before export, so the pin is stored in the file. | `00e4591e7ac4ec8ebcfb3c88563a62e900e25597e6640cae81bb13a3c7b2232c` |

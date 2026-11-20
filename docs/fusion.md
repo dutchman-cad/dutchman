@@ -125,6 +125,8 @@ assumed motion bindings are reported separately.
 
 Bodies a Combine used up as a tool, or that a Remove step took out of the design, are left out when cadmpeg marks them hidden and no component owns them; an Info `bodies` note gives the count. A body an active Remove deletes is left out too, even when cadmpeg lists it as shown, as long as cadmpeg resolves which body the Remove names; an Info note on the Remove gives the count. Bodies you hid yourself stay available and are written marked hidden: SolidCraft 0.42 and newer open them hidden, while older releases show a part with both shown and hidden bodies whole. An Info note gives the count. A hidden body the editable history rebuilds has no STEP of its own to carry that mark, so it is listed in the design's hidden bodies instead, at every placement of its part, and opens hidden too.
 
+Fusion's own STEP export leaves hidden bodies out, so a STEP you export from Fusion can have fewer bodies than the design Dutchman writes, and a design whose bodies are all hidden exports as an empty STEP. When the counts differ, check the extra bodies in SolidCraft's browser: if they're hidden there, they're the bodies you hid in Fusion, not extra geometry.
+
 | What the codec gives | What Dutchman does |
 |---|---|
 | The design's B-rep, with body transforms applied. | Converts it: restated as STEP, written as SolidCraft's import. |
@@ -150,6 +152,14 @@ reported as a history blocker.
 User-hidden bodies that still belong to a component are kept, with an Info note. Hidden
 occurrences remain hidden; the current writer shows a part with both shown and hidden bodies
 whole, so its hidden members can appear visible in SolidCraft.
+
+Holes ending at a proven earlier planar extrusion or box cap retain their drill point,
+including countersunk entries. Fusion measures Extents To to the cylindrical shoulder;
+the conical point extends beyond the selected face. Dutchman resolves that distance
+along the drilling direction and keeps the countersink at the entry. Unresolved,
+offset, tilted, or unproven terminating faces retain a specific history blocker.
+Later features rebuild when the hole maps. A refused hole still stops body-building
+history; independently resolved reference sketches remain available.
 
 Holes on planar historical entry faces can keep their editable history when the boundary
 includes circular arcs or whole circles, including a rounded corner or an earlier through

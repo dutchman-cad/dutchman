@@ -18,6 +18,7 @@ mod container;
 mod document;
 mod evaluator;
 mod linked;
+mod opening;
 mod output_links;
 #[cfg(not(target_family = "wasm"))]
 pub use evaluator::CliEvaluator;
@@ -82,6 +83,9 @@ const GEOMETRY: &str = "geometry";
 /// What the report says turned history off, unless a front end names its own choice.
 const IMPORT_ONLY_REASON: &str = "--import-only";
 
+/// The least time the final opening check gets: a large assembly takes minutes to open.
+pub const OPENING_CHECK_FLOOR: Duration = Duration::from_secs(15 * 60);
+
 /// Writes `.sc` designs.
 #[derive(Clone, Debug)]
 pub struct SolidCraftWriter {
@@ -101,6 +105,7 @@ pub struct SolidCraftWriter {
     verification: Verification,
     replay: Verification,
     timeout: Duration,
+    opening_timeout: Option<Duration>,
     hide_unverified: bool,
     stand_up: Option<bool>,
     memory_budget: Option<u64>,
@@ -126,6 +131,7 @@ impl Default for SolidCraftWriter {
             verification: Verification::Auto,
             replay: Verification::Auto,
             timeout: DEFAULT_TIMEOUT,
+            opening_timeout: None,
             hide_unverified: false,
             stand_up: None,
             memory_budget: None,
@@ -343,6 +349,18 @@ impl SolidCraftWriter {
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// The whole time the final opening check of the written design may take. By default it is
+    /// its own budget, at least [`OPENING_CHECK_FLOOR`], never what the replay checks left over.
+    pub fn opening_timeout(mut self, timeout: Duration) -> Self {
+        self.opening_timeout = Some(timeout);
+        self
+    }
+
+    fn opening_budget(&self) -> Duration {
+        self.opening_timeout
+            .unwrap_or_else(|| self.timeout.max(OPENING_CHECK_FLOOR))
     }
 
     /// Whether `model` can be written at all: `Err` with the reason a conversion would fail
@@ -1610,6 +1628,7 @@ impl Writer for SolidCraftWriter {
         }
         if let Some(assembly) = &model.assembly {
             let bytes = assembly::write(self, model, assembly, report, progress)?;
+            let bytes = self.check_opening(bytes, report)?;
             // Each part is placed any number of times, so only SolidCraft's own warnings count.
             let expected = verify::Expected {
                 sheets: placed_sheets(assembly, 0),
@@ -1661,6 +1680,7 @@ impl Writer for SolidCraftWriter {
                 check: self.check_sketches(&bytes),
                 features: mapping.features,
             });
+            let bytes = self.check_opening(bytes, report)?;
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
@@ -1920,6 +1940,7 @@ impl Writer for SolidCraftWriter {
         }
         state_tolerances(report, &outcome);
         report.set_outcome(outcome);
+        let bytes = self.check_opening(bytes, report)?;
         out.write_all(&bytes)
             .map_err(|err| Error::Encode(format!("cannot write the design: {err}")))
     }

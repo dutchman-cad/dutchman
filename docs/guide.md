@@ -89,6 +89,10 @@ Simplify the sketch or split the bundle when the recovery budget is exhausted;
 the final STEP shape remains available. Native symmetric distances and parameter
 fallback defaults stay unchanged.
 
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
+
 Onshape quantities need a dimensioned expression or explicit supported units.
 Malformed or repeated Boolean operands, unresolved latest variable bindings,
 face/cap sketch attachments without a stored complete frame, up-to-next extents without
@@ -567,6 +571,13 @@ without looking for or launching an installed SolidCraft CLI.
 [Progress during conversion](command-line.md#progress-during-conversion)
 
 ### Convert a whole folder: convert-all
+
+Folder runs in the desktop app and CLI keep paths relative to the input folder:
+`in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`. Designs with the same name in
+other subfolders stay separate. Linked design companions and desktop reports stay
+beside their design. Repeating a run into an explicit output folder reuses those
+paths and replaces designs unless `--no-clobber` is set; edited linked companions
+are kept and reported as a conflict. Single-file output paths are unchanged.
 
 [Convert a whole folder: convert-all](command-line.md#convert-a-whole-folder-convert-all)
 
@@ -1074,6 +1085,26 @@ source geometry, which is not supported yet`. A numeric feature-local path alone
 does not prove which rebuilt edge to select. The editable prefix and original final
 geometry are retained; a generated reference with missing or blank fields is still refused.
 
+When no final source shape is available, conversion keeps the editable history before the
+failed feature, leaves out its dependent suffix, and checks the remaining design again.
+The report names the omitted features and the rebuild reason. Conversion stops only if
+no usable history remains or the remaining design cannot be made to open.
+
+When SolidCraft reports a feature that fails to rebuild, conversion removes that feature and
+its dependent body history and keeps the final source shape with the editable prefix before the
+failure. The report names the feature and SolidCraft's reason, even when the source shape could
+not be measured. Before omission, refused STEP imports with excess shared edge uses get identical edge
+copies for uses beyond the first two and are rechecked. Faces, curves, vertices, names, and
+placements are retained; `geometry/sheet-edges-split` records the repair. A final opening
+check also covers geometry-only output, hidden history, and
+assemblies. If SolidCraft also refuses the available final source shape, omission is the last
+resort: `geometry/import-failed` says the body geometry is **MISSING** and names the feature
+and reason. A combined import may leave out the whole part. Review these losses before using
+the result. If a named failure cannot be removed, conversion stops without writing it. An
+evaluator error or nonzero exit without named failed features means verification is
+unavailable: the design is still written, marked unverified, with the reason. Verification
+turned off remains unchecked.
+
 Variable-radius fillets with an unproven chain direction report `variable fillets need
 a proven chain direction: their radius stations are not bound to a source start vertex,
 which is not supported yet`. Mapping a radius law requires
@@ -1087,3 +1118,7 @@ says the design is too large to open inside SolidCraft, use the
 `.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
 "Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
 See [the plugin guide](plugin.md).
+
+The [public fixture score workflow](fixture-score.md) checks public fixture
+history on GitHub runners each week or on demand. It records conversion and
+SolidCraft reopen evidence for the fixture scoreboard.
