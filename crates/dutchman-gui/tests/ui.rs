@@ -4712,6 +4712,7 @@ fn designs_header_screenshots() {
         }
     }
     std::fs::write(dir.join("index.md"), index).unwrap();
+}
 
 fn many_results_onshape_harness(
     out: &Path,
