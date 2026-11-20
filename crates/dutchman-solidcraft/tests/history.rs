@@ -13126,7 +13126,7 @@ fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
     let base = holed_cube(2.0 * BORE, |_| {});
     let mut wire = serde_json::to_value(&base.ir).unwrap();
     let mut group = json!({"edges": {"kind": "historical", "value": {
-        "state": "f3d:model:feature-input-topology#1", "edges": ["hole-top"],
+        "state": "f3d:model:feature-input-topology#1", "edges": ["synthetic:rim:edge#hole-top"],
         "native": "synthetic input edge"}}});
     group[if kind == "fillet" { "radius" } else { "spec" }] = dimension;
     let mut definition = json!({"groups": [group]});
@@ -13136,10 +13136,10 @@ fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
     wire["model"]["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#5", "ordinal": 4, "name": "Edge treatment", "suppressed": false, "dependencies": ["f3d:model:feature#4"], "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": {"kind": kind, "value": definition}}, "source_properties": {}, "source_content": []}));
     let xyz = |x: f64, y: f64, z: f64| json!({"x": x, "y": y, "z": z});
     let start = xyz(5.0 + BORE, 5.0, 10.0);
-    let sample = json!({"edge": "hole-top", "interior": xyz(5.0 - BORE, 5.0, 10.0),
+    let sample = json!({"edge": "synthetic:rim:edge#hole-top", "interior": xyz(5.0 - BORE, 5.0, 10.0),
         "tangent": xyz(0.0, -1.0, 0.0), "start": start, "end": start,
-        "faces": ["hole-wall", "top"]});
-    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#5", "edges": ["hole-top"], "faces": ["hole-wall", "top"], "edge_geometry": [sample], "bodies": [], "vertices": []}]);
+        "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"]});
+    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#5", "edges": ["synthetic:rim:edge#hole-top"], "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"], "edge_geometry": [sample], "bodies": [], "vertices": []}]);
     // Exact input carrier belongs to an earlier hidden result, independently of final edges.
     let source = "synthetic:rim:body#0";
     for feature in wire["model"]["features"].as_array_mut().unwrap() {
@@ -13155,8 +13155,8 @@ fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
         .unwrap()
         .push(json!({"id": source, "kind": "wire", "visible": false}));
     g["regions"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:region#0", "body": source, "shells": ["synthetic:rim:shell#0"]}));
-    g["shells"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:shell#0", "region": "synthetic:rim:region#0", "members": [{"kind": "wire_edge", "id": "hole-top"}]}));
-    g["edges"].as_array_mut().unwrap().push(json!({"id": "hole-top", "carrier": {"curve": "synthetic:rim:curve#0", "param_range": [0.0, std::f64::consts::TAU]}, "ends": {"start": "synthetic:rim:vertex#0", "end": "synthetic:rim:vertex#0"}}));
+    g["shells"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:shell#0", "region": "synthetic:rim:region#0", "members": [{"kind": "wire_edge", "id": "synthetic:rim:edge#hole-top"}]}));
+    g["edges"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:edge#hole-top", "carrier": {"curve": "synthetic:rim:curve#0", "param_range": [0.0, std::f64::consts::TAU]}, "ends": {"start": "synthetic:rim:vertex#0", "end": "synthetic:rim:vertex#0"}}));
     g["vertices"]
         .as_array_mut()
         .unwrap()
