@@ -207,8 +207,8 @@ format provides the 0.18.2 compatibility floor. This stays `solidcraft/23` for 0
 targets too: its format 45 additions (nested Browser groups, point cloud properties and
 filters, and print faces) are not used by Dutchman. Feature mapping also respects the writer's
 target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
-`NEWEST_SOLIDCRAFT` (currently 0.44), unless an explicit target is supplied.
-`WINDOW_OLDEST` (currently 0.18.2) marks the oldest release in the rolling 14-day window;
+`NEWEST_SOLIDCRAFT` (currently 0.45), unless an explicit target is supplied.
+`WINDOW_OLDEST` (currently 0.40.0) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
 Sketch-profile helical sweeps require a target of 0.25 patch 1 or newer; older targets block them
@@ -396,7 +396,7 @@ length but no tangent. For an open line or circular arc, its midpoint must
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
 either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
 splits into pieces and other non-circular curves are refused. Closed input circles map for
-explicit targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
+targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
 stored circle with exact centre, axis, radius and full-turn parameter range; historical
 samples cannot establish circularity. Stored topology must identify one earlier named owning
 body, and only that body supplies replay candidates. Missing carrier or ownership evidence,

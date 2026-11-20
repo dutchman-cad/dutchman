@@ -221,7 +221,7 @@ either order) and length; a straight one must lie along the input tangent. Solid
 a curved edge along the polyline it draws, so a rebuilt arc's length must lie between its chord
 and the input arc's length. Arcs SolidCraft
 splits into pieces and other non-circular curves are refused. Closed input circles map for
-explicit targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
+targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
 stored circle with exact centre, axis, radius and full-turn parameter range; historical
 samples cannot establish circularity. Stored topology must identify one earlier named owning
 body, and only that body supplies replay candidates. Missing carrier or ownership evidence,
@@ -489,10 +489,15 @@ When a partial history is checked against the source's stored bodies, each kept 
 sit where the source has it: within the larger of 1 mm and 2% of its box diagonal when the
 source's position is approximate, or 0.5 mm and 1% when it is exact.
 
-Dutchman targets SolidCraft 0.44 with the same writer capabilities as 0.40 and keeps
-design format 23. Saving a design in SolidCraft 0.44 upgrades it to format 58, which
-SolidCraft 0.30.1 and earlier cannot open. SolidCraft 0.40.1 through 0.43
-open designs saved in 0.44 with a warning about the newer format.
+Dutchman targets SolidCraft 0.45 by default with the writer capabilities available in 0.44.1 and
+keeps design format 23, as for earlier targets. SolidCraft 0.45 opens every earlier
+design format. Saving in SolidCraft 0.45 upgrades a design to format 63 (drawing format 2);
+SolidCraft 0.44 asks to update before opening that saved design. Dutchman does not write
+drawings or require format 63. Explicit older targets keep their existing output.
+
+Converted assemblies embed their parts and STEP blobs in the design container; they do
+not link back to the source part files. SolidCraft 0.45's requirement to use Update Links
+for changed files outside the design's folder therefore does not affect converted assemblies.
 
 For targets of SolidCraft 0.30 or newer, partial and unverified editable-history copies
 use **Hide its History**: their features stay in the Browser and keep rebuilding, but

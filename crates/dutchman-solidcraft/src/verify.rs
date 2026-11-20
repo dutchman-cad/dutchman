@@ -413,11 +413,11 @@ pub fn chosen_cli(chosen: &Path) -> Result<PathBuf, String> {
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
 /// The newest minor known at build time. Patch releases need no constant update.
-pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 44];
+pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 45];
 
 /// The oldest SolidCraft release published in the 14 days before the tag, never below
 /// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
-pub const WINDOW_OLDEST: [u64; 3] = [0, 18, 2];
+pub const WINDOW_OLDEST: [u64; 3] = [0, 40, 0];
 
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
@@ -3183,11 +3183,19 @@ mod cli_tests {
     #[test]
     fn the_newest_solidcraft_app_carries_the_cli() {
         let dir = tempfile::tempdir().unwrap();
-        for (app, version) in [
-            ("SolidCraft.app", Some("0.18.2")),
-            ("SolidCraft 2.app", Some("0.18.10")),
-            ("SolidCraft old.app", None),
-            ("Other.app", Some("9.0")),
+        for (app, version, id) in [
+            (
+                "SolidCraft.app",
+                Some("0.44.1"),
+                "ai.storyteller.solidcraft",
+            ),
+            (
+                "SolidCraft 2.app",
+                Some("0.45.0"),
+                "io.tangencylabs.solidcraft",
+            ),
+            ("SolidCraft old.app", None, "ai.storyteller.solidcraft"),
+            ("Other.app", Some("9.0"), "org.example.other"),
         ] {
             let macos = dir.path().join(app).join("Contents/MacOS");
             std::fs::create_dir_all(&macos).unwrap();
@@ -3196,7 +3204,7 @@ mod cli_tests {
                 std::fs::write(
                     dir.path().join(app).join("Contents/Info.plist"),
                     format!(
-                        "<dict><key>CFBundleShortVersionString</key>\n<string>{version}</string></dict>"
+                        "<dict><key>CFBundleIdentifier</key><string>{id}</string><key>CFBundleShortVersionString</key>\n<string>{version}</string></dict>"
                     ),
                 )
                 .unwrap();
@@ -3237,14 +3245,14 @@ mod cli_tests {
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("dutchman");
         assert_eq!(beside(&program), None);
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.44.0");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.0");
         assert_eq!(beside(&program), Some(cli));
     }
 
     #[test]
     fn a_chosen_cli_must_answer_as_solidcraft() {
         let dir = tempfile::tempdir().unwrap();
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.44.0");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.0");
         assert_eq!(chosen_cli(&cli), Ok(cli));
         let other = version_script(dir.path(), "other-tool", "other-tool 1.2.3");
         assert!(chosen_cli(&other)
@@ -3277,7 +3285,7 @@ mod cli_tests {
         .unwrap();
         std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(chosen_cli(&app).unwrap_err().contains("portable ZIP"));
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.44.1");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.1");
         assert_eq!(chosen_cli(&app), Ok(cli));
         assert!(!started.exists());
     }
@@ -3579,7 +3587,7 @@ mod cli_tests {
         let dir = tempfile::tempdir().unwrap();
         for version in [
             "0.18.2", "0.20.0", "0.25.1", "0.27.1", "0.40.0", "0.41.0", "0.42.0", "0.43.0",
-            "0.44.0", "0.44.9", "0.45.0", "nonsense", "0.17.0",
+            "0.44.0", "0.44.1", "0.44.9", "0.45.0", "0.45.9", "0.46.0", "nonsense", "0.17.0",
         ] {
             let cli = dir.path().join(version);
             std::fs::write(
@@ -3797,11 +3805,32 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
+        // 0.45 also enables the 0.44.1 closed-circle blend gate by default.
+        assert!(target_loses_history(target));
         assert!(!VersionGate::ScopedBodies.supported(previous));
         assert!(VersionGate::ScopedBodies.supported(target));
         assert!(!VersionGate::ClosedCircleBlend.supported(target));
         assert!(VersionGate::ClosedCircleBlend.supported(SolidCraftVersion::V0_44_1));
+    }
+
+    #[test]
+    fn target_045_keeps_044_patch_1_writer_capabilities() {
+        let target: SolidCraftVersion = "0.45.0".parse().unwrap();
+        let previous = SolidCraftVersion::V0_44_1;
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+            VersionGate::HistoryBody,
+            VersionGate::SplitFaces,
+            VersionGate::ScopedBodies,
+            VersionGate::ClosedCircleBlend,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
+        assert!(!target_loses_history(target));
     }
 
     #[test]
@@ -3815,7 +3844,9 @@ mod version_tests {
             ("0.43.0", "current"),
             ("0.44.0", "current"),
             ("0.44.9", "current"),
-            ("0.45.0", "newer"),
+            ("0.45.0", "current"),
+            ("0.45.9", "current"),
+            ("0.46.0", "newer"),
             ("0.17.99", "too_old"),
         ] {
             assert_eq!(
@@ -3836,7 +3867,9 @@ mod version_tests {
         assert!(target_loses_history(after));
         assert!(!VersionGate::ThinExtrude.supported(after));
         assert!(VersionGate::ThinExtrude.supported(SolidCraftVersion::V0_44_0));
-        assert!(!target_loses_history(SolidCraftVersion::V0_44_0));
+        // The newest target also retains closed-circle blends, added in 0.44.1.
+        assert!(target_loses_history(SolidCraftVersion::V0_44_0));
+        assert!(!target_loses_history(SolidCraftVersion::V0_44_1));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
         assert!(!VersionGate::HoleThreadDepth.supported(SolidCraftVersion::V0_30_0));

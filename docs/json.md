@@ -514,9 +514,9 @@ asking for its body-producing feature to resolve first. Source storage order doe
 change replay order: the neutral ordinal controls it.
 
 SolidCraft version presentation uses minors: `solidcraft.target` and
-`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.44"`), changing their
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.45"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
-`"0.44.0"`). Status comparisons use minors, so all 0.44 patches are current; 0.45 is newer
+`"0.44.0"`). Status comparisons use minors, so all 0.45 patches are current; 0.46 is newer
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.
@@ -578,7 +578,7 @@ elements count once. Grounded parts appear as rigid joints, and unsupported join
 loss notes while stored placements are retained. No report schema fields are added.
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
-explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
 stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
 only that body supplies replay candidates, even when another body has a coincident rim.
 Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
@@ -635,7 +635,7 @@ For older targets, `history.features[].reason` says
 line explains the blocker. `--solidcraft-version x.y.z` selects the target on `convert`,
 `convert-all`, and `watch`; it must be at least 0.18.2. By default the found verification
 CLI's version is used, even with `--no-verify`, else the newest release known at build
-time (currently 0.44). The supported rolling 14-day window is currently 0.18.2–0.44;
+time (currently 0.45). The supported rolling 14-day window is currently 0.40–0.45;
 older targets down to 0.18.2 retain the existing feature simplifications.
 When a written coil or flat entry-recess tip uses the newer mapping, the history line
 includes the actual target, such as `target SolidCraft 0.25 patch 1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip

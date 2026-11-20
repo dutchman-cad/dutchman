@@ -546,7 +546,7 @@ FreeCAD external Body and Part links are resolved beside the assembly first, the
 once. Grounding and supported Assembly-workbench joints map like other assembly joints.
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
-explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
 stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
 only that body supplies replay candidates, even when another body has a coincident rim.
 Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
@@ -600,8 +600,8 @@ map to sketch-profile coils when targeting SolidCraft 0.25 patch 1 or newer. Old
 the helix with `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the
 original geometry. The CLI equivalent is `--solidcraft-version x.y.z` on `convert`,
 `convert-all`, and `watch` (default: found CLI version, even with `--no-verify`, else
-the newest release known at build time, currently 0.44). The rolling 14-day window
-is currently 0.18.2–0.44; older targets down to 0.18.2 get simplified features.
+the newest release known at build time, currently 0.45). The rolling 14-day window
+is currently 0.40–0.45; older targets down to 0.18.2 get simplified features.
 Pitch/height/turn laws, handedness, axis, reversed travel, and Boolean operation carry across. Feature parameter
 bindings are retained when available, otherwise dimensions use resolved values. Conical
 and spiral sweeps report the missing SolidCraft cone-angle/radial-growth option.
@@ -666,7 +666,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `import_only` | boolean | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `verify` | boolean | Check a converted history in SolidCraft. Default `true`; skipped, and the history marked unverified, when no `solidcraft-cli` is found. |
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
-| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.44), including when `verify` is false. |
+| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.45), including when `verify` is false. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
 | `stand_up` | boolean | Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis (+90° about +X). Default false. |
 | `no_stand_up` | boolean | Keep source axes without standing Y-up models up along +Z (default). |
@@ -993,9 +993,9 @@ SolidCraft reports also include `solidcraft.known_newest` (a version string) and
 fields require no network check. See [JSON reports](json.md).
 
 SolidCraft version presentation uses minors: `solidcraft.target` and
-`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.44"`), changing their
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.45"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
-`"0.44.0"`). Status comparisons use minors, so all 0.44 patches are current; 0.45 is newer
+`"0.44.0"`). Status comparisons use minors, so all 0.45 patches are current; 0.46 is newer
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.

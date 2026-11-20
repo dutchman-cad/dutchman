@@ -202,7 +202,7 @@ A design stores its geometry compressed, so a large assembly stays small: SolidC
 [Install](install.md) has every option, checksums, and the one-time
 [first-run approval](install.md#opening-the-app-the-first-time) on macOS. Install
 [SolidCraft](install.md#solidcraft-optional-recommended) too: Dutchman uses it to check each
-converted history. The supported SolidCraft window is currently 0.18.2–0.44.
+converted history. The supported SolidCraft window is currently 0.40–0.45.
 
 ## Your first conversion
 
@@ -616,7 +616,7 @@ feature budget covers region discovery (including `sketch.inspect`), mapping and
 evaluations; late results keep the refusal.
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
-explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
 stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
 only that body supplies replay candidates, even when another body has a coincident rim.
 Missing carrier or ownership evidence, ellipses, and transformed source carriers remain

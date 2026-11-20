@@ -99,7 +99,7 @@ Dutchman preserves those edges when it removes the hidden intermediate shapes. I
 straight edges and open circular arcs only when their midpoint identifies exactly one edge
 on SolidCraft's replay at that step, with matching ends and length. An ambiguous pick, a
 missing base shape or another unsupported curve stops the editable prefix, with the
-reason reported. When explicitly targeting SolidCraft 0.44.1 or newer, a closed circular rim
+reason reported. When targeting SolidCraft 0.44.1 or newer, a closed circular rim
 also maps if its seam, opposite midpoint, and tangent describe a circle, and rebuilt arc
 pieces cover that circle exactly once on one body. The proof compares plane, radius, and
 angular coverage rather than seam endpoints, then picks each rebuilt piece. An additional
@@ -159,8 +159,8 @@ axis, pitch/height/turn law, handedness, reversed direction, and join/cut operat
 sketch-profile coils when the target is SolidCraft 0.25 patch 1 or newer. Choose a target with
 `--solidcraft-version x.y.z` on `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The default is the found CLI's version, even with `--no-verify`, else the newest release
-known at build time (currently 0.44). The rolling 14-day window is currently
-0.18.2–0.44. Older targets block the helix with
+known at build time (currently 0.45). The rolling 14-day window is currently
+0.40–0.45. Targets before 0.25 patch 1 block the helix with
 `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the original
 geometry. Resolved feature parameter
 bindings drive the coil dimensions; dimensions without bindings keep their values.

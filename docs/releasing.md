@@ -7,24 +7,24 @@ Candidate and stable tags also run the full CI matrix and release builds; the st
 rebuild does not replace the promoted candidate files. PRs run fast Linux checks, and the
 merge queue runs the full matrix once per group. Pushes to `main` keep their existing checks.
 
-1. Refresh the SolidCraft window alongside the cadmpeg pin. `WINDOW_OLDEST` stays an
-   exact, checksum-pinned release from the rolling 14-day window, never below the internal
+1. Refresh the SolidCraft window alongside the cadmpeg pin. `WINDOW_OLDEST` records the
+   exact oldest release from the rolling 14-day window, never below the internal
    `OLDEST_SOLIDCRAFT` floor (0.18.2). `NEWEST_SOLIDCRAFT` names only the newest known
-   minor, currently `[0, 44]`; a patch release requires no Dutchman constant or docs update.
+   minor, currently `[0, 45]`; a patch release requires no Dutchman constant or docs update.
    Choose the oldest release and newest minor from SolidCraft's release dates, then run
-   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.18.2 0.44` with a read-only GitHub token.
+   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.40.0 0.45` with a read-only GitHub token.
    The script reads the authenticated GitHub releases list, selects the highest published
    stable patch of that minor, and checks its checksum metadata. It prints the constants,
-   the oldest pinned checksum, and the newest minor's dynamic CI matrix entry. Copy those
+   the oldest checksum, and the newest minor's dynamic CI matrix entry. Copy the constants
    into `crates/dutchman-solidcraft/src/verify.rs`; the CI matrix's `newest` entry follows
    that constant, so `.github/workflows/ci.yml` needs no edit for a new minor.
    CI resolves that newest minor again at each run with the workflow's `GITHUB_TOKEN`,
    downloads its `SHA256SUMS.txt`, and verifies the exact archive before extracting it.
    Drafts, prereleases, missing minors, and ambiguous checksums fail rather than falling back.
-   Keep the oldest entry pinned. Update minor names in README and docs when the newest
+   Keep the 0.18.2 opens-in entry pinned. Update minor names in README and docs when the newest
    minor changes. Internal writer targets default to newest-minor.0; explicit and found
    targets retain patches for feature gates and the 0.18.2 verification floor.
-   Run target-version and roundtrip checks at both window bounds in CI.
+   Keep target-version and roundtrip checks for the 0.18.2 opens-in floor and newest release in CI.
 
    A new minor does not have to wait for a person: the `SolidCraft window` workflow
    (`.github/workflows/solidcraft-window.yml`) checks SolidCraft's releases every day and,
