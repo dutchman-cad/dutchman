@@ -37,6 +37,7 @@ mod shell;
 mod sketch;
 mod spatial;
 mod sweep;
+mod thin;
 mod thread;
 mod wire;
 
@@ -612,6 +613,8 @@ struct Context<'a> {
     model: &'a Value,
     /// Current topology, separate from the model records on CADIR v11.
     geometry: &'a Value,
+    /// Typed v11 outputs paired by identity with model-history projections.
+    design: &'a Value,
     /// The arenas `model` holds when it is a subset of the whole; reading another is a bug,
     /// which a debug build panics on.
     reading_only: Option<&'static [&'static str]>,
@@ -690,6 +693,7 @@ impl<'a> Context<'a> {
             source: None,
             model,
             geometry: &Value::Null,
+            design: &Value::Null,
             reading_only: None,
             children: [("regions", OnceCell::new()), ("faces", OnceCell::new())]
                 .into_iter()
@@ -1203,6 +1207,7 @@ fn map_into(
     let mut ctx =
         Context::new(wire).with_geometry(document.get("geometry").unwrap_or(&Value::Null));
     ctx.source = Some(model);
+    ctx.design = document.get("design").unwrap_or(&Value::Null);
     ctx.target_version = target_version;
     ctx.confirming_consumed_bodies = confirming_consumed_bodies;
     ctx.params = param_names;
@@ -1527,7 +1532,13 @@ fn map_into(
     }
     params::unsigned_dimensions(references, &ctx);
     references.next_id = ctx.next_id;
-    if !ctx.builds {
+    // A complete sketch-only design has no source bodies to rebuild. Other
+    // histories still need a body builder, including any stopped sketch prefix.
+    let complete_sketches = keep_sketches
+        && crate::sketches_only(model)
+        && blocked.is_none()
+        && !history.features.is_empty();
+    if !ctx.builds && !complete_sketches {
         return Err(blocked.unwrap_or_else(|| {
             if no_timeline {
                 "the design carries no feature history".to_owned()

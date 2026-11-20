@@ -16,6 +16,7 @@ pub(crate) fn map(
     ctx: &mut Context,
     preceding: &[Value],
 ) -> Result<Value, String> {
+    let thin = super::thin::map(feature, definition, ctx)?;
     let reference = definition.get("profile").map(super::profile::planar);
     let face_profile = reference
         .and_then(|profile| profile.get("kind"))
@@ -41,7 +42,9 @@ pub(crate) fn map(
         .and_then(Value::as_str)
         == Some("spatial_sketch_profiles")
         && ctx.target_version >= crate::SolidCraftVersion::V0_44_0;
-    let (sketch_id, profiles) = if spatial_profile {
+    let (sketch_id, profiles) = if let Some((sketch, _)) = &thin {
+        (sketch.clone(), json!({"type":"all"}))
+    } else if spatial_profile {
         super::spatial::profile::map(reference.ok_or("it has no profile")?, ctx)?
     } else if face_profile {
         // The sketch of the face's boundary runs along the face's outward normal; mapping
@@ -67,7 +70,7 @@ pub(crate) fn map(
     } else {
         profile(reference, ctx)?
     };
-    let profile_sketch = if face_profile {
+    let profile_sketch = if face_profile || thin.is_some() {
         None
     } else {
         super::profile::whole_region_sketch(feature, &sketch_id, ctx, preceding)
@@ -98,12 +101,26 @@ pub(crate) fn map(
         let first = ["/extent/side", "/extent/first"]
             .iter()
             .find_map(|path| number(definition.pointer(path)?.pointer("/termination/length")));
-        if let Some(expression) =
-            first.and_then(|length| ctx.owned_parameter(feature, "AlongDistance", length))
-        {
-            if extent.get("direction").and_then(Value::as_str) != Some("symmetric") {
-                extent.insert("distance".to_owned(), json!(expression));
-            }
+        // A symmetric extent holds its total distance, so only a parameter the source states
+        // as the total (`TotalDistance`) drives it; a per-side distance would halve it.
+        let symmetric = extent.get("direction").and_then(Value::as_str) == Some("symmetric");
+        let kind = if symmetric {
+            "TotalDistance"
+        } else {
+            "AlongDistance"
+        };
+        let total_parameter = feature
+            .pointer("/source_properties/symmetric_distance_parameter")
+            .and_then(Value::as_str)
+            == Some("total");
+        if let Some(expression) = first.and_then(|length| {
+            ctx.owned_parameter(feature, kind, length).or_else(|| {
+                (symmetric && total_parameter)
+                    .then(|| ctx.owned_parameter(feature, "AlongDistance", length))
+                    .flatten()
+            })
+        }) {
+            extent.insert("distance".to_owned(), json!(expression));
         }
     }
     let mut start_height = 0.0;
@@ -138,9 +155,14 @@ pub(crate) fn map(
             extent.insert("start_offset".to_owned(), json!(mm(offset)));
         }
     }
+    let mut slanted_start = false;
     if definition.pointer("/start/kind").and_then(Value::as_str) == Some("from_face") {
         let start = definition.get("start").ok_or("its start is malformed")?;
-        let point = super::faces::pick(ctx, feature, start.get("face"), sketch.normal)?;
+        let slanted = crate::VersionGate::SlantedFaceExtent.supported(ctx.target_version);
+        let (point, tilted) =
+            super::faces::pick(ctx, feature, start.get("face"), sketch.normal, slanted)?;
+        // A slanted start has no single height: no flat-cap proof applies to its far end.
+        slanted_start = tilted;
         start_height = point
             .iter()
             .zip(sketch.origin)
@@ -204,9 +226,10 @@ pub(crate) fn map(
     {
         return Err("its through-all cut has no earlier named body; resolve its body-producing feature first".to_owned());
     }
-    let end = end_of_sweep(definition, &extent, sketch, start_height, forward);
+    let end =
+        end_of_sweep(definition, &extent, sketch, start_height, forward).filter(|_| !slanted_start);
     let body_names = body_names(feature, ctx, operation);
-    if !face_profile {
+    if !face_profile && thin.is_none() {
         let proven = match (operation, end) {
             ("new_body", Some(end)) if ctx.sole_builder => {
                 match super::cap::check(reference, ctx, &end) {
@@ -234,6 +257,11 @@ pub(crate) fn map(
         "extent": extent,
         "operation": operation,
     });
+    if let Some((_, thin)) = thin {
+        if let Some(fields) = out.as_object_mut() {
+            fields.insert("thin".to_owned(), thin);
+        }
+    }
     if let (Some(names), Some(fields)) = (body_names, out.as_object_mut()) {
         fields.insert("body_names".to_owned(), json!(names));
     }
@@ -390,7 +418,14 @@ fn side(
             .ok_or_else(|| "its blind length is malformed".to_owned()),
         Some("through_all") => Ok(Side::ThroughAll),
         Some("to_face") => Ok(Side::ToObject(
-            super::faces::pick(ctx, feature, termination.get("face"), normal)?,
+            super::faces::pick(
+                ctx,
+                feature,
+                termination.get("face"),
+                normal,
+                crate::VersionGate::SlantedFaceExtent.supported(ctx.target_version),
+            )?
+            .0,
             number(termination.get("offset")),
         )),
         Some("to_plane") => {

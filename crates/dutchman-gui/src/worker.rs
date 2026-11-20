@@ -356,10 +356,8 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
             .map(|handle| handle.path().to_path_buf())
             .collect()
         });
-        if !paths.is_empty() {
-            let _ = messages.send(Message::Picked { pick: kind, paths });
-            ctx.request_repaint();
-        }
+        let _ = messages.send(Message::Picked { pick: kind, paths });
+        ctx.request_repaint();
     });
 }
 

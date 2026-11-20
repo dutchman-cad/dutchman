@@ -151,6 +151,96 @@ project root selection and recursive resolution; no third-party design supplied 
 and an embedded cube reference. It covers matching a local holder's neutral source name
 to a saved sub-assembly file when choosing project roots.
 
+## Onshape bundles
+
+`onshape-plate-fillet.onshape-bundle`, `onshape-revolve.onshape-bundle`,
+`onshape-hole.onshape-bundle`, `onshape-hole-forms.onshape-bundle` (invented counterbored,
+countersunk and tapped blind holes in a 30 × 10 × 10 mm plate, its STEP from SolidCraft CLI
+0.44.0), and `onshape-unsupported.onshape-bundle` are synthetic.
+`onshape.py` constructs their REST response objects from Onshape's public OpenAPI
+schemas (`BTFeatureListResponse-2457`, `BTMSketch-151`, `BTMFeature-134`, and
+`BTExportModelBodiesResponse-734`) and the Dutchman bundle v1 specification. It
+creates elementary shapes from scratch with SolidCraft CLI 0.40.1 and exports
+their exact STEP reference bodies. No Onshape account, real document data, vendor
+sample, or third-party design was used. Run `python3 onshape.py` to regenerate, or
+`python3 onshape.py --only onshape-hole-forms` for that bundle alone.
+The plate is 20 × 10 × 2 mm with one 1 mm vertical-edge fillet; the ring is a full
+turn of a 5–10 mm radial rectangle; the hole has a 2 mm bore through a plate below
+XY. The unsupported custom feature is a synthetic no-op after the plate.
+
+`onshape-default-plane-regions.onshape-bundle` is generated from scratch by
+`onshape-regions.py` with SolidCraft CLI 0.43.0: an invented 20 × 10 mm rectangle
+on Top, a construction point, and a 5 mm extrude. Its JSON uses the REST generic
+`BTMIndividualQuery-138`, `deterministicIds`, `queryStatement`, and `queryString`
+fields, with literal and zlib `qCompressed` records. The query encoder authors
+its own dictionary references and topology disambiguation to named sketch curves;
+all identifiers and geometry are invented. It includes default features and empty
+rollback bodydetails, rather than fabricated sketch faces in bodydetails. No
+private query, identifier or geometry is copied. Regenerate with
+`python3 onshape-regions.py --cli /path/to/solidcraft-cli`.
+
+The Onshape tests in `src/onshape/tests.rs` and `tests/onshape.rs` also build
+synthetic variants in memory: zlib cap queries with booleans, shared-vertex tangent
+chains, diameter `length` dimensions, hole `locations` and entry forms, construction
+line axes, origin and midpoint relations, assigned-variable symmetric extrudes, and
+up-to-next bounds on axis-aligned and slanted synthetic boxes. The slanted box is
+built by raising the top vertices linearly along X; no document geometry is used.
+All identifiers, dimensions and geometry in those variants were invented for tests.
+Custom-feature variants also assign a synthetic namespace to built-in feature types,
+omit a custom feature's name, or suppress it. The SolidCraft Onshape tests insert a
+synthetic custom feature before a fillet and move its existing rollback selection
+response to the fillet's new index. These in-memory bundles test the named frozen-shape
+refusal and preservation of the final STEP; they add no captured document data.
+`dutchman/tests/onshape.rs` uses a synthetic response client to capture and convert
+a sketch-only Part Studio without any STEP request or network connection.
+
+The repeated-carrier tests in `src/onshape/tests.rs` rebuild the default-plane
+bundle in memory with a generic ellipse and two solved chords. They encode
+intersection-order witnesses independently, including ambiguous endpoints and an
+outside region with an unlisted hole. Thin-wall tests in `tests/onshape.rs` and
+`dutchman-solidcraft/tests/onshape.rs` rebuild the synthetic plate bundle in memory;
+the replay test uses a generic circle and checks analytic annulus volumes. No
+private bundle geometry or identifiers enter these tests.
+
+The `onshape_regions.rs` test helper builds a synthetic 20 mm square frame,
+circular hole and optional divider meeting the interiors of opposite frame edges.
+Reader and writer tests mutate the generated default-plane bundle in memory;
+repeated circles and consumers exercise cumulative recovery limits. Arc/ellipse
+endpoint and tangent tests construct neutral geometry in code. No private design
+geometry or identifiers are used.
+Long invented source identifiers also exercise the serialized boundary byte limit.
+The isolated-arc and attached-arc cases use invented circular arcs in that same
+frame. Disjoint arcs on one carrier and nested carriers exercise separation
+certificates; translated contacts use generic large coordinates in code. These
+are mathematical constructions, with no private dimensions or geometry copied.
+
+The Onshape P1 admission regressions in `src/onshape/review.rs` and
+`src/onshape/tests.rs` edit these code-built bundles in memory. They port generic
+cases from cadmpeg commit `6a922b771e`, `crates/cadmpeg-codec-onshape/src/integration_tests/{review,projection}.rs`.
+The hole-forms bundle now explicitly states its 118 degree tip angle, shoulder depth
+reference, right thread hand and cosmetic presentation, as generated by `onshape.py`;
+its synthetic STEP member is unchanged. Missing facts are tested by removing them.
+No private design identifiers or geometry are used.
+
+Stored-frame and analytic-proof controls are authored directly in the Rust tests:
+translated/rotated planar frames, circle/ellipse lenses, a rounded stadium with
+explicit tangent relations, a concave polygon, straight-sided boxes and an
+annulus. Missing and contradictory controls are removed or changed in memory.
+The very long tangent-line control uses invented coordinates to test numerical
+conditioning. These constructions copy no private model geometry or identifiers.
+
+The re-review regressions in `src/onshape/rereview.rs` build bundle ZIPs and JSON
+records directly in Rust from the public response shapes. Generic line sketches,
+points, a straight edge and a planar face exercise dependency transitions, operand
+order, scopes, thread termination, midpoint admission and permissive recovery.
+Additional thin tests extend the generated default-plane bundle in memory with a
+synthetic producer and rollback states. No new binary fixture or private design
+identifier is used.
+
+The older revolve bundle's deterministic axis has no earlier body-producing feature.
+It now intentionally retains a named Native history record; the new code-built tests
+supply a separate producer to prove the supported historical-axis case.
+
 The curved hole-entry tests in `dutchman-solidcraft/tests/history.rs` build neutral CADIR
 in code from `cadmpeg_ir::examples::unit_cube`: a 10 mm box with a 2 mm vertical-edge
 fillet and a top-face hole, and a 10 mm plate with two separate 2 mm through holes. Their
