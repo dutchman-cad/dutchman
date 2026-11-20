@@ -574,10 +574,12 @@ mod tests {
                 assert!(design.is_file());
                 let saved = dutchman::saved_report::read(&design).unwrap();
                 assert_eq!(saved["ok"], true);
-                assert_eq!(
-                    saved["input"]["path"],
-                    input.join(folder).join("part.f3d").to_str().unwrap()
-                );
+                // Folders are written with '/'; join each part so Windows paths compare equal.
+                let expected = folder
+                    .split('/')
+                    .fold(input.to_path_buf(), |path, part| path.join(part))
+                    .join("part.f3d");
+                assert_eq!(saved["input"]["path"], expected.to_str().unwrap());
                 assert_eq!(saved["output"]["path"], design.to_str().unwrap());
                 assert!(!design.with_file_name("part-2.sc").exists());
                 let linked = output.join(folder).join("linked.sc");
