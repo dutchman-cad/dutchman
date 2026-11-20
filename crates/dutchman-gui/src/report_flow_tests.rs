@@ -18,10 +18,15 @@ fn report(case: usize) -> Value {
 
 fn row(case: usize) -> Row {
     let mut report = report(case);
-    report["input"] = json!({"path": format!("synthetic-{case}.f3d"), "format":"fusion_archive"});
-    if case == 1 {
-        report["verification"] = json!({"status":"verified"});
-        report["solidcraft"] = json!({"found":"0.44.1"});
+    if let Some(fields) = report.as_object_mut() {
+        fields.insert(
+            "input".into(),
+            json!({"path": format!("synthetic-{case}.f3d"), "format":"fusion_archive"}),
+        );
+        if case == 1 {
+            fields.insert("verification".into(), json!({"status":"verified"}));
+            fields.insert("solidcraft".into(), json!({"found":"0.44.1"}));
+        }
     }
     Row {
         input: PathBuf::from(format!("synthetic-{case}.f3d")),

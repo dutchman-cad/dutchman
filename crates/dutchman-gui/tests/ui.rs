@@ -2510,6 +2510,8 @@ fn anonymous_report_only_opens_review_and_sends_nothing() {
     let dm = h.get_by_label("Copy and open DM").rect();
     assert!(github.top() > dm.bottom());
     open_more(&mut h);
+    // The bottom-pinned panel grows upward when More opens; compare the current layout.
+    let github = h.get_by_label("GitHub issue").rect();
     let anonymous = h.get_by_label("Anonymous report").rect();
     assert!(anonymous.top() > github.bottom());
     assert!(h.query_by_label("No Discord?").is_none());

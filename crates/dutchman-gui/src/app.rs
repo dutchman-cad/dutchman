@@ -122,8 +122,6 @@ pub struct App {
     report_done: Option<(Step, &'static str)>,
     /// Bring the panel into view on the next frame.
     reveal_report: bool,
-    /// Scroll the report panel to show More's buttons on the frame after it opens.
-    reveal_more: bool,
     /// Bring the AI prompt into view on the next frame.
     reveal_ai: bool,
     pub updater: crate::update::Updater,
@@ -494,7 +492,6 @@ impl App {
             report_row: None,
             report_done: None,
             reveal_report: false,
-            reveal_more: false,
             reveal_ai: false,
             consent: crate::report_consent::Consent {
                 ids: stored
@@ -1655,8 +1652,11 @@ impl App {
             let reveal = self.reveal_report;
             self.report_heading(ui);
             let heading_height = ui.cursor().top() - top;
+            // Keep the body width fixed while its measured height grows. A disappearing
+            // scrollbar would reflow the cards and change button IDs during a click.
             let mut scroll = ScrollArea::vertical()
                 .id_salt("report-panel-body")
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                 .auto_shrink([false, false]);
             if reveal {
                 scroll = scroll.vertical_scroll_offset(0.0);
@@ -2761,7 +2761,7 @@ impl App {
             }
             if let (Some((index, row)), Some(file)) = (row, file) {
                 if row.report.is_some() {
-                    let more = egui::CollapsingHeader::new(report_panel::MORE)
+                    egui::CollapsingHeader::new(report_panel::MORE)
                         .id_salt(("report-more", index, &row.input))
                         .show(ui, |ui| {
                             if file.can_report
@@ -2785,14 +2785,7 @@ impl App {
                             {
                                 action = Some(Action::Diagnose(index));
                             }
-                            // Opening More in the pinned panel shows its buttons, not a clipped edge.
-                            if std::mem::take(&mut self.reveal_more) {
-                                ui.scroll_to_cursor(Some(Align::BOTTOM));
-                            }
                         });
-                    if more.header_response.clicked() {
-                        self.reveal_more = true;
-                    }
                 }
             }
         }
@@ -3533,9 +3526,15 @@ fn display(path: &Path) -> String {
 
 fn preset_description(preset: Preset) -> &'static str {
     match preset {
-        Preset::Fast => "Shape only; no feature history, sketches, parameters or joints. Least memory.",
-        Preset::Standard => "Feature history, sketches, parameters and joints that map; leaves history out if it would not fit in free memory.",
-        Preset::Full => "Feature history, sketches, parameters and joints that map. Most memory; keeps history regardless of free memory.",
+        Preset::Fast => {
+            "Shape only; no feature history, sketches, parameters or joints. Least memory."
+        }
+        Preset::Standard => {
+            "Feature history, sketches, parameters and joints that map; leaves history out if it would not fit in free memory."
+        }
+        Preset::Full => {
+            "Feature history, sketches, parameters and joints that map. Most memory; keeps history regardless of free memory."
+        }
     }
 }
 
@@ -3611,7 +3610,9 @@ mod tests {
             assert!(!app.running());
             assert_eq!(
                 app.notice.as_deref(),
-                Some("The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman.")
+                Some(
+                    "The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman."
+                )
             );
             assert!(!app.notice.as_ref().unwrap().contains("synthetic"));
             let scratch = app.download_root.as_ref().unwrap().path().to_path_buf();
@@ -3643,7 +3644,9 @@ mod tests {
         assert!(!harness.state().running());
         assert_eq!(
             harness.state().notice.as_deref(),
-            Some("The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman.")
+            Some(
+                "The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman."
+            )
         );
     }
 
@@ -4593,7 +4596,10 @@ mod tests {
             row("Assembly.iam", Status::Converting, 151_000, 61_000),
             row("waiting.iam", Status::Waiting, 999_000, 999_000),
         ];
-        assert_eq!(running_file_line(&rows).unwrap(), "Assembly.iam: building history (1 other file running)\nStill checking Bracket (rebuilt history): 1 min 1 s");
+        assert_eq!(
+            running_file_line(&rows).unwrap(),
+            "Assembly.iam: building history (1 other file running)\nStill checking Bracket (rebuilt history): 1 min 1 s"
+        );
         rows.push(row("another.iam", Status::Converting, 10_000, 10_000));
         assert!(running_file_line(&rows)
             .unwrap()

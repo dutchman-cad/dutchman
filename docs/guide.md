@@ -745,7 +745,9 @@ Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the s
 conversion report, so changing the installed CLI or verification setting afterward does
 not rewrite what checked that file. No schema fields change.
 
-The desktop scrollbars let you reach the report panel and every result.
+In wide desktop windows, the report question stays visible below the input and output
+controls. Its body has its own scrollbar, so **More** and long reviews remain reachable.
+The input controls and results scroll separately; narrow windows use one scrolling page.
 Each reporting step shows its own copied-message notice beside the action.
 **Check a folder** keeps the app header; **Part to check** selects a part for local checks.
 
