@@ -877,10 +877,12 @@ fn search(
 }
 
 /// `path`, numbered (`part-2.sc`) when an earlier file already writes there.
-fn unique(path: PathBuf, taken: &mut BTreeSet<PathBuf>) -> PathBuf {
+fn unique(path: PathBuf, taken: &mut BTreeSet<String>) -> PathBuf {
     let mut candidate = path.clone();
     let mut n = 2;
-    while taken.contains(&candidate) {
+    // Reserve portable names even on a case-sensitive source filesystem: outputs
+    // may be written to a case-insensitive volume on the same machine.
+    while taken.contains(&candidate.to_string_lossy().to_lowercase()) {
         let stem = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -893,7 +895,7 @@ fn unique(path: PathBuf, taken: &mut BTreeSet<PathBuf>) -> PathBuf {
         candidate = path.with_file_name(name);
         n += 1;
     }
-    taken.insert(candidate.clone());
+    taken.insert(candidate.to_string_lossy().to_lowercase());
     candidate
 }
 
@@ -1719,6 +1721,23 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, Path::new(names[2]));
         assert_eq!(skipped.len(), 2);
+    }
+
+    #[test]
+    fn output_collisions_are_case_insensitive_and_keep_relative_folders() {
+        let mut taken = BTreeSet::new();
+        assert_eq!(
+            unique("out/ProjectA/part.sc".into(), &mut taken),
+            Path::new("out/ProjectA/part.sc")
+        );
+        assert_eq!(
+            unique("out/projecta/PART.sc".into(), &mut taken),
+            Path::new("out/projecta/PART-2.sc")
+        );
+        assert_eq!(
+            unique("out/ProjectB/part.sc".into(), &mut taken),
+            Path::new("out/ProjectB/part.sc")
+        );
     }
 
     #[test]

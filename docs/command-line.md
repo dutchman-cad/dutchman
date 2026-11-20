@@ -387,6 +387,14 @@ convert at once (default: the machine's cores, at most 8). It takes the same opt
 `dutchman.convert/1` report per file. One run converts at most 10,000 files and searches
 folders at most 32 levels deep.
 
+Folder paths are relative to each input folder: `in/ProjectA/part.f3d` writes
+`out/ProjectA/part.sc`. Linked design companions are written beside that design.
+Same-named files in different subfolders keep their own paths. Output names that
+would collide, including names differing only in case, receive a numeric suffix.
+An explicit output folder is reused on a rerun: designs at the same paths are
+replaced unless `--no-clobber` is set. Identical linked companions are reused;
+edited companions are kept and the conversion reports the conflict.
+
 Large batches:
 
 - **Each file in its own process.** A file that takes longer than `--timeout SECONDS` (default

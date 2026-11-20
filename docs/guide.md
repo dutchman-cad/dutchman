@@ -568,6 +568,13 @@ without looking for or launching an installed SolidCraft CLI.
 
 ### Convert a whole folder: convert-all
 
+Folder runs in the desktop app and CLI keep paths relative to the input folder:
+`in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`. Designs with the same name in
+other subfolders stay separate. Linked design companions and desktop reports stay
+beside their design. Repeating a run into an explicit output folder reuses those
+paths and replaces designs unless `--no-clobber` is set; edited linked companions
+are kept and reported as a conflict. Single-file output paths are unchanged.
+
 [Convert a whole folder: convert-all](command-line.md#convert-a-whole-folder-convert-all)
 
 ### Watch a folder

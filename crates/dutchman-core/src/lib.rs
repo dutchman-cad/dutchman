@@ -424,6 +424,59 @@ fn local_components(
     if let Some(assembly) = &model.assembly {
         report.set_completeness(assembly.completeness());
     }
+    report.record_missing_links(&missing_linked_components(model));
+}
+
+/// Occurrences whose design is a linked document the file doesn't contain: the reader states
+/// their prototype as unresolved.
+fn missing_linked_components(model: &Model) -> Vec<String> {
+    let (Ok(definitions), Ok(occurrences)) = (
+        serde_json::to_value(&model.ir.model.product_definitions),
+        serde_json::to_value(&model.ir.model.occurrences),
+    ) else {
+        return Vec::new();
+    };
+    // The placeholder is either a definition with no bodies and no children, or no definition
+    // at all (readers that name the unresolved prototype without stating it).
+    let empty = |id: &str| {
+        definitions
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|row| row.get("id").and_then(serde_json::Value::as_str) == Some(id))
+            .is_none_or(|row| {
+                ["bodies", "occurrences"].iter().all(|key| {
+                    row.get(*key)
+                        .and_then(serde_json::Value::as_array)
+                        .is_none_or(Vec::is_empty)
+                })
+            })
+    };
+    occurrences
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            // The reader states the prototype as unresolved, or (newer readers) as an empty
+            // placeholder definition named for the unresolved occurrence.
+            let unresolved = row
+                .pointer("/prototype/kind")
+                .and_then(serde_json::Value::as_str)
+                == Some("unresolved")
+                || row
+                    .pointer("/prototype/definition")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|definition| {
+                        definition.ends_with("/unresolved") && empty(definition)
+                    });
+            unresolved.then(|| {
+                row.get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+        })
+        .collect()
 }
 
 /// The part of `model` holding only `bodies` (CADIR body ids) and what they are made of, named
