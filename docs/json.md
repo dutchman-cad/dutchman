@@ -1801,3 +1801,9 @@ The CLI options `--stand-up` and `--no-stand-up` (MCP `stand_up` and
 `no_stand_up`) control the saved design orientation. Reports retain the existing
 schemas and source coordinates; these options add no report fields. See
 [the command reference](command-line.md) for the rotation and default.
+
+Spatial hole arrays with complete parallel, coplanar directed entries can map as one
+source feature with a helper location sketch for SolidCraft 0.44.1 or newer. The helper
+does not increase source feature counts. Unsupported generated edge identities use
+`its generated edge identity has no resolved source geometry, which is not supported yet`
+as the existing history blocker reason. The report schema and field names are unchanged.

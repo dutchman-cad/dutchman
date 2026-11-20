@@ -18187,3 +18187,196 @@ fn clockwise_rounded_plate_replays_with_source_face_count_area_and_volume() {
         }
     }
 }
+
+/// Synthetic complete spatial entries with no location sketch in the source.
+fn spatial_hole_array(change: impl FnOnce(&mut Value)) -> Model {
+    holed_cube(2.0, |hole| {
+        directed_hole(hole);
+        hole["placements"] = json!([
+            {"kind": "directed", "position": {"x": 3.0, "y": 3.0, "z": 10.0},
+                "direction": {"x": 0.0, "y": 0.0, "z": -2.0}},
+            {"kind": "directed", "position": {"x": 7.0, "y": 7.0, "z": 10.0},
+                "direction": {"x": 0.0, "y": 0.0, "z": -1.0}}
+        ]);
+        change(hole);
+    })
+}
+
+fn spatial_hole_writer() -> SolidCraftWriter {
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.44.1".parse().unwrap()))
+}
+
+#[test]
+fn complete_spatial_hole_arrays_get_an_editable_location_sketch() {
+    let (document, report) = convert(&spatial_hole_array(|_| {}), &spatial_hole_writer());
+    assert!(
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let features = document["features"].as_array().unwrap();
+    let hole = features.iter().find(|f| f["type"] == "hole").unwrap();
+    assert_eq!(hole["direction"], json!([0.0, 0.0, -1.0]));
+    assert_eq!(hole["position"], json!([3.0, 3.0, 10.0]));
+    let sketch = features
+        .iter()
+        .find(|f| f["id"] == hole["points"]["sketch"])
+        .unwrap();
+    let origin: Vec<f64> =
+        serde_json::from_value(sketch["plane"]["plane"]["origin"].clone()).unwrap();
+    let x: Vec<f64> = serde_json::from_value(sketch["plane"]["plane"]["x_dir"].clone()).unwrap();
+    let y: Vec<f64> = serde_json::from_value(sketch["plane"]["plane"]["y_dir"].clone()).unwrap();
+    let ids = hole["points"]["ids"].as_array().unwrap();
+    assert_eq!(ids.len(), 2);
+    for (id, expected) in ids.iter().zip([[3.0, 3.0, 10.0], [7.0, 7.0, 10.0]]) {
+        let point = sketch["sketch"]["points"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == *id)
+            .unwrap();
+        let uv: Vec<f64> = serde_json::from_value(point["pos"].clone()).unwrap();
+        for (axis, expected) in expected.into_iter().enumerate() {
+            assert!((origin[axis] + uv[0] * x[axis] + uv[1] * y[axis] - expected).abs() < 1e-9);
+        }
+    }
+}
+
+#[test]
+fn spatial_hole_arrays_refuse_unproven_entries_and_unsupported_placements() {
+    let cases: Vec<(Model, &str)> = vec![
+        (
+            spatial_hole_array(|h| h["placements"][1]["direction"]["z"] = json!(1.0)),
+            "different directions",
+        ),
+        (
+            spatial_hole_array(|h| h["placements"][1]["position"]["z"] = json!(9.0)),
+            "different entry planes",
+        ),
+        (
+            spatial_hole_array(|h| {
+                h["face"] = json!({"kind": "faces", "value": ["synthetic:cube:face#top"]});
+                h["placements"][1]["position"]["x"] = json!(20.0);
+            }),
+            "does not drill into its entry face",
+        ),
+        (
+            spatial_hole_array(
+                |h| h["placements"][1] = json!({"kind": "axis", "origin": {"x": 7.0, "y": 7.0, "z": 10.0}, "axis": {"x": 0.0, "y": 0.0, "z": -1.0}}),
+            ),
+            "multiple spatial hole placements",
+        ),
+        (
+            spatial_hole_array(|h| h["placements"] = json!([])),
+            "empty or exceed",
+        ),
+        (
+            spatial_hole_array(|h| {
+                h["profile"] = json!({"kind": "sketch", "value": HOLES});
+                h["profile_filter"] = json!("circles");
+            }),
+            "its placements are not its sketch locations",
+        ),
+    ];
+    for (model, reason) in cases {
+        let (document, report) = convert(&model, &spatial_hole_writer());
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+        assert!(!document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "hole"));
+    }
+    let older = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.18.2".parse().unwrap()));
+    let (_, report) = convert(&spatial_hole_array(|_| {}), &older);
+    assert!(
+        history_line(&report)
+            .contains("multiple spatial hole locations need SolidCraft 0.44 patch 1"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn solidcraft_drills_complete_spatial_hole_arrays_without_a_source_sketch() {
+    let Some(cli) = closed_blend_cli() else {
+        return;
+    };
+    let (document, report) = convert(&spatial_hole_array(|_| {}), &spatial_hole_writer());
+    assert!(
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "hole"));
+    let pi = std::f64::consts::PI;
+    let side = spatial_hole_array(|hole| {
+        for (placement, coordinate) in hole["placements"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .zip([3.0, 7.0])
+        {
+            placement["position"] = json!({"x": 10.0, "y": coordinate, "z": coordinate});
+            placement["direction"] = json!({"x": -1.0, "y": 0.0, "z": 0.0});
+        }
+    });
+    let blind = spatial_hole_array(|hole| {
+        hole["extent"] = json!({"kind": "blind", "length": 4.0});
+        hole["bottom"] = json!({"kind": "flat"});
+        hole["face"] = json!({"kind": "faces", "value": ["synthetic:cube:face#top"]});
+    });
+    for (model, expected) in [
+        (spatial_hole_array(|_| {}), 1000.0 - 20.0 * pi),
+        (side, 1000.0 - 20.0 * pi),
+        (blind, 1000.0 - 8.0 * pi),
+    ] {
+        let mut bytes = Vec::new();
+        spatial_hole_writer()
+            .write(&model, &mut bytes, &mut Report::default())
+            .unwrap();
+        let actual = volumes(&cli, &bytes);
+        assert_eq!(actual.len(), 1);
+        assert!((actual[0] - expected).abs() < 1e-6, "{actual:?}");
+    }
+}
+
+#[test]
+fn opaque_generated_edge_identities_are_supported_cadir_but_need_source_geometry() {
+    for kind in ["fillet", "chamfer"] {
+        let dimension = if kind == "fillet" {
+            json!({"kind": "constant", "radius": 1.0})
+        } else {
+            json!({"kind": "distance", "distance": 1.0})
+        };
+        let model = input_blend(kind, dimension, false);
+        for identity in ["3,8,12", "opaque generated edge", "n:sketch-entity:side"] {
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"] = json!({"kind": "generated", "value": {
+                "edges": [{"feature": "f3d:model:feature#2", "local_id": identity}], "native": "synthetic selection"}});
+            let model = Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ..model.clone()
+            };
+            let (_, report) = convert(&model, &spatial_hole_writer());
+            let reason = "generated edge identity has no resolved source geometry, which is not supported yet";
+            assert!(
+                history_line(&report).contains(reason),
+                "{}",
+                history_line(&report)
+            );
+        }
+    }
+}

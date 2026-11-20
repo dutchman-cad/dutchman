@@ -454,6 +454,8 @@ pub enum VersionGate {
     ScopedBodies,
     /// Blends selected by a proven closed circular path.
     ClosedCircleBlend,
+    /// Complete spatial hole entries represented by an editable location sketch.
+    SpatialHoleLocations,
 }
 
 impl VersionGate {
@@ -472,7 +474,7 @@ impl VersionGate {
             Self::SlantedFaceExtent => SolidCraftVersion::V0_44_0,
             Self::RemoveBody => SolidCraftVersion::V0_40_0,
             Self::ScopedBodies => SolidCraftVersion::V0_44_0,
-            Self::ClosedCircleBlend => SolidCraftVersion::V0_44_1,
+            Self::ClosedCircleBlend | Self::SpatialHoleLocations => SolidCraftVersion::V0_44_1,
         }
     }
 
@@ -494,6 +496,7 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         VersionGate::SplitFaces,
         VersionGate::ScopedBodies,
         VersionGate::ClosedCircleBlend,
+        VersionGate::SpatialHoleLocations,
     ]
     .into_iter()
     .any(|gate| gate.supported(SolidCraftVersion::default()) && !gate.supported(target))

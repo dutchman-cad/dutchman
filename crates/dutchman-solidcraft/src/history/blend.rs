@@ -633,13 +633,20 @@ fn generated(selection: &Value, ctx: &Context) -> Result<(Vec<Input>, Vec<V3>), 
         let producer = edge
             .get("feature")
             .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
             .ok_or(GENERATED)?;
-        let (entity, role) = edge
+        let local = edge
             .get("local_id")
             .and_then(Value::as_str)
-            .and_then(|id| id.split_once(":sketch-entity:"))
-            .and_then(|(_, rest)| rest.rsplit_once(":role:"))
+            .filter(|id| !id.trim().is_empty())
             .ok_or(GENERATED)?;
+        // CADIR identities are opaque, nonblank references. Only this resolved
+        // sketch-entity form supplies enough geometry to reconstruct an edge.
+        let (entity, role) = local
+            .split_once(":sketch-entity:")
+            .and_then(|(_, rest)| rest.rsplit_once(":role:"))
+            .filter(|(entity, role)| !entity.is_empty() && !role.is_empty())
+            .ok_or("its generated edge identity has no resolved source geometry, which is not supported yet")?;
         let definition = ctx
             .arena("features")
             .iter()
@@ -2710,7 +2717,16 @@ mod tests {
             (json!([edge("missing", "corner", 18)]), "is missing"),
             (
                 json!([{"feature": "extrude", "local_id": "inventor:nmx:other"}]),
-                "malformed",
+                "no resolved source geometry",
+            ),
+            (json!([{"feature": "extrude", "local_id": ""}]), "malformed"),
+            (json!([{"feature": "extrude"}]), "malformed"),
+            (json!([{"local_id": "3,8"}]), "malformed"),
+            (json!([{"feature": " ", "local_id": "3,8"}]), "malformed"),
+            (json!([{"feature": "extrude", "local_id": 8}]), "malformed"),
+            (
+                json!([{"feature": "extrude", "local_id": "n:sketch-entity:side"}]),
+                "no resolved source geometry",
             ),
             (json!([]), "empty"),
         ] {

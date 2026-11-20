@@ -137,3 +137,10 @@ Dutchman never uses customer files. The fixtures (provenance in
   example cube and authored native envelope helper. It converts end to end against a golden
   document and opens in SolidCraft. All three fixtures follow the conforming envelope layout
   introduced by cadmpeg PR #286; the fixtures README records the exact commit and recipes.
+
+
+Generated blend-edge identities are opaque CADIR references. An identity without
+resolved sketch-entity geometry reports `its generated edge identity has no resolved
+source geometry, which is not supported yet`. A numeric feature-local path alone
+does not prove which rebuilt edge to select. The editable prefix and original final
+geometry are retained; a generated reference with missing or blank fields is still refused.
