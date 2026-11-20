@@ -3,8 +3,10 @@
 The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
 Folder and selection summaries use the highest per-file memory estimate and sum the displayed
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
-the full path on hover. At wide window sizes the path and estimate share a wrapping row
-to keep the default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
+the full path on hover. The path and estimate share one paragraph that wraps as needed,
+keeping the complete sentence visible at every window width. The compact header keeps the
+default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
+
 Onshape history dependencies follow consumed operands in their stored order. Deterministic
 body, face and edge selections need a unique earlier producer proved by rollback
 transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
@@ -92,9 +94,6 @@ carried only as a non-parametric body, even when no sketch maps.
 The optional bundle manifest field `consistent` is input metadata, not a new
 report field. `false` produces an ordinary decode failure explaining how to fetch
 a consistent snapshot; older v1 bundles lacking the field remain accepted.
-the full path on hover. The path and estimate share one paragraph that wraps as needed,
-keeping the complete sentence visible at every window width. The compact header keeps the
-default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
 
 ## Share link inputs
 

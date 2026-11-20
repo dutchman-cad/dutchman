@@ -3,8 +3,10 @@
 The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
 Folder and selection summaries use the highest per-file memory estimate and sum the displayed
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
-the full path on hover. At wide window sizes the path and estimate share a wrapping row
-to keep the default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
+the full path on hover. The path and estimate share one paragraph that wraps as needed,
+keeping the complete sentence visible at every window width. The compact header keeps the
+default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
+
 Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
 components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
 Select target 0.44 explicitly when the existing default is older.
@@ -53,9 +55,6 @@ This adds no CLI flags, MCP tools, or report fields.
 Desktop Onshape jobs keep the `.onshape-bundle` beside the `.sc`; **Show bundle**
 reveals it and **Send to Dutchman** opens private report review with it attached.
 To share a document with us, send the .onshape-bundle; never send your keys.
-the full path on hover. The path and estimate share one paragraph that wraps as needed,
-keeping the complete sentence visible at every window width. The compact header keeps the
-default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
 
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
