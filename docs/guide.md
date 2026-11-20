@@ -931,6 +931,8 @@ Token files are opened once on Unix, with symlinks and special files refused and
 and permissions checked on that handle. On Windows, file privacy cannot be checked yet:
 clear the token file selection and use `DUTCHMAN_ONSHAPE_BEARER_TOKEN` instead.
 Credentials stay out of logs and reports, including `--json`.
+Selecting a token file alongside API-key environment variables reports the authentication
+conflict before reading the file on every platform.
 Part Studios include features, stored sketch placements, needed input topology,
 variables/configuration, and final STEP; assemblies include their same-document
 Part Studios. Version links use version paths throughout. Workspace links pin supported reads to a microversion,

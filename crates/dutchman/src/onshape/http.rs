@@ -299,6 +299,8 @@ mod bearer_tests {
                         Err(e) => panic!("{e}"),
                     }
                 };
+                // An accepted stream inherits the listener's non-blocking mode on macOS and Windows.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();

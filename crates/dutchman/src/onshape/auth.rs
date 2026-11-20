@@ -234,18 +234,22 @@ impl FetchAuth {
     /// A token file overrides the token environment variable. Mixing a token with API keys,
     /// including saved keys, is refused before any request is sent.
     pub fn find(store: &super::Store, token_file: Option<&Path>) -> Result<Option<Self>> {
-        let token = match token_file {
-            Some(path) => Some(BearerToken::from_file(path)?),
-            None => (store.env)("DUTCHMAN_ONSHAPE_BEARER_TOKEN")
-                .map(BearerToken::new)
-                .transpose()?,
-        };
-        if token.is_some()
+        let token_env = token_file
+            .is_none()
+            .then(|| (store.env)("DUTCHMAN_ONSHAPE_BEARER_TOKEN"))
+            .flatten();
+        // Refuse mixed selections before opening a file or validating its contents,
+        // including on platforms where private token files cannot be checked.
+        if (token_file.is_some() || token_env.is_some())
             && ((store.env)("ONSHAPE_ACCESS_KEY").is_some()
                 || (store.env)("ONSHAPE_SECRET_KEY").is_some())
         {
             return Err(auth_conflict());
         }
+        let token = match token_file {
+            Some(path) => Some(BearerToken::from_file(path)?),
+            None => token_env.map(BearerToken::new).transpose()?,
+        };
         let keys = store.find()?;
         match (token, keys) {
             (Some(_), Some(_)) => Err(auth_conflict()),
@@ -383,12 +387,14 @@ mod token_file_tests {
                         .unwrap();
                 }
                 Replacement::Symlink => symlink(&original, &path).unwrap(),
-                Replacement::Fifo => rustix::fs::mkfifoat(
-                    rustix::fs::CWD,
-                    &path,
-                    rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-                )
-                .unwrap(),
+                // The POSIX utility is available on Unix, including macOS where
+                // rustix does not expose mkfifoat. No writer is attached.
+                Replacement::Fifo => assert!(std::process::Command::new("mkfifo")
+                    .args(["-m", "600"])
+                    .arg(&path)
+                    .status()
+                    .unwrap()
+                    .success()),
             }
             assert_eq!(
                 BearerToken::from_open_file(file).unwrap().0,

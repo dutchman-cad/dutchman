@@ -1182,7 +1182,9 @@ Never include credential values in tool arguments or chat. Remove API-key enviro
 variables and saved keys (`dutchman onshape logout`) before using a token; mixed
 credentials return `onshape/auth` with zero calls. HTTP 401/403 explains that the token
 expired or lacks access: obtain a fresh token with read access, replace it, and retry.
-Tokens and remote error bodies stay out of both text and structured reports. This tool uses Onshape's network API and your own
+Tokens and remote error bodies stay out of both text and structured reports.
+Selecting a token file alongside API-key environment variables reports the authentication
+conflict before reading the file on every platform. This tool uses Onshape's network API and your own
 allowance and writes a private bundle/cache. Nothing is sent to Dutchman.
 
 Part Studios include features, stored sketch placements, input topology, optional

@@ -1121,6 +1121,8 @@ variables and run `dutchman onshape logout` first. HTTP 401/403 means the token 
 lacks access; ask the user to obtain a fresh token with read access and replace their local
 file or environment variable. Reports and logs never echo tokens. The desktop supports
 **Use bearer token file** in Connect Onshape and the same environment variable.
+Selecting a token file alongside API-key environment variables reports the authentication
+conflict before reading the file on every platform.
 Unix token files must belong to the current user; ownership, permissions, type, and size
 are checked on the opened handle, and symlinks and special files are refused. Windows
 token files are not supported yet because privacy cannot be checked: clear the file
