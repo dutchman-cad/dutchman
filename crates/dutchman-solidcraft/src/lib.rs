@@ -1545,7 +1545,14 @@ impl Writer for SolidCraftWriter {
                     "cannot write the sketch-only design: {reason}"
                 )));
             }
-            let bytes = self.history_design_report(model, &history, "", Live::Whole, report)?;
+            let bytes = self.history_design_report(
+                model,
+                &history,
+                "",
+                Live::Whole,
+                self.should_stand_up(),
+                report,
+            )?;
             report.set_outcome(Outcome {
                 mode: Mode::History,
                 check: self.check_sketches(&bytes),
