@@ -1,5 +1,8 @@
 # Getting started
 
+The desktop Designs list shows each file’s memory and time estimate as a wrapping sentence
+below its folder path. Estimate values in commands, tools and JSON reports are unchanged.
+
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
 

@@ -1,5 +1,8 @@
 # Machine-readable reports
 
+The desktop Designs list shows each file’s memory and time estimate as a wrapping sentence
+below its folder path. Estimate values in commands, tools and JSON reports are unchanged.
+
 ## Share link inputs
 
 `dutchman convert <url>` and the desktop app resolve public Fusion and Google Drive file

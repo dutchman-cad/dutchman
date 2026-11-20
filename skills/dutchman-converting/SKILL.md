@@ -128,6 +128,9 @@ confirm them. An output ID alone is not proof. Without proof, selecting the
 tool stops editable history with "it selects a body that an earlier feature
 has not named". Older targets keep the previous mapping.
 
+The desktop Designs list puts the folder on its own line and wraps each file’s estimate
+sentence. Command, tool and JSON estimate values are unchanged.
+
 ## Conversion choices and memory
 
 Use `threads: 0` (default) for automatic assembly part concurrency, or

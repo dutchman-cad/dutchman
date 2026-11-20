@@ -1913,54 +1913,53 @@ impl App {
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         for (index, input) in self.inputs.iter().enumerate() {
-                            egui::Sides::new().shrink_left().truncate().show(
+                            egui::Sides::new().shrink_left().wrap().show(
                                 ui,
                                 |ui| {
-                                    // Keep the elided text clear of the Remove button.
-                                    let reserve = ui.spacing().item_spacing.x;
-                                    ui.set_max_width((ui.max_rect().width() - reserve).max(0.0));
-                                    // A narrow row stacks its text, so no piece is squeezed to a stub.
-                                    let stacked = ui.max_rect().width() < 450.0;
-                                    let layout = if stacked {
-                                        egui::Layout::top_down(Align::Min)
-                                    } else {
-                                        egui::Layout::left_to_right(Align::Center)
-                                    };
-                                    ui.with_layout(layout, |ui| {
-                                        path_label(ui, &p, input);
+                                    ui.vertical(|ui| {
+                                        let folder =
+                                            if dutchman_core::Format::from_path(input).is_some() {
+                                                input
+                                                    .parent()
+                                                    .filter(|parent| !parent.as_os_str().is_empty())
+                                                    .unwrap_or_else(|| Path::new("."))
+                                            } else {
+                                                input.as_path()
+                                            };
+                                        ui.add(egui::Label::new(display(folder)).wrap())
+                                            .on_hover_text(display(input));
+                                        if dutchman_core::Format::from_path(input).is_some()
+                                            && !self.estimates.iter().any(|(path, estimate)| {
+                                                path == input && estimate.is_some()
+                                            })
+                                        {
+                                            ui.add(egui::Label::new(file_name(input)).wrap());
+                                        }
                                         for (path, estimate) in &self.estimates {
                                             if path == input || path.starts_with(input) {
                                                 if let Some(estimate) = estimate {
-                                                    let text = if path == input {
-                                                        self.file_estimate_text(path, *estimate)
-                                                    } else {
-                                                        format!(
-                                                            "{}: {}",
-                                                            file_name(path),
-                                                            self.file_estimate_text(
-                                                                path, *estimate
-                                                            )
-                                                        )
-                                                    };
-                                                    // Room for less than a stub: leave it out rather than draw "…" under the button.
-                                                    if ui.available_width() > 48.0 {
-                                                        let large = large_estimate(
-                                                            estimate,
-                                                            self.available,
-                                                        );
-                                                        let colour = if large {
-                                                            p.lantern_text
-                                                        } else {
-                                                            p.tide
-                                                        };
-                                                        let label = ui.label(
+                                                    let text =
+                                                        self.file_estimate_text(path, *estimate);
+                                                    let details =
+                                                        text.replacen(", ", " of memory and ", 1);
+                                                    let text = format!(
+                                                        "{} needs {details} to convert.",
+                                                        file_name(path)
+                                                    );
+                                                    let large =
+                                                        large_estimate(estimate, self.available);
+                                                    let colour =
+                                                        if large { p.lantern_text } else { p.tide };
+                                                    let label = ui.add(
+                                                        egui::Label::new(
                                                             RichText::new(text)
                                                                 .small()
                                                                 .color(colour),
-                                                        );
-                                                        if large {
-                                                            label.on_hover_text(LARGE_ESTIMATE);
-                                                        }
+                                                        )
+                                                        .wrap(),
+                                                    );
+                                                    if large {
+                                                        label.on_hover_text(LARGE_ESTIMATE);
                                                     }
                                                 }
                                             }
@@ -1972,12 +1971,13 @@ impl App {
                                                 .headline_level()
                                                 .map(|level| format!("  {level}"))
                                                 .unwrap_or_default();
-                                            if ui.available_width() > 48.0 {
-                                                ui.label(format!(
+                                            ui.add(
+                                                egui::Label::new(format!(
                                                     "{}{level}",
                                                     format.status_for(input)
-                                                ));
-                                            }
+                                                ))
+                                                .wrap(),
+                                            );
                                         }
                                     });
                                 },
@@ -3467,29 +3467,6 @@ fn framed(
         .response
 }
 
-/// A file's name, then its folder in `tide`, cut short to fit; the whole path on hover.
-fn path_label(ui: &mut egui::Ui, p: &Palette, path: &Path) {
-    let folder = path.parent().map(display).unwrap_or_default();
-    let mut job = egui::text::LayoutJob::default();
-    RichText::new(file_name(path)).append_to(
-        &mut job,
-        ui.style(),
-        egui::FontSelection::Default,
-        Align::Center,
-    );
-    RichText::new(format!("   {folder}"))
-        .small()
-        .color(p.tide)
-        .append_to(
-            &mut job,
-            ui.style(),
-            egui::FontSelection::Default,
-            Align::Center,
-        );
-    ui.add(egui::Label::new(job).truncate())
-        .on_hover_text(display(path));
-}
-
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -4175,6 +4152,60 @@ mod tests {
     }
 
     #[test]
+    fn designs_header_keeps_the_full_estimate_and_path() {
+        use egui_kittest::kittest::Queryable;
+        let folder = PathBuf::from("/synthetic/designs/a-long-folder-for-mechanical-projects/another-long-folder-for-working-copies/current-designs");
+        for size in [crate::FIT_SIZE, [900.0, 800.0]] {
+            let mut h = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(size[0], size[1]))
+                .build_eframe(|cc| {
+                    let mut app = App::new(cc);
+                    app.inputs = vec![folder.clone()];
+                    app.size_inputs = Some(app.inputs.clone());
+                    app.estimate_key = Some(app.current_estimate_key());
+                    app.estimates = vec![(
+                        folder.join("generated_unit_cube.f3d"),
+                        Some(Estimate {
+                            peak_bytes: 1,
+                            seconds: 1,
+                            seconds_exact: 1.0,
+                            band: 0.3,
+                            memory_band: 0.3,
+                            time_band: None,
+                        }),
+                    )];
+                    app
+                });
+            h.run_steps(8);
+            let sentence = "generated_unit_cube.f3d needs under 0.1 GB of memory and under a minute to convert.";
+            let estimate = h.get_by_label(sentence).rect();
+            let path = h.get_by_label(&display(&folder)).rect();
+            assert!(estimate.top() >= path.bottom());
+            assert!(estimate.right() < h.get_by_label("Remove").rect().left());
+            let mut found = 0;
+            for shape in &h.output().shapes {
+                if let egui::Shape::Text(text) = &shape.shape {
+                    if text.galley.text() == sentence || text.galley.text() == display(&folder) {
+                        assert!(!text.galley.elided);
+                        assert!(!text.galley.text().ends_with('…'));
+                        found += 1;
+                    }
+                }
+            }
+            assert_eq!(found, 2);
+            h.ctx
+                .style_mut(|style| style.interaction.tooltip_delay = 0.0);
+            h.get_by_label(&display(&folder)).hover();
+            h.run_steps(8);
+            assert_eq!(
+                h.query_all_by_label(&display(&folder)).count(),
+                2,
+                "full path tooltip"
+            );
+        }
+    }
+
+    #[test]
     fn tiny_estimates_use_lower_bounds() {
         use egui_kittest::kittest::Queryable;
         let mut harness = egui_kittest::Harness::builder()
@@ -4200,7 +4231,9 @@ mod tests {
             });
         harness.run_steps(8);
         assert!(harness
-            .query_by_label("under 0.1 GB, under a minute")
+            .query_by_label(
+                "synthetic.f3d needs under 0.1 GB of memory and under a minute to convert."
+            )
             .is_some());
     }
 
@@ -4256,11 +4289,15 @@ mod tests {
             });
         harness.run_steps(8);
         assert!(harness
-            .query_by_label("about 2.5 GB, about 3 min")
+            .query_by_label(
+                "synthetic.f3d needs about 2.5 GB of memory and about 3 min to convert."
+            )
             .is_some());
         assert!(harness.query_by_label("4.0 GB of memory free").is_some());
         assert!(harness
-            .query_by_label("about 90.0 GB, about 1 min")
+            .query_by_label(
+                "synthetic.f3d needs about 90.0 GB of memory and about 1 min to convert."
+            )
             .is_none());
     }
 
