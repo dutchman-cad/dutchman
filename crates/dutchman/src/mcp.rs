@@ -282,8 +282,19 @@ fn search_property() -> Value {
 
 fn onshape_fetch(args: &Map<String, Value>) -> Result<Value, String> {
     let parsed = (|| -> Result<crate::onshape::FetchOptions, String> {
-        only(args, &["document_url", "out", "version", "max_calls"])
-            .map_err(|_| "Use only document_url, out, version, and max_calls".to_owned())?;
+        only(
+            args,
+            &[
+                "document_url",
+                "out",
+                "version",
+                "max_calls",
+                "bearer_token_file",
+            ],
+        )
+        .map_err(|_| {
+            "Use only document_url, out, version, max_calls, and bearer_token_file".to_owned()
+        })?;
         let document_url = args
             .get("document_url")
             .and_then(Value::as_str)
@@ -306,6 +317,7 @@ fn onshape_fetch(args: &Map<String, Value>) -> Result<Value, String> {
             document_url: document_url.into(),
             out: text("out")?.map(std::path::PathBuf::from),
             version: text("version")?,
+            bearer_token_file: text("bearer_token_file")?.map(std::path::PathBuf::from),
             max_calls,
             json: true,
         })
@@ -314,7 +326,7 @@ fn onshape_fetch(args: &Map<String, Value>) -> Result<Value, String> {
         Ok(options) => crate::onshape::run(&options),
         Err(_) => crate::json::onshape_fetch(&Err(crate::onshape::Error::new(
             crate::onshape::ErrorKind::Url,
-            "Use document_url (string), optional out and version (strings), and max_calls (whole number from 0 to 4294967295). No other arguments are accepted.",
+            "Use document_url (string), optional out, version, and bearer_token_file (strings), and max_calls (whole number from 0 to 4294967295). No other arguments are accepted.",
         ))),
     })
 }
@@ -409,10 +421,11 @@ fn tools() -> Value {
             "inputSchema": {"type": "object", "properties": compare_properties, "required": ["input"], "additionalProperties": false}},
         {
             "name": "onshape_fetch", "title": "Fetch your Onshape document",
-            "description": "Fetch your own Onshape document with local API keys into a private offline bundle. Uses Onshape's API and your call allowance. Never sends data to Dutchman. Returns dutchman.onshape-fetch/1.",
+            "description": "Fetch your own Onshape document with local API keys or an OAuth bearer token into a private offline bundle. Uses Onshape's API and your call allowance. Never sends data to Dutchman. Returns dutchman.onshape-fetch/1.",
             "inputSchema": {"type": "object", "properties": {
                 "document_url": {"type": "string"}, "out": {"type": "string", "description": "Bundle file path. An existing file is replaced only after a successful fetch."},
                 "version": {"type": "string", "description": "Immutable Onshape version ID overriding the URL."},
+                "bearer_token_file": {"type": "string", "description": "Private local token file path. Alternatively set DUTCHMAN_ONSHAPE_BEARER_TOKEN in the server environment. Never pass a token value."},
                 "max_calls": {"type": "integer", "minimum": 0, "maximum": 4294967295u64, "default": 50}
             }, "required": ["document_url"], "additionalProperties": false},
             "outputSchema": {"type": "object", "properties": {

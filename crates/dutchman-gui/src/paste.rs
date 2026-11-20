@@ -294,6 +294,7 @@ pub(crate) struct Inbox {
     pub(crate) receiver: std::sync::mpsc::Receiver<Message>,
     pub(crate) transport: std::sync::Arc<dyn Transport>,
     pub(crate) fetch: fn(String, &Path) -> Result<PathBuf, String>,
+    pub(crate) bearer_token_file: Option<PathBuf>,
     pub(crate) active: bool,
     pub(crate) row: Option<usize>,
     pub(crate) caption: String,
@@ -313,6 +314,7 @@ impl Inbox {
             receiver,
             transport: std::sync::Arc::new(Network),
             fetch: crate::onshape::fetch,
+            bearer_token_file: None,
             active: false,
             row: None,
             caption: String::new(),
@@ -348,11 +350,19 @@ impl Inbox {
         let sender = self.sender.clone();
         let transport = self.transport.clone();
         let fetch = self.fetch;
+        let bearer_token_file = self.bearer_token_file.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| {
                 let link = match source {
-                    Source::Onshape(link) => return fetch(link, &output).map(|path| (path, None)),
+                    Source::Onshape(link) => {
+                        let result = if bearer_token_file.is_some() {
+                            crate::onshape::fetch_with_token_file(link, &output, bearer_token_file)
+                        } else {
+                            fetch(link, &output)
+                        };
+                        return result.map(|path| (path, None));
+                    }
                     Source::Download(link) => link,
                 };
                 let folder = tempfile::Builder::new()

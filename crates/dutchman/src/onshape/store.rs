@@ -159,7 +159,7 @@ type Env = Box<dyn Fn(&str) -> Option<String>>;
 /// Finds, saves and forgets the Onshape keys. Lookup order: environment variables, then the
 /// system credential store, then the private file.
 pub struct Store {
-    env: Env,
+    pub(super) env: Env,
     system: Option<Box<dyn Backend>>,
     file: Option<Box<dyn Backend>>,
 }
