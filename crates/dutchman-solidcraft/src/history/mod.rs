@@ -1761,10 +1761,71 @@ fn split_blend(
     Ok(())
 }
 
+/// Settles which face each of an unequal chamfer's per-body features (`at` and the `added` ones
+/// after it) takes first, on SolidCraft's own cut: as written when the replay after it has
+/// edges on its body where `cuts` put them, else with `flip`. Bodies are disjoint, so each
+/// feature is settled on its own. `Ok(true)` when any had to be flipped.
+fn orient_unequal(
+    history: &mut History,
+    at: usize,
+    added: usize,
+    cuts: &[blend::Cut],
+    replay: &mut impl FnMut(&History, &[u64], bool) -> Replayed,
+) -> Result<bool, String> {
+    let mut flipped = false;
+    for index in at..=at.saturating_add(added) {
+        let feature = history
+            .features
+            .get(index)
+            .ok_or("the mapped chamfer is missing")?;
+        let id = feature
+            .get("id")
+            .and_then(Value::as_u64)
+            .ok_or("the mapped chamfer is missing")?;
+        let body = feature
+            .get("body")
+            .and_then(Value::as_str)
+            .ok_or("the mapped chamfer names no body")?
+            .to_owned();
+        let mut failed = None;
+        let mut settled = false;
+        for flip in [false, true] {
+            if flip {
+                if let Some(fields) = history
+                    .features
+                    .get_mut(index)
+                    .and_then(Value::as_object_mut)
+                {
+                    fields.insert("flip".to_owned(), Value::Bool(true));
+                }
+            }
+            match replay(history, &[id], false)?.first() {
+                Some(Ok(after)) if blend::cut_as(cuts, &body, &after.bodies) => {
+                    flipped |= flip;
+                    settled = true;
+                    break;
+                }
+                Some(Err(why)) => failed = Some(why.clone()),
+                _ => {}
+            }
+        }
+        if !settled {
+            return Err(match failed {
+                Some(why) => format!("SolidCraft cannot cut it either way round: {why}"),
+                None => {
+                    "SolidCraft cuts it on other faces than the source either way round".to_owned()
+                }
+            });
+        }
+    }
+    Ok(flipped)
+}
+
 /// What proving a pending feature settled.
 enum Proven {
-    /// The blend is proven and emitted, with this many additional per-body operations.
-    Bodies(usize),
+    /// The blend is proven and emitted, with `added` additional per-body operations; `flipped`
+    /// when an unequal chamfer had to take SolidCraft's other face first.
+    Bodies { added: usize, flipped: bool },
     /// A sweep path bound to the unique earlier body carrying all its edges.
     Path,
     /// A face profile's sketch rewritten on the other side of its plane, if it had to be.
@@ -1826,8 +1887,8 @@ pub(crate) fn prove_blends(
                 let at = bodies.get(step);
                 step = step.saturating_add(1);
                 match at {
-                    Some(Ok(replay)) => match &pending.face {
-                        None => blend::prove(pending, &replay.bodies).and_then(|selections| {
+                    Some(Ok(before)) => match &pending.face {
+                        None => blend::prove(pending, &before.bodies).and_then(|selections| {
                             if pending.path {
                                 let [selection] = selections.as_slice() else {
                                     return Err("its input edge path crosses several rebuilt bodies, which is not supported yet".to_owned());
@@ -1840,16 +1901,23 @@ pub(crate) fn prove_blends(
                                 fields.insert("path_edges".to_owned(), json!(selection.points));
                                 return Ok(Proven::Path);
                             }
+                            let cuts = pending
+                                .unequal
+                                .as_ref()
+                                .map(|unequal| blend::cuts(unequal, &pending.edges, &before.bodies))
+                                .transpose()?;
                             let added = selections.len().saturating_sub(1);
-                            split_blend(
-                                history,
-                                pending.feature.saturating_add(inserted),
-                                pending.outcome,
-                                selections,
-                            )?;
-                            Ok(Proven::Bodies(added))
+                            let at = pending.feature.saturating_add(inserted);
+                            split_blend(history, at, pending.outcome, selections)?;
+                            let flipped = match cuts {
+                                Some(cuts) => {
+                                    orient_unequal(history, at, added, &cuts, &mut replay)?
+                                }
+                                None => false,
+                            };
+                            Ok(Proven::Bodies { added, flipped })
                         }),
-                        Some(face) => face_profile::prove(face, replay).and_then(|mirrored| {
+                        Some(face) => face_profile::prove(face, before).and_then(|mirrored| {
                             if let Some(direction) = face.entry_direction(mirrored)? {
                                 Ok(Proven::Hole(direction))
                             } else if mirrored {
@@ -1897,7 +1965,10 @@ pub(crate) fn prove_blends(
                             if let Some(outcome) = mapping.features.get_mut(pending.outcome) {
                                 outcome.inferred = Some(inferred);
                             }
-                            Proven::Bodies(added)
+                            Proven::Bodies {
+                                added,
+                                flipped: false,
+                            }
                         })
                     }
                     Some(Err(why)) => Err(format!("{reason}; {why}")),
@@ -1907,15 +1978,15 @@ pub(crate) fn prove_blends(
             proven => proven,
         };
         match proven {
-            Ok(proven @ (Proven::Bodies(_) | Proven::Path)) => {
-                let (added, path) = match proven {
-                    Proven::Bodies(added) => (added, false),
+            Ok(proven @ (Proven::Bodies { .. } | Proven::Path)) => {
+                let (added, redo) = match proven {
+                    Proven::Bodies { added, flipped } => (added, flipped),
                     _ => (0, true),
                 };
                 inserted = inserted.saturating_add(added);
-                if (added > 0 || path) && index.saturating_add(1) < blends.len() {
+                if (added > 0 || redo) && index.saturating_add(1) < blends.len() {
                     // Later blends must see all per-body operations, including earlier
-                    // radius groups. Their original last IDs remain rollback markers.
+                    // radius groups, as written. Their original last IDs remain rollback markers.
                     let remaining: Vec<u64> = after
                         .iter()
                         .skip(index.saturating_add(1))
@@ -3382,5 +3453,76 @@ mod tests {
             Some(1)
         );
         assert!(compared_state(&outcome(true), &feature).is_none());
+    }
+
+    /// Two per-body features of one unequal chamfer whose bodies need opposite flips: each is
+    /// settled on its own body's cut.
+    #[test]
+    fn unequal_chamfers_settle_their_flip_per_body() {
+        let mut history = History {
+            features: vec![
+                json!({"id": 5, "type": "chamfer", "body": "A"}),
+                json!({"id": 6, "type": "chamfer", "body": "B"}),
+            ],
+            ..History::default()
+        };
+        let along = [1.0, 0.0, 0.0];
+        let cuts = [
+            blend::Cut::testing(
+                "A",
+                along,
+                [[0.0, 1.0, 10.0], [0.0, 0.0, 7.0]],
+                ([0.0, 0.0, 10.0], [10.0, 0.0, 10.0]),
+            ),
+            blend::Cut::testing(
+                "B",
+                along,
+                [[20.0, 0.0, 9.0], [20.0, 3.0, 10.0]],
+                ([20.0, 0.0, 10.0], [30.0, 0.0, 10.0]),
+            ),
+        ];
+        let edge = |x0: f64, [_, y, z]: [f64; 3]| crate::verify::ReplayedEdge {
+            start: [x0, y, z],
+            end: [x0 + 10.0, y, z],
+            mid: [x0 + 5.0, y, z],
+            length: 10.0,
+            name: String::new(),
+            index: None,
+            circle: None,
+        };
+        // A is cut as the source has it unflipped, B only flipped.
+        let mut replays = 0;
+        let mut replay = |history: &History, _: &[u64], _: bool| -> Replayed {
+            replays += 1;
+            let flipped = |id: u64| {
+                history
+                    .features
+                    .iter()
+                    .any(|f| f["id"] == id && f["flip"] == true)
+            };
+            let cut = |name: &str, x0: f64, points: [[f64; 3]; 2], right: bool| {
+                let edges = if right {
+                    points.iter().map(|&p| edge(x0, p)).collect()
+                } else {
+                    Vec::new()
+                };
+                (name.to_owned(), edges)
+            };
+            let bodies = vec![
+                cut("A", 0.0, [[0.0, 1.0, 10.0], [0.0, 0.0, 7.0]], !flipped(5)),
+                cut("B", 20.0, [[20.0, 0.0, 9.0], [20.0, 3.0, 10.0]], flipped(6)),
+            ];
+            Ok(vec![Ok(crate::verify::Replay {
+                bodies,
+                faces: Vec::new(),
+            })])
+        };
+        assert_eq!(
+            orient_unequal(&mut history, 0, 1, &cuts, &mut replay),
+            Ok(true)
+        );
+        assert_eq!(replays, 3);
+        assert!(history.features[0].get("flip").is_none());
+        assert_eq!(history.features[1]["flip"], true);
     }
 }

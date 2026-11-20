@@ -226,8 +226,13 @@ curves retain a named refusal; older targets keep the original geometry. A refus
 proof failed: no rebuilt edge through the midpoint (with how far the nearest rebuilt edge is, which
 tells a rebuilt body that differs from the source from a rounding gap), more than one, or one with
 other ends, another length, another kind of curve or another direction. Equal two-distance chamfers also map; distance-and-angle chamfers map at
-45 degrees on perpendicular faces. Unequal distances and other angles lack a source
-reference-face ordering and are refused specifically. Variable fillets lack a proven
+45 degrees on perpendicular faces. Unequal distances and other angles map on straight edges
+when the source's final body still has the chamfer's face: the face order that puts it there,
+between that face's own boundary edges along the input edge, is taken. A selection on several
+bodies becomes one chamfer per body, and each is flipped on its own when SolidCraft's first
+face (the one facing up most) would put the cut elsewhere on that body. A chamfer face the final body lost, an edge whose faces SolidCraft
+cannot tell apart, and SolidCraft cutting it elsewhere either way round are refused, saying
+which. Variable fillets lack a proven
 chain direction. A fillet with several radius groups becomes one SolidCraft blend per group,
 in the source's order; a later group's straight edge may be shorter than the source edge where
 an earlier group rounded its end. Final-body edge selections never stand in for input geometry.

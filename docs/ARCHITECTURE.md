@@ -374,8 +374,13 @@ angular intervals must cover exactly one turn without gaps or overlaps on exactl
 An overlapping candidate without carrier metadata on the selected body also blocks the proof.
 Picks use the proven pieces' midpoints, independently of the source seam. Other closed
 curves retain a named refusal; older targets keep the original geometry. Equal two-distance chamfers also map; distance-and-angle chamfers map at
-45 degrees on perpendicular faces. Unequal distances and other angles lack a source
-reference-face ordering and are refused specifically. Variable fillets lack a proven
+45 degrees on perpendicular faces. Unequal distances and other angles map on straight edges
+when the source's final body still has the chamfer's face: the face order that puts it there,
+between that face's own boundary edges along the input edge, is taken. A selection on several
+bodies becomes one chamfer per body, and each is flipped on its own when SolidCraft's first
+face (the one facing up most) would put the cut elsewhere on that body. A chamfer face the final body lost, an edge whose faces SolidCraft
+cannot tell apart, and SolidCraft cutting it elsewhere either way round are refused, saying
+which. Variable fillets lack a proven
 chain direction. Final-body edge selections never stand in for input geometry.
 
 For targets 0.44 and newer, a sweep path can name connected topological edges from its
