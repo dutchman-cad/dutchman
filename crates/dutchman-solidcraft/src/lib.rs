@@ -797,9 +797,8 @@ impl SolidCraftWriter {
         Some(results.first()?.get("profiles")?.as_array()?.len())
     }
 
-    /// Keeps the largest replayable prefix we can identify from SolidCraft's first error.
-    /// A shape mismatch alone cannot identify a bad operation: retain the mapped timeline
-    /// for correction, hidden beside the original, and say it differs.
+    /// Keeps the prefix before SolidCraft's first error or a measured geometry difference.
+    /// Replaying successfully cannot establish that a differing body is correct.
     fn partial(
         &self,
         model: &Model,
@@ -815,9 +814,13 @@ impl SolidCraftWriter {
                 .and_then(|s| s.strip_suffix(')'))
                 .unwrap_or(&why);
             let identified = self.stop_replay(mapping, error);
-            // A replay that differs without naming a feature: a whole-sketch profile nothing
-            // confirmed is the first suspect.
-            if !identified && !unconfirmed_stop(mapping) {
+            // An unverified pattern is represented as a replay difference so its
+            // original stays visible; it is not a measured geometry mismatch.
+            let measured = why.starts_with("replay differs (")
+                && !error.starts_with("the pattern instance set could not be verified:");
+            if !identified && measured {
+                Self::stop_geometry_difference(mapping, why);
+            } else if !identified && !unconfirmed_stop(mapping) {
                 if let Ok(history) = &mut mapping.result {
                     history.stop = Some(why);
                 }
@@ -876,9 +879,8 @@ impl SolidCraftWriter {
                             "history/body-mismatch",
                             &why,
                         );
-                        return Ok(Check::Partial(format!(
-                            "{summary}; retained features replay in SolidCraft, but {why}"
-                        )));
+                        Self::stop_geometry_difference(mapping, format!("replay differs ({why})"));
+                        continue;
                     }
                     return Ok(Check::Partial(format!("{summary}; retained features replay in SolidCraft; the full history is not verified")));
                 }
@@ -899,6 +901,41 @@ impl SolidCraftWriter {
             mapping.result = Err("retained history exceeded the replay repair limit".to_owned());
         }
         Ok(Check::Flattened("no replayable prefix remains".to_owned()))
+    }
+
+    /// A final-body difference does not identify the operation that introduced it.
+    /// Keep source imports before the first unconfirmed body edit, and independent
+    /// sketches; a replayable but unproven edited body must not survive in the file.
+    fn stop_geometry_difference(mapping: &mut history::Mapping, reason: String) {
+        let source = mapping.result.as_ref().ok().and_then(|history| {
+            history
+                .features
+                .iter()
+                .find_map(|feature| {
+                    if matches!(
+                        feature.get("type").and_then(Value::as_str),
+                        Some("sketch" | "import")
+                    ) {
+                        return None;
+                    }
+                    history.sources.get(&feature.get("id")?.as_u64()?).copied()
+                })
+                .or_else(|| {
+                    history.features.iter().find_map(|feature| {
+                        if feature.get("type").and_then(Value::as_str) == Some("sketch") {
+                            return None;
+                        }
+                        history.sources.get(&feature.get("id")?.as_u64()?).copied()
+                    })
+                })
+        });
+        if let Some(source) = source {
+            history::shorten(mapping, source, reason);
+        } else {
+            // Even a stored body must be discarded if it is itself the differing
+            // result. The final import is the only confirmed geometry in this case.
+            mapping.result = Err(reason);
+        }
     }
 
     fn stop_replay(&self, mapping: &mut history::Mapping, why: &str) -> bool {

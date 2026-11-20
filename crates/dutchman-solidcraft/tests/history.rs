@@ -2026,31 +2026,221 @@ fn a_faithful_history_is_verified_in_solidcraft() {
 }
 
 #[test]
-fn a_history_that_replays_differently_stays_editable_beside_the_original() {
+fn a_wrong_sized_replay_uses_only_the_imported_final_body() {
     let Some(cli) = solidcraft() else { return };
-    // The history says 4 mm; the geometry is the 10 mm cube.
     let model = cube_with_history(4.0, first_profile(), None);
-    let (document, report) = convert(
-        &model,
-        &SolidCraftWriter::new().verification(Verification::With(cli)),
+    let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
+    let (document, report) = convert(&model, &writer);
+    assert_reference_sketches(&document, 1);
+    assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+    assert!(history_line(&report).contains("replay differs"));
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|feature| { matches!(feature["type"].as_str(), Some("sketch" | "import")) }));
+    let (bytes, _) = written_with(&model, &writer);
+    assert_eq!(volumes(&cli, &bytes), [1000.0]);
+}
+
+#[test]
+fn a_displaced_replay_uses_only_the_imported_final_body() {
+    let Some(cli) = solidcraft() else { return };
+    for offset in [-4.0, 7.0] {
+        let mut model = cube_with_history(10.0, first_profile(), None);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["sketches"][0]["placement"]["frame"]["origin"]["z"] = json!(offset);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
+        let (document, report) = convert(&model, &writer);
+        assert_reference_sketches(&document, 1);
+        assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+        assert!(history_line(&report).contains("position"), "{report:?}");
+        assert!(!document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| { feature["type"] == "extrude" }));
+        let (bytes, _) = written_with(&model, &writer);
+        let measured = evaluated(&cli, &bytes);
+        let bodies = measured["bodies"].as_array().unwrap();
+        assert_eq!(bodies.len(), 1, "{measured}");
+        assert_eq!(bodies[0]["bbox"]["min"], json!([0.0, 0.0, 0.0]));
+        assert_eq!(bodies[0]["bbox"]["max"], json!([10.0, 10.0, 10.0]));
+        assert!((bodies[0]["volume_mm3"].as_f64().unwrap() - 1000.0).abs() < 1e-6);
+    }
+}
+
+#[derive(Debug)]
+struct MeasuredReplayDifference(&'static str);
+
+impl dutchman_solidcraft::SolidCraftEvaluator for MeasuredReplayDifference {
+    fn evaluate(
+        &self,
+        design: &[u8],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Value, String> {
+        let mut result = dutchman_solidcraft::SolidCraftEvaluator::evaluate(
+            &RecordedEvaluator::default(),
+            design,
+            timeout,
+            label,
+        )?;
+        if label == "history" {
+            match self.0 {
+                "position" => {
+                    result["bodies"][0]["bbox"] = json!({"min": [0, 0, 4], "max": [10, 10, 14]});
+                }
+                "box" => {
+                    result["bodies"][0]["bbox"] = json!({"min": [0, 0, -2], "max": [10, 10, 12]});
+                }
+                "volume" => result["bodies"][0]["volume_mm3"] = json!(900.0),
+                "area" => result["bodies"][0]["area_mm2"] = json!(700.0),
+                _ => return Err("unknown synthetic measurement".to_owned()),
+            }
+        }
+        Ok(result)
+    }
+
+    fn run(
+        &self,
+        design: &[u8],
+        commands: &[Value],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Vec<Value>, String> {
+        dutchman_solidcraft::SolidCraftEvaluator::run(
+            &RecordedEvaluator::default(),
+            design,
+            commands,
+            timeout,
+            label,
+        )
+    }
+}
+
+#[test]
+fn every_measured_replay_difference_removes_the_edited_body_and_reports_the_amount() {
+    for (check, amount) in [
+        ("position", "4.000 mm"),
+        ("box", "2.000 mm"),
+        ("volume", "difference 100.000000 mm³"),
+        ("area", "difference 100.000000 mm²"),
+    ] {
+        let identity = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ];
+        for model in [
+            cube_with_history(10.0, first_profile(), None),
+            primitive_history(block([10.0; 3], identity)),
+        ] {
+            let writer = SolidCraftWriter::new()
+                .evaluator(std::sync::Arc::new(MeasuredReplayDifference(check)));
+            let (document, report) = convert(&model, &writer);
+            assert_reference_sketches(&document, 1);
+            let outcome = report.outcome().unwrap();
+            assert_eq!(outcome.mode, Mode::Import, "{check}: {report:?}");
+            let Check::Flattened(reason) = &outcome.check else {
+                panic!("{report:?}")
+            };
+            assert!(
+                reason.contains(check) && reason.contains(amount),
+                "{check}: {reason}"
+            );
+            assert_eq!(
+                outcome
+                    .features
+                    .iter()
+                    .find(|feature| feature.kind != "sketch")
+                    .unwrap()
+                    .status,
+                dutchman_core::FeatureStatus::Blocked
+            );
+            assert!(document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|feature| { matches!(feature["type"].as_str(), Some("sketch" | "import")) }));
+        }
+    }
+}
+
+#[test]
+fn a_measured_difference_keeps_the_source_base_before_the_failed_edit() {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let body = wire["geometry"]["bodies"][0]["id"].clone();
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    for feature in features.iter_mut() {
+        feature["ordinal"] = json!(feature["ordinal"].as_u64().unwrap() + 1);
+    }
+    features[1]["definition"]["value"]["value"]["op"] = json!("join");
+    features.insert(
+        0,
+        json!({
+            "id": "f3d:model:feature#0", "ordinal": 0, "name": "Stored base",
+            "suppressed": false, "dependencies": [], "outputs": [body],
+            "source_properties": {}, "source_content": [],
+            "definition": {"kind": "operation", "value": {
+                "kind": "base_feature", "value": {"bodies": {"kind": "resolved", "value": {
+                    "bodies": [body], "native": "synthetic:base#0"
+                }}}
+            }}
+        }),
     );
-    let line = history_line(&report);
-    assert!(line.contains("replay differs"), "{line}");
+    let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+    wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
+    wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#0");
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let writer = SolidCraftWriter::new()
+        .evaluator(std::sync::Arc::new(MeasuredReplayDifference("position")));
+    let (document, report) = convert(&model, &writer);
     assert_partial(&document, &report, 1);
-    assert_eq!(document["features"][1]["type"], "extrude");
+    let features = document["features"].as_array().unwrap();
+    assert!(features
+        .iter()
+        .any(|feature| feature["name"] == "Stored base"));
+    assert!(!features.iter().any(|feature| feature["type"] == "extrude"));
+    assert!(history_line(&report).contains("4.000 mm"), "{report:?}");
+    let outcomes = &report.outcome().unwrap().features;
+    assert_eq!(outcomes[0].status, dutchman_core::FeatureStatus::Mapped);
+    assert_eq!(outcomes[2].status, dutchman_core::FeatureStatus::Blocked);
+}
+
+#[test]
+fn a_retained_prefix_with_a_measured_source_state_difference_uses_the_final_import() {
+    let mut model = partial_history_model();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|feature| feature["id"] == "f3d:model:feature#4")
+        .unwrap()["source_properties"] = json!({
+        "body_centers": "1:5,5,12", "body_centers_exact": "1"
+    });
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let writer =
+        SolidCraftWriter::new().evaluator(std::sync::Arc::new(RecordedEvaluator::default()));
+    let (document, report) = convert(&model, &writer);
+    assert_eq!(report.outcome().unwrap().mode, Mode::Import, "{report:?}");
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|feature| { matches!(feature["type"].as_str(), Some("sketch" | "import")) }));
     assert!(
-        line.contains("retained features replay in SolidCraft"),
-        "{line}"
+        report.losses().iter().any(|loss| {
+            loss.code.as_deref() == Some("history/body-mismatch") && loss.detail.contains("7.0 mm")
+        }),
+        "{report:?}"
     );
     assert_eq!(
-        report
-            .outcome()
-            .unwrap()
-            .features
-            .iter()
-            .filter(|f| f.status == dutchman_core::FeatureStatus::Mapped)
-            .count(),
-        2
+        report.outcome().unwrap().features[1].status,
+        dutchman_core::FeatureStatus::Blocked
     );
 }
 
@@ -6399,8 +6589,8 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
                     &axis_only,
                     &SolidCraftWriter::new().verification(Verification::With(cli)),
                 );
-                // A differing replay keeps the mapped timeline as partial history.
-                assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
+                // A measured difference removes the unconfirmed body-building recipe.
+                assert_eq!(report.outcome().unwrap().mode, Mode::Import);
                 assert!(
                     history_line(&report).contains("replay differs"),
                     "{}",
@@ -13784,23 +13974,28 @@ fn a_fillet_of_tangency_weight_one_maps_as_a_circular_fillet() {
 #[test]
 fn a_fillet_remains_mapped_when_standing_up() {
     let model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
-    let _fake;
-    let cli_path = match solidcraft() {
-        Some(cli) => cli,
-        None => {
-            _fake = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 0);
-            _fake.path.clone()
-        }
-    };
+    // This mapping fixture stores the pre-fillet cube. Recorded measurements isolate
+    // the coordinate-space contract; mismatching real geometry is covered separately.
+    let host = std::sync::Arc::new(RecordedEvaluator {
+        require_untransformed: true,
+        ..RecordedEvaluator::default()
+    });
     let writer = SolidCraftWriter::new()
-        .verification(Verification::With(cli_path))
+        .evaluator(host.clone())
         .stand_up(Some(true));
     let (document, report) = convert(&model, &writer);
     let features = document["features"].as_array().unwrap();
-    assert!(
-        features.iter().any(|f| f["type"] == "fillet"),
-        "{}",
-        history_line(&report)
+    assert!(features.iter().any(|f| f["type"] == "fillet"), "{report:?}");
+    assert_eq!(report.outcome().unwrap().check, Check::Verified);
+    assert_eq!(
+        *host.calls.lock().unwrap(),
+        [
+            "bodies",
+            "edges",
+            "original",
+            "history",
+            "verification-parameters"
+        ]
     );
     assert_eq!(
         document["occurrences"][0]["transform"],
@@ -14043,8 +14238,14 @@ fn helper_info_survives_mapping_and_replay_fallbacks() {
             .iter()
             .any(|loss| loss.severity == Severity::Info
                 && loss.detail == "helper not converted: nothing uses it"));
-        if blocked || std::env::var_os(CLI_ENV).is_some() {
+        if blocked {
             assert!(matches!(report.outcome().unwrap().check, Check::Partial(_)));
+        } else if std::env::var_os(CLI_ENV).is_some() {
+            assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+            assert!(matches!(
+                report.outcome().unwrap().check,
+                Check::Flattened(_)
+            ));
         }
     }
 }
@@ -16104,6 +16305,7 @@ struct RecordedEvaluator {
     different_history: bool,
     reject_curve_candidate: bool,
     warning: bool,
+    require_untransformed: bool,
 }
 
 impl dutchman_solidcraft::SolidCraftEvaluator for RecordedEvaluator {
@@ -16117,6 +16319,20 @@ impl dutchman_solidcraft::SolidCraftEvaluator for RecordedEvaluator {
         let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
         let document: Value =
             serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        if self.require_untransformed {
+            for occurrence in document["occurrences"].as_array().unwrap() {
+                assert_eq!(
+                    occurrence["transform"],
+                    json!([
+                        [1.0, 0.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, 0.0],
+                        [0.0, 0.0, 0.0, 1.0]
+                    ]),
+                    "{label}"
+                );
+            }
+        }
         let rejected = self.reject_curve_candidate
             && document["features"]
                 .as_array()
@@ -16207,7 +16423,7 @@ fn a_host_evaluator_skips_parameter_verification_for_history_without_parameters(
 }
 
 #[test]
-fn a_host_evaluator_carries_prefix_measurements_and_final_geometry_warnings() {
+fn a_host_evaluator_reports_geometry_warnings_after_replacing_a_differing_replay() {
     let host = std::sync::Arc::new(RecordedEvaluator {
         different_history: true,
         warning: true,
@@ -16218,17 +16434,14 @@ fn a_host_evaluator_carries_prefix_measurements_and_final_geometry_warnings() {
         .target_version(Some(dutchman_solidcraft::SolidCraftVersion::default()));
     let model = cube_with_history(10.0, first_profile(), None);
     let (_, report) = convert(&model, &writer);
-    assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
-    assert!(matches!(report.outcome().unwrap().check, Check::Partial(_)));
+    assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+    assert!(matches!(
+        report.outcome().unwrap().check,
+        Check::Flattened(_)
+    ));
     assert_eq!(
         *host.calls.lock().unwrap(),
-        [
-            "original",
-            "history",
-            "verification-parameters",
-            "prefix",
-            "import"
-        ]
+        ["original", "history", "verification-parameters", "import"]
     );
     assert!(report
         .losses()

@@ -397,10 +397,22 @@ Offset datum planes need no building feature when their support resolves or all 
 consumers carry independent resolved sketch placements. Otherwise the history reason
 names the unresolved plane reference; resolved skipped planes count as `not_needed`.
 
+A feature's `mapped` status means its neutral operation has a target representation.
+It does not establish that the rebuilt body matches the source. Use
+`verification.status` for a single part and `history.parts[].status` for assembly
+parts. A measured mismatch in position, box, volume, or area removes the
+unconfirmed edited body from the file and keeps the imported final shape. The
+existing `reason` states the check and measured difference, including absolute
+volume and area differences. Source imports before the unconfirmed edit and
+independent sketches may remain. Numerical `eval` also includes legitimate hidden
+prefix bodies; use `document.inspect` body `visible` flags for final-shape comparisons.
+
 A partial history that replays but whose bodies differ from what the source stores at the same
 point adds a `Degraded` loss with code `history/body-mismatch`, and `verification.reason` says
 so: fewer bodies, or a body the source has with no replayed body whose box centre is near
-enough. When the source marks a body's box as the solid's own (Fusion's `body_centers_exact`),
+enough. The mismatching edited body is removed; only earlier source imports and
+independent sketches are retained when no earlier edited state can be proved.
+When the source marks a body's box as the solid's own (Fusion's `body_centers_exact`),
 its centre must be within the larger of 0.5 mm and 1% of the replayed body's box diagonal.
 Other boxes are taken over edge vertices, interior samples and proven arc extremes; their
 centres must be within the larger of 1 mm and 2% of the replayed body's box diagonal.
@@ -412,6 +424,7 @@ A base feature written with its body as the design ends (`final_body`) isn't com
 source's stored state after it is the body before later features changed it.
 A base feature written with its own body as the source keeps it (a history body) is compared
 like any other feature.
+
 Face extrusions on imported bases require a matching final source result after the
 input face is proved. An intermediate result, an unavailable check, or a measured
 mismatch keeps the final imported shape and reports

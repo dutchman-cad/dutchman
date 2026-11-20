@@ -1561,13 +1561,15 @@ fn match_bodies(replayed: &[Measured], expected: &[Measured]) -> Outcome {
         let allowed = (VOLUME_TOLERANCE * v.abs().max(w.abs())).max(mesh_slack(got, want));
         if !within((v - w).abs(), allowed) {
             return Outcome::Differs(format!(
-                "a body's volume is {v:.6} mm³, the original's {w:.6} mm³"
+                "a body's volume is {v:.6} mm³, the original's {w:.6} mm³ (difference {:.6} mm³)",
+                (v - w).abs()
             ));
         }
         if let (Some(a), Some(b)) = (got.area, want.area) {
             if !within((a - b).abs(), AREA_TOLERANCE * a.abs().max(b.abs())) {
                 return Outcome::Differs(format!(
-                    "a body's area is {a:.6} mm², the original's {b:.6} mm²"
+                    "a body's area is {a:.6} mm², the original's {b:.6} mm² (difference {:.6} mm²)",
+                    (a - b).abs()
                 ));
             }
         }

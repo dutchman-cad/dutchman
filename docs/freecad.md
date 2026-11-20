@@ -19,9 +19,12 @@ history. The reason says whether retained features replayed or remain unverified
 sketches with unresolved planes or external geometry are reported and left out. A sketch
 that fails replay is retried without constraints, with the loss reported. If there is
 no body-building prefix, resolved sketches remain hidden beside the imported shape for
-reference. A final shape mismatch preserves the mapped timeline for correction when it
-replays; it does not identify which feature needs correction. SolidCraft's numerical eval
-includes hidden bodies as well as the visible final shape.
+reference. A measured shape mismatch removes unconfirmed body-building features from the
+written design. The imported final shape remains visible, and the report names
+the failed check and its measured difference. Earlier source imports and independent
+sketches remain available; a successfully replayed body cannot stay merely because
+its features run without errors. SolidCraft's numerical eval includes hidden bodies
+as well as the visible final shape.
 
 ## What converts
 
