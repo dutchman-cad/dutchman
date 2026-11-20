@@ -1080,3 +1080,7 @@ says the design is too large to open inside SolidCraft, use the
 `.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
 "Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
 See [the plugin guide](plugin.md).
+
+The [public fixture score workflow](fixture-score.md) checks public fixture
+history on GitHub runners each week or on demand. It records conversion and
+SolidCraft reopen evidence for the fixture scoreboard.
