@@ -1074,6 +1074,26 @@ source geometry, which is not supported yet`. A numeric feature-local path alone
 does not prove which rebuilt edge to select. The editable prefix and original final
 geometry are retained; a generated reference with missing or blank fields is still refused.
 
+When no final source shape is available, conversion keeps the editable history before the
+failed feature, leaves out its dependent suffix, and checks the remaining design again.
+The report names the omitted features and the rebuild reason. Conversion stops only if
+no usable history remains or the remaining design cannot be made to open.
+
+When SolidCraft reports a feature that fails to rebuild, conversion removes that feature and
+its dependent body history and keeps the final source shape with the editable prefix before the
+failure. The report names the feature and SolidCraft's reason, even when the source shape could
+not be measured. Before omission, refused STEP imports with excess shared edge uses get identical edge
+copies for uses beyond the first two and are rechecked. Faces, curves, vertices, names, and
+placements are retained; `geometry/sheet-edges-split` records the repair. A final opening
+check also covers geometry-only output, hidden history, and
+assemblies. If SolidCraft also refuses the available final source shape, omission is the last
+resort: `geometry/import-failed` says the body geometry is **MISSING** and names the feature
+and reason. A combined import may leave out the whole part. Review these losses before using
+the result. If a named failure cannot be removed, conversion stops without writing it. An
+evaluator error or nonzero exit without named failed features means verification is
+unavailable: the design is still written, marked unverified, with the reason. Verification
+turned off remains unchecked.
+
 The SolidCraft plugin checks estimated memory and time before native decoding. When it
 says the design is too large to open inside SolidCraft, use the
 [Dutchman desktop app](https://github.com/dutchman-cad/dutchman/releases/latest) to save a

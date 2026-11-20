@@ -217,7 +217,7 @@ mod tests {
         }
         assert!(
             matches!(crate::verify::check_import(host, DEFAULT_TIMEOUT, b"design",
-            crate::verify::Expected::default()), crate::verify::Shown::Short(why) if why.contains("host refused"))
+            crate::verify::Expected::default()), crate::verify::Shown::Unchecked(why) if why.contains("host refused"))
         );
     }
 

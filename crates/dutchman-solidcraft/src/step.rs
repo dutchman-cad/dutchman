@@ -1,5 +1,8 @@
 //! The model's geometry restated as STEP text, the form a SolidCraft Import keeps.
 
+mod split;
+pub(crate) use split::split_sheet_edges;
+
 use cadmpeg_ir::codec::write::target::TargetRequest;
 use cadmpeg_ir::codec::write::EncodeInput;
 use cadmpeg_registry::{build_encoder, Format};
@@ -15,7 +18,7 @@ const PLACEHOLDER: &str = "'cadmpeg_model'";
 const PROCEDURAL_NOT_WRITTEN: &str = "step/geometry.procedural-definition-not-written";
 
 /// The largest STEP text SolidCraft's reader accepts.
-const MAX_STEP_BYTES: usize = 512 << 20;
+pub(crate) const MAX_STEP_BYTES: usize = 512 << 20;
 
 /// Restates the model as STEP AP214 text, recording what the restatement drops.
 ///

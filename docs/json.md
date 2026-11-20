@@ -1979,3 +1979,26 @@ in the fixture sweep result record (`exit`, `reopen_exit`, `report`, `evaluation
 `seconds`). Download skips add `skip_reason`; execution failures add
 `failure_reason`. These records are workflow artifacts, separate from CLI report
 schemas. `run.json` records the build and manifest provenance.
+
+Rebuild failures use existing report fields and schema versions. A failed history feature is
+`blocked`, with its name and refusal in `reason`; `partial` or `flattened` describes the
+retained prefix and final source shape. The final opening check adds `history/rebuild-failed`
+(Degraded) when it replaces a refused feature with the final source shape, or `geometry/import-failed` (Dropped) when the available final source shape also fails and omission is the last
+resort. Its detail says the body geometry is `MISSING` and names the part, feature, and
+refusal; the refused import and its dependent features are left out. Removed feature IDs are
+cleared from `history.features[].output_ids` and use `output_match: "no_output"` when none
+remain. A combined import can omit a whole part; the loss names the import feature and
+SolidCraft's reason. Geometry-only output uses `flattened` with the named omission as its
+reason. No successful verification is claimed for the removed history. A named failure that
+cannot be safely repaired stops conversion before the output is written. An evaluator error or
+nonzero exit without named failed features is unavailable verification: output is still written
+with `verification.status: "unverified"` and the reason. Disabled verification remains
+unverified.
+An Info loss `geometry/sheet-edges-split` names a refused STEP import whose edge uses beyond
+the first two receive identical edge records. The repaired blob is rechecked before any
+feature is omitted; source faces, curves, vertices, body names, and placements stay unchanged.
+Only an import that still fails after available repairs may be reported as MISSING.
+
+When no final source shape exists, `history/rebuild-failed` also describes retaining the
+editable prefix alone. Its reason names the failed feature, the omitted dependent features,
+and the rebuild error. The remaining design is checked again before writing.
