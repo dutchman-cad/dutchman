@@ -251,6 +251,8 @@ fn option_properties() -> Map<String, Value> {
             "minimum": 1,
             "description": "Seconds each SolidCraft check may run before the history is written unverified (default 120).",
         },
+        "stand_up": {"type": "boolean", "default": false, "description": "Rotate Y-up models +90 degrees about +X so +Y becomes +Z. Cannot be combined with no_stand_up."},
+        "no_stand_up": {"type": "boolean", "default": false, "description": "Preserve source axes (the default). Cannot be combined with stand_up."},
         "project": project_property(),
         "search": search_property(),
     });
@@ -562,7 +564,7 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 19] = [
+const OPTIONS: [&str; 21] = [
     "diagnostics",
     "diagnostics_default",
     "threads",
@@ -579,6 +581,8 @@ const OPTIONS: [&str; 19] = [
     "solidcraft",
     "solidcraft_version",
     "verify_timeout",
+    "stand_up",
+    "no_stand_up",
     "overwrite",
     "project",
     "search",
@@ -657,6 +661,11 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
     if diagnostics_default && arguments.get("diagnostics").is_some_and(|v| !v.is_null()) {
         return Err("diagnostics and diagnostics_default cannot be combined".into());
     }
+    let stand_up = flag(arguments, "stand_up", false)?;
+    let no_stand_up = flag(arguments, "no_stand_up", false)?;
+    if stand_up && no_stand_up {
+        return Err("stand_up and no_stand_up cannot be combined; choose one orientation".into());
+    }
     Ok(ConvertOptions {
         threads,
         diagnostics_default,
@@ -690,6 +699,8 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         no_clobber: !flag(arguments, "overwrite", true)?,
         solidcraft,
         solidcraft_version,
+        stand_up,
+        no_stand_up,
         verify_timeout: count(arguments, "verify_timeout")?
             .map_or(defaults.verify_timeout, |n| n.get() as u64),
         project: search.project,
@@ -891,6 +902,38 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn orientation_options_are_advertised_validated_and_forwarded() {
+        let listed = tools();
+        for name in ["convert", "convert_all"] {
+            let tool = listed
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap();
+            for option in ["stand_up", "no_stand_up"] {
+                assert_eq!(tool["inputSchema"]["properties"][option]["type"], "boolean");
+            }
+        }
+        for (arguments, choice, flag) in [
+            (json!({"stand_up": true}), Some(true), "--stand-up"),
+            (json!({"no_stand_up": true}), Some(false), "--no-stand-up"),
+        ] {
+            let parsed = options(arguments.as_object().unwrap()).unwrap();
+            assert_eq!(parsed.stand_up_choice(), choice);
+            assert!(parsed.to_args().iter().any(|arg| arg == flag));
+        }
+        assert_eq!(options(&Arguments::new()).unwrap().stand_up_choice(), None);
+        for bad in [
+            json!({"stand_up": true, "no_stand_up": true}),
+            json!({"stand_up": "true"}),
+            json!({"no_stand_up": "true"}),
+        ] {
+            assert!(options(bad.as_object().unwrap()).is_err());
+        }
+    }
 
     #[test]
     fn diagnostic_limits_preserve_both_argument_styles() {

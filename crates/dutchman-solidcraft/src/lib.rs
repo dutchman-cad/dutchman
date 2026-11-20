@@ -99,6 +99,7 @@ pub struct SolidCraftWriter {
     replay: Verification,
     timeout: Duration,
     hide_unverified: bool,
+    stand_up: Option<bool>,
     memory_budget: Option<u64>,
     memory_skip: OnceLock<(u64, u64)>,
 }
@@ -122,6 +123,7 @@ impl Default for SolidCraftWriter {
             replay: Verification::Auto,
             timeout: DEFAULT_TIMEOUT,
             hide_unverified: false,
+            stand_up: None,
             memory_budget: None,
             memory_skip: OnceLock::new(),
         }
@@ -231,7 +233,7 @@ impl SolidCraftWriter {
     }
 
     /// How a written history is checked, and which SolidCraft CLI finds the input edges of
-    /// its blends (see [`SolidCraftWriter::replay`]).
+    /// its blends and body-edge sweep paths (see [`SolidCraftWriter::replay`]).
     pub fn verification(mut self, verification: Verification) -> Self {
         self.replay = verification.clone();
         self.verification = verification;
@@ -239,9 +241,9 @@ impl SolidCraftWriter {
         self
     }
 
-    /// Which SolidCraft CLI replays the history before each fillet or chamfer to find the
-    /// edges it blends, after [`SolidCraftWriter::verification`] has set it too. Without one
-    /// ([`Verification::Off`], or none found) blends are refused, saying why.
+    /// Which SolidCraft CLI replays the history to prove blend and body-edge sweep-path input edges,
+    /// after [`SolidCraftWriter::verification`] has set it too. Without one
+    /// ([`Verification::Off`], or none found) those selections are refused, saying why.
     pub fn replay(mut self, replay: Verification) -> Self {
         self.replay = replay;
         self
@@ -254,6 +256,17 @@ impl SolidCraftWriter {
     pub fn hide_unverified_history(mut self, hide: bool) -> Self {
         self.hide_unverified = hide;
         self
+    }
+
+    /// Whether to orient Y-up models (such as Fusion 360 designs) to SolidCraft's Z-up
+    /// coordinate system. By default (`None` or `false`), source axes are preserved.
+    pub fn stand_up(mut self, stand_up: Option<bool>) -> Self {
+        self.stand_up = stand_up;
+        self
+    }
+
+    pub(crate) fn should_stand_up(&self) -> bool {
+        self.stand_up.unwrap_or(false)
     }
 
     /// Additional memory estimated after reading the design. Recheck current free memory
@@ -292,6 +305,10 @@ impl SolidCraftWriter {
 
     fn keep_unverified_hidden(&self) -> bool {
         self.hide_unverified || self.memory_skip.get().is_some()
+    }
+
+    fn keep_unverified_history_hidden(&self, history: &history::History) -> bool {
+        self.keep_unverified_hidden() || history.topological_replay_required
     }
 
     /// How long each SolidCraft evaluation may run before the check gives up.
@@ -446,7 +463,7 @@ impl SolidCraftWriter {
         let references = references.filter(|_| self.sketches);
         document::report_unmapped(model, references, report);
         let design = container::Container::new(step.as_bytes())?;
-        let mut doc = document::import_design(model, design.step_blob());
+        let mut doc = document::import_design(model, design.step_blob(), self.should_stand_up());
         let looks = history::imported(model, step, report, false)?;
         document::import_looks(&mut doc, &looks);
         if let Some(references) = references {
@@ -472,8 +489,9 @@ impl SolidCraftWriter {
         history: &history::History,
         step: &str,
         live: Live,
+        stand_up: bool,
     ) -> Result<Vec<u8>, Error> {
-        self.history_design_report(model, history, step, live, &mut Report::default())
+        self.history_design_report(model, history, step, live, stand_up, &mut Report::default())
     }
 
     fn history_design_report(
@@ -482,6 +500,7 @@ impl SolidCraftWriter {
         history: &history::History,
         step: &str,
         live: Live,
+        stand_up: bool,
         report: &mut Report,
     ) -> Result<Vec<u8>, Error> {
         let mut design = if live == Live::Whole {
@@ -498,6 +517,7 @@ impl SolidCraftWriter {
             design.step_blob(),
             live,
             self.resolved_version(),
+            stand_up,
         );
         if matches!(live, Live::Partial | Live::Unverified) {
             let mut looks = history::imported(model, step, report, false)?;
@@ -562,7 +582,7 @@ impl SolidCraftWriter {
                 // feature would otherwise cost every proof run its full time.
                 let prefix = through_last(history, after);
                 let history = prefix.as_ref().unwrap_or(history);
-                let design = match self.history_design(model, history, step, Live::History) {
+                let design = match self.history_design(model, history, step, Live::History, false) {
                     Ok(design) => design,
                     Err(err) => {
                         let why = err.to_string();
@@ -642,7 +662,7 @@ impl SolidCraftWriter {
             return Fit::Unknown;
         };
         let _measuring = progress.map(|p| p.measuring());
-        let Ok(design) = self.history_design(model, prefix, step, Live::History) else {
+        let Ok(design) = self.history_design(model, prefix, step, Live::History, false) else {
             return Fit::Unknown;
         };
         if final_state {
@@ -713,7 +733,7 @@ impl SolidCraftWriter {
         let cli = self.selected_evaluator(&self.verification).ok()?;
         let cli = evaluator::Budgeted::new(cli, budget.saturating_sub(started.elapsed()));
         let design = self
-            .history_design(model, prefix, step, Live::History)
+            .history_design(model, prefix, step, Live::History, false)
             .ok()?;
         let script = [json!({"command": "sketch.inspect", "params": {"sketch": sketch}})];
         let results = cli
@@ -779,7 +799,7 @@ impl SolidCraftWriter {
                     "{summary}; prefix unverified: replay timed out"
                 )));
             };
-            let design = self.history_design(model, history, step, Live::History)?;
+            let design = self.history_design(model, history, step, Live::History, false)?;
             if let Some(why) = self.memory_refusal() {
                 return Ok(Check::Partial(format!("{summary}; {why}")));
             }
@@ -964,7 +984,7 @@ impl SolidCraftWriter {
             Ok(cli) => cli,
             Err(why) => return Ok(verify::Outcome::Unverified(why.to_string())),
         };
-        let original = self.history_design(model, history, step, Live::Original)?;
+        let original = self.history_design(model, history, step, Live::Original, false)?;
         if let Some(why) = self.memory_refusal() {
             return Ok(verify::Outcome::Unverified(why));
         }
@@ -986,7 +1006,7 @@ impl SolidCraftWriter {
             &model.name,
             dutchman_core::progress_words::history_limit(
                 history.pattern_replay_required,
-                self.keep_unverified_hidden(),
+                self.keep_unverified_history_hidden(history),
             ),
         );
         Ok(match result {
@@ -1508,7 +1528,8 @@ impl Writer for SolidCraftWriter {
             let mut checked = None;
             if let Ok(history) = &mapping.result {
                 if history.stop.is_none() && !only_stored_geometry(&mapping.features) {
-                    let written = self.history_design(model, history, &step, Live::History)?;
+                    let written =
+                        self.history_design(model, history, &step, Live::History, false)?;
                     checked = Some(self.check(model, history, &step, &written, progress)?);
                 }
             }
@@ -1572,11 +1593,18 @@ impl Writer for SolidCraftWriter {
                     if let Check::Partial(message) = &check {
                         report.push(Severity::Degraded, HISTORY, message);
                     }
-                    let written =
-                        self.history_design_report(model, history, &step, Live::Partial, report)?;
+                    let written = self.history_design_report(
+                        model,
+                        history,
+                        &step,
+                        Live::Partial,
+                        self.should_stand_up(),
+                        report,
+                    )?;
                     // Check the visible original separately: hidden editable bodies also
                     // appear in SolidCraft's numerical eval result.
-                    let original = self.history_design(model, history, &step, Live::Original)?;
+                    let original =
+                        self.history_design(model, history, &step, Live::Original, false)?;
                     self.check_import(model, &original, report, progress);
                     (
                         written,
@@ -1589,8 +1617,13 @@ impl Writer for SolidCraftWriter {
                 }
                 (Ok(history), _) if only_stored_geometry(&mapping.features) => {
                     report.append(history_report);
-                    let written =
-                        self.history_design(model, history, &step, final_live(history, model))?;
+                    let written = self.history_design(
+                        model,
+                        history,
+                        &step,
+                        final_live(history, model),
+                        self.should_stand_up(),
+                    )?;
                     let outcome = Outcome {
                         mode: Mode::Import,
                         check: Check::NotApplicable(history::base::STORED_SOLID.to_owned()),
@@ -1599,8 +1632,13 @@ impl Writer for SolidCraftWriter {
                     (written, outcome)
                 }
                 (Ok(history), _) => {
-                    let written =
-                        self.history_design(model, history, &step, final_live(history, model))?;
+                    let written = self.history_design(
+                        model,
+                        history,
+                        &step,
+                        final_live(history, model),
+                        self.should_stand_up(),
+                    )?;
                     let summary = self.history_summary(history);
                     let written_as = |check| Outcome {
                         mode: Mode::History,
@@ -1617,7 +1655,9 @@ impl Writer for SolidCraftWriter {
                             );
                             (written, written_as(Check::Verified))
                         }
-                        verify::Outcome::Unverified(why) if self.keep_unverified_hidden() => {
+                        verify::Outcome::Unverified(why)
+                            if self.keep_unverified_history_hidden(history) =>
+                        {
                             report.append(history_report);
                             let message = format!(
                                 "{summary}; unverified: {why}; kept hidden beside the original, which stays the visible model"
@@ -1633,6 +1673,7 @@ impl Writer for SolidCraftWriter {
                                 history,
                                 &step,
                                 Live::Unverified,
+                                self.should_stand_up(),
                                 report,
                             )?;
                             (

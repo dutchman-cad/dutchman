@@ -35,10 +35,30 @@ const IDENTITY: [[f64; 4]; 4] = [
     [0.0, 0.0, 0.0, 1.0],
 ];
 
+/// A row-major 3 × 4 rigid transform as SolidCraft's column-major 4 × 4.
+pub(crate) const fn column_major(rows: &[[f64; 4]; 3]) -> [[f64; 4]; 4] {
+    let [r0, r1, r2] = *rows;
+    let [a0, b0, c0, d0] = r0;
+    let [a1, b1, c1, d1] = r1;
+    let [a2, b2, c2, d2] = r2;
+    [
+        [a0, a1, a2, 0.0],
+        [b0, b1, b2, 0.0],
+        [c0, c1, c2, 0.0],
+        [d0, d1, d2, 1.0],
+    ]
+}
+
+/// Rotation from Fusion 360's default Y-up coordinate system to SolidCraft's default Z-up
+/// coordinate system (+90° about +X: X -> X, Y -> Z, Z -> -Y), column-major.
+pub(crate) const STAND_UP_Y_TO_Z: [[f64; 4]; 4] =
+    column_major(&dutchman_core::placement::STAND_UP_Y_TO_Z);
+
 /// A design holding the model as one Import feature in its own component, the STEP text kept
 /// in the container at `step_blob`.
-pub(crate) fn import_design(model: &Model, step_blob: &str) -> Value {
+pub(crate) fn import_design(model: &Model, step_blob: &str, stand_up: bool) -> Value {
     let component = component_name(&model.name);
+    let transform = if stand_up { STAND_UP_Y_TO_Z } else { IDENTITY };
     json!({
         "format": FORMAT,
         "name": model.name,
@@ -52,7 +72,7 @@ pub(crate) fn import_design(model: &Model, step_blob: &str) -> Value {
             "component": COMPONENT,
             "parent": 0,
             "grounded": false,
-            "transform": IDENTITY,
+            "transform": transform,
         }],
         "features": [import_feature(model, FEATURE, &feature_name(model), Some(COMPONENT), false, step_blob)],
     })
@@ -151,19 +171,6 @@ pub(crate) fn keep_sketches(doc: &mut Value, references: &History) {
     }
 }
 
-/// A row-major 3 × 4 rigid transform as SolidCraft's column-major 4 × 4.
-pub(crate) fn column_major(rows: &[[f64; 4]; 3]) -> [[f64; 4]; 4] {
-    let mut out = IDENTITY;
-    for (column, out_column) in out.iter_mut().enumerate() {
-        for (row, values) in rows.iter().enumerate() {
-            if let (Some(cell), Some(value)) = (out_column.get_mut(row), values.get(column)) {
-                *cell = *value;
-            }
-        }
-    }
-    out
-}
-
 /// Which side of a history design is live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Live {
@@ -200,12 +207,14 @@ pub(crate) fn history_design(
     step_blob: &str,
     live: Live,
     target: SolidCraftVersion,
+    stand_up: bool,
 ) -> Value {
     let mut history = history.clone();
+    let hidden = matches!(live, Live::Partial | Live::Unverified);
+    let wrap_in_occurrence = hidden || stand_up;
     let component = history.next_id;
     let occurrence = component.saturating_add(1);
-    let hidden = matches!(live, Live::Partial | Live::Unverified);
-    if hidden {
+    if wrap_in_occurrence {
         history.relocate(0, component, "", &mut Default::default());
         history.next_id = occurrence.saturating_add(1);
     }
@@ -218,22 +227,38 @@ pub(crate) fn history_design(
         }
     }
     let original = history.next_id;
+    let (orig_component, orig_occurrence, original_feature_comp) = if hidden && stand_up {
+        let comp = original.saturating_add(1);
+        let occ = comp.saturating_add(1);
+        (Some(comp), Some(occ), Some(comp))
+    } else if wrap_in_occurrence && !hidden {
+        (None, None, Some(component))
+    } else {
+        (None, None, None)
+    };
     if live != Live::Whole {
         features.push(import_feature(
             model,
             original,
             ORIGINAL,
-            None,
+            original_feature_comp,
             live == Live::History,
             step_blob,
         ));
     }
+    let next_id = if let Some(occ) = orig_occurrence {
+        occ.saturating_add(1)
+    } else if live == Live::Whole && wrap_in_occurrence {
+        history.next_id
+    } else {
+        original.saturating_add(1)
+    };
     let mut doc = json!({
         "format": FORMAT,
         "name": model.name,
         "units": "mm",
         "params": history.params,
-        "next_id": original.saturating_add(1),
+        "next_id": next_id,
         "features": features,
     });
     if let (Some(first), Some(fields)) = (history.sheet_rules.first(), doc.as_object_mut()) {
@@ -242,30 +267,64 @@ pub(crate) fn history_design(
             json!({"active": first.get("name"), "rules": history.sheet_rules}),
         );
     }
-    if let (true, Some(fields)) = (hidden, doc.as_object_mut()) {
-        let part = if live == Live::Unverified {
-            "Editable history (unverified)"
+    if let (true, Some(fields)) = (wrap_in_occurrence, doc.as_object_mut()) {
+        if hidden {
+            let part = if live == Live::Unverified {
+                "Editable history (unverified)"
+            } else {
+                "Editable history (partial)"
+            };
+            let hist_transform = if stand_up { STAND_UP_Y_TO_Z } else { IDENTITY };
+            let mut components = vec![editable_history_component(component, part, 0, target)];
+            let mut occurrences = vec![json!({
+                "id": occurrence,
+                "name": format!("{part}:1"),
+                "component": component,
+                "parent": 0,
+                "grounded": true,
+                "transform": hist_transform,
+            })];
+            if let (Some(orig_comp), Some(orig_occ)) = (orig_component, orig_occurrence) {
+                let cname = component_name(&model.name);
+                components.push(json!({"id": orig_comp, "name": cname, "parent": 0}));
+                occurrences.push(json!({
+                    "id": orig_occ,
+                    "name": format!("{cname}:1"),
+                    "component": orig_comp,
+                    "parent": 0,
+                    "grounded": false,
+                    "transform": STAND_UP_Y_TO_Z,
+                }));
+            }
+            fields.insert("components".to_owned(), json!(components));
+            fields.insert("occurrences".to_owned(), json!(occurrences));
+            let sketches: Vec<Value> = history
+                .features
+                .iter()
+                .filter(|f| f.get("type").and_then(Value::as_str) == Some("sketch"))
+                .filter_map(|f| f.get("id").cloned())
+                .collect();
+            let mut visibility = serde_json::Map::new();
+            visibility.insert("hidden_occurrences".to_owned(), json!([[occurrence]]));
+            visibility.insert("hidden_sketches".to_owned(), json!(sketches));
+            if !history.hidden_bodies.is_empty() {
+                visibility.insert("hidden_bodies".to_owned(), json!(history.hidden_bodies));
+            }
+            fields.insert("visibility".to_owned(), Value::Object(visibility));
         } else {
-            "Editable history (partial)"
-        };
-        fields.insert(
-            "components".to_owned(),
-            json!([editable_history_component(component, part, 0, target)]),
-        );
-        fields.insert("occurrences".to_owned(), json!([{"id": occurrence, "name": format!("{part}:1"), "component": component, "parent": 0, "grounded": true, "transform": IDENTITY}]));
-        let sketches: Vec<Value> = history
-            .features
-            .iter()
-            .filter(|f| f.get("type").and_then(Value::as_str) == Some("sketch"))
-            .filter_map(|f| f.get("id").cloned())
-            .collect();
-        let mut visibility = serde_json::Map::new();
-        visibility.insert("hidden_occurrences".to_owned(), json!([[occurrence]]));
-        visibility.insert("hidden_sketches".to_owned(), json!(sketches));
-        if !history.hidden_bodies.is_empty() {
-            visibility.insert("hidden_bodies".to_owned(), json!(history.hidden_bodies));
+            let cname = component_name(&model.name);
+            let components = vec![json!({"id": component, "name": cname, "parent": 0})];
+            let occurrences = vec![json!({
+                "id": occurrence,
+                "name": format!("{cname}:1"),
+                "component": component,
+                "parent": 0,
+                "grounded": false,
+                "transform": STAND_UP_Y_TO_Z,
+            })];
+            fields.insert("components".to_owned(), json!(components));
+            fields.insert("occurrences".to_owned(), json!(occurrences));
         }
-        fields.insert("visibility".to_owned(), Value::Object(visibility));
     }
     // A body the source hides stays hidden when the history rebuilds it.
     let rebuilt = matches!(live, Live::History | Live::Whole);
@@ -279,6 +338,7 @@ pub(crate) fn history_design(
             json!({"hidden_bodies": history.hidden_bodies}),
         );
     }
+
     let has_looks = !history.looks.is_empty() || !history.face_looks.is_empty();
     if let (true, Some(fields)) = (has_looks, doc.as_object_mut()) {
         let mut appearances = json!({"bodies": history.looks});
@@ -598,6 +658,7 @@ mod history_tests {
             sheet_rules: Vec::new(),
             next_id: 3,
             pattern_replay_required: false,
+            topological_replay_required: false,
             mapped: 2,
             not_needed: 0,
             reapplied: 0,
@@ -618,19 +679,38 @@ mod history_tests {
         let mut hiding = history();
         hiding.hidden_bodies = vec!["Body 2".to_owned()];
         let version = SolidCraftVersion::V0_30_0;
-        for live in [Live::History, Live::Whole, Live::Partial, Live::Unverified] {
-            let doc = history_design(&model, &hiding, "blobs/x.step", live, version);
-            assert_eq!(
-                doc["visibility"]["hidden_bodies"],
-                json!(["Body 2"]),
-                "{live:?}"
-            );
+        for stand_up in [false, true] {
+            for live in [Live::History, Live::Whole, Live::Partial, Live::Unverified] {
+                let doc = history_design(&model, &hiding, "blobs/x.step", live, version, stand_up);
+                assert_eq!(
+                    doc["visibility"]["hidden_bodies"],
+                    json!(["Body 2"]),
+                    "{live:?}, stand_up={stand_up}"
+                );
+                if matches!(live, Live::Partial | Live::Unverified) {
+                    assert!(doc["visibility"]["hidden_occurrences"].is_array());
+                }
+            }
         }
         // Suppressed history builds nothing, so there is nothing to hide.
-        let doc = history_design(&model, &hiding, "blobs/x.step", Live::Original, version);
+        let doc = history_design(
+            &model,
+            &hiding,
+            "blobs/x.step",
+            Live::Original,
+            version,
+            false,
+        );
         assert!(doc.get("visibility").is_none());
         // Nothing hidden writes no visibility for a live history.
-        let doc = history_design(&model, &history(), "blobs/x.step", Live::History, version);
+        let doc = history_design(
+            &model,
+            &history(),
+            "blobs/x.step",
+            Live::History,
+            version,
+            false,
+        );
         assert!(doc.get("visibility").is_none());
     }
 
@@ -648,7 +728,7 @@ mod history_tests {
                 Live::Whole,
                 Live::Original,
             ] {
-                let doc = history_design(&model, &history(), "blobs/x.step", live, version);
+                let doc = history_design(&model, &history(), "blobs/x.step", live, version, false);
                 assert_eq!(doc["format"], FORMAT);
                 // The newest targets keep format 23 and the 0.30 representation.
                 if matches!(target, "0.40.0" | "0.41.0" | "0.42.0" | "0.43.0" | "0.44.0") {
@@ -660,6 +740,7 @@ mod history_tests {
                             "blobs/x.step",
                             live,
                             SolidCraftVersion::V0_30_0,
+                            false,
                         )
                     );
                 }
@@ -691,6 +772,7 @@ mod history_tests {
             "blobs/x.step",
             Live::History,
             SolidCraftVersion::default(),
+            false,
         );
         let features = doc["features"].as_array().unwrap();
         assert_eq!(features.len(), 3);
@@ -716,6 +798,7 @@ mod history_tests {
             "",
             Live::Whole,
             SolidCraftVersion::default(),
+            false,
         );
         let features = doc["features"].as_array().unwrap();
         assert_eq!(features.len(), 2);
@@ -731,9 +814,33 @@ mod history_tests {
             "blobs/x.step",
             Live::Original,
             SolidCraftVersion::default(),
+            false,
         );
         let features = doc["features"].as_array().unwrap();
         assert!(features.iter().take(2).all(|f| f["suppressed"] == true));
         assert_eq!(features.last().unwrap()["suppressed"], false);
+    }
+
+    #[test]
+    fn stand_up_wraps_whole_history_in_rotated_occurrence() {
+        let model = crate::testing::cube();
+        let doc = history_design(
+            &model,
+            &history(),
+            "",
+            Live::Whole,
+            SolidCraftVersion::default(),
+            true,
+        );
+        let components = doc["components"].as_array().unwrap();
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0]["name"], "generated_unit_cube");
+        let occurrences = doc["occurrences"].as_array().unwrap();
+        assert_eq!(occurrences.len(), 1);
+        assert_eq!(occurrences[0]["transform"], json!(STAND_UP_Y_TO_Z));
+        let features = doc["features"].as_array().unwrap();
+        assert_eq!(features.len(), 2);
+        assert_eq!(features[0]["component"], components[0]["id"]);
+        assert_eq!(features[1]["component"], components[0]["id"]);
     }
 }

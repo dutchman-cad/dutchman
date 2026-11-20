@@ -114,7 +114,7 @@ geometry-only fallback; it never reparses the report's display-only minor as a r
 Closed-circle blends also request `inspect.measure` with an edge item (body, replay index,
 and midpoint). Its item must include `round`, `center`, `axis`, `radius`, `length_mm`, and
 `circumference` or `arc_length`. A failed carrier query leaves ordinary edge/face proofs
-available and refuses only closed circles.
+available. Closed circles and curved body-edge sweep paths require successful carrier measurements.
 Measured inference also runs `timeline.suppress`, `inspect.compare` and `sketch.inspect`; a
 host without complete finite body measurements, surface comparison results and both face counts
 refuses new final-shape inferences. `sketch.inspect` reports region centroids without proven
@@ -235,6 +235,13 @@ Unused construction helpers need no target feature. Later active consumers carry
 datum frames in sketches, pattern axes, and later datum constructions; unresolved helper
 uses remain blockers.
 
+Histories using the new topological sweep paths retain the
+original as the visible model unless their full comparison succeeds. Their mapped
+features remain in a hidden editable component, including in assemblies. The original
+may have no sound volume to compare; an unverified replay must not expose an earlier
+local frame in place of its final positioned body. This applies with verification off
+too; ordinary histories retain their existing verification behavior.
+
 At the first blocking feature, the editable timeline stops. Earlier features and
 independently resolved sketches are kept in a hidden component, followed by the original
 final geometry as a visible Import. The original is a separate result, not an
@@ -321,14 +328,20 @@ metric thread label (`M6x1`, the pitch from the designation, the source, or the 
 series), and the thread's hand, class, and length are reported as Degraded, not mapped;
 entry recesses combined with drill points, exit treatments, taper, and modeled threads are not mapped;
 patterns of earlier features or named bodies, linear in one or
-two directions, circular over a partial span or all the way round, or at fixed spacing along
+two directions (a symmetric direction, with instances on both sides of the original, becomes a
+centred SolidCraft direction), circular over a partial span or all the way round, or at fixed spacing along
 planar sketch curves; regular explicit offsets and angles, and pairs of linear composite
 stages; ordered chains of feature-pattern stages containing mirrors (target SolidCraft
 0.25 patch 1 or newer), each repeating the previous instance set (at most 32 stages), with at most
 10,000 instances per pattern or chain;
 mirrors of earlier features across a
-plane; and body mirror patterns and body combines (join, cut or intersect, optionally keeping
-the tools) of bodies named by earlier features. Shells and drafts wait on input face geometry
+plane; body mirror patterns and body combines (join, cut or intersect, optionally keeping
+the tools) of bodies named by earlier features; and removals of such bodies (target SolidCraft
+0.40 or newer). A body mirror joins its copies to the bodies it mirrors when the bodies it
+outputs are exactly those bodies. A body the final model leaves out, which cadmpeg names by
+the feature that generated it, takes the name the new-body extrude that made it gives it. A
+body selected in the feature's own input state is the one body named so far when that state
+holds exactly one body. Shells and drafts wait on input face geometry
 (their faces are known only on the final body, which the feature has changed);
 modeled threads and threads without resolved metric size, extent, and cylindrical face
 geometry, and shape-replacing mirrors are not supported yet. Features are
@@ -363,9 +376,24 @@ angular intervals must cover exactly one turn without gaps or overlaps on exactl
 An overlapping candidate without carrier metadata on the selected body also blocks the proof.
 Picks use the proven pieces' midpoints, independently of the source seam. Other closed
 curves retain a named refusal; older targets keep the original geometry. Equal two-distance chamfers also map; distance-and-angle chamfers map at
-45 degrees on perpendicular faces. Unequal distances and other angles lack a source
-reference-face ordering and are refused specifically. Variable fillets lack a proven
+45 degrees on perpendicular faces. Unequal distances and other angles map on straight edges
+when the source's final body still has the chamfer's face: the face order that puts it there,
+between that face's own boundary edges along the input edge, is taken. A selection on several
+bodies becomes one chamfer per body, and each is flipped on its own when SolidCraft's first
+face (the one facing up most) would put the cut elsewhere on that body. A chamfer face the final body lost, an edge whose faces SolidCraft
+cannot tell apart, and SolidCraft cutting it elsewhere either way round are refused, saying
+which. Variable fillets lack a proven
 chain direction. Final-body edge selections never stand in for input geometry.
+
+For targets 0.44 and newer, a sweep path can name connected topological edges from its
+own input state. Resolved edges are preserved only from one hidden earlier dependency
+result before that geometry is removed. A wire owned by an earlier mapped sketch resolves
+to that sketch only when every edge matches one entire emitted curve by its endpoints,
+midpoint, tangent and length. Other paths use the blend edge proof, check connectivity in
+source order, and bind the whole path to one rebuilt body.
+Later edge consumers replay after this binding. Topological guide rails remain unsupported;
+SolidCraft's rail representation requires sketch curves. Paths without proven earlier
+input geometry and older targets keep specific refusals.
 
 Selected straight profile loops that cross or retrace their own curves are split at
 intersections into bounded regions for selection. The sketch keeps its original curves and

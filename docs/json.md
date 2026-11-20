@@ -431,6 +431,7 @@ in conversion, inspection, batch results and MCP reports. Its `error.message` is
 `Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).`,
 with `error.stage: "decode"` and `error.upstream: null`. Batch results count it as a refused
 file (`ok: false`); the CLI and GUI do not offer a fixtures invitation for IGES.
+The command exits with status 1 for a refused IGES file, on every platform.
 The formats listing reports `status: "not_supported"`, `words: "open it in SolidCraft directly"`
 and `converts: "SolidCraft imports IGES itself (File > Import)"`.
 
@@ -469,6 +470,22 @@ and keep the original geometry. The existing history status and reason fields re
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
+
+For SolidCraft 0.44 and newer, sweep paths may select a connected open chain of proven input
+edges on one earlier body. Missing source geometry, ambiguous matches, topological guide rails, and older
+targets keep the original geometry and report a specific history blocker. Closed sweep
+paths, including loops assembled from open edges, still require a proven start and traversal
+direction and remain refused. An unavailable exact curve measurement blocks only the feature
+that needs it; earlier straight-edge blends remain editable. These proofs
+require a SolidCraft replay for body-edge selections; `--no-verify` cannot establish those
+edges. A stored sketch wire instead resolves to its owning earlier sketch when every edge
+matches one entire mapped curve, including the midpoint and length of an arc.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
 
 For FreeCAD fillets and chamfers, `history.features[].reason` reports missing stored input
 edge geometry or a failed replay proof. Resolved edges without proven membership in an
@@ -522,7 +539,9 @@ base holes or partial regions remain unsupported by this proof. These reasons us
 `blocked` status and `reason` field. Other flanges report `blocked` with the specific selection or dimension reason
 (for example, "its input edge midpoint does not identify exactly one rebuilt edge"). Hems
 report the form or developed length SolidCraft cannot express. A blocked history falls back
-to geometry. These use the existing report fields; no schema fields change.
+to geometry. Contour flanges with an open line/arc chain, a blind normal sweep and material on one side
+also report `mapped`; unsupported contour forms report `blocked` with their specific reason.
+These use the existing report fields; no schema fields change.
 
 Renamed parameter names are included in `names` so anonymous reports can remove them.
 Fusion consumed tools and removed bodies are omitted only when cadmpeg marks them hidden
@@ -1588,3 +1607,10 @@ to the replacement geometry merely because it contains the source feature's shap
 For example, a split row can contain `"output_ids": [12, 8], "output_match": "emitted"`;
 ids follow timeline order rather than numeric order. A dropped row contains
 `"output_ids": [], "output_match": "no_output"`.
+
+## Output orientation
+
+The CLI options `--stand-up` and `--no-stand-up` (MCP `stand_up` and
+`no_stand_up`) control the saved design orientation. Reports retain the existing
+schemas and source coordinates; these options add no report fields. See
+[the command reference](command-line.md) for the rotation and default.

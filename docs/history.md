@@ -226,11 +226,35 @@ curves retain a named refusal; older targets keep the original geometry. A refus
 proof failed: no rebuilt edge through the midpoint (with how far the nearest rebuilt edge is, which
 tells a rebuilt body that differs from the source from a rounding gap), more than one, or one with
 other ends, another length, another kind of curve or another direction. Equal two-distance chamfers also map; distance-and-angle chamfers map at
-45 degrees on perpendicular faces. Unequal distances and other angles lack a source
-reference-face ordering and are refused specifically. Variable fillets lack a proven
+45 degrees on perpendicular faces. Unequal distances and other angles map on straight edges
+when the source's final body still has the chamfer's face: the face order that puts it there,
+between that face's own boundary edges along the input edge, is taken. A selection on several
+bodies becomes one chamfer per body, and each is flipped on its own when SolidCraft's first
+face (the one facing up most) would put the cut elsewhere on that body. A chamfer face the final body lost, an edge whose faces SolidCraft
+cannot tell apart, and SolidCraft cutting it elsewhere either way round are refused, saying
+which. Variable fillets lack a proven
 chain direction. A fillet with several radius groups becomes one SolidCraft blend per group,
 in the source's order; a later group's straight edge may be shorter than the source edge where
 an earlier group rounded its end. Final-body edge selections never stand in for input geometry.
+
+For targets 0.44 and newer, a sweep path can name connected topological edges from its
+own input state. Resolved edges are preserved only from one hidden earlier dependency
+result before that geometry is removed. A wire owned by an earlier mapped sketch resolves
+to that sketch only when every edge matches one entire emitted curve by its endpoints,
+midpoint, tangent and length. Other paths use the blend edge proof, check connectivity in
+source order, and bind the whole path to one rebuilt body. Closed chains assembled from
+open edges remain refused until their start and traversal direction can be proven.
+Exact curve measurements are requested only for consumers that need them; a measurement
+limit or failure preserves earlier straight-edge blends.
+Later edge consumers replay after this binding. Topological guide rails remain unsupported;
+SolidCraft's rail representation requires sketch curves. Paths without proven earlier
+input geometry and older targets keep specific refusals.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
 
 Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note
 `helper not converted: nothing uses it`. Used datum points and coordinate systems can be
@@ -415,10 +439,15 @@ by this attachment proof. Any other plate, or a bend without its plate, keeps th
 and reports the unsupported shape. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
 outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. A sheet-metal
 corner that cadmpeg proves leaves its body unchanged (a single flange's corner, with nothing to
-relieve) needs no SolidCraft feature and is counted as not needed. Contour flanges and
-unfold/refold operations are not mapped yet. Sheet rules keep SolidCraft's defaults for
-K-factor and relief settings. The report names the
-first feature that stops the history; the original geometry is still converted.
+relieve) needs no SolidCraft feature and is counted as not needed. Contour flanges map when
+cadmpeg supplies one open chain of sketch lines and arcs, one blind distance along the sketch
+normal, and material on the left or right. Thickness,
+inside bend radius and any supplied K-factor become a separate sheet rule. Centered,
+symmetric, two-sided, drafted, object-ended, oblique and closed-profile contour flanges keep
+the source geometry and report the reason. Unfold/refold history and corner relief that
+changes geometry are not supported yet; sheet rules keep SolidCraft's defaults for relief
+settings. The report names the first feature that stops the history; the original geometry
+is still converted.
 
 ## Partial history
 

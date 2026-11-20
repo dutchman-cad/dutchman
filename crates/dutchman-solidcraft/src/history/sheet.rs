@@ -1,4 +1,4 @@
-//! Sheet-metal base flanges and edge flanges on proven input-state edges. Hems are refused
+//! Sheet-metal base and contour flanges, and edge flanges on proven input-state edges. Hems are refused
 //! with the reason SolidCraft cannot express them.
 
 use serde_json::{json, Value};
@@ -48,6 +48,221 @@ pub(super) fn base_flange(
         fields.insert("flip".to_owned(), Value::Bool(true));
     }
     Ok(out)
+}
+
+/// Maps a contour flange: an open chain of sketch lines and arcs swept along the sketch's
+/// normal into a sheet, its bends at the chain's corners.
+pub(super) fn contour_flange(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    let definition = definition
+        .get("construction")
+        .ok_or("its contour-flange construction is not given")?;
+    let profile = definition
+        .get("profile")
+        .ok_or("its profile is not given")?;
+    let kind = profile
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if kind != "sketch_entities" {
+        return Err(format!(
+            "a contour flange whose profile is {kind}, not a list of sketch lines and arcs, is not supported yet"
+        ));
+    }
+    let value = profile.get("value").unwrap_or(&Value::Null);
+    let sketch_id = value
+        .get("sketch")
+        .and_then(Value::as_str)
+        .ok_or("its profile sketch is malformed")?;
+    let entities = value
+        .get("entities")
+        .and_then(Value::as_array)
+        .filter(|entities| !entities.is_empty())
+        .ok_or("its profile entities are malformed")?;
+    let sketch = ctx
+        .sketches
+        .get(sketch_id)
+        .ok_or("its sketch is not an earlier mapped sketch")?;
+    let chain = open_chain(sketch, entities)?;
+
+    let extent = definition.get("extent").ok_or("its extent is not given")?;
+    let length = match extent.get("kind").and_then(Value::as_str) {
+        Some("one_sided") => {
+            let side = extent.get("side").ok_or("its extent is malformed")?;
+            if number(side.get("draft")).is_some_and(|draft| draft != 0.0) {
+                return Err("a drafted contour flange is not supported yet".to_owned());
+            }
+            match side.pointer("/termination/kind").and_then(Value::as_str) {
+                Some("blind") => number(side.pointer("/termination/length"))
+                    .filter(|length| *length != 0.0)
+                    .ok_or("its flange length is not given")?,
+                Some(other) => {
+                    return Err(format!(
+                        "a contour flange whose length ends {other} is not supported yet; \
+                         SolidCraft takes a distance"
+                    ))
+                }
+                None => return Err("its extent is malformed".to_owned()),
+            }
+        }
+        Some(other) => {
+            return Err(format!(
+                "a {other} contour flange is not supported yet; SolidCraft sweeps one distance on one side"
+            ))
+        }
+        None => return Err("its extent is malformed".to_owned()),
+    };
+    let direction = v3(definition.get("direction")).ok_or("its travel direction is not given")?;
+    let norm = dot(direction, direction).sqrt();
+    if norm < 1e-9 {
+        return Err("its travel direction is not given".to_owned());
+    }
+    let along = dot(direction, sketch.normal) / norm;
+    if along.abs() < 1.0 - 1e-6 {
+        return Err("a contour flange oblique to its sketch is not supported yet".to_owned());
+    }
+    // The signed length runs from the profile plane along the stated direction.
+    let reverse = length * along < 0.0;
+    let flip = match definition.get("side").and_then(Value::as_str) {
+        // SolidCraft puts the sheet to the right of the chain's travel by default.
+        Some("right") => false,
+        Some("left") => true,
+        Some("centered") => {
+            return Err(
+                "a contour flange centered on its profile is not supported yet; SolidCraft puts the sheet on one side"
+                    .to_owned(),
+            )
+        }
+        _ => return Err("the side of its profile the sheet lies on is not given".to_owned()),
+    };
+    let thickness = number(definition.get("thickness"))
+        .filter(|t| *t > 0.0)
+        .ok_or("its thickness is not given")?;
+    let radius = number(definition.get("inside_radius"))
+        .filter(|r| *r >= 0.0)
+        .ok_or("its inside bend radius is not given")?;
+    let k_factor = number(definition.get("neutral_factor"));
+    let sketch = sketch.feature;
+    let rule = ctx.sheet_rule_of(thickness, Some(radius), k_factor);
+    let id = ctx.id();
+    ctx.builds = true;
+    let mut out = json!({
+        "id": id,
+        "name": name(feature).map(str::to_owned).unwrap_or_else(|| format!("ContourFlange{id}")),
+        "type": "sheet_contour",
+        "suppressed": false,
+        "sketch": sketch,
+        "curves": chain,
+        "distance": format!("{} mm", length.abs()),
+        "rule": rule,
+    });
+    if let Some(fields) = out.as_object_mut() {
+        if flip {
+            fields.insert("flip".to_owned(), Value::Bool(true));
+        }
+        if reverse {
+            fields.insert("reverse".to_owned(), Value::Bool(true));
+        }
+    }
+    Ok(out)
+}
+
+/// The SolidCraft curve ids of `entities` as one open chain of lines and arcs, each curve
+/// reaching the next, in the order the source lists them (so the first curve is where the
+/// chain's travel starts, which SolidCraft follows and the sheet's side is judged against).
+fn open_chain(sketch: &super::sketch::Mapped, entities: &[Value]) -> Result<Vec<String>, String> {
+    // Each source curve occurs once. Bound allocation by the already mapped sketch,
+    // including for a hostile selection that repeats a curve many times.
+    if entities.len() > sketch.shapes.len() {
+        return Err("its profile repeats sketch curves".to_owned());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut curves = Vec::new();
+    for entity in entities {
+        let id = entity
+            .as_str()
+            .ok_or("its profile entities are malformed")?;
+        if !seen.insert(id) {
+            return Err("its profile repeats sketch curves".to_owned());
+        }
+        let curve = sketch
+            .curve(id)
+            .ok_or("its profile uses a curve the sketch does not carry")?;
+        let pieces = if curve.pieces.is_empty() {
+            std::slice::from_ref(curve)
+        } else {
+            curve.pieces.as_slice()
+        };
+        if pieces
+            .iter()
+            .any(|piece| !matches!(piece.kind, "line" | "arc"))
+        {
+            return Err(
+                "a contour flange along anything but sketch lines and arcs is not supported yet"
+                    .to_owned(),
+            );
+        }
+        let (Some(start), Some(end)) = (curve.start, curve.end) else {
+            return Err("its profile uses a curve whose ends are not known".to_owned());
+        };
+        curves.push((curve, start, end));
+    }
+    let position = |index: usize| sketch.points.get(index).map(|(_, at)| *at);
+    let same = |a: usize, b: usize| {
+        a == b
+            || matches!((position(a), position(b)), (Some(p), Some(q))
+                if (p[0] - q[0]).abs() < 1e-7 && (p[1] - q[1]).abs() < 1e-7)
+    };
+    // Which end of each curve the travel enters it by.
+    let mut forward = Vec::new();
+    if let [first, second, ..] = curves.as_slice() {
+        let (_, a, b) = *first;
+        let (_, c, d) = *second;
+        let touches = |p: usize| same(p, c) || same(p, d);
+        forward.push(match (touches(b), touches(a)) {
+            (true, false) => true,
+            (false, true) => false,
+            _ => return Err("its profile curves do not form an open chain".to_owned()),
+        });
+    } else {
+        forward.push(true);
+    }
+    let first_forward = forward.first().copied().unwrap_or(true);
+    let mut at = curves
+        .first()
+        .map(|&(_, a, b)| if first_forward { b } else { a });
+    for &(_, a, b) in curves.iter().skip(1) {
+        let here = at.ok_or("its profile is empty")?;
+        if same(here, a) {
+            forward.push(true);
+            at = Some(b);
+        } else if same(here, b) {
+            forward.push(false);
+            at = Some(a);
+        } else {
+            return Err("its profile curves do not form an open chain".to_owned());
+        }
+    }
+    let first = curves
+        .first()
+        .map(|&(_, a, b)| if first_forward { a } else { b });
+    if let (Some(first), Some(last)) = (first, at) {
+        if same(first, last) {
+            return Err("a contour flange along a closed profile is not supported yet".to_owned());
+        }
+    }
+    let mut ids = Vec::new();
+    for ((curve, ..), forward) in curves.iter().zip(forward) {
+        let mut each = curve.ids();
+        if !forward {
+            each.reverse();
+        }
+        ids.extend(each);
+    }
+    Ok(ids)
 }
 
 /// A flange on a proven perimeter edge of the sole, unchanged rectangular base sheet.
@@ -260,8 +475,8 @@ fn base_edges(ctx: &Context, preceding: &[Value], attached: bool) -> Result<Base
     let thickness = ctx
         .sheet_rules
         .iter()
-        .find(|(_, name)| name == rule)
-        .map(|(thickness, _)| *thickness)
+        .find(|known| known.name == rule)
+        .map(|known| known.thickness)
         .ok_or(reason)?;
     let sign = if base.get("flip").and_then(Value::as_bool) == Some(true) {
         -1.0
@@ -680,14 +895,36 @@ pub(super) fn bend_refusal() -> String {
         .to_owned()
 }
 
+/// A sheet rule a sheet-metal feature uses: its thickness, and the bend radius and K-factor
+/// when the feature states them.
+#[derive(Clone)]
+pub(super) struct SheetRule {
+    pub(super) thickness: f64,
+    pub(super) radius: Option<f64>,
+    pub(super) k_factor: Option<f64>,
+    pub(super) name: String,
+}
+
+impl SheetRule {
+    /// The SolidCraft rule.
+    pub(super) fn value(&self) -> Value {
+        rule(&self.name, self.thickness, self.radius, self.k_factor)
+    }
+}
+
 /// A SolidCraft sheet rule of `thickness` mm, named after it, with SolidCraft's own defaults
-/// for everything else.
-pub(super) fn rule(name: &str, thickness: f64) -> Value {
+/// for everything else but the bend radius and K-factor, where given.
+pub(super) fn rule(
+    name: &str,
+    thickness: f64,
+    radius: Option<f64>,
+    k_factor: Option<f64>,
+) -> Value {
     json!({
         "name": name,
         "thickness": format!("{thickness} mm"),
-        "bend_radius": "Thickness",
-        "k_factor": "0.44",
+        "bend_radius": radius.map_or_else(|| "Thickness".to_owned(), |r| format!("{r} mm")),
+        "k_factor": k_factor.map_or_else(|| "0.44".to_owned(), |k| k.to_string()),
         "relief_width": "Thickness",
         "relief_depth": "Thickness * 0.5",
         "corner_relief": "Thickness * 4.0",
@@ -695,4 +932,212 @@ pub(super) fn rule(name: &str, thickness: f64) -> Value {
         "hem_gap": "0.01 mm",
         "gap": "Thickness",
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::super::sketch::{Curve, Mapped, Shape};
+    use super::*;
+
+    fn line(index: usize, a: usize, b: usize) -> Shape {
+        Shape::Curve(Curve {
+            pieces: Vec::new(),
+            index,
+            id: format!("l{}", index + 1),
+            kind: "line",
+            start: Some(a),
+            end: Some(b),
+            center: None,
+        })
+    }
+
+    /// A sketch on XY with the open chain (0,0) - (20,0) - (20,15) as entities e1, e2, a
+    /// detached line e3 and the closing line e4 back to the start.
+    fn sketch() -> Mapped {
+        let shapes = [
+            ("e1", line(0, 1, 2)),
+            ("e2", line(1, 2, 3)),
+            ("e3", line(2, 4, 5)),
+            ("e4", line(3, 3, 1)),
+        ];
+        Mapped {
+            feature: 7,
+            normal: [0.0, 0.0, 1.0],
+            origin: [0.0, 0.0, 0.0],
+            x_dir: [1.0, 0.0, 0.0],
+            y_dir: [0.0, 1.0, 0.0],
+            point_displacement: 0.0,
+            points: vec![
+                ("origin".to_owned(), [0.0, 0.0]),
+                ("l1.start".to_owned(), [0.0, 0.0]),
+                ("l1.end".to_owned(), [20.0, 0.0]),
+                ("l2.end".to_owned(), [20.0, 15.0]),
+                ("l3.start".to_owned(), [50.0, 0.0]),
+                ("l3.end".to_owned(), [60.0, 0.0]),
+            ],
+            shapes: shapes
+                .into_iter()
+                .map(|(id, shape)| (id.to_owned(), shape))
+                .collect::<BTreeMap<_, _>>(),
+        }
+    }
+
+    fn definition(change: Value) -> Value {
+        let mut full = json!({
+            "profile": chain(&["e1", "e2"]),
+            "direction": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "extent": travel(10.0),
+            "thickness": 2.0,
+            "inside_radius": 2.0,
+            "side": "right",
+            "neutral_factor": 0.4,
+        });
+        for (key, value) in change.as_object().unwrap() {
+            full[key] = value.clone();
+        }
+        json!({"definition": "sheet_metal_contour_flange", "construction": full})
+    }
+
+    fn chain(entities: &[&str]) -> Value {
+        json!({"kind": "sketch_entities", "value": {"sketch": "s", "entities": entities}})
+    }
+
+    fn travel(length: f64) -> Value {
+        json!({"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": length}}})
+    }
+
+    fn mapped(change: Value) -> Result<(Value, Vec<Value>), String> {
+        let model = json!({});
+        let mut ctx = Context::new(&model);
+        ctx.sketches.insert("s".to_owned(), sketch());
+        let out = contour_flange(&json!({"name": "Contour"}), &definition(change), &mut ctx)?;
+        Ok((out, ctx.sheet_rules.iter().map(SheetRule::value).collect()))
+    }
+
+    #[test]
+    fn a_contour_flange_is_a_sheet_contour_under_a_rule_of_its_bend() {
+        let (flange, rules) = mapped(json!({})).unwrap();
+        assert_eq!(flange["type"], "sheet_contour");
+        assert_eq!(flange["sketch"], 7);
+        assert_eq!(flange["curves"], json!(["l1", "l2"]));
+        assert_eq!(flange["distance"], "10 mm");
+        assert_eq!(flange["rule"], "Sheet 2 mm R2 K0.4");
+        assert!(flange.get("flip").is_none());
+        assert!(flange.get("reverse").is_none());
+        assert_eq!(rules[0]["thickness"], "2 mm");
+        assert_eq!(rules[0]["bend_radius"], "2 mm");
+        assert_eq!(rules[0]["k_factor"], "0.4");
+    }
+
+    #[test]
+    fn a_contour_flange_keeps_its_side_and_travel() {
+        // CADIR's left of the chain is SolidCraft's flip; travel against the direction reverses.
+        assert_eq!(mapped(json!({"side": "left"})).unwrap().0["flip"], true);
+        let back = mapped(json!({"extent": travel(-10.0)})).unwrap().0;
+        assert_eq!(back["reverse"], true);
+        assert_eq!(back["distance"], "10 mm");
+        let down = json!({"x": 0.0, "y": 0.0, "z": -1.0});
+        assert_eq!(
+            mapped(json!({"direction": down})).unwrap().0["reverse"],
+            true
+        );
+        let both = mapped(json!({"direction": down, "extent": travel(-10.0)}))
+            .unwrap()
+            .0;
+        assert!(both.get("reverse").is_none());
+        // The chain runs in the order the source lists it, each curve entered by its shared end.
+        let backwards = mapped(json!({"profile": chain(&["e2", "e1"])})).unwrap().0;
+        assert_eq!(backwards["curves"], json!(["l2", "l1"]));
+        let one = mapped(json!({"profile": chain(&["e2"])})).unwrap().0;
+        assert_eq!(one["curves"], json!(["l2"]));
+    }
+
+    #[test]
+    fn a_contour_flange_solidcraft_cannot_hold_is_refused_with_its_reason() {
+        let blind = json!({"termination": {"kind": "blind", "length": 10.0}});
+        for (change, reason) in [
+            (
+                json!({"side": "centered"}),
+                "a contour flange centered on its profile is not supported yet",
+            ),
+            (
+                json!({"extent": {"kind": "symmetric", "side": blind}}),
+                "a symmetric contour flange is not supported yet",
+            ),
+            (
+                json!({"extent": {"kind": "one_sided",
+                    "side": {"termination": {"kind": "through_all"}}}}),
+                "a contour flange whose length ends through_all is not supported yet",
+            ),
+            (
+                json!({"extent": {"kind": "one_sided", "side": {
+                    "termination": {"kind": "blind", "length": 10.0}, "draft": 0.1}}}),
+                "a drafted contour flange is not supported yet",
+            ),
+            (
+                json!({"direction": {"x": 1.0, "y": 0.0, "z": 1.0}}),
+                "a contour flange oblique to its sketch is not supported yet",
+            ),
+            (
+                json!({"profile": chain(&["e1", "e3"])}),
+                "its profile curves do not form an open chain",
+            ),
+            (
+                json!({"profile": chain(&["e1", "e2", "e4"])}),
+                "a contour flange along a closed profile is not supported yet",
+            ),
+            (
+                json!({"profile": {"kind": "sketch_profiles",
+                    "value": {"sketch": "s", "profiles": [0]}}}),
+                "a contour flange whose profile is sketch_profiles",
+            ),
+            (json!({"thickness": null}), "its thickness is not given"),
+            (
+                json!({"inside_radius": null}),
+                "its inside bend radius is not given",
+            ),
+        ] {
+            let error = mapped(change.clone()).unwrap_err();
+            assert!(error.contains(reason), "{change}: {error}");
+        }
+    }
+
+    #[test]
+    fn contour_flanges_of_one_bend_share_a_rule() {
+        let model = json!({});
+        let mut ctx = Context::new(&model);
+        ctx.sketches.insert("s".to_owned(), sketch());
+        let default = ctx.sheet_rule(2.0);
+        for change in [
+            json!({}),
+            json!({}),
+            json!({"inside_radius": 3.0}),
+            json!({"neutral_factor": 0.5}),
+        ] {
+            contour_flange(&json!({}), &definition(change), &mut ctx).unwrap();
+        }
+        assert_eq!(ctx.sheet_rules.len(), 4);
+        assert_eq!(ctx.sheet_rule(2.0), default);
+        let base = ctx.sheet_rules[0].value();
+        assert_eq!(base["name"], "Sheet 2 mm");
+        assert_eq!(base["bend_radius"], "Thickness");
+        assert_eq!(base["k_factor"], "0.44");
+    }
+
+    #[test]
+    fn contour_profiles_reject_repeated_curves_and_single_closed_curves() {
+        assert!(mapped(json!({"profile": chain(&["e1", "e2", "e1"])}))
+            .unwrap_err()
+            .contains("repeats sketch curves"));
+        let mut sketch = sketch();
+        if let Some(Shape::Curve(curve)) = sketch.shapes.get_mut("e1") {
+            curve.end = curve.start;
+        }
+        assert!(open_chain(&sketch, &[json!("e1")])
+            .unwrap_err()
+            .contains("closed profile"));
+    }
 }
