@@ -349,11 +349,16 @@ mod tests {
         let mut data = zip.finish().unwrap().into_inner();
         let central = data.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
         data[central + 24..central + 28].copy_from_slice(&(17u32 << 20).to_le_bytes());
-        let error = check(
+        // An unlimited estimate budget isolates the inner inflation bound.
+        let error = check_with(
             Format::FusionMultiDocument,
             data.len() as u64,
             Cursor::new(&data),
             true,
+            Budget {
+                peak_bytes: u64::MAX,
+                seconds: u64::MAX,
+            },
         )
         .unwrap_err();
         assert!(matches!(error, Error::MemoryBudget(_)));
