@@ -1651,9 +1651,11 @@ source attributes are dropped with subject `attributes` and a message naming
 that scope. Neither assignment is applied to the shared component definition.
 No report fields or schema versions change.
 
-The desktop report panel stays visible below output controls in wide windows. Discord
-comes first, with a small **GitHub issue** backup link (a public issue under the user's
-GitHub name). **Anonymous report**, under **More**, opens review before direct cloud upload.
+The desktop report panel stays visible below output controls in wide windows. Narrow
+windows pin **Report a problem…** (or **Report this design…** with a result selected) above
+**Convert**; it scrolls to the full numbered cards in the page. Discord comes first, with
+a small **GitHub issue** backup link (a public issue under the user's GitHub name).
+**Anonymous report**, under **More**, opens review before direct cloud upload.
 Partial history says **Partly converted**; geometry-only or flattened results say
 **Converted, no history**, in amber. Full history keeps **Converted** in green unless
 degraded content needs review. Report fields
@@ -1677,6 +1679,8 @@ Token files that fail ownership, privacy, type, or size checks return `onshape/a
 with `calls: 0`. Windows refuses token files because privacy cannot be checked yet and
 directs users to clear the file selection and use the environment variable instead.
 Mixing a token with API keys (including saved keys) returns `onshape/auth` with `calls: 0`.
+Selecting a token file alongside API-key environment variables reports the authentication
+conflict before reading the file on every platform.
 Bearer HTTP 401/403 returns `onshape/auth` and explains that the token expired or lacks
 access, with instructions to obtain and supply a fresh token with read access. Echoed
 credential material returns `onshape/privacy` without echoing the credential.
@@ -1788,14 +1792,82 @@ order. One source feature may produce several output features. Ids are recorded 
 emission and adjusted when parts join an assembly; names are never used for matching.
 `output_match` is `emitted` when the ids link to retained features, `no_output` when
 no independently produced feature survives (including dropped or merged rows), or
-`not_written` for inspection, which saves no design. Empty arrays do not change the
-existing status or counts: a feature can map during planning and be removed by fallback.
+`not_written` for inspection, which saves no design. Library planning outcomes used
+by preflight follow the same rule. Empty arrays do not change the existing status
+or counts: a feature can map during planning and be removed by fallback.
 Retained reference sketches link to their final ids even after fallback. No link points
 to the replacement geometry merely because it contains the source feature's shape.
 
 For example, a split row can contain `"output_ids": [12, 8], "output_match": "emitted"`;
 ids follow timeline order rather than numeric order. A dropped row contains
 `"output_ids": [], "output_match": "no_output"`.
+
+## Preflight
+
+`dutchman preflight <file> --json` returns `dutchman.preflight/1`.
+The following partial-history example abbreviates the repeated unknown target
+entries; actual output always includes `sc`, `fcmacro`, `fcstd` and `dxf`:
+
+```json
+{
+  "schema": "dutchman.preflight/1",
+  "advisory": true,
+  "tier": "planned",
+  "stop_reason": null,
+  "detail": null,
+  "scan": {
+    "format_hint": "freecad_document", "detected_codec": null,
+    "source_version": null, "assembly_hint": false,
+    "document_kind": "part", "size_bytes": 4096,
+    "max_input_bytes": 1073741824, "bytes_read": 8192,
+    "readable": "readable", "reason": "planned",
+    "feature_count": 3, "feature_kinds": ["extrude", "native", "sketch"]
+  },
+  "message": "The design was read and its history planned without writing output.",
+  "targets": [{
+    "target": "sc", "target_version": "0.43.0", "outcome": "partial", "reason": "planned",
+    "driving_feature_kinds": ["extrude", "native", "sketch"],
+    "mapped_features": 2, "total_features": 3,
+    "first_blocking_feature": {"kind": "native", "reason": "This feature is not supported yet."},
+    "detail": null
+  }]
+}
+```
+
+`tier` is `prefix` or `planned`; only the latter ran target planning. A decode
+refusal can still have prefix tier and a specific decoding `detail`.
+`stop_reason` is null or `byte_budget`, `time_budget`, `feature_budget`,
+`resource_limit`.
+Budget exhaustion makes every forecast unknown, even if some planning completed.
+Time enforcement is cooperative; see [bounds and limitations](preflight.md).
+
+Hints describe the suffix; `assembly_hint` does not establish actual contents.
+`document_kind` is `part`, `assembly` or null. `detected_codec` requires a unique
+strong prefix signal. Null means unknown, including counts and kind lists.
+`readable` is `readable`, `not_readable` or `unknown`. Decoded feature counts
+include suppressed features and aggregate local part models; target totals count
+active timeline outcomes only. Target mapped counts include features needing no
+row. `first_blocking_feature` identifies the first blocked active timeline row.
+Assemblies aggregate their mapped part outcomes in the writer's planning order.
+Leaves without exportable geometry contribute no timeline outcomes, as in
+conversion.
+
+Target outcomes are `full_history`, `partial`, `solid_only`, `refused`, `unknown`.
+Only the default writer currently exposes planning without producing output;
+other targets use `target_planner_unavailable` rather than borrow its forecast.
+Drawing-only conversion may work even when design decoding does not.
+`target_version` identifies the build-known release used by the default planner;
+it is null for other targets. No target installation is probed. Static planning
+does not perform final replay
+or establish output permissions and capacity.
+
+Reasons are `planned`, `reader_unavailable`, `target_planner_unavailable`,
+`decode_failed`, `byte_budget`, `time_budget`, `feature_budget`, `resource_limit`,
+`input_unavailable`, `not_a_file`, `empty_input`, `input_too_large`,
+`format_not_supported`, `format_mismatch`. The suffix refusal follows the existing
+conversion gate;
+shared part suffixes need content evidence. Messages and decoding details are
+human-readable; use reason codes in programs.
 
 ## Output orientation
 

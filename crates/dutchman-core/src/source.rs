@@ -76,7 +76,16 @@ pub(crate) fn decode_source_bytes(
     if let Some(progress) = progress {
         progress.stage(Stage::Decode);
     }
-    let mut model = crate::decode::decode_with_progress(format, input, bytes, report, progress)?;
+    let model = crate::decode::decode_with_progress(format, input, bytes, report, progress)?;
+    finish_decoded(format, model, include_hidden, report)
+}
+
+pub(crate) fn finish_decoded(
+    format: Format,
+    mut model: Model,
+    include_hidden: bool,
+    report: &mut Report,
+) -> Result<Model, Error> {
     if matches!(format, Format::SolidWorksPart | Format::SolidWorksAssembly) {
         assembly::release_solidworks_display(&mut model, report);
     }

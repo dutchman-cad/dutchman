@@ -974,7 +974,9 @@ explicit consent. CLI users can preview with `dutchman report --folder FOLDER --
 supported in the anonymous envelope. Describe the problem privately or in the GitHub
 form without private names or paths. The desktop offers these actions in its always-open
 **Is there a problem? Is something missing?** panel, pinned below output controls in wide
-windows. Discord comes first; **GitHub issue** is a small backup link. **Anonymous report**
+windows. In narrow windows, **Report a problem…** (or **Report this design…** with a result
+selected) stays above **Convert** and scrolls to the full numbered cards in the page.
+Discord comes first; **GitHub issue** is a small backup link. **Anonymous report**
 is under **More**, alongside AI help and diagnosis. **Report this file…** selects the file
 in the same panel.
 Partial history says **Partly converted**; geometry-only or flattened results say
@@ -1124,6 +1126,8 @@ variables and run `dutchman onshape logout` first. HTTP 401/403 means the token 
 lacks access; ask the user to obtain a fresh token with read access and replace their local
 file or environment variable. Reports and logs never echo tokens. The desktop supports
 **Use bearer token file** in Connect Onshape and the same environment variable.
+Selecting a token file alongside API-key environment variables reports the authentication
+conflict before reading the file on every platform.
 Unix token files must belong to the current user; ownership, permissions, type, and size
 are checked on the opened handle, and symlinks and special files are refused. Windows
 token files are not supported yet because privacy cannot be checked: clear the file
@@ -1203,6 +1207,19 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](../../docs/json.md).
+
+For bounded evidence before conversion, run `dutchman preflight <file> --json`.
+The planned tier decodes geometry and history and forecasts the default target
+without writing output. Read `tier`, `stop_reason`, retained feature counts and
+the first blocking kind and reason. Unknown is not a conversion promise. Other
+targets have no planning-only forecast yet. No MCP tool or browser binding is
+provided. See `docs/preflight.md` and `docs/json.md` for bounds and fields.
+
+A `format_not_supported` reason follows the existing suffix policy before any
+payload is read. Shared part suffixes require bounded content evidence.
+
+Library planning outcomes used by preflight keep empty output ids with
+`not_written`; preflight saves no design.
 
 ### Y-up orientation
 

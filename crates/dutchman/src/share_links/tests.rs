@@ -28,20 +28,7 @@ impl Mock {
         let task = std::thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(5);
             for response in responses {
-                let mut stream = loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => break stream,
-                        Err(e)
-                            if e.kind() == std::io::ErrorKind::WouldBlock
-                                && Instant::now() < deadline =>
-                        {
-                            std::thread::sleep(Duration::from_millis(5))
-                        }
-                        _ => return,
-                    }
-                };
-                // macOS/BSD: an accepted socket inherits the listener's non-blocking mode.
-                stream.set_nonblocking(false).unwrap();
+                let mut stream = crate::test_support::accept_blocking(&listener, deadline).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
@@ -456,20 +443,7 @@ fn actual_http_timeout_is_bounded() {
     listener.set_nonblocking(true).unwrap();
     let task = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(2);
-        let mut stream = loop {
-            match listener.accept() {
-                Ok((stream, _)) => break stream,
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::WouldBlock
-                        && Instant::now() < deadline =>
-                {
-                    std::thread::sleep(Duration::from_millis(2))
-                }
-                _ => return,
-            }
-        };
-        // macOS/BSD: an accepted socket inherits the listener's non-blocking mode.
-        stream.set_nonblocking(false).unwrap();
+        let mut stream = crate::test_support::accept_blocking(&listener, deadline).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
@@ -626,18 +600,7 @@ fn total_deadline_removes_scratch_while_body_is_still_streaming() {
     let (release, wait) = std::sync::mpsc::channel();
     let server = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(5);
-        let mut stream = loop {
-            match listener.accept() {
-                Ok((stream, _)) => break stream,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    assert!(Instant::now() < deadline);
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Err(error) => panic!("Mock accept failed: {error}"),
-            }
-        };
-        // macOS/BSD: an accepted socket inherits the listener's non-blocking mode.
-        stream.set_nonblocking(false).unwrap();
+        let mut stream = crate::test_support::accept_blocking(&listener, deadline).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();

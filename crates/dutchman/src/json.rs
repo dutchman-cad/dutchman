@@ -18,6 +18,9 @@ pub const INSPECT: &str = "dutchman.inspect/1";
 /// The schema of `dutchman contents --json`.
 pub const CONTENTS: &str = "dutchman.contents/1";
 
+/// The schema of the bounded advisory scan.
+pub const PREFLIGHT: &str = "dutchman.preflight/1";
+
 /// The schema of `dutchman diagnose`'s report.
 pub const DIAGNOSE: &str = "dutchman.diagnose/1";
 
@@ -1284,6 +1287,20 @@ pub fn placement_choices(
 /// The selected preset and its effective narrowed choices.
 pub fn choice_values(preset: crate::choices::Preset, choices: crate::choices::Choices) -> Value {
     json!({"preset": preset.name(), "history": choices.history, "sketches": choices.sketches, "joints": choices.joints})
+}
+
+/// Output ids shared with the conversion command, independent of target installation.
+pub const PREFLIGHT_TARGETS: [&str; 4] = ["sc", "fcmacro", "fcstd", "dxf"];
+
+/// A bounded scan is advisory; unknown is never a promise of conversion success.
+pub fn preflight(forecast: &crate::preflight::Forecast) -> Value {
+    let mut value = serde_json::to_value(forecast).unwrap_or(Value::Null);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("schema".to_owned(), json!(PREFLIGHT));
+        object.insert("advisory".to_owned(), json!(true));
+        object.insert("message".to_owned(), json!(forecast.scan.reason.message()));
+    }
+    value
 }
 
 /// Shared CLI/MCP result for an Onshape fetch. Never contains the supplied URL or credentials.

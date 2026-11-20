@@ -169,8 +169,10 @@ fn allowed_redirect_host_with_private_dns_never_opens_a_socket() {
     assert_eq!(requests, 2);
     assert_eq!(error, UNSAFE);
     assert_eq!(
-        listener.accept().unwrap_err().kind(),
-        io::ErrorKind::WouldBlock
+        crate::test_support::accept_blocking(&listener, std::time::Instant::now())
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::TimedOut
     );
 }
 
@@ -237,19 +239,7 @@ fn actual_request_bounds_tls_and_slow_body_with_remaining_budget() {
         listener.set_nonblocking(true).unwrap();
         let server = std::thread::spawn(move || {
             let end = Instant::now() + Duration::from_secs(2);
-            let mut socket = loop {
-                match listener.accept() {
-                    Ok((socket, _)) => break socket,
-                    Err(error)
-                        if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < end =>
-                    {
-                        std::thread::sleep(Duration::from_millis(5));
-                    }
-                    _ => return,
-                }
-            };
-            // macOS/BSD: an accepted socket inherits the listener's non-blocking mode.
-            socket.set_nonblocking(false).unwrap();
+            let mut socket = crate::test_support::accept_blocking(&listener, end).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();

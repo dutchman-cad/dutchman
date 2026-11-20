@@ -1153,9 +1153,11 @@ existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
 
-The desktop report panel stays visible below output controls in wide windows. Discord
-comes first, with a small **GitHub issue** backup link (a public issue under the user's
-GitHub name). **Anonymous report**, under **More**, opens review before direct cloud upload.
+The desktop report panel stays visible below output controls in wide windows. Narrow
+windows pin **Report a problem…** (or **Report this design…** with a result selected) above
+**Convert**; it scrolls to the full numbered cards in the page. Discord comes first, with
+a small **GitHub issue** backup link (a public issue under the user's GitHub name).
+**Anonymous report**, under **More**, opens review before direct cloud upload.
 Partial history says **Partly converted**; geometry-only or flattened results say
 **Converted, no history**, in amber. Full history keeps **Converted** in green unless
 degraded content needs review. Report fields
@@ -1184,7 +1186,9 @@ Never include credential values in tool arguments or chat. Remove API-key enviro
 variables and saved keys (`dutchman onshape logout`) before using a token; mixed
 credentials return `onshape/auth` with zero calls. HTTP 401/403 explains that the token
 expired or lacks access: obtain a fresh token with read access, replace it, and retry.
-Tokens and remote error bodies stay out of both text and structured reports. This tool uses Onshape's network API and your own
+Tokens and remote error bodies stay out of both text and structured reports.
+Selecting a token file alongside API-key environment variables reports the authentication
+conflict before reading the file on every platform. This tool uses Onshape's network API and your own
 allowance and writes a private bundle/cache. Nothing is sent to Dutchman.
 
 Part Studios include features, stored sketch placements, input topology, optional
@@ -1264,3 +1268,11 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](json.md).
+
+The CLI also provides `dutchman preflight <file> --json` for budgeted reading and
+history planning without writing a design. The default target gets a forecast;
+other targets and exhausted budgets return unknown. This is not an MCP tool.
+See [preflight](preflight.md) for tiers, counts and limits.
+
+Library planning outcomes used by preflight keep empty output ids with
+`not_written`; preflight saves no design.

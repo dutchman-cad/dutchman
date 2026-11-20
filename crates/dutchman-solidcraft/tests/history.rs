@@ -8700,6 +8700,12 @@ fn solidcraft_replays_contour_flange_side_and_travel_at_the_expected_coordinates
 #[test]
 fn solidcraft_replays_a_contour_bend_with_the_source_radius_and_thickness() {
     let Some(cli) = solidcraft() else { return };
+    // The opens-in floor can replay straight contours, but not rounded contour bends.
+    let version =
+        dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()));
+    if version <= "0.18.2".parse().unwrap() {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let design = dir.path().join("bent-contour.sc");
     std::fs::write(&design, written(&contour_flange_model(json!({}))).0).unwrap();
@@ -10313,10 +10319,18 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
 fn a_face_at_an_angle_to_the_sketch_is_gated_to_solidcraft_0_44() {
     // The front face is perpendicular to the sketch: older targets name the release that
     // reaches slanted faces, and 0.44 still refuses a face the sweep runs along.
+    let detected = dutchman_solidcraft::SolidCraftVersion::detected(&Verification::Auto);
+    let detected_reason = if dutchman_solidcraft::VersionGate::SlantedFaceExtent.supported(detected)
+    {
+        "runs along the travel"
+    } else {
+        "needs SolidCraft 0.44 or newer"
+    };
     for (target, reason) in [
+        (Some("0.18.2"), "needs SolidCraft 0.44 or newer"),
         (Some("0.43.0"), "needs SolidCraft 0.44 or newer"),
         (Some("0.44.0"), "runs along the travel"),
-        (None, "runs along the travel"),
+        (None, detected_reason),
     ] {
         let mut model = face_ended_extrude(false, 0.0, false);
         let mut wire = serde_json::to_value(&model.ir).unwrap();

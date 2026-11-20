@@ -805,6 +805,10 @@ After a conversion, **Output folder** folds into a summary. Click its folder pat
 **Change…** to reopen all output settings. **Clear** removes the designs and results and
 restores the expanded settings.
 
+In narrow desktop windows, **Report a problem…** (or **Report this design…** with a result
+selected) stays above **Convert** and scrolls to the full numbered cards in the page.
+See [reporting a problem](desktop.md#reporting-a-problem).
+
 Report consent is per report. In the desktop app, Discord is the first route, with a small
 **GitHub issue** backup link below the three steps. **Anonymous report** is under **More**,
 with AI help and diagnosis. It opens a review for the chosen file
@@ -935,6 +939,8 @@ Token files are opened once on Unix, with symlinks and special files refused and
 and permissions checked on that handle. On Windows, file privacy cannot be checked yet:
 clear the token file selection and use `DUTCHMAN_ONSHAPE_BEARER_TOKEN` instead.
 Credentials stay out of logs and reports, including `--json`.
+Selecting a token file alongside API-key environment variables reports the authentication
+conflict before reading the file on every platform.
 Part Studios include features, stored sketch placements, needed input topology,
 variables/configuration, and final STEP; assemblies include their same-document
 Part Studios. Version links use version paths throughout. Workspace links pin supported reads to a microversion,
@@ -999,6 +1005,22 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](json.md).
+
+## Scan before converting
+
+Run `dutchman preflight part.f3d` (or add `--json`) for bounded input evidence.
+The planned tier reads geometry and history, then forecasts the default target
+without writing a design. Partial results include retained feature counts and
+the first blocker. Other targets and budget overruns stay unknown. Exit 0
+includes unknown; it does not promise that conversion will succeed.
+See [preflight](preflight.md) for bounds and available facts.
+
+Preflight also refuses suffixes the current build cannot convert, following the
+existing converter gate before reading payload bytes. A shared part suffix stays
+unknown until its contents identify a reader.
+
+Library planning outcomes used by preflight keep empty output ids with
+`not_written`; preflight saves no design.
 
 ## Orient a Y-up design
 

@@ -3734,11 +3734,13 @@ fn verbose_asks_for_plain_progress_lines_off_a_terminal() {
 #[test]
 fn convert_all_warns_about_a_missing_argument_that_looks_like_an_output_folder() {
     let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("cube.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
     let wanted = dir.path().join("Converted");
     let out = dutchman(&[
         "convert-all",
         "--no-verify",
-        &fixture("generated_unit_cube.f3d"),
+        input.to_str().unwrap(),
         wanted.to_str().unwrap(),
     ]);
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -3751,6 +3753,7 @@ fn convert_all_warns_about_a_missing_argument_that_looks_like_an_output_folder()
     // The missing input is still reported as before.
     assert_eq!(out.status.code(), Some(1));
     assert!(!wanted.exists());
+    assert!(dir.path().join("cube (SolidCraft)/dutchman.log").is_file());
 }
 
 #[test]

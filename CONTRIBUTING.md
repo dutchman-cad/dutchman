@@ -47,6 +47,7 @@ Before you open a pull request, run the checks CI runs (`.github/workflows/ci.ym
 ```sh
 scripts/solidcraft-window.sh --print
 python3 scripts/check-version-gates.py --base HEAD
+python3 scripts/check-test-accept.py
 python3 -m unittest discover -s scripts/tests -v
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -56,6 +57,13 @@ cargo test --workspace --locked
 Pull requests and merge groups run formatting, Linux Clippy and x86_64 tests (or the
 focused docs tests), release notes, changelog and version gates. Code merge groups also build
 the shared Linux CLI/server programs and run the small railcore and robot-arm placement checks.
+Pull requests also run Windows and macOS tests when they change tests, platform conditions,
+Cargo manifests or locks, filesystem, process or network code, or the Onshape, sharing,
+report submission or platform modules. History replay tests and writer version gates also
+select SolidCraft 0.18.2 round trips. Mock servers use `accept_blocking` from
+`crates/dutchman/tests/support/net.rs`; include that module by path in test targets.
+The helper bounds accepting by a deadline and restores blocking reads on every platform.
+
 Windows, macOS, ARM64, Rust 1.88, WebAssembly, SolidCraft round trips (including 0.18.2),
 Voron placements and Docker images run after merge on main, nightly, on tags and by hand.
 Platform-only breaks are caught on main right after merge instead of before.

@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CiResultTests(unittest.TestCase):
-    def check_results(self, event, release=False, failed=None, results=None, docs=False):
+    def check_results(self, event, release=False, failed=None, results=None, docs=False, platform=False, floor=False):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         script = workflow.split('echo "$RESULTS" | python3 -c \'\n', 1)[1]
         script = textwrap.dedent(script.rsplit("\n          '", 1)[0])
@@ -31,11 +31,19 @@ class CiResultTests(unittest.TestCase):
         if event == "merge_group":
             active.add("placements")
             needs["placements"]["result"] = "success"
+        needs["changes"]["outputs"].update(platform=str(platform).lower(), floor=str(floor).lower())
+        if event == "pull_request":
+            if platform:
+                needs["test-macos"]["result"] = "success"
+            if floor:
+                needs["solidcraft-roundtrip"]["result"] = "success"
         if docs:
             for job in ("fmt", "clippy", "test", "placements"):
                 needs[job]["result"] = "skipped"
             needs["docs"]["result"] = "success"
             needs["changes"]["outputs"].update(code="false", rust="false", docker="false")
+        if event == "pull_request" and platform:
+            needs["test"]["result"] = "success"
         for job, result in (results or {}).items():
             needs[job]["result"] = result
         if failed:
@@ -102,6 +110,7 @@ class CiResultTests(unittest.TestCase):
             values = {"always()": True, "cancelled()": False, "github.event_name": "merge_group",
                       "needs.changes.outputs.full": "false", "needs.changes.outputs.code": "true",
                       "needs.changes.outputs.rust": "true", "needs.changes.outputs.docker": "true",
+                      "needs.changes.outputs.platform": "true", "needs.changes.outputs.floor": "true",
                       "needs.placements.result": "success", "needs.test-arm.result": "failure"}
             for key, value in values.items():
                 condition = condition.replace(key, repr(value))
@@ -128,3 +137,19 @@ class CiResultTests(unittest.TestCase):
                     })
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("test-arm", result.stderr)
+
+    def test_selected_pr_requires_platform_and_floor_results(self):
+        result = self.check_results("pull_request", platform=True, floor=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for job in ("test-macos", "solidcraft-roundtrip"):
+            result = self.check_results("pull_request", platform=True, floor=True, failed=job)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(job, result.stderr)
+
+    def test_queue_keeps_linux_coverage_even_when_selector_matches(self):
+        result = self.check_results("merge_group", platform=True, floor=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_test_documentation_still_runs_selected_platform_checks(self):
+        result = self.check_results("pull_request", docs=True, platform=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
