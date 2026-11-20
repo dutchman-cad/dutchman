@@ -14166,6 +14166,22 @@ fn a_fillet_of_tangency_weight_one_maps_as_a_circular_fillet() {
 
 #[cfg(unix)]
 #[test]
+fn an_opening_check_that_runs_out_of_time_leaves_the_design_unverified() {
+    let host = std::sync::Arc::new(RecordedEvaluator::default());
+    let writer = SolidCraftWriter::new()
+        .evaluator(host)
+        .opening_timeout(std::time::Duration::ZERO);
+    let (_, report) = convert(&cube_with_history(10.0, first_profile(), None), &writer);
+    match &report.outcome().unwrap().check {
+        Check::Unverified(why) => assert!(
+            why.contains("SolidCraft didn't finish checking the written design"),
+            "{why}"
+        ),
+        other => panic!("expected unverified, got {other:?}"),
+    }
+}
+
+#[test]
 fn a_fillet_remains_mapped_when_standing_up() {
     let model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
     // This mapping fixture stores the pre-fillet cube. Recorded measurements isolate

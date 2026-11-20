@@ -21,17 +21,27 @@ impl SolidCraftWriter {
             return Ok(bytes);
         };
         let started = dutchman_core::time::Instant::now();
+        let budget = self.opening_budget();
+        let unfinished = || {
+            let minutes = budget.as_secs().div_ceil(60);
+            format!("SolidCraft didn't finish checking the written design in {minutes} min")
+        };
         for _ in 0..64 {
-            let remaining = self.timeout.saturating_sub(started.elapsed());
-            if remaining.is_zero() || self.memory_refusal().is_some() {
-                unavailable(
-                    report,
-                    "the final opening check timed out or stopped for memory",
-                );
+            let remaining = budget.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                unavailable(report, &unfinished());
+                return Ok(bytes);
+            }
+            if self.memory_refusal().is_some() {
+                unavailable(report, "the final opening check stopped for memory");
                 return Ok(bytes);
             }
             let result = match cli.evaluate(&bytes, remaining, "opening") {
                 Ok(result) => result,
+                Err(why) if why.contains("timed out") => {
+                    unavailable(report, &unfinished());
+                    return Ok(bytes);
+                }
                 Err(why) => {
                     unavailable(report, &why);
                     return Ok(bytes);
@@ -407,7 +417,7 @@ fn not_located(report: &mut Report, failures: &[String]) {
 }
 
 fn unavailable(report: &mut Report, why: &str) {
-    let why = format!("Final opening check unavailable: {why}");
+    let why = format!("Not verified: {why}");
     report.push_at(Stage::SolidCraft, Severity::Info, crate::HISTORY, &why);
     if let Some(outcome) = report.outcome_mut() {
         let why = match &outcome.check {

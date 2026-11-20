@@ -214,9 +214,37 @@ def combine(written, source, output, prefix):
     return prefix + 'source:1'
 
 
+def hidden_history_components(design):
+    """Names of the components the written design keeps as hidden editable history."""
+    with zipfile.ZipFile(design) as archive:
+        document = json.loads(archive.read('document.json'))
+    return {c.get('name') for c in document.get('components', [])
+            if c.get('history_hidden') is True and c.get('name')}
+
+
+def split_hidden_history(result, hidden):
+    """Compare what the user sees: hidden editable-history copies are reported apart."""
+    def under_hidden(path):
+        return any(step.rsplit(':', 1)[0] in hidden for step in path)
+    kept, history = [], []
+    for failure in result['failures']:
+        path = failure.get('component_path')
+        if path is not None and failure.get('source_count') == 0 and under_hidden(path):
+            history.append(failure)
+        else:
+            kept.append(failure)
+    hidden_bodies = sum(1 for body in result.get('written_bodies', [])
+                        if under_hidden(body['component_path']))
+    result['failures'] = kept
+    result['hidden_history'] = {'bodies': hidden_bodies, 'components': history}
+    result['total'] -= hidden_bodies
+    return result
+
+
 def compare(cli, written, source, tolerance=0.1):
     """Compare bodies, then count each feature that fails when the written design is opened."""
     result = compare_bodies(cli, written, source, tolerance)
+    result = split_hidden_history(result, hidden_history_components(written))
     timeline = sorted({line for design, line in cli.timeline_errors
                        if Path(design).resolve() == Path(written).resolve()})
     result['failures'] = result['failures'] + [{'timeline_feature_failed': line} for line in timeline]

@@ -22,9 +22,10 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch or pull request cancels the run it supersedes.
+# Main commits have separate groups so a stuck run cannot hold up newer commits,
+# and every commit still finishes. PRs and merge groups keep their ref-based groups.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   # Every commit on main finishes its run; a newer push cancels an older one elsewhere.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
@@ -379,27 +380,33 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v7
+        timeout-minutes: 5
         with:
           fetch-depth: 0
       - name: Select source Docker coverage
+        timeout-minutes: 2
         id: source
         if: needs.changes.outputs.full == 'true'
         env:
           BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
         run: python3 scripts/ci-docker-source.py --base "$BASE" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v8
+        timeout-minutes: 5
         if: needs.changes.outputs.full == 'true'
         with:
           name: dutchman-bin
           path: bin
       - name: Prepare the image from the placement programs
+        timeout-minutes: 2
         if: needs.changes.outputs.full == 'true'
         run: |
           mkdir -p build-context/image/amd64/licences
           cp bin/dutchman bin/dutchman-mcp bin/dutchman-web LICENSE NOTICE build-context/image/amd64/
           cp licences/*.txt build-context/image/amd64/licences/
       - uses: docker/setup-buildx-action@v4
+        timeout-minutes: 5
       - name: Build the source Dockerfile
+        timeout-minutes: 45
         uses: docker/build-push-action@v7
         if: needs.changes.outputs.full != 'true' || steps.source.outputs.required == 'true'
         with:
@@ -410,10 +417,12 @@ jobs:
           # core the hosted runner was shut down mid-build.
           build-args: |
             CARGO_BUILD_JOBS=2
-          cache-from: type=gha
+          cache-from: type=gha,timeout=5m
+          # Export only final-image layers, with a deadline for cache service stalls.
           # Only main writes the layer cache; a pull request reads it.
-          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max' || '' }}
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=min,timeout=5m' || '' }}
       - name: Build the image from the placement programs
+        timeout-minutes: 15
         if: needs.changes.outputs.full == 'true'
         uses: docker/build-push-action@v7
         with:
@@ -421,10 +430,11 @@ jobs:
           file: docker/release.Dockerfile
           load: true
           tags: dutchman:ci
-          cache-from: type=gha,scope=ci-runtime
+          cache-from: type=gha,scope=ci-runtime,timeout=5m
           # Queue groups and tags restore but never compete to write the runtime cache.
-          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=ci-runtime' || '' }}
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=min,scope=ci-runtime,timeout=5m' || '' }}
       - name: Convert a fixture in the image
+        timeout-minutes: 5
         run: |
           fixtures="$PWD/crates/dutchman-core/tests/fixtures"
           docker run --rm -v "$fixtures:/work:ro" -v "$RUNNER_TEMP:/out" --user "$(id -u):$(id -g)" \
@@ -432,10 +442,12 @@ jobs:
           grep -q '"ok":true' report.json
           test -s "$RUNNER_TEMP/cube.solidcraft"
       - name: Start the MCP server in the image
+        timeout-minutes: 2
         run: |
           echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
             | docker run --rm -i --entrypoint dutchman-mcp dutchman:ci | grep -q '"result"'
       - name: Convert through the web server in the image
+        timeout-minutes: 5
         run: |
           docker run -d --name web -p 8080:8080 -e DUTCHMAN_WEB_PASSWORD=ci --entrypoint dutchman-web dutchman:ci
           for _ in $(seq 30); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done

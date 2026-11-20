@@ -1,5 +1,11 @@
 # Machine-readable reports
 
+Folder conversions retain paths relative to each input folder in the existing
+`results[].output.path` field: `in/ProjectA/part.f3d` writes
+`out/ProjectA/part.sc`. Same-named files in other subfolders have distinct paths.
+Linked design companions and desktop `.report.json` files stay beside each design.
+Reruns into an explicit output folder reuse these paths. Report schemas are unchanged.
+
 The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
 Folder and selection summaries use the highest per-file memory estimate and sum the displayed
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
@@ -1998,6 +2004,9 @@ cannot be safely repaired stops conversion before the output is written. An eval
 nonzero exit without named failed features is unavailable verification: output is still written
 with `verification.status: "unverified"` and the reason. Disabled verification remains
 unverified.
+The final opening check has its own time, at least 15 minutes, not what earlier checks left.
+When SolidCraft doesn't finish it, verification is `unverified` with the reason "Not verified:
+SolidCraft didn't finish checking the written design in N min".
 An Info loss `geometry/sheet-edges-split` names a refused STEP import whose edge uses beyond
 the first two receive identical edge records. The repaired blob is rechecked before any
 feature is omitted; source faces, curves, vertices, body names, and placements stay unchanged.

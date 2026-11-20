@@ -83,6 +83,9 @@ const GEOMETRY: &str = "geometry";
 /// What the report says turned history off, unless a front end names its own choice.
 const IMPORT_ONLY_REASON: &str = "--import-only";
 
+/// The least time the final opening check gets: a large assembly takes minutes to open.
+pub const OPENING_CHECK_FLOOR: Duration = Duration::from_secs(15 * 60);
+
 /// Writes `.sc` designs.
 #[derive(Clone, Debug)]
 pub struct SolidCraftWriter {
@@ -102,6 +105,7 @@ pub struct SolidCraftWriter {
     verification: Verification,
     replay: Verification,
     timeout: Duration,
+    opening_timeout: Option<Duration>,
     hide_unverified: bool,
     stand_up: Option<bool>,
     memory_budget: Option<u64>,
@@ -127,6 +131,7 @@ impl Default for SolidCraftWriter {
             verification: Verification::Auto,
             replay: Verification::Auto,
             timeout: DEFAULT_TIMEOUT,
+            opening_timeout: None,
             hide_unverified: false,
             stand_up: None,
             memory_budget: None,
@@ -344,6 +349,18 @@ impl SolidCraftWriter {
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// The whole time the final opening check of the written design may take. By default it is
+    /// its own budget, at least [`OPENING_CHECK_FLOOR`], never what the replay checks left over.
+    pub fn opening_timeout(mut self, timeout: Duration) -> Self {
+        self.opening_timeout = Some(timeout);
+        self
+    }
+
+    fn opening_budget(&self) -> Duration {
+        self.opening_timeout
+            .unwrap_or_else(|| self.timeout.max(OPENING_CHECK_FLOOR))
     }
 
     /// Whether `model` can be written at all: `Err` with the reason a conversion would fail
