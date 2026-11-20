@@ -3649,7 +3649,9 @@ fn countersink_to_face_with_a_drill_point_keeps_later_history() {
     for to_tip in [false, true] {
         let (document, report) = convert(
             &countersink_to_face_with_later_box(to_tip),
-            &SolidCraftWriter::new().verification(Verification::Off),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_44_0)),
         );
         assert!(
             history_line(&report).starts_with("5 of 5 features rebuilt"),
@@ -3691,7 +3693,9 @@ fn pointed_to_face_holes_still_require_a_proven_earlier_cap() {
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (_, report) = convert(
             &model,
-            &SolidCraftWriter::new().verification(Verification::Off),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_44_0)),
         );
         let reason = if native {
             "its face has no resolved geometry"
@@ -3709,6 +3713,13 @@ fn pointed_to_face_holes_still_require_a_proven_earlier_cap() {
 #[test]
 fn solidcraft_replays_countersink_to_face_with_a_drill_point_and_later_box() {
     let Some(cli) = solidcraft() else { return };
+    // A drill point on a countersink needs SolidCraft 0.22.1 or newer.
+    if dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()))
+        < dutchman_solidcraft::SolidCraftVersion::V0_22_1
+    {
+        eprintln!("skipped: the countersink drill point needs SolidCraft 0.22.1 or newer");
+        return;
+    }
     let bore = std::f64::consts::PI * 4.0;
     // Extra material removed by the entry frustum beyond the cylindrical bore.
     let entry = std::f64::consts::PI * 2.0 * (16.0 + 8.0 + 4.0) / 3.0 - bore * 2.0;
@@ -3735,6 +3746,13 @@ fn solidcraft_replays_countersink_to_face_with_a_drill_point_and_later_box() {
 #[test]
 fn solidcraft_replays_countersink_to_face_with_a_later_fillet() {
     let Some(cli) = solidcraft() else { return };
+    // A drill point on a countersink needs SolidCraft 0.22.1 or newer.
+    if dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()))
+        < dutchman_solidcraft::SolidCraftVersion::V0_22_1
+    {
+        eprintln!("skipped: the countersink drill point needs SolidCraft 0.22.1 or newer");
+        return;
+    }
     let mut model = countersink_to_face_with_later_box(false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     // Reuse the synthetic vertical-corner input geometry, after the hole instead
