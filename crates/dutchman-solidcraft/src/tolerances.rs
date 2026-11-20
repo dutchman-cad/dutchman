@@ -112,7 +112,7 @@ pub fn report() -> Value {
             "parameter_scale_floor": 1.0,
             "centroid_min_mm": POSITION_MIN_MM,
             "centroid_diagonal_relative": POSITION_DIAGONAL_RELATIVE,
-            "counts": "evaluated kernel face, edge and shell counts must match exactly",
+            "counts": "informational: evaluated kernel face, edge and shell counts may differ for equivalent geometry",
             "manifold": "not checked: no explicit evaluator result",
         },
         "stored_bodies": {

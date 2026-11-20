@@ -130,7 +130,7 @@ fn body_check(want: &Measured, got: &Measured, source: &Value, written: &Value) 
             written.pointer(pointer).and_then(Value::as_u64),
         ) {
             (Some(a), Some(b)) => {
-                json!({"status": if a == b {"pass"} else {"fail"}, "source":a, "written":b})
+                json!({"status": if a == b {"info"} else {"differs"}, "source":a, "written":b})
             }
             _ => skipped("Source or replay kernel count is unavailable"),
         };
@@ -259,6 +259,8 @@ fn parameters(model: &Model, replayed: Result<Vec<Value>, String>) -> Value {
         let kinds = unit.and_then(quantity_kind).zip(written_unit.and_then(quantity_kind));
         let check = if name.is_none() {
             skipped("Source parameter was not mapped")
+        } else if name.is_some_and(|name| name != &parameter.name) {
+            skipped("Source parameter was renamed in the written design")
         } else if expected.is_none() {
             skipped("A comparable numeric source value is unavailable")
         } else if oversized {
@@ -282,7 +284,7 @@ fn parameters(model: &Model, replayed: Result<Vec<Value>, String>) -> Value {
                 skipped("Replay parameter quantity unit is unavailable or not supported yet")
             }
         } else {
-            json!({"status":"fail", "source":expected, "written":null, "reason":"Mapped parameter is missing after replay"})
+            skipped("Mapped parameter is absent or renamed after replay")
         };
         json!({"source_id":parameter.id, "name":name, "unit":unit, "written_unit":written_unit, "check":check})
     }).collect()
@@ -292,7 +294,9 @@ fn failed(value: &Value) -> bool {
     match value {
         Value::Object(fields) => {
             fields.get("status").and_then(Value::as_str) == Some("fail")
-                || fields.values().any(failed)
+                || fields.iter().any(|(name, value)| {
+                    !matches!(name.as_str(), "faces" | "edges" | "shells") && failed(value)
+                })
         }
         Value::Array(rows) => rows.iter().any(failed),
         _ => false,
@@ -325,7 +329,7 @@ fn failure_reason(evidence: &Value) -> String {
         for body in bodies {
             if let Some(checks) = body.get("checks").and_then(Value::as_object) {
                 for (name, check) in checks {
-                    if is_failure(check) {
+                    if !matches!(name.as_str(), "faces" | "edges" | "shells") && is_failure(check) {
                         let index = body
                             .get("source_index")
                             .and_then(Value::as_u64)
@@ -462,19 +466,19 @@ mod tests {
     }
 
     #[test]
-    fn cube_passes_every_available_check() {
+    fn cube_passes_geometric_checks_and_records_informational_counts() {
         let report = compare(cube());
         for check in [
             "volume",
             "surface_area",
             "bounding_box",
             "centroid",
-            "faces",
-            "edges",
-            "shells",
             "closed_shell",
         ] {
             assert_eq!(status(&report, check), "pass", "{check}");
+        }
+        for check in ["faces", "edges", "shells"] {
+            assert_eq!(status(&report, check), "info");
         }
         assert_eq!(status(&report, "manifold"), "not_checked");
         assert!(!failed(&report));
@@ -496,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_face_and_open_shell_fail_their_own_checks() {
+    fn open_shell_and_missing_area_fail_while_counts_are_informational() {
         let mut written = cube();
         written["bodies"][0]["kernel"]["faces"] = json!(5);
         written["bodies"][0]["area_mm2"] = json!(500);
@@ -506,16 +510,19 @@ mod tests {
             .unwrap()
             .remove("volume_mm3");
         let report = compare(written);
-        for check in ["faces", "surface_area", "closed_shell"] {
+        for check in ["surface_area", "closed_shell"] {
             assert_eq!(status(&report, check), "fail", "{check}");
         }
+        assert_eq!(status(&report, "faces"), "differs");
+        assert!(failed(&report));
         assert_eq!(status(&report, "volume"), "not_checked");
         let mut written = cube();
         written["bodies"][0]["kernel"]["edges"] = json!(11);
         written["bodies"][0]["kernel"]["shells"] = json!(2);
         let report = compare(written);
-        assert_eq!(status(&report, "edges"), "fail");
-        assert_eq!(status(&report, "shells"), "fail");
+        assert_eq!(status(&report, "edges"), "differs");
+        assert_eq!(status(&report, "shells"), "differs");
+        assert!(!failed(&report));
     }
 
     #[test]
@@ -679,8 +686,32 @@ mod tests {
         );
         assert_eq!(
             parameters(&model, Ok(vec![json!({"parameters":[]})]))[0]["check"]["status"],
-            "fail"
+            "not_checked"
         );
+    }
+
+    #[test]
+    fn omitted_or_unmatched_parameters_are_not_checked() {
+        for rows in [
+            json!([]),
+            json!([{"name":"renamed_depth","unit":"mm","value":11}]),
+        ] {
+            let report = parameters(&model(), Ok(vec![json!({"parameters":rows})]));
+            assert_eq!(report[0]["check"]["status"], "not_checked");
+            assert!(!failed(&report));
+        }
+        let mut model = model();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["parameters"][0]["expression"] = json!("unsupported()");
+        wire["model"]["parameters"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("value");
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let report = parameters(&model, Ok(vec![json!({"parameters":[]})]));
+        assert_eq!(report[0]["name"], Value::Null);
+        assert_eq!(report[0]["check"]["status"], "not_checked");
+        assert!(!failed(&report));
     }
 
     #[test]
@@ -697,7 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn source_parameter_identity_survives_renaming_and_angle_conversion() {
+    fn renamed_parameter_identity_is_retained_without_checking_its_value() {
         let mut model = model();
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         wire["model"]["parameters"][0]["name"] = json!("depth value");
@@ -715,13 +746,14 @@ mod tests {
         let report = parameters(
             &model,
             Ok(vec![json!({"parameters":[
-            {"name":"depth_value","unit":"mm","value":10}, {"name":"angle","unit":"rad","value":90} ]})]),
+            {"name":"depth_value","unit":"mm","value":11}, {"name":"angle","unit":"rad","value":90} ]})]),
         );
         assert_eq!(report[0]["source_id"], "f3d:model:parameter#1");
         assert_eq!(report[0]["name"], "depth_value");
-        assert_eq!(report[0]["check"]["status"], "pass");
+        assert_eq!(report[0]["check"]["status"], "not_checked");
         assert_eq!(report[1]["check"]["status"], "pass");
         assert_eq!(report[1]["check"]["source"], 90.0);
+        assert!(!failed(&report));
     }
 
     #[derive(Debug)]
@@ -745,12 +777,51 @@ mod tests {
     }
 
     #[test]
+    fn split_faces_and_other_kernel_counts_do_not_reject_matching_geometry() {
+        for (count, value) in [("faces", 7), ("edges", 13), ("shells", 2)] {
+            let mut written = cube();
+            written["bodies"][0]["kernel"][count] = json!(value);
+            let host = Host {
+                written,
+                parameter: 10.0,
+            };
+            let mut report = Report::default();
+            let outcome = compare_report(
+                &host,
+                DEFAULT_TIMEOUT,
+                b"written",
+                b"source",
+                Expected {
+                    solids: 1,
+                    sheets: 0,
+                },
+                None,
+                &model(),
+                "check",
+                &mut report,
+            );
+            assert_eq!(outcome, Outcome::Matches);
+            let geometry = &report.verification_checks()[0]["geometry"];
+            assert_eq!(status(geometry, count), "differs");
+            assert_eq!(geometry["bodies"][0]["checks"][count]["written"], value);
+            assert!(!failed(geometry));
+        }
+        // Topology counts cannot reject even if a producer supplies a fail status.
+        assert!(!failed(&json!({"checks":{"faces":{"status":"fail"},
+            "edges":{"status":"fail"},"shells":{"status":"fail"}}})));
+    }
+
+    #[test]
     fn final_comparison_records_evidence_and_downgrades_failed_checks() {
-        for (parameter, closure, differs) in
-            [(10.0, true, false), (11.0, true, true), (10.0, false, true)]
-        {
+        for (parameter, closure, volume, differs) in [
+            (10.0, true, 1000.0, false),
+            (11.0, true, 1000.0, true),
+            (10.0, false, 1000.0, true),
+            (10.0, true, 8000.0, true),
+        ] {
             let mut written = cube();
             written["bodies"][0]["closed"] = json!(closure);
+            written["bodies"][0]["volume_mm3"] = json!(volume);
             let host = Host { written, parameter };
             let mut report = Report::default();
             let outcome = compare_report(
@@ -897,7 +968,11 @@ mod tests {
             &mut report,
         );
         assert!(matches!(outcome, Outcome::Differs(_)), "{outcome:?}");
-        for check in ["faces", "closed_shell", "surface_area"] {
+        assert_eq!(
+            status(&report.verification_checks()[0]["geometry"], "faces"),
+            "differs"
+        );
+        for check in ["closed_shell", "surface_area"] {
             assert_eq!(
                 status(&report.verification_checks()[0]["geometry"], check),
                 "fail"

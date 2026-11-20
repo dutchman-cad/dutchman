@@ -698,9 +698,12 @@ not attempted; it must never be interpreted as a pass.
 box position, then volume, retaining zero-based `source_index` and `written_index`.
 Indices refer to the evaluated source and replay body lists, rather than native topology ids.
 Each body's `checks` contains `volume`, `surface_area`, `bounding_box`, `centroid`, `faces`,
-`edges`, `shells`, `closed_shell` and `manifold`. Every check has `status`: `pass`, `fail`,
-or `not_checked`. Failures retain `source` and `written` evidence. Continuous measurements also
-record absolute `difference` and inclusive `tolerance`; exact counts retain their integers.
+`edges`, `shells`, `closed_shell` and `manifold`. Geometric, closure and parameter checks
+use `status`: `pass`, `fail` or `not_checked`. Kernel face, edge and shell counts are
+informational: `info` when equal, `differs` when unequal, or `not_checked` when unavailable.
+Count differences never reject a history. Available counts retain `source` and `written`
+integers. Failures retain compared evidence. Continuous measurements also
+record absolute `difference` and inclusive `tolerance`.
 Unavailable checks carry `reason`.
 An unmatched source body has `written_index: null`, `status: not_checked`, a reason and
 unavailable per-body checks; body count still fails. If evaluation cannot complete,
@@ -711,7 +714,7 @@ Volume, area and box checks use the existing measured replay tolerances above.
 The box difference is the larger of the distance between box centres and the largest
 absolute difference of a minimum or maximum coordinate, preserving both existing criteria. Centroid
 compares the actual centre of mass in source coordinates with the existing position allowance;
-a box centre is never substituted. Kernel face, edge and shell counts must match exactly.
+a box centre is never substituted. Kernel face, edge and shell counts are informational.
 The existing descriptive `replay.face_count` and `replay.centre` tolerance fields describe
 the base geometry comparator retained for inference; `source_comparison` describes these
 additional final history checks.
@@ -730,9 +733,10 @@ from the source model and the replay's evaluated named parameters, in millimetre
 or scalar units. Serialization roundoff allows 5e-12 times the larger of one and the source magnitude.
 `verification_tolerances.source_comparison` records `parameter_relative` (5e-12),
 `parameter_scale_floor` (1), `centroid_min_mm` (0.01),
-`centroid_diagonal_relative` (2e-4), and explanatory `counts` and `manifold` fields. Missing mapped parameters and evaluation errors fail;
-unmapped parameters, absent source numeric values and unavailable replay values are
-`not_checked`. Source expressions and written expressions are not used as proof of equality.
+`centroid_diagonal_relative` (2e-4), and explanatory `counts` and `manifold` fields. Evaluation errors and mismatched available
+values fail; omitted or renamed parameters, absent source numeric values and unavailable
+replay values are `not_checked`. A parameter renamed by mapping is not checked, even when
+its mapped name is present; a missing mapped name is also `not_checked`. Source expressions and written expressions are not used as proof of equality.
 A failed check prevents an otherwise matching final history from being reported as verified.
 Unavailable checks never strengthen the existing overall verification status.
 

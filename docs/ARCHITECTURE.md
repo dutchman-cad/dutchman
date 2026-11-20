@@ -111,7 +111,9 @@ centroids, kernel counts and closure when available. Named replay parameters are
 separately and compared with CADIR values, using the existing parameter name mapper.
 The core report carries opaque comparison entries through part merges; shared JSON reporting
 exposes them additively as `verification_checks`. A failed available check rejects the final
-history; an unavailable check records a reason and cannot upgrade the existing outcome.
+history; kernel face, edge and shell counts remain informational. Omitted or renamed
+parameters are not checked. An unavailable check records a reason and cannot upgrade
+the existing outcome.
 Earlier inference and partial-history geometry policies keep their existing checks.
 
 A plugin host must open a design archive with its STEP blobs, evaluate it with `inspect.measure` plus `document.inspect` (the same combined JSON

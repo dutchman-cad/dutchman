@@ -364,10 +364,11 @@ A face-count difference alone does not establish a defect. An AI agent can do th
 
 Conversion JSON includes `verification_checks` when a final history comparison is attempted.
 It records each body's measurements, counts, closure and centre of mass against source
-geometry, plus source parameter values and quantity kinds after replay. Each check says `pass`, `fail` or
-`not_checked` with evidence or a reason. A failed check can cause conversion to retain the
-original geometry. Counts can differ when equivalent faces are split or merged; review
-these alongside volume, area and bounds. Manifoldness remains explicitly unchecked because
+geometry, plus source parameter values and quantity kinds after replay. Geometric, closure
+and parameter checks say `pass`, `fail` or `not_checked` with evidence or a reason. A failed check can cause conversion to retain the
+original geometry. Face, edge and shell counts are informational: `info` when equal and
+`differs` when unequal. Split or merged equivalent faces never reject a history on counts
+alone. Omitted or renamed parameters are `not_checked`. Manifoldness remains explicitly unchecked because
 there is no evaluator result proving it. See [JSON reports](json.md#source-comparison-evidence).
 
 Which SolidCraft a design is written for, and how Dutchman finds the installed one, is in

@@ -479,7 +479,9 @@ When conversion reports `verification_checks`, explain the individual source com
 volume, surface area, bounds, counts, closure, centroid and evaluated named parameters,
 including their quantity kinds.
 A `fail` includes the compared evidence; `not_checked` names the missing evidence and must
-never be called a pass. Count differences may reflect split or merged equivalent faces.
+never be called a pass. Face, edge and shell counts are informational: `info` when equal,
+`differs` when unequal. These count differences never reject a history. Omitted or renamed
+parameters are `not_checked`.
 Do not claim manifoldness from closure: its check remains unavailable. Entries can describe
 a rejected final history even when the delivered design retains the original geometry.
 

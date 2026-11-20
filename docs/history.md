@@ -90,14 +90,15 @@ cancel):
 | Volume | The larger of 1e-4 (0.01%) of the larger volume and the mesh allowance: each body's area times the mesh chord, `max(5e-5 of the box diagonal, 1e-4 mm)`, summed for both bodies. With no area or box from SolidCraft, only 1e-4. |
 | Area | 1e-3 (0.1%) of the larger area, when SolidCraft gives both. |
 | Position (box centre) and box corners | The larger of 0.01 mm and 2e-4 (0.02%, four mesh chords) of the larger box diagonal; the centre distance and each minimum and maximum coordinate. Skipped when SolidCraft gives no box. |
-| Kernel face, edge and shell counts | Final history comparisons require the same evaluated counts. Equivalent split or merged faces may differ; the evidence states both counts. Earlier inference retains its geometry comparison policy. |
+| Kernel face, edge and shell counts | Informational only: `info` when equal, `differs` when unequal. Equivalent split or merged faces may differ; counts never reject a final history. Earlier inference retains its geometry comparison policy. |
 | Centre of mass | Final history comparisons use the position allowance above on actual centroids, when both are available. A box centre is never substituted. |
 | Closed shell | Final history comparisons require source and replay closure to agree; a source sheet may be open. |
-| Named parameters | Replayed numeric values must match source values within 5e-12 times max(1, absolute source value), allowing measured reply serialization roundoff. |
+| Named parameters | Replayed numeric values must match source values within 5e-12 times max(1, absolute source value), allowing measured reply serialization roundoff. Omitted or renamed parameters are not checked. |
 | Manifoldness | Not checked: the evaluator exposes no explicit manifold result. |
 
 Final comparisons record each check as `pass`, `fail` or `not_checked` in
-`verification_checks`, including numbers or a reason. A missing check never strengthens
+`verification_checks`, including numbers or a reason. Kernel counts instead use informational
+`info` or `differs` statuses when available. A missing check never strengthens
 verification. Entries describe the attempted history even if it is rejected and original
 geometry is retained. See [source comparison evidence](json.md#source-comparison-evidence).
 

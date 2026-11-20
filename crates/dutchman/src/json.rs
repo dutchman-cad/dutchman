@@ -1872,7 +1872,9 @@ mod tests {
         let checks = json!({"part":"Cube", "geometry":{"bodies":[{"source_index":0,"written_index":0,
             "checks":{"volume":{"status":"fail","source":1000,"written":8000,"difference":7000,"tolerance":1},
                 "centroid":{"status":"pass","source":[5,5,5],"written":[5,5,5],"difference":0,"tolerance":0.01},
-                "manifold":{"status":"not_checked","reason":"No evaluator result"}}}]}});
+                "manifold":{"status":"not_checked","reason":"No evaluator result"},
+                "faces":{"status":"differs","source":6,"written":7},
+                "edges":{"status":"info","source":12,"written":12}}}]}});
         report.record_verification_checks(checks.clone());
         let out = Value::Object(success(CONVERT, json!({}), &report));
         assert_eq!(out["schema"], plain["schema"]);
