@@ -59,6 +59,31 @@ If a run was cut off, the next launch says **The last run didn't finish.**, with
 log folder. **Dismiss** keeps that run's notice away after a relaunch; another unfinished run
 shows its own.
 
+## Paste files and links
+
+With no text field focused, press ⌘V on macOS or Ctrl+V on Windows/Linux anywhere
+in the main window. Dutchman handles these clipboard contents in order:
+
+- Files or folders copied in Finder, Explorer, or your file manager: queued just like dropped files.
+- A local path, or several paths on separate lines (including `file://` URLs): queued the same way.
+- An Onshape Part Studio link: fetched and converted using your saved keys. If you have not
+  connected yet, the connection dialog keeps the link and continues after **Save**.
+- A direct HTTPS link whose filename has a supported CAD input extension. GitHub `blob`
+  links are changed to `raw.githubusercontent.com` links. Dutchman asks **Download <name>
+  (<size>) from <host>?** before downloading; when the host does not supply a size,
+  it says **size unknown**. Downloads are limited to 2 GB, follow at most five HTTPS
+  redirects, and send no cookies or credentials. Progress and conversion results appear
+  in the main job list. Downloads stay in a temporary folder for inspection and retry
+  until the app closes. Choose an output folder if one has not been selected.
+
+Other links show **Dutchman can't open this link. Download the file and drop it here.**
+Fusion and Google Drive share links are not supported yet. Download those files first.
+Pasting into a focused text field edits that field normally.
+
+Once connected, **Onshape connected ✓** opens the account dialog with
+**Paste your Onshape Part Studio link** and **Open**. See
+[connecting your Onshape account](onshape.md#connect-your-onshape-account).
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning
@@ -306,6 +331,14 @@ bundle described in that review; the log stays local. The copied Discord DM name
 log so you can attach it without guessing which file belongs to the run. An older log's
 version is shown as an advisory notice, such as "This log is from Dutchman 0.2.5; this is
 0.2.6." It never blocks conversion.
+
+Onshape result cards also offer **Show bundle** and **Send to Dutchman**. The fetched
+`.onshape-bundle` stays beside the `.sc` with the same base name after the app closes,
+including when you opened the document by pasting or dropping its link. **Show bundle**
+reveals the source archive in Finder or Explorer. **Send to Dutchman** opens the existing
+report review with that archive attached; **Send** uploads it privately. The private-send
+card uses the original archive when the report upload is too large.
+To share a document with us, send the .onshape-bundle; never send your keys.
 
 Descriptions are not supported in the anonymous report envelope yet. Describe what is
 wrong in the private DM or GitHub form, leaving out private names and paths. Converted

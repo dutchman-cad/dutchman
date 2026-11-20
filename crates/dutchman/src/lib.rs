@@ -24,6 +24,7 @@ pub mod investigate;
 pub mod issue;
 pub mod json;
 pub mod mcp;
+pub mod onshape;
 pub mod present;
 pub mod progress;
 pub mod report_policy;
@@ -881,6 +882,25 @@ impl Inspection {
 #[cfg(test)]
 mod option_tests {
     use super::*;
+
+    #[test]
+    fn prepared_writer_keeps_the_explicit_target_and_patch() {
+        for version in ["0.25.1", "0.44.1"] {
+            let target: SolidCraftVersion = version.parse().unwrap();
+            let options = ConvertOptions {
+                solidcraft_version: Some(target),
+                no_verify: true,
+                no_memory_check: true,
+                ..Default::default()
+            };
+            let prepared = options.prepare_writer(Path::new("synthetic.onshape-bundle"), None);
+            assert_eq!(prepared.solidcraft.unwrap()["target"], target.minor());
+            let OutputWriter::SolidCraft(writer) = prepared.writer else {
+                panic!("Expected the SolidCraft writer");
+            };
+            assert_eq!(writer.resolved_version(), target);
+        }
+    }
 
     #[test]
     fn a_skipped_final_assembly_check_cannot_claim_overall_verification() {

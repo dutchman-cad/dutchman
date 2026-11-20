@@ -1,5 +1,76 @@
 # Machine-readable reports
 
+Onshape history dependencies follow consumed operands in their stored order. Deterministic
+body, face and edge selections need a unique earlier producer proved by rollback
+transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+Every present scope query list is validated, while an empty list keeps implicit scope.
+Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
+A record the reader cannot convert becomes a named loss and the remaining records continue.
+Unreadable or oversized members use `onshape/member.not-supported`; malformed features
+remain Native with `onshape/history.not-supported`. Container admission and exhausted
+caller resource budgets can still stop conversion. Inspect the reported losses before
+relying on editable history.
+Open, one-sided thin walls retain directed left/right data in the reader; writing
+those sides is not supported yet, so the final STEP geometry remains.
+
+The desktop app also accepts pasted files, paths, Onshape links, and confirmed HTTPS
+downloads; see [pasting files and links](desktop.md#paste-files-and-links).
+**Onshape connected ✓** opens the account dialog with the Part Studio link field.
+This adds no CLI flags, MCP tools, or report fields.
+
+Onshape bundles add the format identifier `onshape_bundle` and extension
+`onshape-bundle` to the existing format fields and listings. Existing report
+schemas and fields are unchanged. Reader losses use
+`onshape/history.not-supported` for a feature retained as Native and
+`onshape/sketch.constraint-not-supported` for a dropped relation whose solved
+curves remain, and `onshape/history.part-not-matched` (subject `part names`) when a
+Part Studio's parts cannot all be matched to the features that made them. Constraint
+loss messages include the source constraint kind, including when its operands cannot be
+resolved. All are Degraded losses at stage `map`. The existing `history`
+rows and `verification` describe CADIR mapping and comparison with the bundle's
+STEP export; see [Onshape](onshape.md). Compressed default-plane and sketch-region
+queries use these existing rows and codes too. Unresolved source boundaries report
+a specific reason under `onshape/history.not-supported`; no report field changes.
+An active custom FeatureScript feature uses that same Degraded loss code, with the
+feature name as `subject` and a message naming the lack of complete per-feature body
+geometry in bundle format 1 to prove a frozen step. Its `history` row remains blocked,
+as do later body-building rows; the final STEP shape is preserved. No frozen-step loss
+is emitted, because v1 cannot prove a frozen shape. Suppressed custom features are left
+out without this loss. No report schema or field changes.
+`onshape/extrude.thin-not-supported` is a Degraded loss at stage `map` for
+thin construction with missing or contradictory domain, input-body scope, thickness,
+side or direction values. Proven controls emit a typed design feature.
+The final STEP geometry remains available. Repeated ellipse trims and incomplete
+outside-face witness lists use the existing history rows; unresolved intersections
+and tied connections retain `onshape/history.not-supported`. Two-offset and distance-and-angle chamfers retain their dimensions in
+CADIR; asymmetric forms report missing input reference-face ordering in the existing
+history feature reason. Ellipses and variable expressions add no report fields.
+Unproven open dividers and exhausted cumulative region-recovery budgets produce
+`onshape/history.not-supported` before writing, including with verification off.
+Simplify the sketch or split the bundle when the recovery budget is exhausted;
+the final STEP shape remains available. Native symmetric distances and parameter
+fallback defaults stay unchanged.
+
+Onshape quantities need a dimensioned expression or explicit supported units.
+Malformed or repeated Boolean operands, unresolved latest variable bindings,
+face/cap sketch attachments without a stored complete frame, up-to-next extents without
+exact stored-target coverage, ambiguous directed region boundaries
+and missing required hole facts retain `onshape/history.not-supported` with a specific
+reason. A dropped sketch dimension instead uses
+`onshape/sketch.constraint-not-supported`, preserving the solved geometry.
+Blind holes need an explicit unique tip angle; angled bottoms also need Boolean
+`depthToTip`. Hole standards need explicit hand and modeled/cosmetic facts.
+Inspect these losses before relying on editable history; the final STEP shape remains.
+
+Explicit `--solidcraft-version` and MCP `solidcraft_version` options keep their
+full `x.y.z` value during writer preparation; the report's minor-only target is
+display metadata and is not parsed back into the option.
+Parameters retained alongside a STEP fallback are no longer counted as parameters
+carried only as a non-parametric body, even when no sketch maps.
+The optional bundle manifest field `consistent` is input metadata, not a new
+report field. `false` produces an ordinary decode failure explaining how to fetch
+a consistent snapshot; older v1 bundles lacking the field remain accepted.
+
 ## Share link inputs
 
 `dutchman convert <url>` and the desktop app resolve public Fusion and Google Drive file
@@ -261,7 +332,7 @@ Explicit output paths keep their given extension. The container format stays `so
 | `solidcraft` | SolidCraft output only: `target` is the selected `x.y` minor; `found` is the discovered CLI release as `x.y.z`, or null when unavailable or not checked. `known_newest` is the newest known minor (`0.42`). `status` is `newer`, `too_old`, `older_loses_history`, `current`, or `none_found`. The history status requires an older installed release and a selected target whose writer gates retain less history than newest; `current` includes older releases with no gated history loss. Included even with verification off. When `found` is null, `search` says why: `outcome` (`not_found`, or `found_no_answer` when a CLI was found but did not report its version in time) and `places`, each `{"place", "outcome"}` for `SOLIDCRAFT_CLI`, `PATH`, `beside Dutchman` and the platform's install folders (`Program Files`, `Program Files (x86)`, `per-user install folder`, `Windows registry`, `Applications`, `user Applications`), with `outcome` `unset`, `set_but_missing`, `not_found`, `found` or `used`. This local report adds each `path` and the `cli` chosen; the [anonymous report](report-anon.md) does not. An explicit target wins; otherwise the supported found version capped at known newest, else built-in newest (0.42), is targeted. |
 | `choices` | `part_positions` is `smart` (default), `last-shown`, or `first-placed`. Smart admits current poses after checking touching joints, assembly bounds, and repeated inserted designs; last-shown uses available current poses; first-placed ignores later moves. Compatibility `stored_placements` is true only for first-placed. Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
 | `part_positions` | Per-conversion placement summary: `mode`, `total`, and disjoint rule counts `displayed`, `current`, `first_placed` whose sum equals `total`. `displayed` counts saved-scene poses, directly bound or derived from agreeing displayed children, which take precedence without the current-pose guards. `bound_displayed` and `derived_holders` partition `displayed`. Only bound rows are used; an absent arena supplies none. `derived_holders` counts world poses inferred bottom-up from displayed children whose estimates agree within 0.001 mm and 1e-6 rotation entries; `holder_conflicts` counts disagreements; the holder keeps its first placement. In Smart a displayed holder whose subtree would leave the grown bounds is counted under `bounds` and reverts with everything inside it, so `derived_holders` counts only holders still displayed. `fallbacks` counts `no_current_pose`, `ambiguous`, `unsupported`, `joints`, `bounds`, and `instances`. Fallback reasons can overlap for ambiguous carriers and are not a partition. Counts describe source occurrences including holders, excluding extra history representations. Smart keeps first placements for unsupported checks; bounds use conservative geometry envelopes. The matching Info note has subject `part positions`. `assumed` lists each part (not holders) whose position nothing confirms, as `{"part", "reason"}`, with `part` naming what holds it, outermost first: `identity` (the placement could not be read and the part sits at its design's origin; a Degraded loss names these), `later_pose_unused` (the file holds a later pose that was not used), or `only_stored_pose` (the stored pose is all the file holds and no joint holds the part). The last two are usually right, so an Info note names the first 20. With `first-placed`, only `identity` is listed, since that mode ignores later poses by choice. The anonymous report leaves part names out. A non-assembly read has zero counts; decode refusals may have no summary. |
-| `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `catia_part`, `creo_part`, `nx_part`, `creo_view`, `rhino`, `acis`, `step`, `iges`, `unclassified_part`, or `null` for an unknown extension. `format_name` is the same for people. Creo and NX share `.prt` and are distinguished by contents; inconclusive contents give `unclassified_part`. |
+| `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `catia_part`, `creo_part`, `nx_part`, `creo_view`, `rhino`, `acis`, `step`, `iges`, `onshape_bundle`, `unclassified_part`, or `null` for an unknown extension. `format_name` is the same for people. Creo and NX share `.prt` and are distinguished by contents; inconclusive contents give `unclassified_part`. |
 | `input.words` | Reader status: `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`, or `open it in SolidCraft directly` (IGES); `null` for an unknown format. Present on successes and failures, including batch results and MCP reports. The conversion's history and verification describe what this file kept. |
 | `input.program`, `input.extension` | Program or format family, and the input's actual suffix without a dot, used for status text (`prt.12` for a numbered save). Unknown programs are `null`. |
 | `output.format` | The SolidCraft design format written. |
@@ -336,11 +407,17 @@ An unresolved `sketch_selection` may retain a candidate built from selected neut
 its carrier sketch only after the same source body comparison confirms it. The loss
 `history/profile-region-inferred` has level `Degraded`, names the consuming feature in `subject`,
 and says Dutchman inferred the region and the source body check confirmed it. This body check is
-separate from an extrude's end-cap area proof, which `profile_unverified` continues to describe. A failed or
-unavailable check blocks the feature with `its inferred profile region could not be confirmed by
+separate from an extrude's end-cap area proof, which `profile_unverified` continues to describe.
+A failed or unavailable check blocks the feature with `its inferred profile region could not be confirmed by
 the source body check`. Trimmed regions select interior points from their directed boundary
 intervals; an unclosed or ambiguous boundary blocks with `its trimmed profile boundary does not
 close unambiguously or has no unambiguous interior point`. These add no report fields.
+
+An extrude starting on a planar face at a slant to its sketch has no single flat
+end-cap height, so it retains `profile_unverified` and uses the existing replay check.
+Slanted face starts and ends require a target of SolidCraft 0.44 or newer; older
+targets report the release requirement in `history.features[].reason` and retain
+the final geometry. No report fields or schema versions change.
 
 `history/body-scope-confirmed` has level `Info`, names the extrude in `subject`,
 and says that the source body check confirmed its selected target bodies. It is
@@ -400,7 +477,11 @@ precise gate control.
 installed version. Within the supported range, `older_loses_history` requires an older
 installed release and a selected target that disables editable writer capabilities;
 otherwise it is `current`. Today those capabilities are sketch-profile coils and ordered
-mirror-pattern chains, both introduced in 0.25 patch 1. The 0.22 patch 1 entry-recess tip representation
+mirror-pattern chains, both introduced in 0.25 patch 1. Onshape fillets and chamfers that
+blend only their listed edges need a 0.40 or newer target; for older targets their
+`history.features[].reason` says `blending only its listed edges needs SolidCraft 0.40 or newer
+(target 0.30)` (with the actual target). They are left out of this status, which every input
+format shares. The 0.22 patch 1 entry-recess tip representation
 change preserves geometry and does not count as history loss. These fields use local
 version discovery only.
 
@@ -1524,6 +1605,13 @@ unknown context values are null. Keep the gzip and prepared metadata private.
 Cut refusals (including the fragment byte limit) return `ok: true` and
 `bundle_available: false`, with a plain `summary` and `private_send`; no bundle is saved.
 
+Desktop Onshape report review uses the same report-send envelope with
+`source_format: "onshape-bundle"` and a single part whose role is `Onshape bundle`.
+Its gzip wraps the original offline ZIP archive, including the manifest and source
+geometry. It is a whole document attachment; it is not a minimal reproduction.
+No fields or consent values change. Oversize archives remain available through
+the private-send card.
+
 ### Appearance loss codes
 
 Dropped appearance assignments use `dutchman/appearance.wire` (wire body or saved free
@@ -1539,6 +1627,77 @@ These fixed categories reach both `dutchman.report-anon/1` loss counts and
 contain no binding or target ids or names. See [the anonymous report](report-anon.md#appearance-loss-causes).
 Ordinary conversion losses keep `subject`, `message`, `stage` and `upstream` as before;
 Dutchman's appearance codes have `stage: "map"` and `upstream: null`.
+
+Appearance bindings scoped to one placed instance or an evaluation state use
+`dutchman/appearance.other`; their message names the unsupported scope. Scoped
+source attributes are dropped with subject `attributes` and a message naming
+that scope. Neither assignment is applied to the shared component definition.
+No report fields or schema versions change.
+
+## Onshape fetch (`dutchman.onshape-fetch/1`)
+
+CLI `onshape fetch --json` and MCP `onshape_fetch` share this report builder.
+All reports contain `schema`, `ok`, and `calls` (the number of HTTP attempts,
+including retries and failures). Success adds `output` (local bundle path),
+`microversion`, and `cache_hits` (raw response and absence-marker hits, excluding
+cached document names and version resolutions). Failure adds `error: {code, message}` with a
+stable `onshape/` code: `url`, `auth`, `budget`, `yearly-limit`, `throttle`,
+`transport`, `response`, `io`, `limit`, `privacy`, `not-supported`, `export`, or
+`changed`. `changed` reports “the document changed while fetching; try again, or
+use a version link” after the workspace changes during both allowed captures.
+No supplied URL, key, bearer token, authorization header, or remote error body is echoed.
+Authentication options add no report fields or schema version. CLI `--bearer-token-file`
+and MCP `bearer_token_file` accept only a local path; `DUTCHMAN_ONSHAPE_BEARER_TOKEN`
+is read from the process environment. A file takes precedence over that variable.
+Token files that fail ownership, privacy, type, or size checks return `onshape/auth`
+with `calls: 0`. Windows refuses token files because privacy cannot be checked yet and
+directs users to clear the file selection and use the environment variable instead.
+Mixing a token with API keys (including saved keys) returns `onshape/auth` with `calls: 0`.
+Bearer HTTP 401/403 returns `onshape/auth` and explains that the token expired or lacks
+access, with instructions to obtain and supply a fresh token with read access. Echoed
+credential material returns `onshape/privacy` without echoing the credential.
+
+The ZIP's manifest uses separate schema `dutchman.onshape-bundle/1` and records
+`fetched_at` (RFC 3339), `fetcher`, `api_version` (`v17`), `document` (`id`, `name`,
+`workspace_or_version`, `wvid`, `microversion`), `elements` (`id`, `name`, `type`,
+`files`), `external`, and `calls`. `files` maps roles to archive paths, including
+`definition` and `features` for assemblies. `external` lists `documentId`,
+`elementId`, and `microversionId` for other-document references. Raw API responses
+are retained verbatim. Part Studio roles are `features`, `bodydetails` (the rollback
+index file), `sketches` (the raw sketch-information response at
+`partstudios/<element>/sketches.json`), optional `configuration` and `variables`, and
+`step`. The optional additive `sketches` role keeps bundle schema v1; older bundles
+retain their existing reading behavior. Each sketch entry binds its `featureId`
+to a sixteen-value row-major `sketchMatrix` (sketch-to-world, translation in metres).
+Missing or contradictory face-attachment frames keep `onshape/history.not-supported`
+with final STEP geometry; no report fields or loss codes change. The request adds
+one HTTP attempt per uncached Part Studio to the existing `calls` count.
+
+Successful manifests also contain `consistent: true` and `file_sources`, mapping each
+archive path (including generated indices and manifest) to `path_kind` (`m`, `v`, or
+`w`) and `microversion`. Every file reflects the manifest's document microversion.
+Version content reads use `v`; workspace reads use `m` where supported and `w` for
+STEP/variables. Exported STEP records its initiating request's path kind, since
+poll/download endpoints identify jobs/files directly. Generated files inherit the
+content pin. No bundle is written after two changing workspace captures or an
+unfinished final check. See [Onshape](onshape.md#fetching-a-document) for consistency and cache rules.
+
+Onshape assigned-variable features count as `not_needed`: their named parameters
+remain editable without adding a solid feature. Sketch-only bundles have no STEP
+reference to compare: with a SolidCraft CLI their `verification.status` is `verified` when every
+sketch replays without an error and no body is built, and `differs` otherwise (`reason` says
+why); without one it is `not_applicable`. Unresolved tangent chains and unsupported variable expressions
+use `onshape/history.not-supported`; unresolved external origin references use
+`onshape/sketch.constraint-not-supported`. A feature value written with variables that
+no SolidCraft parameter can keep driven (for example a fillet radius or hole size) is
+written as its evaluated value with a Degraded `onshape/history.variable-evaluated`
+loss at stage `map` naming the value. Suppressed features, including parent-suppressed
+features, do not produce these losses. Report fields and schema versions are unchanged.
+
+`onshape/member.not-supported` identifies a skipped member, body topology table or
+sketch-information record, with that record as its subject. `onshape/design.operation-native`
+identifies a native design timeline member whose decoded operation remains in model history.
+Both are Degraded losses at stage `map`; report fields and schema versions are unchanged.
 
 Appearance bindings scoped to one placed instance or an evaluation state use
 `dutchman/appearance.other`; their message names the unsupported scope. Scoped

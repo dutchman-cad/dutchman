@@ -172,6 +172,30 @@ impl SolidCraftWriter {
         }
     }
 
+    /// A design of sketches alone has no source bodies to compare with. Replaying it shows
+    /// whether SolidCraft rebuilds every sketch: it must run without a feature error and,
+    /// like its source, build no body.
+    fn check_sketches(&self, design: &[u8]) -> Check {
+        const NO_BODIES: &str = "the design contains sketches and no source bodies to compare";
+        let cli = match self.selected_evaluator(&self.verification) {
+            Ok(cli) => cli,
+            Err(why) => return Check::NotApplicable(format!("{NO_BODIES}; not replayed: {why}")),
+        };
+        if let Some(why) = self.memory_refusal() {
+            return Check::NotApplicable(format!("{NO_BODIES}; not replayed: {why}"));
+        }
+        match verify::replay(cli.as_ref(), self.timeout, design) {
+            (verify::Outcome::Matches, Some(bodies)) if bodies.is_empty() => Check::Verified,
+            (verify::Outcome::Matches, _) => Check::Differs(
+                "SolidCraft built a body from a design whose source has only sketches".to_owned(),
+            ),
+            (verify::Outcome::Differs(why), _) => {
+                Check::Differs(format!("SolidCraft cannot replay the sketches: {why}"))
+            }
+            (verify::Outcome::Unverified(why), _) => Check::Unverified(why),
+        }
+    }
+
     /// Maximum simultaneous assembly part preparations (0: automatic, 1: serial).
     /// Available memory and the number of parts may reduce this limit.
     pub fn threads(mut self, threads: usize) -> Self {
@@ -329,7 +353,11 @@ impl SolidCraftWriter {
             Some(_) => {
                 Err("none of the assembly's parts has geometry SolidCraft can import".to_owned())
             }
-            None if parameters_only(model) => Ok(()),
+            None if parameters_only(model)
+                || (sketches_only(model) && !self.import_only && self.sketches) =>
+            {
+                Ok(())
+            }
             None => step::restatable(model).map_err(|err| match err {
                 Error::Encode(reason) | Error::NoGeometry(reason) | Error::Restate(reason) => {
                     reason
@@ -401,7 +429,14 @@ impl SolidCraftWriter {
                 report.append(history_report);
                 Outcome {
                     mode: Mode::History,
-                    check: Check::Unverified("not checked: inspect writes nothing".to_owned()),
+                    check: if sketches_only(model) {
+                        Check::NotApplicable(
+                            "the design contains sketches and no source bodies to compare"
+                                .to_owned(),
+                        )
+                    } else {
+                        Check::Unverified("not checked: inspect writes nothing".to_owned())
+                    },
                     features: mapping.features,
                 }
             }
@@ -467,7 +502,7 @@ impl SolidCraftWriter {
         let looks = history::imported(model, step, report, false)?;
         document::import_looks(&mut doc, &looks);
         if let Some(references) = references {
-            document::keep_sketches(&mut doc, references);
+            document::keep_sketches(&mut doc, references, model);
             let kept = references.features.len();
             let left_out = model.ir.model.sketches.len().saturating_sub(kept);
             if kept > 0 || left_out > 0 {
@@ -1233,6 +1268,30 @@ fn parameters_only(model: &Model) -> bool {
         && matches!(step::restatable(model), Err(Error::NoGeometry(_)))
 }
 
+/// A neutral timeline that builds sketches and no bodies needs no STEP fallback.
+fn sketches_only(model: &Model) -> bool {
+    use cadmpeg_ir::features::FeatureOperation;
+    model.assembly.is_none()
+        && model.source_step.is_none()
+        && model.ir.geometry.bodies.is_empty()
+        && model.ir.geometry.faces.is_empty()
+        && !model.ir.model.sketches.is_empty()
+        && model.ir.model.features.iter().any(|feature| {
+            feature.suppressed != Some(true)
+                && matches!(
+                    feature.evaluation.definition().operation(),
+                    FeatureOperation::Sketch { .. }
+                )
+        })
+        && model.ir.model.features.iter().all(|feature| {
+            feature.suppressed == Some(true)
+                || matches!(
+                    feature.evaluation.definition().operation(),
+                    FeatureOperation::Sketch { .. } | FeatureOperation::TreeNode { .. }
+                )
+        })
+}
+
 /// Whether any part `assembly` places, at any depth, has geometry SolidCraft can import.
 fn any_part(assembly: &dutchman_core::Assembly) -> bool {
     assembly.parts.iter().any(|part| match &part.assembly {
@@ -1471,6 +1530,34 @@ impl Writer for SolidCraftWriter {
             let bytes = container::Container::empty()
                 .finish(&document::parameters_design(model, &params))?;
             report.set_outcome(parameters_outcome(model));
+            return out
+                .write_all(&bytes)
+                .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
+        }
+        if sketches_only(model) {
+            if self.import_only || !self.sketches {
+                return Err(Error::NoGeometry("the design contains only sketches; enable sketches and editable history to convert it".to_owned()));
+            }
+            let mapping = history::map_with_sketches(model, report, self.resolved_version(), true);
+            let history = mapping.result.map_err(Error::Encode)?;
+            if let Some(reason) = &history.stop {
+                return Err(Error::Encode(format!(
+                    "cannot write the sketch-only design: {reason}"
+                )));
+            }
+            let bytes = self.history_design_report(
+                model,
+                &history,
+                "",
+                Live::Whole,
+                self.should_stand_up(),
+                report,
+            )?;
+            report.set_outcome(Outcome {
+                mode: Mode::History,
+                check: self.check_sketches(&bytes),
+                features: mapping.features,
+            });
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));

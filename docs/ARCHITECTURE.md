@@ -19,6 +19,20 @@ native format itself; it drives cadmpeg's codecs and maps cadmpeg's neutral mode
 (`cadmpeg_ir::CadIr`), onto a target. Format work lands in cadmpeg, so every cadmpeg
 consumer benefits and Dutchman stays small.
 
+The offline Onshape REST bundle reader is an explicit exception to that native
+codec rule. `dutchman-core::onshape` validates bundle v1 and translates the public
+JSON construction records into `cadmpeg-ir` history and feature input topology.
+Neutral properties opt in to two parameter behaviors: feature
+`source_properties.symmetric_distance_parameter = "total"` permits a symmetric
+extrude to use its owned total-span parameter; parameter
+`properties.retain_without_sketches = "true"` permits parameters beside a STEP-only
+fallback. Absent these properties, the writer preserves its existing defaults.
+The embedded STEP export is decoded by the existing guarded cadmpeg route; it
+supplies final source geometry and verification, never historical selections.
+`dutchman-solidcraft` receives the same neutral model and knows nothing about the
+bundle. The `onshape` core feature includes the STEP codec and ZIP reader; it is
+part of the default `formats` set. See [Onshape](onshape.md).
+
 ## Crates
 
 | Crate | Role | Depends on |
@@ -262,8 +276,10 @@ profiles, of profile regions (whole loops with their holes, or regions bounded b
 curves) or of selected curves, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
 offset, or a resolved parallel planar face on an earlier named body. A face of the
 feature's own input topology (a face of an earlier history state) is rebuilt as its plane and
-an interior point from that state's boundary samples; a face that is not parallel to the
-sketch is refused. Trimmed regions name interior points computed from directed trim intervals, including for
+an interior point from that state's boundary samples. A flat face at a slant to the sketch
+maps only when the target is SolidCraft 0.44 or newer, which starts on and ends at such a face
+(a slanted start skips the flat-cap proof); older targets refuse it, and a face along the
+travel is always refused. Trimmed regions name interior points computed from directed trim intervals, including for
 revolves; unresolved or ambiguous boundaries are blockers. Otherwise unresolved native sketch
 selections try at most two candidates through the normal feature mapper, selected neutral curves
 and the whole carrier. A writer callback admits each only after the existing source body check,

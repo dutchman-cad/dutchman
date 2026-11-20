@@ -4004,7 +4004,7 @@ fn solidcraft_keeps_the_bore_of_a_cosmetic_tapped_hole() {
 
 #[test]
 fn hole_thread_details_solidcraft_lacks_are_reported_not_blocking() {
-    let thread_note = |change: Value| {
+    let converted = |change: Value, target: &str, blind: Option<f64>| {
         let model = holed_cube(4.0, |hole| {
             let mut specification = cosmetic_hole_thread();
             specification
@@ -4016,10 +4016,15 @@ fn hole_thread_details_solidcraft_lacks_are_reported_not_blocking() {
                 .unwrap()
                 .retain(|_, v| !v.is_null());
             hole["shape"]["construction"]["value"]["specification"] = specification;
+            if let Some(length) = blind {
+                hole["extent"] = json!({"kind": "blind", "length": length});
+            }
         });
         let (document, report) = convert(
             &model,
-            &SolidCraftWriter::new().verification(Verification::Off),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(target.parse().unwrap())),
         );
         assert!(
             history_line(&report).starts_with("4 of 4 features rebuilt"),
@@ -4032,16 +4037,60 @@ fn hole_thread_details_solidcraft_lacks_are_reported_not_blocking() {
             .find(|loss| loss.detail.contains("thread"))
             .map(|loss| loss.detail.clone())
             .unwrap_or_default();
-        (document["features"][3]["thread"].clone(), note)
+        (document["features"][3].clone(), note)
     };
-    let (label, note) = thread_note(json!({"hand": "left", "class": "6H",
-        "depth": {"kind": "blind", "depth": 3.0}}));
-    assert_eq!(label, "M6x1");
+    let thread_note = |change: Value| {
+        let (hole, note) = converted(change, "0.43.0", None);
+        (hole["thread"].clone(), note)
+    };
+    let details = json!({"hand": "left", "class": "6H", "depth": {"kind": "blind", "depth": 3.0}});
+    // Older targets keep the label and name everything else.
+    for (target, blind) in [("0.30.1", None), ("0.30.1", Some(6.0))] {
+        let (hole, note) = converted(details.clone(), target, blind);
+        assert_eq!(hole["thread"], "M6x1");
+        for key in ["hand", "thread_class", "thread_depth"] {
+            assert!(hole.get(key).is_none(), "{target}: {key}");
+        }
+        assert_eq!(
+            note,
+            "its thread is kept as a cosmetic M6x1 label over the whole hole, without its \
+             left-hand direction, its 6H tolerance class, and its 3 mm thread length"
+        );
+    }
+    // 0.40 stores the hand and, on a blind plain hole, the thread length.
+    let (hole, note) = converted(details.clone(), "0.40.0", Some(6.0));
+    assert_eq!(hole["hand"], "left");
+    assert_eq!(hole["thread_depth"], "3 mm");
+    assert!(hole.get("thread_class").is_none());
     assert_eq!(
         note,
-        "its thread is kept as a cosmetic M6x1 label over the whole hole, without its \
-         left-hand direction, its 6H tolerance class, and its 3 mm thread length"
+        "its thread is kept as a cosmetic M6x1 label, without its 6H tolerance class"
     );
+    // 0.43 also stores the class; a through hole's wall is unknown, so its length is named.
+    let (hole, note) = converted(details.clone(), "0.43.0", Some(6.0));
+    assert_eq!(hole["thread_class"], "6H");
+    assert_eq!(hole["thread_depth"], "3 mm");
+    assert!(note.is_empty(), "{note}");
+    let (hole, note) = converted(details.clone(), "0.43.0", None);
+    assert_eq!(hole["hand"], "left");
+    assert!(hole.get("thread_depth").is_none());
+    assert_eq!(
+        note,
+        "its thread is kept as a cosmetic M6x1 label over the whole hole, without its 3 mm \
+         thread length"
+    );
+    // A thread as long as the wall is the default full-length thread.
+    let (hole, note) = converted(
+        json!({"depth": {"kind": "blind", "depth": 6.0}}),
+        "0.43.0",
+        Some(6.0),
+    );
+    assert!(hole.get("thread_depth").is_none());
+    assert!(note.is_empty(), "{note}");
+    // A class SolidCraft would refuse stays a named loss.
+    let (hole, note) = converted(json!({"class": "6g"}), "0.43.0", None);
+    assert!(hole.get("thread_class").is_none());
+    assert!(note.contains("its 6g tolerance class"), "{note}");
     let (label, note) = thread_note(json!({"designation": "M5", "pitch": 0.5}));
     assert_eq!(label, "M5x0.5");
     assert!(note.is_empty(), "{note}");
@@ -10261,6 +10310,155 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
 }
 
 #[test]
+fn a_face_at_an_angle_to_the_sketch_is_gated_to_solidcraft_0_44() {
+    // The front face is perpendicular to the sketch: older targets name the release that
+    // reaches slanted faces, and 0.44 still refuses a face the sweep runs along.
+    for (target, reason) in [
+        (Some("0.43.0"), "needs SolidCraft 0.44 or newer"),
+        (Some("0.44.0"), "runs along the travel"),
+        (None, "runs along the travel"),
+    ] {
+        let mut model = face_ended_extrude(false, 0.0, false);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"][2]["definition"]["value"]["value"]["extent"]["side"]
+            ["termination"]["face"] =
+            json!({"kind": "faces", "value": ["synthetic:cube:face#front"]});
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let writer = SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(target.map(|t| t.parse().unwrap()));
+        let (_, report) = convert(&model, &writer);
+        assert!(
+            history_line(&report).contains(reason),
+            "{target:?}: {}",
+            history_line(&report)
+        );
+    }
+}
+
+/// A small tilted sketch above a cube; its sweep meets the horizontal top obliquely.
+fn slanted_face_extent(from: bool, historical: bool) -> Model {
+    let mut model = face_ended_extrude(from, 0.0, false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let sketch = "test:slanted:sketch#2";
+    let mut placed = wire["model"]["sketches"][0].clone();
+    placed["id"] = json!(sketch);
+    placed["placement"]["frame"] = json!({
+        "origin": {"x": 3.0, "y": 6.0, "z": 14.0},
+        "normal": {"x": 0.0, "y": 0.6, "z": 0.8},
+        "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
+    });
+    let mut curves = vec![
+        line(11, [0.0, 0.0], [4.0, 0.0]),
+        line(12, [4.0, 0.0], [4.0, 4.0]),
+        line(13, [4.0, 4.0], [0.0, 4.0]),
+        line(14, [0.0, 4.0], [0.0, 0.0]),
+    ];
+    placed["profiles"] = json!([curves
+        .iter()
+        .map(|curve| { json!({"entity": curve["id"], "reversed": false}) })
+        .collect::<Vec<_>>()]);
+    for curve in &mut curves {
+        curve["sketch"] = json!(sketch);
+    }
+    wire["model"]["sketches"]
+        .as_array_mut()
+        .unwrap()
+        .push(placed);
+    wire["model"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend(curves);
+    let mut feature = wire["model"]["features"][0].clone();
+    feature["id"] = json!("test:slanted:feature#sketch");
+    feature["ordinal"] = json!(2);
+    feature["definition"]["value"]["value"]["sketch"]["sketch"] = json!(sketch);
+    wire["model"]["features"][2]["ordinal"] = json!(3);
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(feature);
+    let definition = &mut wire["model"]["features"][2]["definition"]["value"]["value"];
+    definition["profile"] = json!({"kind": "planar", "value": {"kind": "sketch", "value": sketch}});
+    if !from {
+        definition["start"] = json!({"kind": "profile_plane"});
+    }
+    if historical {
+        // The same top face resolved only from input boundary samples, as Onshape supplies it.
+        let source = face_extrude(true, |_| {});
+        let source = serde_json::to_value(&source.ir).unwrap();
+        wire["model"]["feature_input_topologies"] =
+            source["model"]["feature_input_topologies"].clone();
+        let selection = json!({"kind": "historical", "value": {
+            "state": "test:face:feature-input#3", "faces": ["test:face:historical-face#target"],
+            "native": "synthetic top face"
+        }});
+        let definition = &mut wire["model"]["features"][2]["definition"]["value"]["value"];
+        if from {
+            definition["start"]["face"] = selection;
+        } else {
+            definition["extent"]["side"]["termination"]["face"] = selection;
+        }
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn slanted_face_starts_and_ends_map_only_on_supported_targets() {
+    for from in [false, true] {
+        for historical in [false, true] {
+            let model = slanted_face_extent(from, historical);
+            for target in ["0.43.0", "0.44.0", "0.44.1"] {
+                let writer = SolidCraftWriter::new()
+                    .verification(Verification::Off)
+                    .target_version(Some(target.parse().unwrap()));
+                let (document, report) = convert(&model, &writer);
+                let line = history_line(&report);
+                if target == "0.43.0" {
+                    assert!(line.contains("needs SolidCraft 0.44 or newer"), "{line}");
+                } else {
+                    assert!(line.starts_with("4 of 4 features rebuilt"), "{line}");
+                    let extent = &document["features"][3]["extent"];
+                    assert_eq!(extent[if from { "from" } else { "to" }][2], 10.0);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn solidcraft_rebuilds_a_slanted_face_end_with_the_expected_volume() {
+    let Some(cli) = solidcraft() else { return };
+    // Use the CLI's actual release: detected() intentionally caps the default output target.
+    let version = dutchman_solidcraft::solidcraft_version(&Verification::With(cli.clone()))
+        .and_then(|line| {
+            line.split_whitespace()
+                .last()?
+                .trim_start_matches('v')
+                .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                .ok()
+        })
+        .expect("the configured SolidCraft CLI must report its release");
+    if !dutchman_solidcraft::VersionGate::SlantedFaceExtent.supported(version) {
+        return;
+    }
+    for historical in [false, true] {
+        let writer = SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some("0.44.0".parse().unwrap()));
+        let (bytes, report) = written_with(&slanted_face_extent(false, historical), &writer);
+        assert!(history_line(&report).starts_with("4 of 4 features rebuilt"));
+        let mut actual = volumes(&cli, &bytes);
+        actual.sort_by(f64::total_cmp);
+        assert_eq!(actual.len(), 2, "{actual:?}");
+        // Profile area 16; mean travel (14 - 0.6 * 2 - 10) / 0.8 = 3.5.
+        assert!((actual[0] - 56.0).abs() < 1e-4, "{actual:?}");
+        assert!((actual[1] - 1000.0).abs() < 1e-4, "{actual:?}");
+    }
+}
+
+#[test]
 fn a_two_sided_extrude_can_end_at_a_face_along_the_positive_normal() {
     let mut model = face_ended_extrude(false, 0.0, false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
@@ -10363,6 +10561,11 @@ fn additional_sketch_relations_keep_their_intent_and_cube_volume() {
             "fix",
         ),
         (
+            json!({"kind": "point_coordinate_values", "point": sketch_locus("start", 1),
+            "values": [0.0, 0.0]}),
+            "coincident",
+        ),
+        (
             json!({"kind": "at_intersection", "point": sketch_locus("end", 1),
             "first": id(1), "second": id(2)}),
             "point_on_curve",
@@ -10456,6 +10659,10 @@ fn additional_sketch_relations_keep_their_intent_and_cube_volume() {
             .as_array()
             .unwrap();
         assert_eq!(constraints[0]["type"], expected, "{definition}");
+        if expected == "coincident" {
+            // A point held at the sketch origin ties to SolidCraft's origin point.
+            assert_eq!(constraints[0]["q"], 0, "{definition}: {constraints:?}");
+        }
         if definition["parameter"] == parameter || definition["distance_parameter"] == parameter {
             assert!(
                 constraints.iter().any(|c| c["param"] == "side"),
@@ -13118,7 +13325,7 @@ fn solidcraft_flips_an_unequal_chamfer_per_body() {
 const BORE: f64 = 2.5;
 
 /// [`holed_cube`] with a hole of radius 2.5 mm about (5, 5), and a `kind` blend of `dimension`
-/// on the hole's top edge, selected by its own input geometry: a closed edge from (7.5, 5, 10)
+/// on the hole's top edge, selected by its own input geometry: a closed edge from (5, 7.5, 10)
 /// all around, its midpoint opposite. `circles` (Z, radius) are circles about the hole's axis
 /// the source's final body has, edges of their own beside the example cube's B-rep: where an
 /// unequal chamfer cut it.
@@ -13135,9 +13342,10 @@ fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
     }
     wire["model"]["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#5", "ordinal": 4, "name": "Edge treatment", "suppressed": false, "dependencies": ["f3d:model:feature#4"], "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": {"kind": kind, "value": definition}}, "source_properties": {}, "source_content": []}));
     let xyz = |x: f64, y: f64, z: f64| json!({"x": x, "y": y, "z": z});
-    let start = xyz(5.0 + BORE, 5.0, 10.0);
-    let sample = json!({"edge": "synthetic:rim:edge#hole-top", "interior": xyz(5.0 - BORE, 5.0, 10.0),
-        "tangent": xyz(0.0, -1.0, 0.0), "start": start, "end": start,
+    // Keep the source seam distinct from the measured replay seam.
+    let start = xyz(5.0, 5.0 + BORE, 10.0);
+    let sample = json!({"edge": "synthetic:rim:edge#hole-top", "interior": xyz(5.0, 5.0 - BORE, 10.0),
+        "tangent": xyz(1.0, 0.0, 0.0), "start": start, "end": start,
         "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"]});
     wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#5", "edges": ["synthetic:rim:edge#hole-top"], "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"], "edge_geometry": [sample], "bodies": [], "vertices": []}]);
     // Exact input carrier belongs to an earlier hidden result, independently of final edges.
@@ -13150,10 +13358,11 @@ fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
         }
     }
     let g = &mut wire["geometry"];
+    // The stored circle's owner must name the body returned by the replay.
     g["bodies"]
         .as_array_mut()
         .unwrap()
-        .push(json!({"id": source, "kind": "wire", "visible": false}));
+        .push(json!({"id": source, "name": "unit cube", "kind": "wire", "visible": false}));
     g["regions"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:region#0", "body": source, "shells": ["synthetic:rim:shell#0"]}));
     g["shells"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:shell#0", "region": "synthetic:rim:region#0", "members": [{"kind": "wire_edge", "id": "synthetic:rim:edge#hole-top"}]}));
     g["edges"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:edge#hole-top", "carrier": {"curve": "synthetic:rim:curve#0", "param_range": [0.0, std::f64::consts::TAU]}, "ends": {"start": "synthetic:rim:vertex#0", "end": "synthetic:rim:vertex#0"}}));
@@ -13166,7 +13375,7 @@ fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
         .unwrap()
         .push(json!({"id": "synthetic:rim:point#0", "position": start}));
     g["curves"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:curve#0", "geometry": {"kind": "solved", "value": {
-        "kind": "circle", "center": xyz(5.0, 5.0, 10.0), "axis": xyz(0.0, 0.0, 1.0), "ref_direction": xyz(1.0, 0.0, 0.0), "radius": BORE
+        "kind": "circle", "center": xyz(5.0, 5.0, 10.0), "axis": xyz(0.0, 0.0, 1.0), "ref_direction": xyz(0.0, 1.0, 0.0), "radius": BORE
     }}}));
     for (i, &(z, radius)) in circles.iter().enumerate() {
         let id = |arena: &str| format!("synthetic:cut:{arena}#{i}");
@@ -13271,16 +13480,17 @@ fn solidcraft_blends_the_full_circle_around_a_hole() {
 }
 
 /// What SolidCraft reports before [`blended_hole`]'s blend: the cube's edges and the hole's two
-/// circles, seamed elsewhere than the source's, with the length SolidCraft 0.44.1 reports for
-/// them (short of the circumference), and the faces of the top one; the hole's wall is a
+/// circles, seamed elsewhere than the source's, with their reported midpoints at the test's
+/// expected blend picks and the length SolidCraft 0.44.1 reports (short of the circumference),
+/// and the faces of the top one; the hole's wall is a
 /// cylinder only `with_cylinder`.
 #[cfg(unix)]
 fn holed_replay(with_cylinder: bool) -> (Vec<Value>, Vec<Value>) {
     let mut edges = prism_edges(&SQUARE, 0.0, 10.0);
     for (z, cap) in [(10.0, "top"), (0.0, "bottom")] {
         edges.push(
-            json!({"start": [5.0, 5.0 + BORE, z], "end": [5.0, 5.0 + BORE, z],
-            "mid": [5.0, 5.0 - BORE, z], "length": 15.682587880594888,
+            json!({"start": [5.0 + BORE, 5.0, z], "end": [5.0 + BORE, 5.0, z],
+            "mid": [5.0 - BORE, 5.0, z], "length": 15.682587880594888,
             "name": format!("wall|{cap}"), "index": edges.len(),
             "measurement": {"items": [{"type": "edge", "round": "circle", "radius": BORE,
                 "center": [5.0, 5.0, z], "axis": [0.0, 0.0, 1.0],
@@ -13327,7 +13537,7 @@ fn blends_on_a_full_circle_need_the_circle_its_faces_and_the_source_cut() {
             "{dimension}: {report:?}"
         );
         let blend = &document["features"][4];
-        assert_eq!(blend["type"], kind);
+        assert_eq!(blend["type"], kind, "{report:?}");
         assert_eq!(blend["body"], "unit cube");
         assert_eq!(blend["edges"], json!([[5.0 - BORE, 5.0, 10.0]]));
         if dimension["kind"] == "distance_angle" {
@@ -16177,6 +16387,52 @@ fn design_only_history_is_refused_instead_of_silently_mapping_nothing() {
         history_line(&report).contains("ordered selections and evaluation states"),
         "{report:?}"
     );
+}
+
+#[test]
+fn a_native_symmetric_extrude_keeps_its_literal_distance() {
+    for namespace in ["f3d:", "inventor:"] {
+        let mut model = cube_with_height_parameter(1.0);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["kind"] =
+            json!("symmetric");
+        model.ir =
+            cadmpeg_ir::CadIr::from_json(&wire.to_string().replace("f3d:", namespace)).unwrap();
+        let (doc, _) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert_eq!(doc["features"][1]["extent"]["direction"], "symmetric");
+        assert_eq!(doc["features"][1]["extent"]["distance"], "10 mm");
+    }
+}
+
+#[test]
+fn native_parameters_do_not_change_a_fallback_without_mapped_sketches() {
+    for namespace in ["f3d:", "inventor:"] {
+        let mut model = cube_with_height_parameter(1.0);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["sketches"][0]["placement"] = json!({"kind":"unresolved"});
+        wire["model"]["sketch_constraints"] = json!([]);
+        model.ir =
+            cadmpeg_ir::CadIr::from_json(&wire.to_string().replace("f3d:", namespace)).unwrap();
+        let writer = SolidCraftWriter::new().verification(Verification::Off);
+        let (with_parameters, _) = written_with(&model, &writer);
+        wire["model"]["parameters"] = json!([]);
+        model.ir =
+            cadmpeg_ir::CadIr::from_json(&wire.to_string().replace("f3d:", namespace)).unwrap();
+        let (without_parameters, _) = written_with(&model, &writer);
+        assert_eq!(
+            with_parameters, without_parameters,
+            "{namespace}: fallback archive must remain byte-for-byte identical"
+        );
+        let (doc, _) = convert(&model, &writer);
+        assert!(doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["type"] != "sketch"));
+    }
 }
 
 /// Add neutral spatial relations to a synthetic non-planar path; no native file is used.

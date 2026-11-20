@@ -505,6 +505,9 @@ The target defaults to the found CLI's version, even with `--no-verify`, else th
 newest minor known at build time (currently 0.44). The current window is 0.18.2–0.44.
 Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
 0.25 patch 1 or newer; older targets preserve the original geometry and report the version needed.
+Onshape fillets and chamfers blend exactly the edges Onshape blended (its tangent chain resolved
+from the bundle) only for targets 0.40 or newer; older targets keep the imported final shape
+from that feature on and report the version needed.
 SolidCraft names and status comparisons use minors; patch-sensitive writer gates use full
 versions internally. CI tests the
 latest published patch of the newest minor, while the oldest window release stays pinned.
