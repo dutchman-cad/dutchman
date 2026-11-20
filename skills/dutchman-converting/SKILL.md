@@ -873,8 +873,11 @@ explicit consent. CLI users can preview with `dutchman report --folder FOLDER --
 `dutchman report --folder FOLDER --send-summary --yes`. No free-text description is
 supported in the anonymous envelope. Describe the problem privately or in the GitHub
 form without private names or paths. The desktop offers these actions in its always-open
-**Is there a problem? Is something missing?** panel. The **Anonymous report** and **GitHub issue**
-pills sit directly below the three steps and also appear under **More**. Failure narrowing is for failed files.
+**Is there a problem? Is something missing?** panel, pinned below output controls in wide
+windows. Discord comes first; **GitHub issue** is a small backup link. **Anonymous report**
+is under **More**, alongside AI help and diagnosis. **Report this file…** selects the file
+in the same panel. Partial history, geometry-only and degraded results use a warning colour.
+Failure narrowing is for failed files.
 
 For report sending, call `report_preview` first and show the user the choices, part
 roles and sizes. Never show or transmit bundle contents through an assistant. Call

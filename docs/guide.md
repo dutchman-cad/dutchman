@@ -686,13 +686,19 @@ produced. These small controls establish basic behavior, not a false-positive ra
 for large assemblies or arbitrary designs.
 
 <a id="report-consent"></a>
-After a conversion, **Output folder** folds into a summary so the reporting steps stay
-in view. Click its folder path or **Change…** to reopen all output settings. **Clear**
-removes the designs and results and restores the expanded settings.
+In wide windows, **Is there a problem? Is something missing?** stays pinned below the
+output controls, even with **Advanced** and output choices expanded. Input and output
+controls scroll above it; long report reviews scroll below the question. Narrow windows
+keep one scrolling page. **Report this file…** selects that file in the panel, and the
+top-bar **Report a problem** opens the same panel. Partial history, geometry-only and
+degraded results use a warning colour; full history without degraded losses stays green.
+After a conversion, **Output folder** folds into a summary. Click its folder path or
+**Change…** to reopen all output settings. **Clear** removes the designs and results and
+restores the expanded settings.
 
-Report consent is per report. In the desktop app, the **Anonymous report** and **GitHub issue**
-pills sit directly below the three steps in **Is there a problem? Is something missing?**,
-and also appear under **More**. **Anonymous report** opens a review for the chosen file
+Report consent is per report. In the desktop app, Discord is the first route, with a small
+**GitHub issue** backup link below the three steps. **Anonymous report** is under **More**,
+with AI help and diagnosis. It opens a review for the chosen file
 with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
 problem signature only. Converted results use `converted-with-problem` and never

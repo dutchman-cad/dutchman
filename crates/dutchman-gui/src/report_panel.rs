@@ -63,7 +63,7 @@ pub struct Card<'a> {
 }
 
 /// The narrowest a card gets before the cards wrap onto another line.
-const MIN_CARD_WIDTH: f32 = 190.0;
+const MIN_CARD_WIDTH: f32 = 175.0;
 /// The step number's circle.
 const BADGE: f32 = 20.0;
 
@@ -188,6 +188,13 @@ pub fn filled<'a>(p: &Palette, label: &'a str) -> egui::Button<'a> {
 /// A button drawn as a link, for the backup route and other quiet actions.
 pub fn link(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
     ui.add(egui::Button::new(RichText::new(label).color(p.spectre).underline()).frame(false))
+}
+
+/// A small backup link below the primary reporting steps.
+pub fn backup_link(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(RichText::new(label).small().color(p.spectre).underline()).frame(false),
+    )
 }
 
 /// The message copied for Dutchy's DM about a finished file: what happened, the details line
