@@ -15795,8 +15795,28 @@ fn a_host_evaluator_proves_a_blend_and_verifies_the_fixture() {
     assert_eq!(report.outcome().unwrap().check, Check::Verified);
     assert_eq!(
         *host.calls.lock().unwrap(),
-        ["bodies", "edges", "original", "history"]
+        [
+            "bodies",
+            "edges",
+            "original",
+            "history",
+            "verification-parameters"
+        ]
     );
+}
+
+#[test]
+fn a_host_evaluator_skips_parameter_verification_for_history_without_parameters() {
+    let host = std::sync::Arc::new(RecordedEvaluator::default());
+    let writer = SolidCraftWriter::new().evaluator(host.clone());
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["parameters"] = json!([]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(&model, &writer);
+    assert_eq!(report.outcome().unwrap().mode, Mode::History);
+    assert_eq!(report.outcome().unwrap().check, Check::Verified);
+    assert_eq!(*host.calls.lock().unwrap(), ["original", "history"]);
 }
 
 #[test]
@@ -15815,7 +15835,13 @@ fn a_host_evaluator_carries_prefix_measurements_and_final_geometry_warnings() {
     assert!(matches!(report.outcome().unwrap().check, Check::Partial(_)));
     assert_eq!(
         *host.calls.lock().unwrap(),
-        ["original", "history", "prefix", "import"]
+        [
+            "original",
+            "history",
+            "verification-parameters",
+            "prefix",
+            "import"
+        ]
     );
     assert!(report
         .losses()

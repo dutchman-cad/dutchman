@@ -222,6 +222,18 @@ fn quantity_kind(unit: &str) -> Option<&'static str> {
     }
 }
 
+fn parameter_value(value: Option<&ParameterValue>) -> Option<f64> {
+    match value {
+        Some(ParameterValue::Length(v)) => Some(v.get()),
+        Some(ParameterValue::Angle(v)) => Some(v.get().to_degrees()),
+        Some(ParameterValue::Real(v)) => Some(v.get()),
+        Some(ParameterValue::Integer(v)) if v.unsigned_abs() <= 9_007_199_254_740_992 => {
+            Some(*v as f64)
+        }
+        _ => None,
+    }
+}
+
 fn parameters(model: &Model, replayed: Result<Vec<Value>, String>) -> Value {
     let (_, names) = crate::history::params::map(model, &mut Report::default());
     let rows = replayed
@@ -241,13 +253,7 @@ fn parameters(model: &Model, replayed: Result<Vec<Value>, String>) -> Value {
     }
     model.ir.model.parameters.iter().take(MAX_ROWS).map(|parameter| {
         let name = names.get(parameter.id.as_str());
-        let expected = match parameter.value.as_ref() {
-            Some(ParameterValue::Length(v)) => Some(v.get()),
-            Some(ParameterValue::Angle(v)) => Some(v.get().to_degrees()),
-            Some(ParameterValue::Real(v)) => Some(v.get()),
-            Some(ParameterValue::Integer(v)) if v.unsigned_abs() <= 9_007_199_254_740_992 => Some(*v as f64),
-            _ => None,
-        };
+        let expected = parameter_value(parameter.value.as_ref());
         let unit = match parameter.value.as_ref() {
             Some(ParameterValue::Length(_)) => Some("mm"),
             Some(ParameterValue::Angle(_)) => Some("deg"),
@@ -395,7 +401,18 @@ pub(crate) fn compare_report(
     {
         outcome = Outcome::Unverified("No source bodies were measured".to_owned());
     }
-    let params = if model.ir.model.parameters.is_empty() {
+    let (_, names) = crate::history::params::map(model, &mut Report::default());
+    let has_parameter_checks = model
+        .ir
+        .model
+        .parameters
+        .iter()
+        .take(MAX_ROWS)
+        .any(|parameter| {
+            names.get(parameter.id.as_str()) == Some(&parameter.name)
+                && parameter_value(parameter.value.as_ref()).is_some()
+        });
+    let params = if !has_parameter_checks {
         Ok(Vec::new())
     } else {
         cli.run(
@@ -773,6 +790,63 @@ mod tests {
             Ok(vec![
                 json!({"parameters":[{"name":"depth","unit":"mm","value":self.parameter}]}),
             ])
+        }
+    }
+
+    #[test]
+    fn parameters_without_comparable_mapped_values_do_not_request_replay() {
+        #[derive(Debug)]
+        struct NoParameterReplay;
+        impl SolidCraftEvaluator for NoParameterReplay {
+            fn evaluate(&self, _: &[u8], _: Duration, _: &str) -> Result<Value, String> {
+                Ok(cube())
+            }
+            fn run(
+                &self,
+                _: &[u8],
+                _: &[Value],
+                _: Duration,
+                label: &str,
+            ) -> Result<Vec<Value>, String> {
+                panic!("Unexpected replay: {label}");
+            }
+        }
+        for (name, expression) in [
+            ("depth value", "10 mm"),
+            ("depth", "unsupported()"),
+            ("depth", "2 + 2"),
+        ] {
+            let mut model = model();
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["parameters"][0]["name"] = json!(name);
+            wire["model"]["parameters"][0]["expression"] = json!(expression);
+            if name == "depth" {
+                wire["model"]["parameters"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("value");
+            }
+            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            let mut report = Report::default();
+            let outcome = compare_report(
+                &NoParameterReplay,
+                DEFAULT_TIMEOUT,
+                b"written",
+                b"source",
+                Expected {
+                    solids: 1,
+                    sheets: 0,
+                },
+                None,
+                &model,
+                "check",
+                &mut report,
+            );
+            assert_eq!(outcome, Outcome::Matches);
+            assert_eq!(
+                report.verification_checks()[0]["parameters"][0]["check"]["status"],
+                "not_checked"
+            );
         }
     }
 
