@@ -39,6 +39,11 @@ kept. Compressed REST queries can resolve built-in plane frames and explicit ske
 region boundaries. Do not treat a deterministic region ID as a whole-sketch pick;
 explain a refused boundary using its specific loss. The ordinary history/verification
 report still applies. See `docs/onshape.md`.
+An active custom FeatureScript feature names why a frozen step cannot be proved:
+bundle format 1 has no complete per-feature body geometry. Explain that rollback
+bodydetails supply selections and STEP supplies only the final shape. Use the retained
+final shape; do not promise that fetching v1 again will make custom features editable
+or let later body-building features continue. Suppressed custom features are left out.
 Ellipses and elliptical arcs retain editable curves. Variables keep units and
 expressions, and remain design parameters alongside the STEP fallback even when no
 sketch maps. Thin extrudes map stored thicknesses, sides and directions after proving

@@ -77,6 +77,10 @@ Bundles marked `consistent: false` are refused; fetch again or use a version lin
 Older v1 bundles without consistency metadata still convert. Default-plane sketches
 and explicit sketch-region extrudes also accept the API's compressed query records;
 ambiguous boundaries retain a specific history loss and the final STEP geometry.
+Custom FeatureScript features name why history stops: bundle format 1 lacks complete
+per-feature body geometry to prove a frozen step. Use the retained final STEP shape;
+fetching another v1 bundle does not add the missing shapes. Later body-building features
+remain blocked.
 
 ## Public share links
 

@@ -81,7 +81,23 @@ plane behavior remain supported.
 | Chamfer | Equal offsets, two offsets, distance and angle in CADIR, with explicit input edges and resolvable tangent chains | The writer maps equal setbacks (including two equal offsets and a 45° distance-and-angle chamfer on perpendicular input faces). Asymmetric chamfers report missing input reference-face ordering; neither face nor direction is guessed. Tangent propagation has the same completeness requirement as fillets, and the chamfer likewise blends exactly the listed edges on SolidCraft 0.40 or newer. Replay proof still applies. |
 | Hole | Explicit sketch point `locations`; simple, counterbore and countersink entries; through, or blind with a unique explicit drill-point angle and an explicit depth reference for an angled bottom, or an explicit flat 180° bottom; tapped holes from the hole table's thread standard, drilled at the tap-drill diameter | A standard must state its hand and modeled/cosmetic facts. A supported tapped hole keeps its ISO metric thread label, with its thread length in a blind hole (SolidCraft 0.40 and newer); otherwise the thread length is reported, and other thread standards keep the bore only. Reversed drilling, other hole tables and standard types, mate connectors and other ends are not supported yet. |
 | Assigned variables | SolidCraft parameters retaining units, with the same names and expressions (`#len / 2` becomes `len / 2`) | Earlier variables, literal units, parentheses and `+`, `-`, `*`, `/` with compatible units; measured variables, reassignment, forward references and FeatureScript functions are not supported yet. A refused replacement blocks each later consumer of that name; earlier parameters remain historical records. Sketch dimensions, blind and symmetric extrude depths and one-direction revolve angles that use variables stay driven by them, so editing the parameter in SolidCraft rebuilds the part. Other values that use variables (fillet and chamfer sizes, hole sizes) are written as their evaluated values with an `onshape/history.variable-evaluated` loss naming each one. Suppressed features, including parent-suppressed features, do not produce these losses. |
-| Other features, custom FeatureScript | Named `onshape/history.not-supported` loss | The shared partial-history path keeps the final STEP shape visible and retains the editable prefix where possible. |
+| Custom FeatureScript | Named `onshape/history.not-supported` loss explaining the missing per-feature body geometry | Bundle v1 cannot prove a frozen step; history stops here, with the final STEP shape visible and the editable prefix retained where possible. |
+| Other features | Named `onshape/history.not-supported` loss | The shared partial-history path keeps the final STEP shape visible and retains the editable prefix where possible. |
+
+Custom features from a Feature Studio are identified by their non-empty `namespace`,
+even when their feature type has the same name as a built-in feature. An active custom
+feature stops history with the reason: `custom FeatureScript feature <name> is not
+supported yet: bundle format 1 lacks complete per-feature body geometry to prove a frozen
+step`. Suppressed custom features are left out without this loss. Later body-building
+features remain blocked, including features whose face or edge selections resolve.
+
+The bundle's rollback bodydetails describe selection geometry, not complete body shapes.
+There are no per-feature tessellations or STEP exports; `export.step` is the final state
+only. Even a custom feature last in the history, or one that appears to change no bodies,
+cannot be proved from these records. Fetching the same bundle format again cannot supply
+the missing shapes. Use the retained final STEP shape; frozen custom steps would require
+a capture of the complete body state at each custom feature, bound to its rollback index
+and pinned microversion, and the shared source-body comparison before history continues.
 
 Assigned variables remain design parameters even if no sketch can be mapped and
 conversion falls back to the STEP body. Sketch dimensions and blind extrude depths
