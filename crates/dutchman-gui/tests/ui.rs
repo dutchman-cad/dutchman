@@ -4326,7 +4326,7 @@ fn designs_header_screenshots() {
         for width in [1180.0, 900.0] {
             let mut h = Harness::builder()
                 .with_size(egui::vec2(width, 800.0))
-                .build_eframe(test_app);
+                .build_eframe(|cc| test_app(cc));
             h.ctx.set_theme(theme);
             h.state_mut().set_checker_for_test(true);
             h.state_mut().preview_solidcraft(Some("0.44.9"));
