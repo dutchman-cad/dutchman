@@ -6,6 +6,9 @@ description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, Fr
 Onshape history dependencies follow consumed operands in their stored order. Deterministic
 body, face and edge selections need a unique earlier producer proved by rollback
 transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+A created-by query may name the proved creator of an entity that later features
+modified; its dependency still follows the latest modification. Missing creation
+proof, unrelated producers and IDs reused after disappearance remain refused.
 Every present scope query list is validated, while an empty list keeps implicit scope.
 Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
 A record the reader cannot convert becomes a named loss and the remaining records continue.

@@ -228,6 +228,9 @@ The re-review regressions in `src/onshape/rereview.rs` build bundle ZIPs and JSO
 records directly in Rust from the public response shapes. Generic line sketches,
 points, a straight edge and a planar face exercise dependency transitions, operand
 order, scopes, thread termination, midpoint admission and permissive recovery.
+Created-body scope regressions use those same code-built records to distinguish
+creation from later modification, unrelated producers, ambiguous creation intervals
+and deterministic IDs reused after disappearance.
 Additional thin tests extend the generated default-plane bundle in memory with a
 synthetic producer and rollback states. No new binary fixture or private design
 identifier is used.

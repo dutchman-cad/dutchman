@@ -563,19 +563,14 @@ pub(super) fn dependencies(
                     return Err("feature dependency selection is empty".into());
                 }
                 for native in ids {
-                    let producer = inputs.producer(
+                    let producer = inputs.producer_with_explicit(
                         ordinal,
                         native
                             .as_str()
                             .ok_or("feature dependency deterministic id must be a string")?,
                         kind,
+                        &explicit,
                     )?;
-                    if explicit.iter().any(|named| named != &producer) {
-                        return Err(
-                            "feature dependency explicit producer contradicts stored topology"
-                                .into(),
-                        );
-                    }
                     producers.push(producer);
                 }
             } else {
