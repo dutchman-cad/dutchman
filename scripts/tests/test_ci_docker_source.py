@@ -15,7 +15,7 @@ class DockerSourceTests(unittest.TestCase):
     def test_recipes_and_inputs_require_source_build(self):
         for path in ('Dockerfile', 'docker/release.Dockerfile', '.dockerignore',
                      'Cargo.toml', 'Cargo.lock', '.cargo/config.toml', 'rust-toolchain.toml',
-                     'crates/dutchman/src/main.rs', 'crates/dutchman/assets/report-policy.json',
+                     'crates/dutchman/build.rs', 'crates/dutchman/assets/report-policy.json',
                      'licences/cadmpeg.txt', 'LICENSE', 'NOTICE', 'README.md',
                      '.github/workflows/ci.yml', 'unknown-build-input'):
             with self.subTest(path=path):
@@ -23,6 +23,14 @@ class DockerSourceTests(unittest.TestCase):
 
     def test_unrelated_changes_keep_runtime_fast_path(self):
         self.assertFalse(SOURCE.required(['docs/docker.md', 'changelog.d/fix.md', 'skills/guide.md']))
+
+    def test_rust_sources_and_tests_keep_runtime_fast_path(self):
+        # Every other Linux job compiles and tests these; the daily Docker workflow rebuilds the
+        # source image, so a code-only change does not pay for a cold source image build.
+        self.assertFalse(SOURCE.required(['crates/dutchman/src/main.rs',
+                                          'crates/dutchman-solidcraft/tests/history.rs',
+                                          'crates/dutchman-core/tests/fixtures/cube.f3d']))
+        self.assertTrue(SOURCE.required(['crates/dutchman/src/main.rs', 'Cargo.lock']))
 
     def test_missing_base_fails_open(self):
         with patch.object(SOURCE.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)):
