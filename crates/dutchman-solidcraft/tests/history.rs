@@ -18555,6 +18555,13 @@ fn unresolved_revolve_does_not_take_extra_regions_needed_by_later_cuts_and_a_fil
 fn unresolved_revolve_synthetic_control_has_more_regions_than_its_stored_loop() {
     use dutchman_solidcraft::{CliEvaluator, SolidCraftEvaluator};
     let Some(cli) = solidcraft() else { return };
+    // The control is written for the newest design format; older releases can't evaluate it.
+    if dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()))
+        < dutchman_solidcraft::SolidCraftVersion::V0_44_0
+    {
+        eprintln!("skipped: the control needs SolidCraft 0.44 or newer");
+        return;
+    }
     // An explicit all-regions control reproduces the old native-pick assumption.
     // The later cuts keep the notch curves solid in the shared sketch.
     let (bytes, report) = written_with(
