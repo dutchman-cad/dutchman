@@ -68,37 +68,12 @@ pub(crate) fn preserve(document: &mut Value, ir: &cadmpeg_ir::CadIr) {
         if rows.contains_key(state_id.as_str()) {
             continue;
         }
-        let definition = operation(feature);
-        if !matches!(operation_kind(feature), Some("fillet" | "chamfer")) {
+        let Some((edges, native, path)) = selection(feature) else {
+            continue;
+        };
+        if edges.is_empty() || edges.len() > 256 {
             continue;
         }
-        let Some(groups) = definition
-            .get("groups")
-            .and_then(Value::as_array)
-            .filter(|g| g.len() == 1)
-        else {
-            continue;
-        };
-        let Some(selection) = groups.first().and_then(|g| g.get("edges")) else {
-            continue;
-        };
-        if selection.get("kind").and_then(Value::as_str) != Some("resolved") {
-            continue;
-        }
-        let Some(native) = selection
-            .pointer("/value/native")
-            .and_then(Value::as_str)
-            .filter(|native| !native.trim().is_empty())
-        else {
-            continue;
-        };
-        let Some(edges) = selection
-            .pointer("/value/edges")
-            .and_then(Value::as_array)
-            .filter(|e| !e.is_empty() && e.len() <= 256)
-        else {
-            continue;
-        };
         if edges
             .iter()
             .filter_map(Value::as_str)
@@ -180,15 +155,16 @@ pub(crate) fn preserve(document: &mut Value, ir: &cadmpeg_ir::CadIr) {
             .iter()
             .filter_map(|edge| sample(ir, edge.as_str()?, body))
             .collect();
-        let state = json!({"id": state_id, "input_of": id, "edges": edges, "edge_geometry": geometry, "bodies": [], "faces": [], "vertices": []});
-        let selection = json!({"kind": "historical", "value": {
+        let bodies: Vec<&str> = if path { vec![body] } else { Vec::new() };
+        let state = json!({"id": state_id, "input_of": id, "edges": edges, "edge_geometry": geometry, "bodies": bodies, "faces": [], "vertices": []});
+        let selection = json!({"kind": if path { "historical_edges" } else { "historical" }, "value": {
             "state": state_id, "edges": edges, "native": native}});
-        changes.push((index, state, selection));
+        changes.push((index, state, selection, path));
     }
     let Some(wire) = document.get_mut("model").and_then(Value::as_object_mut) else {
         return;
     };
-    for (index, state, selection) in changes {
+    for (index, state, selection, path) in changes {
         if let Some(feature) = wire
             .get_mut("features")
             .and_then(Value::as_array_mut)
@@ -196,12 +172,13 @@ pub(crate) fn preserve(document: &mut Value, ir: &cadmpeg_ir::CadIr) {
         {
             let wrapped =
                 feature.pointer("/definition/kind").and_then(Value::as_str) == Some("post_process");
-            let path = if wrapped {
-                "/definition/value/operation/value/groups/0/edges"
+            let root = if wrapped {
+                "/definition/value/operation/value"
             } else {
-                "/definition/value/value/groups/0/edges"
+                "/definition/value/value"
             };
-            if let Some(edges) = feature.pointer_mut(path) {
+            let path = format!("{root}/{}", if path { "path" } else { "groups/0/edges" });
+            if let Some(edges) = feature.pointer_mut(&path) {
                 *edges = selection;
             }
         }
@@ -212,6 +189,47 @@ pub(crate) fn preserve(document: &mut Value, ir: &cadmpeg_ir::CadIr) {
         {
             states.push(state);
         }
+    }
+}
+
+/// A resolved blend selection or an ordered topological sweep path. These refer only
+/// to CADIR geometry; no source-native bytes or edge numbers are interpreted here.
+fn selection(feature: &Value) -> Option<(&[Value], &str, bool)> {
+    let definition = operation(feature);
+    match operation_kind(feature)? {
+        "fillet" | "chamfer" => {
+            let groups = definition
+                .get("groups")?
+                .as_array()
+                .filter(|g| g.len() == 1)?;
+            let selection = groups.first()?.get("edges")?;
+            if selection.get("kind")?.as_str()? != "resolved" {
+                return None;
+            }
+            let native = selection
+                .pointer("/value/native")?
+                .as_str()
+                .filter(|native| !native.trim().is_empty())?;
+            Some((
+                selection.pointer("/value/edges")?.as_array()?,
+                native,
+                false,
+            ))
+        }
+        "sweep" => {
+            let path = definition.get("path")?;
+            if path.get("kind")?.as_str()? != "edges" {
+                return None;
+            }
+            // PathRef::Edges already names neutral edge identities in order. The
+            // consuming feature id records provenance for the temporary input state.
+            Some((
+                path.get("value")?.as_array()?,
+                feature.get("id")?.as_str()?,
+                true,
+            ))
+        }
+        _ => None,
     }
 }
 
@@ -491,6 +509,49 @@ mod tests {
                 .unwrap()
                 .push(json!("test:model:body#wire"));
         });
+    }
+
+    #[test]
+    fn sweep_paths_preserve_only_edges_of_an_earlier_stored_result() {
+        let ir = cube();
+        let base = selection(&ir);
+        for refusal in [
+            None,
+            Some("visible"),
+            Some("later"),
+            Some("foreign"),
+            Some("repeated"),
+        ] {
+            let mut wire = base.clone();
+            let edge = wire["geometry"]["edges"][0]["id"].clone();
+            wire["model"]["features"][1]["definition"]["value"] = json!({"kind": "sweep", "value": {
+                "path": {"kind": "edges", "value": [edge]}}});
+            match refusal {
+                Some("visible") => wire["geometry"]["bodies"][0]["visible"] = json!(true),
+                Some("later") => wire["model"]["features"][0]["ordinal"] = json!(2),
+                Some("foreign") => wire["model"]["features"][1]["dependencies"] = json!([]),
+                Some("repeated") => {
+                    wire["model"]["features"][1]["definition"]["value"]["value"]["path"]["value"] =
+                        json!([edge, edge])
+                }
+                _ => {}
+            }
+            preserve(&mut wire, &ir);
+            let path = &wire["model"]["features"][1]["definition"]["value"]["value"]["path"];
+            if refusal.is_some() {
+                assert_eq!(path["kind"], "edges");
+            } else {
+                assert_eq!(path["kind"], "historical_edges");
+                assert_eq!(path["value"]["edges"], json!([edge]));
+                let state = &wire["model"]["feature_input_topologies"][0];
+                assert_eq!(state["input_of"], "test:model:feature#blend");
+                assert_eq!(state["edge_geometry"][0]["edge"], edge);
+                assert_eq!(
+                    state["bodies"],
+                    json!([wire["geometry"]["bodies"][0]["id"]])
+                );
+            }
+        }
     }
 
     #[test]

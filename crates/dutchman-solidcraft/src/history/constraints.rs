@@ -582,6 +582,11 @@ impl Mapper<'_, '_> {
         if (number(values.first())? - u).abs() > 1e-6 || (number(values.get(1))? - v).abs() > 1e-6 {
             return None;
         }
+        // A point held at the sketch origin is coincident with SolidCraft's own origin point,
+        // as drawing it there would make it; anywhere else it is fixed in place.
+        if p != 0 && u.abs() <= 1e-6 && v.abs() <= 1e-6 {
+            return Some(coincident(&[p, 0]));
+        }
         Some(vec![json!({"type": "fix", "p": p})])
     }
 

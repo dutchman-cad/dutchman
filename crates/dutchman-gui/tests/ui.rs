@@ -967,6 +967,53 @@ fn isolate_missing_cli_preview(test: &str) -> bool {
 }
 
 #[test]
+fn solidcraft_and_onshape_panels_keep_their_own_state() {
+    for width in [760.0, 1120.0] {
+        for connected in [false, true] {
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(width, 900.0))
+                .build_eframe(|cc| test_app(cc));
+            h.state_mut().preview_solidcraft(None);
+            h.state_mut().preview_solidcraft_app(false);
+            h.state_mut()
+                .preview_onshape(connected.then_some("Test designer"));
+            h.state_mut()
+                .set_clipboard_for_test(|| (vec![], String::new()));
+            h.run_steps(8);
+            let status = if width < 920.0 {
+                "not found"
+            } else {
+                "SolidCraft not found"
+            };
+            h.get_by_label(status).click_accesskit();
+            h.run_steps(8);
+            h.get_by_label_contains("SolidCraft not found. Install SolidCraft");
+            assert!(h.query_by_label("Your Onshape API keys").is_none());
+            h.get_by_label(status).click_accesskit();
+            h.run_steps(8);
+            assert!(h.query_by_label("SolidCraft version").is_none());
+
+            h.get_by_label(if connected {
+                "Onshape connected ✓"
+            } else {
+                "Connect Onshape"
+            })
+            .click_accesskit();
+            h.run_steps(8);
+            if connected {
+                h.get_by_label("Connected to Onshape as Test designer");
+            } else {
+                h.get_by_label("Your Onshape API keys");
+            }
+            assert!(h.query_by_label("SolidCraft version").is_none());
+            h.get_by_label(status).click();
+            h.run_steps(8);
+            h.get_by_label_contains("SolidCraft not found. Install SolidCraft");
+        }
+    }
+}
+
+#[test]
 fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
     if isolate_missing_cli_preview(
         "solidcraft_status_panel_waits_for_a_click_and_shares_version_notices",
@@ -3835,6 +3882,327 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
     }
 }
 
+mod paste_inputs {
+    use super::*;
+    use dutchman_gui::paste::{Response, Transport};
+    use egui_kittest::kittest::NodeT;
+    use std::sync::{Arc, Mutex};
+
+    const LINK: &str = "https://cad.onshape.com/documents/aaaaaaaaaaaaaaaaaaaaaaaa/w/bbbbbbbbbbbbbbbbbbbbbbbb/e/cccccccccccccccccccccccc";
+
+    fn window(connected: bool) -> Harness<'static, App> {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1180.0, 1000.0))
+            .build_eframe(|cc| test_app(cc));
+        h.state_mut()
+            .preview_onshape(connected.then_some("Test designer"));
+        h.state_mut()
+            .set_clipboard_for_test(|| (vec![], String::new()));
+        h.run_steps(8);
+        h
+    }
+
+    fn paste(h: &mut Harness<'static, App>, text: &str) {
+        h.input_mut().events.push(egui::Event::Paste(text.into()));
+        h.step();
+    }
+
+    #[test]
+    fn onshape_button_names_both_states_and_connected_dialog_hides_keys() {
+        let mut h = window(false);
+        assert!(h.query_by_label("Connect Onshape").is_some());
+        assert!(h.query_by_label("Onshape connected ✓").is_none());
+        h.state_mut().preview_onshape(Some("Test designer"));
+        h.run_steps(4);
+        h.get_by_label("Onshape connected ✓").click_accesskit();
+        h.run_steps(4);
+        assert!(h
+            .query_by_label("Connected to Onshape as Test designer")
+            .is_some());
+        assert!(h.query_by_label("Access key").is_none());
+        assert!(h.query_by_label("Secret key").is_none());
+        assert!(h.query_by_label("Use bearer token file").is_some());
+        assert!(h.query_by_label("Change keys").is_some());
+        assert!(h.query_by_label("Disconnect").is_some());
+        h.get_by_label("Change keys").click_accesskit();
+        h.run_steps(4);
+        assert!(h.query_by_label("Your Onshape API keys").is_some());
+    }
+
+    #[test]
+    fn onshape_open_enables_only_for_a_document_link_and_keeps_text_paste_in_the_field() {
+        let mut h = window(true);
+        h.get_by_label("Onshape connected ✓").click_accesskit();
+        h.run_steps(4);
+        assert!(h.get_by_label("Open").accesskit_node().is_disabled());
+        let field = h.get_by_label("Paste your Onshape Part Studio link");
+        assert_eq!(field.accesskit_node().value().unwrap_or_default(), "");
+        field.focus();
+        h.step();
+        paste(&mut h, "https://example.test/file.f3d");
+        h.run_steps(3);
+        assert!(h.get_by_label("Open").accesskit_node().is_disabled());
+        assert!(h.query_by_label("Download file").is_none());
+        // Replace the text through ordinary keyboard editing, preserving the focused field.
+        h.get_by_label("Paste your Onshape Part Studio link")
+            .click_accesskit();
+        h.input_mut().events.push(egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                command: true,
+                ctrl: true,
+                ..Default::default()
+            },
+        });
+        h.step();
+        paste(&mut h, LINK);
+        h.run_steps(3);
+        assert!(!h.get_by_label("Open").accesskit_node().is_disabled());
+    }
+
+    fn fetch(_link: String, folder: &Path) -> Result<PathBuf, String> {
+        std::thread::sleep(Duration::from_millis(100));
+        let out = folder.join("part.onshape-bundle");
+        std::fs::copy(fixture("onshape-revolve.onshape-bundle"), &out)
+            .map_err(|e| e.to_string())?;
+        Ok(out)
+    }
+
+    #[derive(Default)]
+    struct MockNetwork {
+        methods: Mutex<Vec<String>>,
+    }
+    impl Transport for MockNetwork {
+        fn request(&self, method: &str, url: &str) -> Result<Response, String> {
+            assert!(url.starts_with("https://"));
+            self.methods.lock().unwrap().push(method.into());
+            let bytes = std::fs::read(fixture("generated_unit_cube.f3d")).unwrap();
+            Ok(Response {
+                status: 200,
+                length: Some(bytes.len() as u64),
+                location: None,
+                body: Box::new(std::io::Cursor::new(bytes)),
+            })
+        }
+    }
+
+    fn output_picker(h: &mut Harness<'static, App>, folder: &Path) {
+        let folder = folder.to_owned();
+        h.state_mut()
+            .set_output_picker_for_test(move |sender, ctx| {
+                sender
+                    .send(dutchman_gui::worker::Message::Picked {
+                        pick: dutchman_gui::worker::Pick::Output,
+                        paths: vec![folder.clone()],
+                    })
+                    .unwrap();
+                ctx.request_repaint();
+            });
+    }
+
+    fn assert_bundle_survives_exit(h: Harness<'static, App>, output: &Path) {
+        let row = &h.state().rows()[0];
+        let bundle = row.input.clone();
+        assert_eq!(bundle.parent(), Some(output));
+        assert_eq!(row.output.as_ref().unwrap(), &bundle.with_extension("sc"));
+        let expected = std::fs::read(fixture("onshape-revolve.onshape-bundle")).unwrap();
+        assert_eq!(std::fs::read(&bundle).unwrap(), expected);
+        drop(h);
+        assert_eq!(std::fs::read(&bundle).unwrap(), expected);
+    }
+
+    #[test]
+    fn pasted_onshape_link_adds_a_main_job_and_asks_for_an_output_folder() {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(true);
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), fetch);
+        output_picker(&mut h, output.path());
+        paste(&mut h, LINK);
+        h.step();
+        assert!(h.state().running());
+        assert_eq!(h.state().rows().len(), 1);
+        assert_eq!(h.state().rows()[0].status, Status::Converting);
+        assert!(h.query_by_label("Your Onshape API keys").is_none());
+        wait_for_conversion(&mut h);
+        assert_eq!(h.state().rows().len(), 1);
+        assert!(h.state().rows()[0]
+            .output
+            .as_ref()
+            .unwrap()
+            .starts_with(output.path()));
+        assert!(h.state().rows()[0].report.is_some());
+        assert_bundle_survives_exit(h, output.path());
+    }
+
+    #[test]
+    fn saving_without_a_pending_link_focuses_the_account_link_field() {
+        let mut h = window(false);
+        h.state_mut()
+            .set_clipboard_for_test(|| (vec![], LINK.into()));
+        h.state_mut().preview_onshape_saved("Test designer");
+        h.run_steps(4);
+        let field = h.get_by_label("Paste your Onshape Part Studio link");
+        assert_eq!(field.accesskit_node().value().as_deref(), Some(LINK));
+        assert!(field.accesskit_node().is_focused());
+        assert!(h.query_by_label("Your Onshape API keys").is_none());
+        assert!(h.state().rows().is_empty());
+    }
+
+    #[test]
+    fn disconnected_paste_keeps_the_link_and_continues_after_save() {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(false);
+        h.state_mut().set_out_dir(output.path().into());
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), fetch);
+        paste(&mut h, LINK);
+        h.run_steps(3);
+        assert!(h.query_by_label("Your Onshape API keys").is_some());
+        assert!(h.state().rows().is_empty());
+        h.state_mut().preview_onshape_saved("Test designer");
+        h.step();
+        assert_eq!(h.state().rows().len(), 1);
+        assert!(h.state().running());
+        h.run_steps(2);
+        assert!(h.query_by_label("Your Onshape API keys").is_none());
+        assert!(h.query_by_label("Onshape connected ✓").is_some());
+        wait_for_conversion(&mut h);
+        assert_bundle_survives_exit(h, output.path());
+    }
+
+    #[test]
+    fn opening_from_the_connected_dialog_closes_it_and_starts_a_main_job() {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(true);
+        h.state_mut().set_out_dir(output.path().into());
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), fetch);
+        h.get_by_label("Onshape connected ✓").click_accesskit();
+        h.run_steps(3);
+        // The dialog gives its empty link editor keyboard focus.
+        paste(&mut h, LINK);
+        h.run_steps(3);
+        h.get_all_by_label("Open")
+            .find(|node| !node.accesskit_node().is_disabled())
+            .unwrap()
+            .click_accesskit();
+        h.step();
+        h.run_steps(2);
+        assert!(h
+            .query_by_label("Connected to Onshape as Test designer")
+            .is_none());
+        assert_eq!(h.state().rows().len(), 1);
+        wait_for_conversion(&mut h);
+        assert_bundle_survives_exit(h, output.path());
+    }
+
+    #[test]
+    fn native_clipboard_files_take_precedence_over_text_and_paths_queue_like_drops() {
+        let mut h = window(false);
+        let input = fixture("generated_unit_cube.f3d");
+        let native = input.clone();
+        h.state_mut()
+            .set_clipboard_for_test(move || (vec![native.clone()], LINK.into()));
+        h.input_mut().events.push(egui::Event::Key {
+            key: egui::Key::V,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                command: true,
+                ctrl: true,
+                ..Default::default()
+            },
+        });
+        h.step();
+        h.run_steps(3);
+        assert!(h.query_by_label("Your Onshape API keys").is_none());
+        assert!(h
+            .query_by_label_contains("generated_unit_cube.f3d")
+            .is_some());
+        let mut h = window(false);
+        paste(
+            &mut h,
+            &format!(
+                "{}\n{}",
+                input.display(),
+                fixture("onshape-revolve.onshape-bundle").display()
+            ),
+        );
+        h.run_steps(3);
+        assert!(h
+            .query_by_label_contains("generated_unit_cube.f3d")
+            .is_some());
+        assert!(h
+            .query_by_label_contains("onshape-revolve.onshape-bundle")
+            .is_some());
+    }
+
+    #[test]
+    fn https_paste_asks_before_downloading_then_converts_in_the_main_list() {
+        let output = tempfile::tempdir().unwrap();
+        let network = Arc::new(MockNetwork::default());
+        let mut h = window(false);
+        h.state_mut().set_out_dir(output.path().into());
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(network.clone(), fetch);
+        paste(&mut h, "https://example.test/generated_unit_cube.f3d");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while h.query_by_label("Download").is_none() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+            h.step();
+        }
+        assert_eq!(*network.methods.lock().unwrap(), vec!["HEAD"]);
+        assert!(h.query_by_label_contains("from example.test?").is_some());
+        h.get_by_label("Download").click_accesskit();
+        h.step();
+        wait_for_conversion(&mut h);
+        assert_eq!(*network.methods.lock().unwrap(), vec!["HEAD", "GET"]);
+        assert_eq!(h.state().rows().len(), 1);
+        assert!(h.state().rows()[0].report.as_ref().unwrap()["ok"]
+            .as_bool()
+            .unwrap());
+    }
+
+    #[test]
+    fn unsupported_paste_gives_a_clear_notice() {
+        let mut h = window(false);
+        paste(&mut h, "https://example.test/share/123");
+        h.run_steps(3);
+        assert!(h
+            .query_by_label("Dutchman can't open this link. Download the file and drop it here.")
+            .is_some());
+    }
+
+    #[test]
+    fn an_onshape_url_dropped_as_text_starts_the_same_main_job() {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(true);
+        h.state_mut().set_out_dir(output.path().into());
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), fetch);
+        h.input_mut().dropped_files.push(egui::DroppedFile {
+            name: LINK.into(),
+            mime: "text/uri-list".into(),
+            ..Default::default()
+        });
+        h.step();
+        assert_eq!(h.state().rows().len(), 1);
+        wait_for_conversion(&mut h);
+        assert_bundle_survives_exit(h, output.path());
+    }
+}
+
 /// The card names the feature the history is on and says when SolidCraft measures it.
 /// With `DUTCHMAN_GUI_SCREENSHOTS`, it also saves both themes, plain and measured.
 #[cfg(feature = "test-support")]
@@ -4272,5 +4640,57 @@ fn report_flow_case_screenshots() {
     } else {
         std::fs::write(dir.join("MEASUREMENTS.md"), measurements).unwrap();
         std::fs::write(dir.join("INDEX.md"), index).unwrap();
+    }
+}
+
+fn many_results_onshape_harness(
+    out: &Path,
+    theme: ThemePreference,
+    connected: bool,
+) -> Harness<'static, App> {
+    let size = dutchman_gui::FIT_SIZE;
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(size[0], size[1]))
+        .build_eframe(|cc| test_app(cc));
+    h.ctx.set_theme(theme);
+    h.state_mut()
+        .preview_onshape(connected.then_some("Test designer"));
+    let folder = out.join("Designs");
+    std::fs::create_dir_all(&folder).unwrap();
+    for name in [
+        "generated_unit_cube.f3d",
+        "synthetic_cube.ipt",
+        "solidworks_cube.sldprt",
+    ] {
+        std::fs::copy(fixture(name), folder.join(name)).unwrap();
+    }
+    h.state_mut().add_inputs([folder]);
+    h.state_mut().set_out_dir(out.join("converted"));
+    h.state_mut().set_verify(false);
+    h.run_steps(8);
+    h.get_by_label("Advanced").click_accesskit();
+    h.run_steps(8);
+    convert(&mut h);
+    h.get_by_label("Change…").click_accesskit();
+    h.run_steps(8);
+    h
+}
+
+#[test]
+fn connected_onshape_keeps_results_in_their_own_column() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let out = tempfile::tempdir().unwrap();
+        let mut h = many_results_onshape_harness(out.path(), theme, true);
+        assert_eq!(h.state().rows().len(), 3);
+        assert!(!h.state().page_scrolls());
+        assert!(h
+            .query_by_label("Paste your Onshape Part Studio link")
+            .is_none());
+        let convert = h.get_by_label("Convert").rect();
+        assert!(h.get_by_label("Open diagnostics folder").rect().bottom() <= convert.top());
+        h.get_by_label("Onshape connected ✓").click_accesskit();
+        h.run_steps(4);
+        h.get_by_label("Paste your Onshape Part Studio link");
+        assert!(!h.state().page_scrolls());
     }
 }

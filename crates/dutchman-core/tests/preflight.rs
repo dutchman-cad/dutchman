@@ -25,7 +25,7 @@ fn fixtures_use_only_input_and_build_facts() {
         if !path.is_file()
             || path
                 .extension()
-                .is_none_or(|ext| ext == "md" || ext == "py")
+                .is_none_or(|ext| ext == "md" || ext == "py" || ext == "rs")
         {
             continue;
         }
@@ -182,4 +182,40 @@ fn an_expired_planning_deadline_stops_before_opening_the_input() {
     assert_eq!(prepared.scan.readable, Readability::Unknown);
     assert_eq!(prepared.scan.bytes_read, 0);
     assert!(prepared.model.is_none());
+}
+
+#[cfg(feature = "onshape")]
+#[test]
+fn onshape_planning_uses_the_bundle_reader_and_preserves_budget_unknowns() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/onshape-plate-fillet.onshape-bundle");
+    let budget = Budget {
+        max_time: Duration::from_secs(30),
+        ..Budget::default()
+    };
+    let prepared = dutchman_core::preflight::prepare(&path, budget, Instant::now());
+    assert_eq!(prepared.scan.readable, Readability::Readable);
+    assert!(prepared.model.is_some());
+    assert!(prepared.scan.feature_count.unwrap() > 1);
+    for (budget, reason) in [
+        (
+            Budget {
+                max_features: 1,
+                ..budget
+            },
+            Reason::FeatureBudget,
+        ),
+        (
+            Budget {
+                max_bytes: std::fs::metadata(&path).unwrap().len() * 2,
+                ..budget
+            },
+            Reason::ResourceLimit,
+        ),
+    ] {
+        let prepared = dutchman_core::preflight::prepare(&path, budget, Instant::now());
+        assert_eq!(prepared.stop_reason, Some(reason));
+        assert_eq!(prepared.scan.readable, Readability::Unknown);
+        assert!(prepared.model.is_none());
+    }
 }

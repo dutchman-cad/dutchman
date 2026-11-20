@@ -171,9 +171,11 @@ pub(super) fn map(
         subject: String::new(),
         edges: Vec::new(),
         angle_chamfer: false,
+        unequal: None,
         face: Some(proof),
         extra: None,
         trimmed: false,
+        path: false,
     });
     Ok((key, json!({"type": "all"})))
 }
@@ -423,6 +425,8 @@ impl EntryFace {
             face: Some(self.proof),
             extra: None,
             trimmed: false,
+            path: false,
+            unequal: None,
         }
     }
 }

@@ -227,7 +227,13 @@ jobs:
       # Two compile jobs at a time keep the build within the ARM runner's memory; with one per
       # core it is shut down while compiling the desktop app and web crates.
       CARGO_BUILD_JOBS: "2"
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ github.workspace }}/scripts/ci-linker.py
+      DUTCHMAN_LINK_TIMES: ${{ github.workspace }}/link-times
     steps:
+      - name: Install LLD
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lld
       - uses: actions/checkout@v7
       - name: Check free disk space
         run: bash scripts/ci-disk-space.sh
@@ -238,6 +244,16 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --locked --features dutchman-gui/test-support
+      - name: Record link durations
+        if: always()
+        run: python3 scripts/ci-linker.py --summary "$DUTCHMAN_LINK_TIMES" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: arm-link-times-${{ github.job }}
+          path: ${{ github.workspace }}/link-times
+          if-no-files-found: ignore
+          retention-days: 7
 
   # Retry test-arm after a timeout or runner shutdown; never retry a cancelled workflow or test failure.
   test-arm-again:
@@ -256,6 +272,8 @@ jobs:
       # Two compile jobs at a time keep the build within the ARM runner's memory; with one per
       # core it is shut down while compiling the desktop app and web crates.
       CARGO_BUILD_JOBS: "2"
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ github.workspace }}/scripts/ci-linker.py
+      DUTCHMAN_LINK_TIMES: ${{ github.workspace }}/link-times
     steps:
       - name: Retry only after a timeout or runner shutdown
         env:
@@ -279,6 +297,10 @@ jobs:
             echo "test (ubuntu-24.04-arm) failed on its own; not retried." >&2
             exit 1
           fi
+      - name: Install LLD
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lld
       - uses: actions/checkout@v7
       - name: Check free disk space
         run: bash scripts/ci-disk-space.sh
@@ -288,6 +310,16 @@ jobs:
           shared-key: test-ubuntu-24.04-arm-debug
           save-if: false
       - run: cargo test --workspace --locked --features dutchman-gui/test-support
+      - name: Record link durations
+        if: always()
+        run: python3 scripts/ci-linker.py --summary "$DUTCHMAN_LINK_TIMES" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: arm-link-times-${{ github.job }}
+          path: ${{ github.workspace }}/link-times
+          if-no-files-found: ignore
+          retention-days: 7
 
   # Docs-only changes skip the build jobs above; the tests that read README.md and docs/formats.md
   # still check them against the program.
@@ -490,7 +522,7 @@ jobs:
       - name: Replay histories in SolidCraft
         run: |
           export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
-          cargo test --locked -p dutchman-solidcraft --test history --test assembly
+          cargo test --locked -p dutchman-solidcraft --test history --test assembly --test topological_edges
 
   # Share the Linux tools; queue groups run only the small placement smoke checks.
   placements:

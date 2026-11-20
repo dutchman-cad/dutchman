@@ -59,6 +59,7 @@ the shared Linux CLI/server programs and run the small railcore and robot-arm pl
 Windows, macOS, ARM64, Rust 1.88, WebAssembly, SolidCraft round trips (including 0.18.2),
 Voron placements and Docker images run after merge on main, nightly, on tags and by hand.
 Platform-only breaks are caught on main right after merge instead of before.
+ARM CI links test programs with LLD and records link durations in the job summary.
 The required `ci-result` enforces the Linux set before merge and the full matrix elsewhere;
 unexpected skips fail it. A failing main check opens or updates one main CI issue, which closes
 when a newer main run is green. Reports follow the newest completed push run of this workflow;

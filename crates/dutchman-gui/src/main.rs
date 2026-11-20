@@ -92,7 +92,7 @@ fn main() -> ExitCode {
         }
     };
     let initialized = ready.clone();
-    let result = eframe::run_native(
+    let result = dutchman_gui::native_paste::run(
         dutchman_gui::SETTINGS_NAME,
         dutchman_gui::options(),
         Box::new(move |cc| {

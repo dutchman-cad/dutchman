@@ -9,6 +9,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+base64 = { version = "0.22", optional = true }
+flate2 = { version = "1", optional = true }
 cadmpeg-core.workspace = true
 cadmpeg-codec-f3d.workspace = true
 cadmpeg-ir.workspace = true
@@ -17,6 +19,7 @@ roxmltree.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
+zip = { workspace = true, optional = true }
 
 [features]
 # Every input format but FreeCAD. A build may name only the formats it reads (as a
@@ -24,7 +27,8 @@ thiserror.workspace = true
 default = ["formats", "source-reader"]
 # Capability-based reader API for sandboxed front ends.
 source-reader = []
-formats = ["fusion", "inventor", "solidworks", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz"]
+formats = ["fusion", "inventor", "solidworks", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz", "onshape"]
+onshape = ["step", "dep:zip", "dep:base64", "dep:flate2"]
 fusion = ["cadmpeg-registry/f3d"]
 inventor = ["cadmpeg-registry/inventor"]
 solidworks = ["cadmpeg-registry/sldprt"]

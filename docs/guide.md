@@ -1,11 +1,86 @@
 # Getting started
 
+Onshape history dependencies follow consumed operands in their stored order. Deterministic
+body, face and edge selections need a unique earlier producer proved by rollback
+transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+Every present scope query list is validated, while an empty list keeps implicit scope.
+Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
+A record the reader cannot convert becomes a named loss and the remaining records continue.
+Unreadable or oversized members use `onshape/member.not-supported`; malformed features
+remain Native with `onshape/history.not-supported`. Container admission and exhausted
+caller resource budgets can still stop conversion. Inspect the reported losses before
+relying on editable history.
+Open, one-sided thin walls retain directed left/right data in the reader; writing
+those sides is not supported yet, so the final STEP geometry remains.
+
+Onshape sketch constraint losses name the source constraint kind and why it could not
+be mapped. The solved sketch geometry remains; inspect these losses even when body
+verification succeeds. Origin coincidences and midpoint construction carriers retain
+editable relations. See [Onshape bundles](onshape.md).
+
+The desktop app also accepts pasted files, paths, Onshape links, and confirmed HTTPS
+downloads; see [pasting files and links](desktop.md#paste-files-and-links).
+**Onshape connected ✓** opens the account dialog with the Part Studio link field.
+This adds no CLI flags, MCP tools, or report fields.
+
+Desktop Onshape jobs keep the `.onshape-bundle` beside the `.sc`; **Show bundle**
+reveals it and **Send to Dutchman** opens private report review with it attached.
+To share a document with us, send the .onshape-bundle; never send your keys.
+
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
 
 If a reader supplies only CADIR v11 design history, the final geometry is kept and
 the report says its ordered selections and evaluation states are not mapped yet.
 See [the port audit](cadir-v11.md) for the pinned reader contract.
+
+Local Onshape bundles (`.onshape-bundle`) convert through the same command:
+`dutchman convert bracket.onshape-bundle bracket.sc`. The reader works offline on
+one Part Studio, including sketch-only bundles without STEP. Supported history includes
+built-in-plane sketches, tangent chains, construction-line revolve axes,
+counterbore/countersink holes, midpoint relations, assigned variables and symmetric
+blind extrudes. Variables become SolidCraft parameters that keep sketch dimensions,
+extrude depths and revolve angles driven. Up-to-next extents map when exact intersections with stored input faces prove coverage
+and the first termination over the complete closed profile. Face/cap sketch attachments
+need a stored complete frame; unresolved cases report `onshape/history.not-supported`.
+Up-to-face extrudes retain their selected planar input face. A face
+at a slant to the sketch needs SolidCraft 0.44 or newer as the target. Older targets
+retain a named loss and the final geometry. Unresolved selections and unsupported
+expressions retain named losses.
+Ellipses and elliptical arcs keep editable geometry. Variables keep their units and
+expressions, including when conversion falls back to STEP with no usable sketch.
+Thin walls map from stored thicknesses, side and direction controls, and a proved
+sole input-body selection for modifying operations. Missing or contradictory controls
+retain the final STEP geometry with `onshape/extrude.thin-not-supported`.
+Repeated ellipse carriers use solved chord endpoints and intersection records to retain distinct trimmed regions.
+Asymmetric chamfers explain the missing input reference-face ordering.
+Unproven open dividers and exhausted cumulative region-recovery budgets produce
+`onshape/history.not-supported` before writing, including with verification off.
+Simplify the sketch or split the bundle when the recovery budget is exhausted;
+the final STEP shape remains available. Native symmetric distances and parameter
+fallback defaults stay unchanged.
+
+Onshape quantities need a dimensioned expression or explicit supported units.
+Malformed or repeated Boolean operands, unresolved latest variable bindings,
+face/cap sketch attachments without a stored complete frame, up-to-next extents without
+exact stored-target coverage, ambiguous directed region boundaries
+and missing required hole facts retain `onshape/history.not-supported` with a specific
+reason. A dropped sketch dimension instead uses
+`onshape/sketch.constraint-not-supported`, preserving the solved geometry.
+Blind holes need an explicit unique tip angle; angled bottoms also need Boolean
+`depthToTip`. Hole standards need explicit hand and modeled/cosmetic facts.
+Inspect these losses before relying on editable history; the final STEP shape remains.
+
+See [Onshape](onshape.md) for editable features, required rollback
+responses, and the STEP fallback when a feature is not supported yet.
+Bundles marked `consistent: false` are refused; fetch again or use a version link.
+Older v1 bundles without consistency metadata still convert. Default-plane sketches
+and explicit sketch-region extrudes also accept the API's compressed query records;
+ambiguous boundaries retain a specific history loss and the final STEP geometry.
+Custom FeatureScript features name why history stops: bundle format 1 lacks complete
+per-feature body geometry to prove a frozen step. Use the retained final STEP shape;
+fetching another v1 bundle does not add the missing shapes. Later body-building features
+remain blocked.
 
 ## Public share links
 
@@ -468,6 +543,11 @@ without looking for or launching an installed SolidCraft CLI.
 
 [Feature history and the SolidCraft check](history.md)
 
+Contour flanges map when cadmpeg supplies an open sketch chain of lines and arcs, a blind
+sweep along the sketch normal, and material on one side. Their thickness, bend radius and
+supplied K-factor become a sheet rule. Unsupported contour forms keep the original geometry
+and report the reason; see [sheet-metal history](history.md#sheet-metal).
+
 A trimmed profile region, including a revolve's, is selected by a point inside its boundary. When a
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
@@ -518,6 +598,22 @@ has not named". Older targets keep the previous mapping.
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
+
+For SolidCraft 0.44 and newer, sweep paths may select a connected open chain of proven input
+edges on one earlier body. Missing source geometry, ambiguous matches, topological guide rails, and older
+targets keep the original geometry and report a specific history blocker. Closed sweep
+paths, including loops assembled from open edges, still require a proven start and traversal
+direction and remain refused. An unavailable exact curve measurement blocks only the feature
+that needs it; earlier straight-edge blends remain editable. These proofs
+require a SolidCraft replay for body-edge selections; `--no-verify` cannot establish those
+edges. A stored sketch wire instead resolves to its owning earlier sketch when every edge
+matches one entire mapped curve, including the midpoint and length of an arc.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
 
 
 Offset datum planes need no building feature when their support resolves or all their
@@ -780,6 +876,35 @@ existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
 
+## Fetch your own Onshape document
+
+`dutchman onshape fetch <document-url> --out snapshot.onshape-bundle --max-calls 50`
+uses the keys saved by `dutchman onshape login` (or Connect Onshape in the app), or `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` for scripts, and prints the HTTP
+attempt count. `--version VERSION_ID` selects an immutable version; `--json` prints
+`dutchman.onshape-fetch/1`. This fetcher saves API responses without converting CAD.
+To use OAuth instead, pass `--bearer-token-file PATH` (a private UTF-8 file, mode 600 on
+Unix), or set `DUTCHMAN_ONSHAPE_BEARER_TOKEN` in the process environment. The file wins
+if both token sources are set. Remove API-key environment variables and saved keys
+(`dutchman onshape logout`) first: mixed authentication is refused before any request.
+Never pass the token value in command arguments. The desktop's **Use bearer token file**
+option and MCP's `bearer_token_file` use the same authentication. HTTP 401/403 means the
+token expired or lacks access; obtain a fresh token with read access, replace it, and retry.
+Token files are opened once on Unix, with symlinks and special files refused and ownership
+and permissions checked on that handle. On Windows, file privacy cannot be checked yet:
+clear the token file selection and use `DUTCHMAN_ONSHAPE_BEARER_TOKEN` instead.
+Credentials stay out of logs and reports, including `--json`.
+Part Studios include features, stored sketch placements, needed input topology,
+variables/configuration, and final STEP; assemblies include their same-document
+Part Studios. Version links use version paths throughout. Workspace links pin supported reads to a microversion,
+use workspace paths for STEP/variables, and recheck the head before writing. A
+change triggers one refetch; a second change stops with “the document changed while
+fetching; try again, or use a version link”. Successful manifests record per-file
+path kinds/microversions and `consistent: true`. See [Onshape](onshape.md#fetching-a-document) for keys,
+limits, caching, and privacy. Each uncached Part Studio now needs one additional
+sketch-information call. Fetch older bundles again when a face-attached sketch
+reports a missing attachment frame; conversion keeps the final shape with
+`onshape/history.not-supported` until that frame is stored.
+
 Meeting 3D curve endpoints do not create relations without a decoded source relation.
 
 Decoded 3D sketches retain supported neutral joins, dimensions, axis directions
@@ -848,3 +973,12 @@ unknown until its contents identify a reader.
 
 Library planning outcomes used by preflight keep empty output ids with
 `not_written`; preflight saves no design.
+
+## Orient a Y-up design
+
+Use `--stand-up` with `convert` or `convert-all` to rotate a Y-up design +90°
+about +X, so its +Y axis becomes SolidCraft's +Z axis. Source axes are preserved
+by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
+`convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
+cannot be combined. This changes the saved design's orientation, while history
+checks use the source coordinates.

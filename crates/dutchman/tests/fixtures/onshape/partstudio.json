@@ -1,0 +1,9 @@
+{
+  "sourceMicroversion":"333333333333333333333333",
+  "serializationVersion": "1.2.11", "libraryVersion": 2500, "rollbackIndex": 3,
+  "features": [
+    {"btType":"BTMSketch-151","featureType":"newSketch","featureId":"sketch","name":"Sketch","entities":[{"btType":"BTMSketchCurveSegment-155","entityId":"line","geometry":{"btType":"BTCurveGeometryLine-117","pntX":0,"pntY":0,"dirX":1,"dirY":0},"startParam":0,"endParam":0.02}],"constraints":[]},
+    {"btType":"BTMFeature-134","featureType":"extrude","featureId":"extrude","parameters":[{"btType":"BTMParameterQueryList-148","parameterId":"entities","queries":[{"btType":"BTMIndividualSketchRegionQuery-140","featureId":"sketch"}]},{"btType":"BTMParameterQuantity-147","parameterId":"depth","expression":"20 mm"}]},
+    {"btType":"BTMFeature-134","featureType":"fillet","featureId":"fillet","parameters":[{"btType":"BTMParameterQueryList-148","parameterId":"entities","queries":[{"btType":"BTMIndividualQuery-138","deterministicIds":["edgeA"]}]},{"btType":"BTMParameterQuantity-147","parameterId":"radius","expression":"1 mm"}]}
+  ], "featureStates": {}, "defaultFeatures": []
+}

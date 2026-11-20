@@ -1,5 +1,32 @@
 # The MCP server
 
+Onshape history dependencies follow consumed operands in their stored order. Deterministic
+body, face and edge selections need a unique earlier producer proved by rollback
+transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+Every present scope query list is validated, while an empty list keeps implicit scope.
+Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
+A record the reader cannot convert becomes a named loss and the remaining records continue.
+Unreadable or oversized members use `onshape/member.not-supported`; malformed features
+remain Native with `onshape/history.not-supported`. Container admission and exhausted
+caller resource budgets can still stop conversion. Inspect the reported losses before
+relying on editable history.
+Open, one-sided thin walls retain directed left/right data in the reader; writing
+those sides is not supported yet, so the final STEP geometry remains.
+
+Onshape sketch constraint losses name the source constraint kind and why it could not
+be mapped. The solved sketch geometry remains; inspect these losses even when body
+verification succeeds. Origin coincidences and midpoint construction carriers retain
+editable relations. See [Onshape bundles](onshape.md).
+
+The desktop app also accepts pasted files, paths, Onshape links, and confirmed HTTPS
+downloads; see [pasting files and links](desktop.md#paste-files-and-links).
+**Onshape connected ✓** opens the account dialog with the Part Studio link field.
+This adds no CLI flags, MCP tools, or report fields.
+
+Desktop Onshape jobs keep the `.onshape-bundle` beside the `.sc`; **Show bundle**
+reveals it and **Send to Dutchman** opens private report review with it attached.
+To share a document with us, send the .onshape-bundle; never send your keys.
+
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
 
@@ -24,6 +51,50 @@ complete bounds and derived placement; missing measurements keep the refusal. Re
 only by centroids are refused because a centroid may lie outside its own region. One 120 s
 feature budget covers region discovery (including `sketch.inspect`), mapping and all candidate
 evaluations; late results keep the refusal.
+
+## Offline Onshape inputs
+
+`inspect`, `convert` and `convert_all` accept `.onshape-bundle` files in builds with
+the `onshape` input feature (included in release builds). Use the ordinary local
+input/output paths; these tools do not fetch documents or need credentials. One
+Part Studio converts with CADIR history and the existing writer/verification.
+Missing or unsupported feature selections produce named losses and preserve the
+bundle's STEP geometry. Fillets and chamfers (tangent chains included) need a SolidCraft
+0.40 or newer target. See [Onshape](onshape.md) for the supported subset.
+Ellipses and elliptical arcs map through the shared sketch writer. Variables retain
+units, expressions and sketch/extrude dependencies, also alongside a STEP fallback.
+Thin extrudes map stored thicknesses, side and direction controls after proving the
+selected input-body scope. Missing controls retain final STEP geometry with
+`onshape/extrude.thin-not-supported`. Repeated ellipse trims use intersection
+records and solved chord endpoints; outside-face witnesses recover complete closed
+source loops. All unresolved thin construction retains `onshape/extrude.thin-not-supported`;
+asymmetric chamfers report missing input reference-face ordering.
+Unproven open dividers and exhausted cumulative region-recovery budgets produce
+`onshape/history.not-supported` before writing, including with verification off.
+Simplify the sketch or split the bundle when the recovery budget is exhausted;
+the final STEP shape remains available. Native symmetric distances and parameter
+fallback defaults stay unchanged.
+
+Onshape quantities need a dimensioned expression or explicit supported units.
+Malformed or repeated Boolean operands, unresolved latest variable bindings,
+face/cap sketch attachments without a stored complete frame, up-to-next extents without
+exact stored-target coverage, ambiguous directed region boundaries
+and missing required hole facts retain `onshape/history.not-supported` with a specific
+reason. A dropped sketch dimension instead uses
+`onshape/sketch.constraint-not-supported`, preserving the solved geometry.
+Blind holes need an explicit unique tip angle; angled bottoms also need Boolean
+`depthToTip`. Hole standards need explicit hand and modeled/cosmetic facts.
+Inspect these losses before relying on editable history; the final STEP shape remains.
+
+An explicitly inconsistent bundle is refused with a request to fetch it again or
+use a version link. Legacy v1 bundles without consistency metadata remain readable.
+Default-plane frames and explicit sketch-region boundaries can be resolved from
+compressed REST query records; deterministic IDs alone are insufficient. The same
+history counts and source-geometry checks apply.
+Custom FeatureScript features report `onshape/history.not-supported`, naming the feature
+and the missing complete per-feature body geometry needed to prove a frozen step.
+Bundle v1 retains only the final STEP shape, so later body-building features remain
+blocked. Use that retained shape; fetching v1 again does not provide frozen steps.
 
 Local CLI and desktop progress can name the current timeline feature, such as
 “Feature 29 of 37 · Extrude 1”, and explain when measurement takes longer.
@@ -153,8 +224,10 @@ map on an unchanged simple polygonal base, including L-shaped and notched sheets
 the actual straight profile edge. Curved, open, crossing, disconnected, or collinear base edges
 and base profiles with holes or partial regions remain blocked for attachments.
 Unsupported flange dimensions or selections, and hems,
-appear as the first blocked feature's reason; the conversion keeps the geometry. K-factor and
-relief use the target rule defaults.
+appear as the first blocked feature's reason; the conversion keeps the geometry. Contour
+flanges map from an open chain of sketch lines and arcs with one blind normal sweep and
+material on either side; their thickness, bend radius and supplied K-factor form a rule.
+Other contour forms report their specific reason. Relief settings use the target defaults.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain
@@ -439,6 +512,22 @@ Constant-radius fillets and equal-setback chamfers whose proven input edges span
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
 
+For SolidCraft 0.44 and newer, sweep paths may select a connected open chain of proven input
+edges on one earlier body. Missing source geometry, ambiguous matches, topological guide rails, and older
+targets keep the original geometry and report a specific history blocker. Closed sweep
+paths, including loops assembled from open edges, still require a proven start and traversal
+direction and remain refused. An unavailable exact curve measurement blocks only the feature
+that needs it; earlier straight-edge blends remain editable. These proofs
+require a SolidCraft replay for body-edge selections; `--no-verify` cannot establish those
+edges. A stored sketch wire instead resolves to its owning earlier sketch when every edge
+matches one entire mapped curve, including the midpoint and length of an arc.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
+
 FreeCAD fillets and chamfers use their base feature's stored edges only when the earlier
 result and each pick on SolidCraft's replay are proven. Otherwise `history.features[].reason`
 says why the edge selection is refused, and conversion keeps the original geometry.
@@ -491,8 +580,8 @@ change replay order: the neutral ordinal controls it.
 |---|---|---|---|
 | `inspect` | `input`, and optionally `project`, `search` | `dutchman.inspect/1` | nothing |
 | `contents` | `input`, and optionally `project`, `search` | `dutchman.contents/1` | nothing |
-| `convert` | `input`, `output` (optional for `dry_run`), and optionally `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
-| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
+| `convert` | `input`, `output` (optional for `dry_run`), and optionally `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `stand_up`, `no_stand_up`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
+| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `stand_up`, `no_stand_up`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
 | `formats` | none | `dutchman.formats/1` | nothing |
 | `read_report` | `input` (saved report or its design) | `dutchman.convert/1` plus `loss_groups`, with private local names and paths | nothing |
 
@@ -521,9 +610,15 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
 | `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.44), including when `verify` is false. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
+| `stand_up` | boolean | Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis (+90° about +X). Default false. |
+| `no_stand_up` | boolean | Keep source axes without standing Y-up models up along +Z (default). |
 | `overwrite` | boolean | Replace an existing `.sc` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
 | `project` | string | Absolute path of the project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an Inventor `.ipj`, else two folders up; for `convert_all`, each folder given. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `search` | array of strings | Absolute paths of more folders to search, with their subfolders, for part files the project folder does not hold. |
+
+The orientation options `stand_up` and `no_stand_up` are optional booleans on
+`convert` and `convert_all`. Both default to false, preserving the source axes.
+Set only one to true; combining them returns an error asking you to choose one orientation.
 
 An unknown argument is refused (`unknown argument bogus`), as is a missing required one
 (`output is required`).
@@ -1027,6 +1122,58 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+Onshape up-to-next extents use exact intersections with stored input faces to prove
+coverage and first termination over closed profile boundaries. Face/cap attachments
+need stored complete frames. Thin extrudes need stored thickness, side and direction
+controls plus a proved input-body scope. Missing or contradictory data retains the
+existing named loss and final STEP geometry; region holes use closed-boundary
+containment and closed-form line/conic intersections, never area or finite samples.
+
+## Fetch an Onshape snapshot
+
+`onshape_fetch` accepts `document_url` (required), `out` (optional file path),
+`version` (optional immutable Onshape version ID), `bearer_token_file` (optional private
+local OAuth token file path), and `max_calls` (optional HTTP attempt budget, default 50). It advertises input and output JSON schemas and returns
+`dutchman.onshape-fetch/1` in text and structured content, with `isError` on failure.
+API keys remain the default and come from the server's local environment or saved
+connection. Alternatively, use `bearer_token_file` or the server process environment's
+`DUTCHMAN_ONSHAPE_BEARER_TOKEN`; the file takes precedence. The token file contains only
+the token and must be private (mode 600 on Unix), regular, UTF-8, and at most 16 KiB.
+Unix checks ownership and permissions on the same open handle used to read the token,
+refusing symlinks and special files. On Windows, token files are refused because privacy
+cannot be checked yet; omit `bearer_token_file` and use the server environment variable.
+Never include credential values in tool arguments or chat. Remove API-key environment
+variables and saved keys (`dutchman onshape logout`) before using a token; mixed
+credentials return `onshape/auth` with zero calls. HTTP 401/403 explains that the token
+expired or lacks access: obtain a fresh token with read access, replace it, and retry.
+Tokens and remote error bodies stay out of both text and structured reports. This tool uses Onshape's network API and your own
+allowance and writes a private bundle/cache. Nothing is sent to Dutchman.
+
+Part Studios include features, stored sketch placements, input topology, optional
+variables/configuration, and final STEP; same-document assembly references are
+fetched too. Version URLs use version paths. Workspace URLs use microversion paths where supported and
+workspace paths for STEP/variables, followed by a final head check. One change
+triggers a refetch; a second returns `onshape/changed`. Successful bundle manifests
+record `consistent: true` and per-file path kinds/microversions. All attempts share
+the tool's call budget. See [Onshape](onshape.md#fetching-a-document) for cache and privacy details.
+Capturing `sketches.json` costs one additional uncached call per Part Studio. Its
+stored frames let face-attached sketches map; older bundles without those frames
+retain `onshape/history.not-supported` and final geometry. Fetch them again to
+capture the placement.
+
+Offline Onshape bundles can contain sketches alone without a STEP export. Resolved
+extrusion-cap sketches, tangent chains, counterbore/countersink hole locations, sketch
+construction-line revolve axes, midpoint relations, assigned variables and symmetric
+blind extrudes use the shared converter. Variables become SolidCraft parameters that keep
+sketch dimensions, extrude depths and revolve angles driven; other values using them are
+written evaluated with `onshape/history.variable-evaluated`. Suppressed features do not
+produce variable-loss reports. Up-to-next ends resolve to the single planar
+input face reached by the whole profile; up-to-face ends retain their selected face.
+Extruding to or from a planar face at a slant to the sketch needs SolidCraft 0.44 or
+newer as the target; older targets retain a named loss and the final geometry.
+Unsupported expressions and unresolved external origin references retain named losses;
+see [Onshape](onshape.md).
 
 The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
 and **GitHub issue** (a public issue under the user’s GitHub name).

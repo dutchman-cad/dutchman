@@ -107,6 +107,21 @@ original geometry with the reason that closed input circles need SolidCraft 0.44
 or newer. This requires a SolidCraft CLI to replay the history; `--no-verify` cannot
 prove blend edges. Final-body edge numbers are never substituted for base-feature edges.
 
+Sweep paths selected as connected open chains of topological edges map for SolidCraft 0.44 and newer
+when every edge belongs to one earlier stored dependency result. A wire owned by an
+earlier sketch resolves to that sketch only when every selected edge matches an entire
+mapped curve, including an arc's midpoint, tangent and length. Other paths must match
+the input geometry on replay, in source order on one rebuilt body. Topological
+guide rails, closed paths without a proven start and traversal direction, paths without
+an earlier stored result, and unsupported curves remain named
+blockers. Older targets keep the original geometry with a version reason.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
+
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain
 available; a dependent magnitude parameter drives each negative distance in SolidCraft.

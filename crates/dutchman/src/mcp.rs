@@ -150,6 +150,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
             };
             let (report, schema) = match name {
                 "convert" => (convert(arguments), crate::json::CONVERT),
+                "onshape_fetch" => (onshape_fetch(arguments), crate::onshape::SCHEMA),
                 "inspect" => (inspect(arguments), crate::json::INSPECT),
                 "contents" => (contents(arguments), crate::json::CONTENTS),
                 "read_report" => (read_report(arguments), crate::json::CONVERT),
@@ -251,6 +252,8 @@ fn option_properties() -> Map<String, Value> {
             "minimum": 1,
             "description": "Seconds each SolidCraft check may run before the history is written unverified (default 120).",
         },
+        "stand_up": {"type": "boolean", "default": false, "description": "Rotate Y-up models +90 degrees about +X so +Y becomes +Z. Cannot be combined with no_stand_up."},
+        "no_stand_up": {"type": "boolean", "default": false, "description": "Preserve source axes (the default). Cannot be combined with stand_up."},
         "project": project_property(),
         "search": search_property(),
     });
@@ -274,6 +277,57 @@ fn search_property() -> Value {
         "type": "array",
         "items": {"type": "string"},
         "description": "Absolute paths of more folders to search, with their subfolders, for part files the project folder does not hold.",
+    })
+}
+
+fn onshape_fetch(args: &Map<String, Value>) -> Result<Value, String> {
+    let parsed = (|| -> Result<crate::onshape::FetchOptions, String> {
+        only(
+            args,
+            &[
+                "document_url",
+                "out",
+                "version",
+                "max_calls",
+                "bearer_token_file",
+            ],
+        )
+        .map_err(|_| {
+            "Use only document_url, out, version, max_calls, and bearer_token_file".to_owned()
+        })?;
+        let document_url = args
+            .get("document_url")
+            .and_then(Value::as_str)
+            .ok_or("document_url is required and must be a string")?;
+        let text = |name: &str| -> Result<Option<String>, String> {
+            match args.get(name) {
+                None => Ok(None),
+                Some(Value::String(value)) => Ok(Some(value.clone())),
+                _ => Err(format!("{name} must be a string")),
+            }
+        };
+        let max_calls = match args.get("max_calls") {
+            None => 50,
+            Some(value) => value
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or("max_calls must be a whole number from 0 to 4294967295")?,
+        };
+        Ok(crate::onshape::FetchOptions {
+            document_url: document_url.into(),
+            out: text("out")?.map(std::path::PathBuf::from),
+            version: text("version")?,
+            bearer_token_file: text("bearer_token_file")?.map(std::path::PathBuf::from),
+            max_calls,
+            json: true,
+        })
+    })();
+    Ok(match parsed {
+        Ok(options) => crate::onshape::run(&options),
+        Err(_) => crate::json::onshape_fetch(&Err(crate::onshape::Error::new(
+            crate::onshape::ErrorKind::Url,
+            "Use document_url (string), optional out, version, and bearer_token_file (strings), and max_calls (whole number from 0 to 4294967295). No other arguments are accepted.",
+        ))),
     })
 }
 
@@ -365,6 +419,23 @@ fn tools() -> Value {
             "inputSchema": {"type": "object", "properties": doctor_properties, "required": ["input", "out"], "additionalProperties": false}},
         {"name": "compare_step", "title": "Compare matching STEP", "description": "Compare stored geometry with a STEP export under resource limits. Anonymous body numbers and measurements only; advisory, worst first. Nothing is sent.",
             "inputSchema": {"type": "object", "properties": compare_properties, "required": ["input"], "additionalProperties": false}},
+        {
+            "name": "onshape_fetch", "title": "Fetch your Onshape document",
+            "description": "Fetch your own Onshape document with local API keys or an OAuth bearer token into a private offline bundle. Uses Onshape's API and your call allowance. Never sends data to Dutchman. Returns dutchman.onshape-fetch/1.",
+            "inputSchema": {"type": "object", "properties": {
+                "document_url": {"type": "string"}, "out": {"type": "string", "description": "Bundle file path. An existing file is replaced only after a successful fetch."},
+                "version": {"type": "string", "description": "Immutable Onshape version ID overriding the URL."},
+                "bearer_token_file": {"type": "string", "description": "Private local token file path. Alternatively set DUTCHMAN_ONSHAPE_BEARER_TOKEN in the server environment. Never pass a token value."},
+                "max_calls": {"type": "integer", "minimum": 0, "maximum": 4294967295u64, "default": 50}
+            }, "required": ["document_url"], "additionalProperties": false},
+            "outputSchema": {"type": "object", "properties": {
+                "schema": {"const": "dutchman.onshape-fetch/1"}, "ok": {"type": "boolean"},
+                "calls": {"type": "integer", "minimum": 0}, "cache_hits": {"type": "integer", "minimum": 0},
+                "output": {"type": "string"}, "microversion": {"type": "string"},
+                "error": {"type": "object", "properties": {"code": {"type": "string"}, "message": {"type": "string"}}, "required": ["code", "message"]}
+            }, "required": ["schema", "ok", "calls"]},
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true}
+        },
         {
             "name": "convert",
             "title": "Convert a CAD file",
@@ -562,7 +633,7 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 19] = [
+const OPTIONS: [&str; 21] = [
     "diagnostics",
     "diagnostics_default",
     "threads",
@@ -579,6 +650,8 @@ const OPTIONS: [&str; 19] = [
     "solidcraft",
     "solidcraft_version",
     "verify_timeout",
+    "stand_up",
+    "no_stand_up",
     "overwrite",
     "project",
     "search",
@@ -657,6 +730,11 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
     if diagnostics_default && arguments.get("diagnostics").is_some_and(|v| !v.is_null()) {
         return Err("diagnostics and diagnostics_default cannot be combined".into());
     }
+    let stand_up = flag(arguments, "stand_up", false)?;
+    let no_stand_up = flag(arguments, "no_stand_up", false)?;
+    if stand_up && no_stand_up {
+        return Err("stand_up and no_stand_up cannot be combined; choose one orientation".into());
+    }
     Ok(ConvertOptions {
         threads,
         diagnostics_default,
@@ -690,6 +768,8 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         no_clobber: !flag(arguments, "overwrite", true)?,
         solidcraft,
         solidcraft_version,
+        stand_up,
+        no_stand_up,
         verify_timeout: count(arguments, "verify_timeout")?
             .map_or(defaults.verify_timeout, |n| n.get() as u64),
         project: search.project,
@@ -891,6 +971,38 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn orientation_options_are_advertised_validated_and_forwarded() {
+        let listed = tools();
+        for name in ["convert", "convert_all"] {
+            let tool = listed
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap();
+            for option in ["stand_up", "no_stand_up"] {
+                assert_eq!(tool["inputSchema"]["properties"][option]["type"], "boolean");
+            }
+        }
+        for (arguments, choice, flag) in [
+            (json!({"stand_up": true}), Some(true), "--stand-up"),
+            (json!({"no_stand_up": true}), Some(false), "--no-stand-up"),
+        ] {
+            let parsed = options(arguments.as_object().unwrap()).unwrap();
+            assert_eq!(parsed.stand_up_choice(), choice);
+            assert!(parsed.to_args().iter().any(|arg| arg == flag));
+        }
+        assert_eq!(options(&Arguments::new()).unwrap().stand_up_choice(), None);
+        for bad in [
+            json!({"stand_up": true, "no_stand_up": true}),
+            json!({"stand_up": "true"}),
+            json!({"no_stand_up": "true"}),
+        ] {
+            assert!(options(bad.as_object().unwrap()).is_err());
+        }
+    }
 
     #[test]
     fn diagnostic_limits_preserve_both_argument_styles() {
