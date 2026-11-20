@@ -2,13 +2,13 @@
 
 The `Public fixture score` workflow converts public fixtures on GitHub runners.
 It runs each Monday at 07:00 UTC. To start a run, open Actions, select
-**Public fixture score**, then select **Run workflow**. Set `ref` to a Dutchman
-branch, tag, or commit (default `main`), `shards` to a count from 1 to 256 (default
-12), and `manifest_url` to the public manifest endpoint (default
+**Public fixture score**, then select **Run workflow**. Pick the Dutchman branch or tag
+to score under **Use workflow from** (default `main`); set `shards` to a count from 1 to 256
+(default 12), and `manifest_url` to the public manifest endpoint (default
 `https://progress.dutchmancad.xyz/scoreboard/public-files.json`). The workflow must
 be on the default branch for scheduled runs.
 
-The workflow builds one release binary with the lockfile of the selected ref.
+The workflow builds one release binary with the lockfile of the selected branch or tag.
 Its shard runner comes from the workflow commit. The build job downloads one
 manifest snapshot and keeps only the public score fields, and each shard takes every Nth file from that snapshot.
 SolidCraft 0.45 is downloaded with the existing release checksum check. Each

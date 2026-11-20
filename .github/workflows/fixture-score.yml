@@ -3,10 +3,6 @@ name: Public fixture score
 on:
   workflow_dispatch:
     inputs:
-      ref:
-        description: Dutchman ref to build
-        type: string
-        default: main
       shards:
         description: Number of shards (1–256)
         type: number
@@ -38,9 +34,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: harness
+      # The commit the run was started on ("Use workflow from"), never a ref typed in as input.
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.ref || 'main' }}
           path: source
       - uses: dtolnay/rust-toolchain@stable
       # No shared build cache here: this job builds whichever ref was dispatched, and that code
