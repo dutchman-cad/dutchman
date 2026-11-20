@@ -403,9 +403,13 @@ simplification. Explain that the converted design keeps its original geometry.
 
 Holes keep chamfered entries and tapped holes (the bore plus an ISO metric thread label; a
 thread's hand, class, and length are listed as losses). Taper, exit treatments, modeled
-threads, and entry recesses with drill points block history: explain the reported reason.
+threads, and entry recesses with drill points on older targets block history: explain the reported reason.
 "SolidCraft holes take a drill point only on a plain drilled hole" means SolidCraft 0.21.0
 ignores drill points on counterbores and countersinks; conversion keeps the original geometry.
+
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
 
 Cosmetic thread contradictions name both the designation's nominal size and secondary
 numeric values. Metric labels tolerate decimal rounding and unit-conversion noise.

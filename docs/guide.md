@@ -89,6 +89,10 @@ Simplify the sketch or split the bundle when the recovery budget is exhausted;
 the final STEP shape remains available. Native symmetric distances and parameter
 fallback defaults stay unchanged.
 
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
+
 Onshape quantities need a dimensioned expression or explicit supported units.
 Malformed or repeated Boolean operands, unresolved latest variable bindings,
 face/cap sketch attachments without a stored complete frame, up-to-next extents without
