@@ -17,6 +17,8 @@ use serde_json::Value;
 /// What the background work tells the window.
 #[derive(Debug)]
 pub enum Message {
+    /// Public downloads, owned until the window no longer needs their local files.
+    Downloaded(Vec<Result<dutchman::share_links::Downloaded, String>>),
     /// Project plan and whether Inventor settings apply.
     ProjectSummary {
         generation: u64,
@@ -103,6 +105,30 @@ impl Run {
         messages: Sender<Message>,
         ctx: egui::Context,
     ) -> Self {
+        Self::start_using(inputs, out_dir, options, messages, ctx, converter_program())
+    }
+
+    /// Use a real process stub while retaining the production planning and supervision path.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn start_isolated_for_test(
+        inputs: Vec<PathBuf>,
+        out_dir: PathBuf,
+        options: &ConvertOptions,
+        messages: Sender<Message>,
+        ctx: egui::Context,
+        program: PathBuf,
+    ) -> Self {
+        Self::start_using(inputs, out_dir, options, messages, ctx, Some(program))
+    }
+
+    fn start_using(
+        inputs: Vec<PathBuf>,
+        out_dir: PathBuf,
+        options: &ConvertOptions,
+        messages: Sender<Message>,
+        ctx: egui::Context,
+        program: Option<PathBuf>,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let writer = options.writer();
         let options = options.clone();
@@ -152,7 +178,7 @@ impl Run {
                     }
                     send(Message::Progress(event));
                 };
-                match converter_program() {
+                match program {
                     Some(program) => batch::run_isolated(
                         &jobs,
                         &options,
@@ -214,7 +240,7 @@ impl Run {
         Run { stop }
     }
 
-    /// Starts no further file; those converting finish.
+    /// Starts no further file and terminates the isolated converters and their children.
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
     }
@@ -357,9 +383,117 @@ pub enum Pick {
     SaveLog(usize),
 }
 
+/// Native window backends can deliver saved web shortcuts as file drops.
+pub fn is_link_file(path: &Path) -> bool {
+    matches!(batch::extension_of(path).as_str(), "url" | "webloc")
+}
+
+fn share_link(input: &str) -> Result<String, String> {
+    let path = Path::new(input);
+    if dutchman::share_links::is_url(input) || !is_link_file(path) {
+        return Ok(input.to_owned());
+    }
+    use std::io::Read;
+    const MESSAGE: &str =
+        "Cannot read this link shortcut. Copy its public share link and paste it into Dutchman.";
+    let mut text = String::new();
+    std::fs::File::open(path)
+        .map_err(|_| MESSAGE.to_owned())?
+        .take(8193)
+        .read_to_string(&mut text)
+        .map_err(|_| MESSAGE.to_owned())?;
+    if text.len() > 8192 {
+        return Err(MESSAGE.into());
+    }
+    let link = if batch::extension_of(path) == "url" {
+        text.trim_start_matches('\u{feff}')
+            .lines()
+            .find_map(|line| {
+                let (key, value) = line.trim().split_once('=')?;
+                key.eq_ignore_ascii_case("URL")
+                    .then(|| value.trim().to_owned())
+            })
+    } else {
+        // Standard .webloc files name Apple's external DTD. It is never fetched, and
+        // custom entity declarations are refused before parsing the bounded XML.
+        if text.contains("<!ENTITY") {
+            return Err(MESSAGE.into());
+        }
+        roxmltree::Document::parse_with_options(
+            &text,
+            roxmltree::ParsingOptions {
+                allow_dtd: true,
+                nodes_limit: 128,
+                ..Default::default()
+            },
+        )
+        .ok()
+        .and_then(|doc| {
+            doc.descendants()
+                .filter(|node| node.has_tag_name("key") && node.text() == Some("URL"))
+                .find_map(|key| {
+                    key.next_sibling_element()
+                        .filter(|node| node.has_tag_name("string"))?
+                        .text()
+                        .map(str::to_owned)
+                })
+        })
+    };
+    link.filter(|url| dutchman::share_links::is_url(url))
+        .ok_or_else(|| MESSAGE.to_owned())
+}
+
+/// Resolves links without blocking the window. The result owns every temporary file.
+pub fn download_links(
+    links: Vec<String>,
+    root: PathBuf,
+    messages: Sender<Message>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let results = links
+            .iter()
+            .map(|input| {
+                share_link(input).and_then(|link| dutchman::share_links::download_in(&link, &root))
+            })
+            .collect();
+        let _ = messages.send(Message::Downloaded(results));
+        ctx.request_repaint();
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn share_links_read_bounded_synthetic_shortcuts_without_network() {
+        let folder = tempfile::tempdir().unwrap();
+        for (name, contents) in [
+            ("share.url", "[InternetShortcut]\nURL=https://a360.co/synthetic\n"),
+            ("share.webloc", "<?xml version=\"1.0\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist><dict><key>URL</key><string>https://a360.co/synthetic</string></dict></plist>"),
+        ] {
+            let path = folder.path().join(name);
+            std::fs::write(&path, contents).unwrap();
+            assert_eq!(share_link(path.to_str().unwrap()).unwrap(), "https://a360.co/synthetic");
+        }
+        let path = folder.path().join("large.url");
+        std::fs::write(&path, "x".repeat(8193)).unwrap();
+        assert!(share_link(path.to_str().unwrap()).is_err());
+        std::fs::write(&path, "[InternetShortcut]\nURL=file:///private/file.f3d").unwrap();
+        assert_eq!(
+            share_link(path.to_str().unwrap()).unwrap(),
+            "file:///private/file.f3d"
+        );
+        // The shared downloader then rejects this scheme before any request.
+        assert!(
+            dutchman::share_links::download(&share_link(path.to_str().unwrap()).unwrap()).is_err()
+        );
+        assert!(is_link_file(Path::new("SHARE.URL")));
+        let path = folder.path().join("entity.webloc");
+        std::fs::write(&path, "<!DOCTYPE plist [<!ENTITY external SYSTEM 'file:///private/file'>]><plist><dict><key>URL</key><string>&external;</string></dict></plist>").unwrap();
+        assert!(share_link(path.to_str().unwrap()).is_err());
+    }
 
     #[test]
     fn estimates_plan_files_in_queued_folders_off_thread() {

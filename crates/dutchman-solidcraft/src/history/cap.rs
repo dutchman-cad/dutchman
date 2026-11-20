@@ -14,7 +14,7 @@ use super::Context;
 /// Points per full turn when a circular edge is followed as a polygon.
 const TURN: usize = 256;
 /// How far (mm) a face's plane may be from the extrude's end plane.
-const PLANE: f64 = 1e-4;
+const PLANE: f64 = crate::tolerances::CAP_PLANE_MM;
 
 /// The sketch frame and the far end of the sweep, all in model space.
 pub(super) struct End {
@@ -37,7 +37,11 @@ pub(super) fn check(profile: Option<&Value>, ctx: &Context, end: &End) -> Result
     let Some(cap) = cap_area(ctx, end) else {
         return Ok(false);
     };
-    if (swept - cap).abs() > 1.0_f64.max(0.03 * cap) {
+    if (swept - cap).abs()
+        > crate::tolerances::CAP_AREA
+            .0
+            .max(crate::tolerances::CAP_AREA.1 * cap)
+    {
         return Err(format!(
             "its profile region doesn't match the source (swept {swept:.1} mm², the source \
              {cap:.1} mm²)"

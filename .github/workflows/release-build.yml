@@ -11,31 +11,22 @@ name: Release builds
 # desktop app and holds the command line programs, with the .zsync that delta updates read.
 #
 # A release candidate is a tag `vX.Y.Z-rc.N` on the commit that may become the release. Pushing
-# it runs this workflow, and that is the only build the release gets: pushing the release tag
-# `vX.Y.Z` on the same commit makes release.yml download these files, check them and draft the
-# release, without building again. Every release is built once, as its final candidate.
+# it runs this workflow. Pushing the stable tag runs the full checks and builds again, while
+# release.yml still promotes the candidate's files from that exact commit into the draft.
 # Candidates carry the final version: Cargo.toml already says X.Y.Z and so do the programs, the
 # archives and the MSI; "rc" appears only in the tag name. The MSI allows same-version upgrades,
 # so rc.2 installs over rc.1. The files are kept as the artifacts dutchman-<version>-<target>
 # (archive, MSI, checksums) and dutchman-<version>-macos (universal archive, disk image,
 # per-chip archives), for 30 days.
 #
-# The `plan` job decides, and every other job waits on it, so this workflow reports on every pull
-# request and the builds show as skipped when they are not needed. The builds run for:
-# These builds restore and save no Rust cache: what users download is built from scratch, never from
-# a cache another run could have written.
-#   - a release-candidate tag `v*-rc.*` (the plan job first fails if the tag's X.Y.Z differs from
-#     Cargo.toml's version; the dry-run tags `v0.0.0-rc.dryrun*` skip that check);
-#   - a run started by hand on any branch (`gh workflow run release-build.yml --ref <branch>`);
-#   - a pull request that changes the packaging (the paths in the `plan` job; for Cargo.toml,
-#     only its [profile.*] tables), or carries the `release-build` label (the label starts
-#     the run when it is added). Other pull requests, and pushes to main, get the debug build and
-#     tests of ci.yml only.
+# The `plan` job enables the full builds for explicit CI dispatches, candidate and
+# stable tags, and manual runs. PRs run only ci.yml fast checks; dispatch ci.yml on a PR branch
+# to exercise the full queue matrix; add release-builds=true for packaging. These release builds restore and save no Rust cache.
 # A newer candidate tag cancels the candidate build in progress.
 
 on:
   push:
-    tags: ["v*-rc.*"]
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       # Build just the Linux x86_64 tarball for measurements.
@@ -44,33 +35,48 @@ on:
         type: choice
         options: [all, linux-x86_64]
         default: all
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-  # A merge queue group is judged like a pull request: the full builds run only when it changes
-  # the packaging (compared with the group's base commit). The release-build label cannot be read
-  # in the queue; a pull request that carries it has already run the full builds.
-  merge_group:
-    types: [checks_requested]
+  # Called only for full CI runs; standalone tag runs keep release artifacts discoverable.
+  workflow_call:
+    outputs:
+      required:
+        description: Result of the non-macOS release builds and checks
+        value: ${{ jobs.required.outputs.result }}
+    inputs:
+      targets:
+        type: string
+        default: all
 
 permissions:
   contents: read
+  actions: read
 
-# One group for candidate tags: a newer candidate cancels a running candidate build (only the
-# newest candidate matters). Other runs are grouped per ref, and a newer run for the same ref
-# supersedes the older. Adding an unrelated label to a pull request starts a run that decides
-# nothing new; it gets its own group so it cannot cancel a build in progress. A build called by
-# release.yml on a tag is never cancelled and is not in the candidate group.
+# Candidate tags share a group; stable tags never cancel a candidate or each other.
+# Use a fixed prefix: github.workflow is the caller name in a reusable workflow.
 concurrency:
-  group: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'release-rc' || format('release-full-{0}-{1}', github.ref, github.event.action == 'labeled' && github.event.label.name != 'release-build' && 'label' || 'run') }}
-  cancel-in-progress: ${{ github.event_name == 'push' || !startsWith(github.ref, 'refs/tags/') }}
+  group: ${{ github.event_name == 'push' && contains(github.ref, '-rc.') && 'release-rc' || format('release-full-{0}', github.ref) }}
+  cancel-in-progress: ${{ contains(github.ref, '-rc.') || !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
   DUTCHMAN_RELEASE_BUILD: "1"
 
 jobs:
-  # Whether this run builds. Always true except for a pull request or merge group, which builds when it carries
-  # the `release-build` label or changes a packaging path.
+  # No macOS dependencies: a missing hosted runner must not affect the queue's required result.
+  required:
+    needs: [plan, build, image-check]
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.result.outputs.result }}
+    steps:
+      - id: result
+        env:
+          RESULT: ${{ needs.plan.result == 'success' && needs.build.result == 'success' && (needs.image-check.result == 'success' || (inputs.targets == 'linux-x86_64' && needs.image-check.result == 'skipped')) && 'success' || 'failure' }}
+        run: |
+          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+          test "$RESULT" = success
+
+  # Release tags and explicit dispatches build all requested targets.
   plan:
     runs-on: ubuntu-latest
     outputs:
@@ -79,75 +85,34 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      # The candidate carries the final version: tag vX.Y.Z-rc.N must be the Cargo.toml version.
-      - name: Check the candidate tag against Cargo.toml
+      - name: Require full CI on the release commit
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/require-green-ci.py "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_REF_NAME"
+      # Both candidate and stable tags must match the final version in Cargo.toml.
+      - name: Check the tag against Cargo.toml
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: |
           set -euo pipefail
           tag=$GITHUB_REF_NAME
           cargo_version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
-          if [[ "$tag" == v0.0.0-rc.dryrun* ]]; then
+          if [[ "$tag" == v0.0.0-rc.dryrun* || "$tag" == v0.0.0-dryrun* ]]; then
             echo "Dry run: the version check is skipped. Building the Cargo.toml version $cargo_version."
             exit 0
           fi
-          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-rc\.[0-9]+$ ]]; then
-            echo "Candidate tag $tag is not of the form vX.Y.Z-rc.N." >&2
+          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-rc\.[0-9]+)?$ ]]; then
+            echo "Tag $tag must be vX.Y.Z or vX.Y.Z-rc.N." >&2
             exit 1
           fi
           if [[ "${BASH_REMATCH[1]}" != "$cargo_version" ]]; then
-            echo "Tag $tag is a candidate for ${BASH_REMATCH[1]}, but Cargo.toml says $cargo_version." >&2
+            echo "Tag $tag names ${BASH_REMATCH[1]}, but Cargo.toml says $cargo_version." >&2
             echo "Bump the version in its own pull request before the first candidate, then tag again." >&2
             exit 1
           fi
-          echo "Candidate $tag matches the workspace version $cargo_version."
+          echo "Tag $tag matches the workspace version $cargo_version."
       - id: plan
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'release-build') }}
-        run: |
-          if [ "$EVENT" != pull_request ] && [ "$EVENT" != merge_group ]; then
-            echo "full=true" >> "$GITHUB_OUTPUT"
-            echo "Not a pull request or merge group: full release builds."
-            exit 0
-          fi
-          if [ "$LABELLED" = true ]; then
-            echo "full=true" >> "$GITHUB_OUTPUT"
-            echo "The release-build label is set: full release builds."
-            exit 0
-          fi
-          if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
-            echo "full=true" >> "$GITHUB_OUTPUT"
-            echo "The base commit is not available: full release builds."
-            exit 0
-          fi
-          # Packaging (what the archives, the installer, the disk image, the updater and the
-          # image are built from) and every workflow. Cargo.toml is checked below.
-          packaging='^(\.github/workflows/|Dockerfile$|docker/|compose\.yaml$'
-          packaging+='|scripts/[^/]*msi[^/]*$|scripts/package[^/]*$|scripts/macos-dmg\.sh$|scripts/archive-readme\.py$|scripts/downloads\.py$'
-          packaging+='|packaging/linux/|assets/(install|dmg|windows)/|skills/'
-          packaging+='|crates/dutchman-gui/assets/(Dutchman\.icns|dutchman-app-icon\.svg)$|crates/dutchman-gui/examples/ico\.rs$'
-          packaging+='|crates/dutchman-gui/src/(update\.rs|update/))'
-          # A Markdown text change under assets/install/ or skills/ (the installed agent guide, the skill) is copied
-          # into the archives as it is: it needs no release build.
-          matched=$(git diff --name-only "$BASE" HEAD | grep -E "$packaging" | grep -vE '^(assets/install|skills)/.*\.md$' || true)
-          # Cargo.toml holds the release profiles, which only the release builds use: a change
-          # to a [profile.*] table counts as packaging. Dependency and version changes (a pin
-          # move, the release bump) are tested by ci.yml and built in full at the candidate.
-          cargo=$(git show "$BASE:Cargo.toml" | python3 -c '
-          import sys, tomllib
-          old = tomllib.loads(sys.stdin.read()).get("profile", {})
-          new = tomllib.load(open("Cargo.toml", "rb")).get("profile", {})
-          print("changed" if old != new else "")')
-          if [ -n "$cargo" ]; then matched="$matched${matched:+$'\n'}Cargo.toml (release profiles)"; fi
-          if [ -n "$matched" ]; then
-            echo "full=true" >> "$GITHUB_OUTPUT"
-            echo "Packaging files changed: full release builds."
-            echo "$matched" | head -20
-          else
-            echo "full=false" >> "$GITHUB_OUTPUT"
-            echo "No packaging change and no release-build label: the release builds are skipped (ci.yml tests the debug profile)."
-          fi
+        run: echo "full=true" >> "$GITHUB_OUTPUT"
 
   build:
     needs: plan
@@ -167,7 +132,7 @@ jobs:
     container: ${{ matrix.container || '' }}
     # An uncached Windows release build alone takes 65-87 minutes; the Windows job then
     # builds and tests the installer and compiles the release updater tests.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 150 || 90 }}
+    timeout-minutes: 180
     env:
       CARGO_BUILD_JOBS: ${{ matrix.jobs }}
     steps:
@@ -236,10 +201,9 @@ jobs:
           name: windows-installer-logs
           path: dist/*.log
           if-no-files-found: ignore
-      # On a pull request, keep the built installer for a manual check on a real Windows PC,
-      # even when a later updater test fails. Release runs publish it with the archive below.
+      # On a manual branch run, keep the installer for review even if an updater test fails.
       - name: Keep the Windows installer for review
-        if: always() && runner.os == 'Windows' && github.event_name == 'pull_request'
+        if: always() && runner.os == 'Windows' && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7
         with:
           name: windows-installer

@@ -8,12 +8,7 @@ on:
   push:
     branches: [main]
     paths: [Dockerfile, .dockerignore, .github/workflows/docker.yml]
-  pull_request:
-    paths: [Dockerfile, .dockerignore, .github/workflows/docker.yml]
-  # A merge queue group has no path filter: the changes job skips the build unless this group
-  # touches the same files, judged against the group's base commit.
-  merge_group:
-    types: [checks_requested]
+  # PRs run fast CI only; ci.yml owns the queue and tag Docker checks.
   schedule:
     - cron: "30 6 * * *"
   workflow_dispatch:
@@ -36,24 +31,13 @@ jobs:
         with:
           fetch-depth: 0
       - id: diff
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.merge_group.base_sha }}
-        run: |
-          if [ "$EVENT" = merge_group ] && git cat-file -e "$BASE^{commit}" 2>/dev/null \
-            && ! git diff --name-only "$BASE" HEAD \
-            | grep -qE '^(Dockerfile$|\.dockerignore$|\.github/workflows/docker\.yml$)'; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "No Docker change in this merge group: skipped."
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
+        run: echo "run=true" >> "$GITHUB_OUTPUT"
 
   docker:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4

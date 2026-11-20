@@ -227,13 +227,9 @@ fn coil_start_angle(axis: [f64; 3], radial: [f64; 3]) -> Result<f64, String> {
 /// How close (as a cosine) a box frame axis must be to a model axis.
 const ALONG_AXIS: f64 = 1.0 - 1e-9;
 
-/// Maps a box (a block) whose operation is `definition`: dimensions along its frame's x, y
-/// and z, from the frame origin, which is the box's minimum corner.
-pub(crate) fn block(
-    feature: &Value,
-    definition: &Value,
-    ctx: &mut Context,
-) -> Result<Value, String> {
+/// The minimum corner and the extent along the model axes of a box whose operation is
+/// `definition`.
+pub(crate) fn box_bounds(definition: &Value) -> Result<([f64; 3], [f64; 3]), String> {
     let dimensions = definition
         .get("dimensions")
         .and_then(Value::as_array)
@@ -279,6 +275,17 @@ pub(crate) fn block(
             }
         }
     }
+    Ok((low, extent))
+}
+
+/// Maps a box (a block) whose operation is `definition`: dimensions along its frame's x, y
+/// and z, from the frame origin, which is the box's minimum corner.
+pub(crate) fn block(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    let (low, extent) = box_bounds(definition)?;
     let operation = operation(definition.get("op"))?;
     let [length_x, width_y, height_z] = extent;
     Ok(primitive(

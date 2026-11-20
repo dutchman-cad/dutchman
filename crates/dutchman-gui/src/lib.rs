@@ -6,6 +6,7 @@ pub mod app;
 mod doctor;
 pub mod platform;
 pub mod report_consent;
+pub mod report_panel;
 pub mod report_policy;
 pub mod theme;
 pub mod worker;
