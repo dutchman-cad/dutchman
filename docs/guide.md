@@ -859,3 +859,12 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](json.md).
+
+## Orient a Y-up design
+
+Use `--stand-up` with `convert` or `convert-all` to rotate a Y-up design +90°
+about +X, so its +Y axis becomes SolidCraft's +Z axis. Source axes are preserved
+by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
+`convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
+cannot be combined. This changes the saved design's orientation, while history
+checks use the source coordinates.

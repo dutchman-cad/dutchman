@@ -1606,3 +1606,10 @@ to the replacement geometry merely because it contains the source feature's shap
 For example, a split row can contain `"output_ids": [12, 8], "output_match": "emitted"`;
 ids follow timeline order rather than numeric order. A dropped row contains
 `"output_ids": [], "output_match": "no_output"`.
+
+## Output orientation
+
+The CLI options `--stand-up` and `--no-stand-up` (MCP `stand_up` and
+`no_stand_up`) control the saved design orientation. Reports retain the existing
+schemas and source coordinates; these options add no report fields. See
+[the command reference](command-line.md) for the rotation and default.

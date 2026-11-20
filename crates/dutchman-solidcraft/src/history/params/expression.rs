@@ -151,6 +151,11 @@ impl Expression<'_> {
     fn product(&mut self, depth: usize) -> Result<Quantity, String> {
         let mut value = self.power(depth)?;
         loop {
+            // SolidCraft reads `°` as degrees of everything before it in the product.
+            if self.take('°') {
+                value = value.product(Quantity::unit("deg"), false);
+                continue;
+            }
             let multiply = self.take('*');
             if !multiply && !self.take('/') {
                 break;
@@ -320,6 +325,12 @@ mod tests {
             ("asin(0.5)", "deg"),
             ("angle / 2", "deg"),
             ("2 * pi", ""),
+            ("0.0 °", "deg"),
+            ("30°", "deg"),
+            ("width / width * 2 °", "deg"),
+            ("(width / width + 5)°", "deg"),
+            ("-(width / width)°", "deg"),
+            ("sin(30°)", ""),
         ] {
             assert_eq!(infer_unit(expr, &names, &units).unwrap(), unit, "{expr}");
         }
