@@ -2293,7 +2293,18 @@ impl App {
         let p = *theme::palette(ui);
         let hovering = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
         section_label(ui, &p, "Designs");
-        panel(ui, &p, hovering, |ui| {
+        let padding = Margin::symmetric(
+            theme::CARD_PADDING as i8,
+            if self.inputs.is_empty() {
+                theme::CARD_PADDING as i8
+            } else {
+                theme::SPACE_1 as i8
+            },
+        );
+        framed(ui, &p, p.surface_2, hovering, padding, |ui| {
+            if !self.inputs.is_empty() {
+                ui.spacing_mut().item_spacing.y = 0.0;
+            }
             if self.inputs.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(theme::SPACE_4);
@@ -2334,38 +2345,37 @@ impl App {
                                             } else {
                                                 input.as_path()
                                             };
-                                        let show_estimate = |ui: &mut egui::Ui| {
-                                            if let Some((text, hover, large)) =
-                                                estimate.as_ref().filter(|_| index == 0)
-                                            {
-                                                let colour =
-                                                    if *large { p.lantern_text } else { p.tide };
-                                                ui.add(
-                                                    egui::Label::new(
-                                                        RichText::new(text).small().color(colour),
-                                                    )
-                                                    .wrap(),
-                                                )
-                                                .on_hover_text(hover);
-                                            }
-                                        };
-                                        // Sharing a wrapping row keeps the default window's
-                                        // controls in view without shortening either label.
-                                        let compact = is_wide(ui);
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.add(egui::Label::new(display(folder)).wrap())
-                                                .on_hover_text(display(folder));
-                                            if compact {
-                                                show_estimate(ui);
-                                            }
-                                        });
+                                        // One paragraph lets the estimate continue on the
+                                        // folder's last line, keeping both texts complete.
+                                        let mut line = egui::text::LayoutJob::default();
+                                        RichText::new(display(folder)).append_to(
+                                            &mut line,
+                                            ui.style(),
+                                            egui::FontSelection::Default,
+                                            Align::Center,
+                                        );
+                                        let mut tooltip = display(folder);
+                                        if let Some((text, hover, large)) =
+                                            estimate.as_ref().filter(|_| index == 0)
+                                        {
+                                            RichText::new(format!(" — {text}"))
+                                                .small()
+                                                .color(if *large { p.lantern_text } else { p.tide })
+                                                .append_to(
+                                                    &mut line,
+                                                    ui.style(),
+                                                    egui::FontSelection::Default,
+                                                    Align::Center,
+                                                );
+                                            tooltip.push('\n');
+                                            tooltip.push_str(hover);
+                                        }
+                                        ui.add(egui::Label::new(line).wrap())
+                                            .on_hover_text(tooltip);
                                         if dutchman_core::Format::from_path(input).is_some()
                                             && (self.inputs.len() > 1 || estimate.is_none())
                                         {
                                             ui.add(egui::Label::new(file_name(input)).wrap());
-                                        }
-                                        if !compact {
-                                            show_estimate(ui);
                                         }
                                         if let Some(format) =
                                             dutchman_core::Format::from_path(input)
@@ -2398,10 +2408,26 @@ impl App {
                     self.keep_used_downloads();
                 }
             }
-            if !self.inputs.is_empty() && !self.project_summary.is_empty() {
-                ui.label(RichText::new(&self.project_summary).small().color(p.tide));
+            let summary = |ui: &mut egui::Ui| {
+                if !self.inputs.is_empty() && !self.project_summary.is_empty() {
+                    ui.label(RichText::new(&self.project_summary).small().color(p.tide));
+                }
+                if let Some(available) = self.estimate_available().filter(|bytes| *bytes > 0) {
+                    ui.label(
+                        RichText::new(format!("{:.1} GB of memory free", gigabytes(available)))
+                            .small()
+                            .color(p.tide),
+                    );
+                }
+            };
+            if self.inputs.is_empty() {
+                summary(ui);
+            } else {
+                ui.horizontal_wrapped(summary);
             }
-            ui.add_space(theme::SPACE_2);
+            if self.inputs.is_empty() {
+                ui.add_space(theme::SPACE_2);
+            }
             ui.horizontal_wrapped(|ui| {
                 ui.add_enabled_ui(!self.running(), |ui| {
                     let field = ui.add(
@@ -3885,12 +3911,26 @@ fn section_label(ui: &mut egui::Ui, p: &Palette, text: &str) -> egui::Response {
 /// A raised panel on `surface-2` with a hairline border (spectre while files hover over it).
 /// It holds ink and tide text only: by day, spectre and danger text need `surface`.
 fn panel(ui: &mut egui::Ui, p: &Palette, highlight: bool, body: impl FnOnce(&mut egui::Ui)) {
-    framed(ui, p, p.surface_2, highlight, body);
+    framed(
+        ui,
+        p,
+        p.surface_2,
+        highlight,
+        Margin::same(theme::CARD_PADDING as i8),
+        body,
+    );
 }
 
 /// A result card: `surface` with a hairline border, so status and loss colours read on it.
 fn card(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::Ui)) -> egui::Response {
-    framed(ui, p, p.surface, false, body)
+    framed(
+        ui,
+        p,
+        p.surface,
+        false,
+        Margin::same(theme::CARD_PADDING as i8),
+        body,
+    )
 }
 
 fn framed(
@@ -3898,6 +3938,7 @@ fn framed(
     p: &Palette,
     fill: egui::Color32,
     highlight: bool,
+    padding: Margin,
     body: impl FnOnce(&mut egui::Ui),
 ) -> egui::Response {
     let stroke = if highlight {
@@ -3909,7 +3950,7 @@ fn framed(
         .fill(fill)
         .stroke(stroke)
         .corner_radius(CornerRadius::same(theme::RADIUS_LG))
-        .inner_margin(Margin::same(theme::CARD_PADDING as i8))
+        .inner_margin(padding)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             theme::compact_rows(ui);
@@ -4719,49 +4760,38 @@ mod tests {
                         app
                     });
                 h.run_steps(8);
-                let estimate = h.get_by_label(sentence).rect();
-                let path = h.get_by_label(&display(&folder)).rect();
-                assert!(estimate.top() >= path.top());
-                if size[0] < crate::WIDE_BREAKPOINT {
-                    assert!(estimate.top() >= path.bottom());
-                }
-                assert!(estimate.right() < h.get_by_label("Remove").rect().left());
+                let paragraph = format!("{} — {sentence}", display(&folder));
+                let text_rect = h.get_by_label(&paragraph).rect();
+                let remove = h.get_by_label("Remove").rect();
+                assert!(text_rect.right() < remove.left());
+                assert!(remove.top() >= h.get_by_label("DESIGNS").rect().bottom());
                 let mut found = 0;
-                let mut estimate_hover = None;
+                let mut hover = None;
                 for shape in &h.output().shapes {
                     if let egui::Shape::Text(text) = &shape.shape {
-                        if text.galley.text() == sentence || text.galley.text() == display(&folder) {
+                        if text.galley.text() == paragraph {
                             assert!(!text.galley.elided);
                             assert!(!text.galley.text().ends_with('…'));
-                            found += 1;
-                            if text.galley.text() == sentence {
-                                let last_row = text.galley.rows.last().unwrap();
-                                estimate_hover = Some(text.pos + last_row.rect_without_leading_space().center().to_vec2());
+                            assert_eq!(text.galley.job.sections.len(), 2);
+                            for (section, style) in text.galley.job.sections.iter().zip([TextStyle::Body, TextStyle::Small]) {
+                                assert_eq!(section.format.font_id, style.resolve(&h.ctx.style()));
                             }
+                            found += 1;
+                            let last_row = text.galley.rows.last().unwrap();
+                            hover = Some(text.pos + last_row.rect_without_leading_space().center().to_vec2());
                         }
                     }
                 }
-                assert_eq!(found, 2);
-                h.ctx
-                    .style_mut(|style| style.interaction.tooltip_delay = 0.0);
-                h.get_by_label(&display(&folder)).hover();
-                h.run_steps(8);
-                assert_eq!(
-                    h.query_all_by_label(&display(&folder)).count(),
-                    2,
-                    "full path tooltip"
-                );
-                h.remove_cursor();
-                h.run_steps(8);
-                // A wrapped label's bounding-box center can be blank space;
-                // hover the actual text on its last row.
-                h.hover_at(estimate_hover.unwrap());
+                assert_eq!(found, 1);
+                h.ctx.style_mut(|style| style.interaction.tooltip_delay = 0.0);
+                // Hover painted text; a wrapped paragraph's center may be blank.
+                h.hover_at(hover.unwrap());
                 h.run_steps(8);
                 let mut tooltip = "Memory is the highest per-file estimate; total time is the sum of the per-file estimates. Files without estimates are excluded.".to_owned();
                 for index in 0..count {
                     tooltip.push_str(&format!("\nsynthetic-{index}.f3d needs under 0.1 GB of memory and under a minute to convert."));
                 }
-                h.get_by_label(&tooltip);
+                h.get_by_label(&format!("{}\n{tooltip}", display(&folder)));
             }
         }
     }
@@ -4837,7 +4867,7 @@ mod tests {
         harness.run_steps(8);
         assert!(harness
             .query_by_label(
-                "synthetic.f3d needs under 0.1 GB of memory and under a minute to convert."
+                ". — synthetic.f3d needs under 0.1 GB of memory and under a minute to convert."
             )
             .is_some());
     }
@@ -4895,13 +4925,13 @@ mod tests {
         harness.run_steps(8);
         assert!(harness
             .query_by_label(
-                "synthetic.f3d needs about 2.5 GB of memory and about 3 min to convert."
+                ". — synthetic.f3d needs about 2.5 GB of memory and about 3 min to convert."
             )
             .is_some());
         assert!(harness.query_by_label("4.0 GB of memory free").is_some());
         assert!(harness
             .query_by_label(
-                "synthetic.f3d needs about 90.0 GB of memory and about 1 min to convert."
+                ". — synthetic.f3d needs about 90.0 GB of memory and about 1 min to convert."
             )
             .is_none());
     }

@@ -75,6 +75,9 @@ carried only as a non-parametric body, even when no sketch maps.
 The optional bundle manifest field `consistent` is input metadata, not a new
 report field. `false` produces an ordinary decode failure explaining how to fetch
 a consistent snapshot; older v1 bundles lacking the field remain accepted.
+the full path on hover. The path and estimate share one paragraph that wraps as needed,
+keeping the complete sentence visible at every window width. The compact header keeps the
+default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
 
 ## Share link inputs
 

@@ -31,6 +31,9 @@ This adds no CLI flags, MCP tools, or report fields.
 Desktop Onshape jobs keep the `.onshape-bundle` beside the `.sc`; **Show bundle**
 reveals it and **Send to Dutchman** opens private report review with it attached.
 To share a document with us, send the .onshape-bundle; never send your keys.
+the full path on hover. The path and estimate share one paragraph that wraps as needed,
+keeping the complete sentence visible at every window width. The compact header keeps the
+default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
 
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
