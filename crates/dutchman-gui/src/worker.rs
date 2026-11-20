@@ -17,6 +17,13 @@ use serde_json::Value;
 /// What the background work tells the window.
 #[derive(Debug)]
 pub enum Message {
+    /// Whether a selected output folder contains an earlier run.
+    BatchReportsFound {
+        key: (PathBuf, usize, bool),
+        found: bool,
+    },
+    /// Local summary writing completed off the window thread.
+    BatchReportWritten(Result<usize, String>),
     /// Public downloads, owned until the window no longer needs their local files.
     Downloaded(Vec<Result<dutchman::share_links::Downloaded, String>>),
     /// Project plan and whether Inventor settings apply.

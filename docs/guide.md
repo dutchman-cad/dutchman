@@ -1080,3 +1080,18 @@ says the design is too large to open inside SolidCraft, use the
 `.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
 "Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
 See [the plugin guide](plugin.md).
+
+### Batch report
+
+After a folder run finishes in the desktop app, choose **Batch report** under
+**Output folder**. To summarise an earlier run, choose its output folder; the
+button appears when that folder contains saved per-file reports. Writing runs
+in the background and reports success or a folder permission error in the app.
+
+For a fresh CLI run, use `dutchman convert-all designs --out-dir converted --batch-report`.
+For saved results, run `dutchman batch-report converted`. Both write
+`dutchman-batch-report.md` and `dutchman-batch-report.csv` in the output folder.
+Each file has its relative input path, output path, outcome (Full history,
+Partial N of M, Geometry only, or Failed), and first reason. Partial counts use
+rebuilt features and features needing rebuilding, with older mapped/total counts
+as a fallback. These local summaries include names and paths.

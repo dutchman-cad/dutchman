@@ -152,6 +152,8 @@ pub struct App {
     available: Option<u64>,
     pending: Option<PendingRun>,
     out_dir: Option<PathBuf>,
+    batch_report_key: Option<(PathBuf, usize, bool)>,
+    batch_report_ready: bool,
     /// Reopen output settings after a result has collapsed them.
     output_expanded: bool,
     options: ConvertOptions,
@@ -469,6 +471,8 @@ impl App {
             available: None,
             pending: None,
             out_dir: None,
+            batch_report_key: None,
+            batch_report_ready: false,
             output_expanded: false,
             options,
             diagnosis: None,
@@ -863,6 +867,7 @@ impl App {
 
     /// Sets the folder designs are written to.
     pub fn set_out_dir(&mut self, dir: PathBuf) {
+        self.batch_report_key = None;
         self.out_dir = Some(dir);
     }
 
@@ -1535,7 +1540,7 @@ impl App {
         match pick {
             Pick::Files | Pick::Folder => self.add_inputs(paths),
             Pick::Output => {
-                self.out_dir = Some(first);
+                self.set_out_dir(first);
                 if let Some(source) = self.intake.choosing_output.take() {
                     self.open_source(source, ctx);
                 }
@@ -1562,6 +1567,19 @@ impl App {
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(message) = self.messages.try_recv() {
             match message {
+                Message::BatchReportsFound { key, found } => {
+                    if self.batch_report_key.as_ref() == Some(&key) {
+                        self.batch_report_ready = found;
+                    }
+                }
+                Message::BatchReportWritten(result) => {
+                    self.batch_report_key = None;
+                    self.notice = Some(match result {
+                        Ok(count) => format!("Batch report: {count} files. Saved dutchman-batch-report.md and dutchman-batch-report.csv in the output folder."),
+                        Err(error) => error,
+                    });
+                }
+
                 Message::Downloaded(results) => {
                     self.downloading = false;
                     for result in results {
@@ -2656,10 +2674,48 @@ impl App {
         });
     }
 
+    fn batch_report_button(&mut self, ui: &mut egui::Ui) {
+        let Some(folder) = self.out_dir.clone() else {
+            return;
+        };
+        let running = self.running();
+        let key = (
+            folder.clone(),
+            self.rows.iter().filter(|row| row.report.is_some()).count(),
+            running,
+        );
+        if self.batch_report_key.as_ref() != Some(&key) {
+            self.batch_report_ready = false;
+            self.batch_report_key = Some(key.clone());
+            if !running {
+                let sender = self.sender.clone();
+                let ctx = ui.ctx().clone();
+                std::thread::spawn(move || {
+                    let found = dutchman::batch_report::report_paths(&folder)
+                        .is_ok_and(|paths| !paths.is_empty());
+                    let _ = sender.send(Message::BatchReportsFound { key, found });
+                    ctx.request_repaint();
+                });
+            }
+        }
+        if self.batch_report_ready && !running && ui.button("Batch report").clicked() {
+            self.batch_report_ready = false;
+            let folder = self.out_dir.clone().unwrap_or_default();
+            let sender = self.sender.clone();
+            let ctx = ui.ctx().clone();
+            std::thread::spawn(move || {
+                let result = dutchman::batch_report::write_folder(&folder);
+                let _ = sender.send(Message::BatchReportWritten(result));
+                ctx.request_repaint();
+            });
+        }
+    }
+
     fn output_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let p = *theme::palette(ui);
         let wide = is_wide(ui);
         section_label(ui, &p, "Output folder");
+        self.batch_report_button(ui);
         let has_results = self.rows.iter().any(|row| row.report.is_some());
         if !has_results {
             self.output_expanded = false;
@@ -4071,6 +4127,54 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn batch_report_button_requires_saved_reports_and_an_idle_run() {
+        use egui_kittest::kittest::Queryable;
+        let folder = tempfile::tempdir().unwrap();
+        let output = folder.path().join("synthetic.sc");
+        for saved in [false, true] {
+            if saved {
+                dutchman::saved_report::save(
+                    &output,
+                    &json!({
+                        "schema": "dutchman.convert/1", "ok": true,
+                        "input": {"path": "synthetic.f3d"}, "losses": []
+                    }),
+                )
+                .unwrap();
+            }
+            let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
+                let mut app = App::new(cc);
+                app.set_out_dir(folder.path().to_path_buf());
+                app
+            });
+            for attempt in 0..500 {
+                harness.run_steps(2);
+                if harness.query_by_label("Batch report").is_some() || (!saved && attempt >= 20) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert_eq!(harness.query_by_label("Batch report").is_some(), saved);
+            if saved {
+                harness.get_by_label("Batch report").click_accesskit();
+                harness.run_steps(8);
+                for _ in 0..500 {
+                    harness.run_steps(2);
+                    if folder.path().join("dutchman-batch-report.csv").is_file() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                assert!(folder.path().join("dutchman-batch-report.md").is_file());
+                assert!(folder.path().join("dutchman-batch-report.csv").is_file());
+                harness.state_mut().intake.active = true;
+                harness.run_steps(8);
+                assert!(harness.query_by_label("Batch report").is_none());
+            }
+        }
+    }
 
     #[test]
     fn paste_keeps_onshape_public_shares_and_local_files_in_their_intakes() {
