@@ -3311,7 +3311,7 @@ fn report_this_file(ui: &mut egui::Ui) -> bool {
     ui.add(
         egui::Button::new(RichText::new(REPORT_THIS_FILE).strong().color(p.spectre))
             .fill(p.surface_2)
-            .stroke(Stroke::new(1.0, p.spectre))
+            .stroke(Stroke::new(1.0_f32, p.spectre))
             .min_size(egui::vec2(0.0, 30.0)),
     )
     .on_hover_text("Choose this file in \"Is there a problem? Is something missing?\"")
