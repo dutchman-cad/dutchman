@@ -22,6 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     container: debian:bookworm
+    env:
+      # rustup refuses a $HOME that differs from the container user's home.
+      HOME: /root
     outputs:
       matrix: ${{ steps.prepare.outputs.matrix }}
       shards: ${{ steps.prepare.outputs.shards }}
