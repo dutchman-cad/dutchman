@@ -20,7 +20,7 @@ const SIZE_BOUNDARY: &str = "000000000000000000000000000000000000000000000000000
 pub const SIZE_NOTICE: &str = "The bundle plus reserved metadata and upload overhead exceeds the 25 MiB send limit. Use the private-send card or send an anonymous summary.";
 const MAX_REPORT: usize = 16 * 1024;
 
-/// Only a replay-verified, minimal repro provider should implement this seam.
+/// A replay-verified minimal repro or an explicitly selected offline Onshape bundle.
 /// Names must describe roles, never source names. Bytes can contain private geometry.
 pub trait BundleSource {
     fn parts(&self) -> Result<Vec<BundlePart>, String>;
@@ -139,8 +139,8 @@ impl Prepared {
             {
                 return Err("The bundle is too large; send it with the private-send card.".into());
             }
-            // A single payload is a directly replayable gzip CADIR document. Keep role
-            // boundaries explicit in a container when a provider needs multiple payloads.
+            // A single payload is a gzip CADIR document or an offline Onshape archive.
+            // Keep role boundaries explicit when a provider needs multiple payloads.
             let mut gzip =
                 flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
             if let [part] = parts.as_slice() {

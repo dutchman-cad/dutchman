@@ -39,8 +39,7 @@ pub(crate) fn map(
         return Err("SolidCraft holes take a drill point only on a plain drilled hole".to_owned());
     }
     let diameter = number(shape.get("diameter")).ok_or("its diameter is not given")?;
-    let (thread, thread_note) =
-        cosmetic_thread(construction.pointer("/value/specification"), diameter)?;
+    let tapped = cosmetic_thread(construction.pointer("/value/specification"), diameter)?;
     let mut hole = match (
         construction.get("kind").and_then(Value::as_str),
         form.get("kind").and_then(Value::as_str),
@@ -215,10 +214,8 @@ pub(crate) fn map(
     if let (Some(depth), Some(fields)) = (depth, out.as_object_mut()) {
         fields.insert("depth".to_owned(), json!(format!("{depth} mm")));
     }
+    let thread_note = tapped.fields(form, depth, ctx, &mut out);
     if let Some(fields) = out.as_object_mut() {
-        if let Some(thread) = thread {
-            fields.insert("thread".to_owned(), json!(thread));
-        }
         if let Some(points) = points {
             fields.insert("points".to_owned(), points);
         }
@@ -232,20 +229,36 @@ pub(crate) fn map(
     Ok(out)
 }
 
-/// The cosmetic thread label a threaded hole keeps, and a note on what of its thread does
-/// not survive. SolidCraft labels a hole with an ISO metric thread (`M6x1`) and keeps the
-/// source's resolved bore diameter; it has no hand, class or thread-length controls, so
-/// those are reported rather than blocking a hole whose geometry maps exactly. A modeled
-/// (helical) thread changes the geometry and is refused.
-fn cosmetic_thread(
-    specification: Option<&Value>,
-    bore: f64,
-) -> Result<(Option<String>, Option<String>), String> {
+/// The cosmetic thread a threaded hole keeps. SolidCraft labels a hole with an ISO metric
+/// thread (`M6x1`) and keeps the source's resolved bore diameter. Its thread length and
+/// left hand (0.40.0 on) and tolerance class (0.43.0 on) are written when the target stores
+/// them; otherwise, and for details SolidCraft has no field for, they are reported rather than
+/// blocking a hole whose geometry maps exactly. A modeled (helical) thread changes the geometry
+/// and is refused.
+#[derive(Default)]
+struct Tapped {
+    label: Option<String>,
+    /// Why the thread is left out entirely.
+    left_out: Option<String>,
+    left_hand: bool,
+    class: Option<String>,
+    length: ThreadLength,
+}
+
+#[derive(Default)]
+enum ThreadLength {
+    #[default]
+    Full,
+    Blind(Option<f64>),
+    TappedStandard,
+}
+
+fn cosmetic_thread(specification: Option<&Value>, bore: f64) -> Result<Tapped, String> {
     let Some(specification) = specification.filter(|value| !value.is_null()) else {
-        return Ok((None, None));
+        return Ok(Tapped::default());
     };
     if specification.get("kind").and_then(Value::as_str) != Some("threaded") {
-        return Ok((None, None));
+        return Ok(Tapped::default());
     }
     if specification.get("modeled").and_then(Value::as_bool) == Some(true) {
         return Err("a hole with a modeled thread is not mapped yet".to_owned());
@@ -271,34 +284,108 @@ fn cosmetic_thread(
     let label = match label {
         Ok(label) => label,
         Err(why) => {
-            return Ok((
-                None,
-                Some(format!("its thread is left out ({why}); the bore is kept")),
-            ))
+            return Ok(Tapped {
+                left_out: Some(format!("its thread is left out ({why}); the bore is kept")),
+                ..Tapped::default()
+            })
         }
     };
-    let mut lost = Vec::new();
-    if specification.get("hand").and_then(Value::as_str) == Some("left") {
-        lost.push("its left-hand direction".to_owned());
-    }
-    if let Some(class) = specification.get("class").and_then(Value::as_str) {
-        lost.push(format!("its {class} tolerance class"));
-    }
-    match specification.pointer("/depth/kind").and_then(Value::as_str) {
-        Some("blind") => match number(specification.pointer("/depth/depth")) {
-            Some(depth) => lost.push(format!("its {depth} mm thread length")),
-            None => lost.push("its thread length".to_owned()),
+    Ok(Tapped {
+        label: Some(label),
+        left_out: None,
+        left_hand: specification.get("hand").and_then(Value::as_str) == Some("left"),
+        class: specification
+            .get("class")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        length: match specification.pointer("/depth/kind").and_then(Value::as_str) {
+            Some("blind") => ThreadLength::Blind(
+                number(specification.pointer("/depth/depth")).filter(|d| *d > 0.0),
+            ),
+            Some("tapped_standard") => ThreadLength::TappedStandard,
+            _ => ThreadLength::Full,
         },
-        Some("tapped_standard") => lost.push("its standard tapped runout".to_owned()),
-        _ => {}
+    })
+}
+
+impl Tapped {
+    /// Writes the thread fields the target stores into `out` and returns the note on what of
+    /// the thread does not survive. `depth` is a blind hole's depth to the shoulder.
+    fn fields(
+        self,
+        form: &Value,
+        depth: Option<f64>,
+        ctx: &Context,
+        out: &mut Value,
+    ) -> Option<String> {
+        let Some(label) = self.label else {
+            return self.left_out;
+        };
+        let target = ctx.target_version;
+        let threads = crate::VersionGate::HoleThreadDepth.supported(target);
+        let mut fields = serde_json::Map::new();
+        fields.insert("thread".to_owned(), json!(label));
+        let mut lost = Vec::new();
+        if self.left_hand {
+            if threads {
+                fields.insert("hand".to_owned(), json!("left"));
+            } else {
+                lost.push("its left-hand direction".to_owned());
+            }
+        }
+        if let Some(class) = self.class {
+            if crate::VersionGate::HoleThreadClass.supported(target) && iso_metric_class(&class) {
+                fields.insert("thread_class".to_owned(), json!(class));
+            } else {
+                lost.push(format!("its {class} tolerance class"));
+            }
+        }
+        match self.length {
+            ThreadLength::Full => {}
+            ThreadLength::TappedStandard => lost.push("its standard tapped runout".to_owned()),
+            ThreadLength::Blind(None) => lost.push("its thread length".to_owned()),
+            ThreadLength::Blind(Some(length)) => {
+                // SolidCraft's thread length runs from the cylindrical wall's entry and must
+                // fit that wall. Only a blind hole without an entry recess shows its wall
+                // here: the thread starts at the hole's start, as the source measures it.
+                let plain = matches!(
+                    form.get("kind").and_then(Value::as_str),
+                    Some("simple" | "simple_drilled")
+                );
+                match depth.filter(|_| plain) {
+                    Some(wall) if length >= wall - 1e-9 => {}
+                    Some(_) if threads => {
+                        fields.insert("thread_depth".to_owned(), json!(format!("{length} mm")));
+                    }
+                    _ => lost.push(format!("its {length} mm thread length")),
+                }
+            }
+        }
+        if let Some(out) = out.as_object_mut() {
+            out.extend(fields);
+        }
+        (!lost.is_empty()).then(|| {
+            format!(
+                "its thread is kept as a cosmetic {label} label{}, without {}",
+                if out.get("thread_depth").is_some() {
+                    ""
+                } else {
+                    " over the whole hole"
+                },
+                series(&lost)
+            )
+        })
     }
-    let note = (!lost.is_empty()).then(|| {
-        format!(
-            "its thread is kept as a cosmetic {label} label over the whole hole, without {}",
-            series(&lost)
-        )
-    });
-    Ok((Some(label), note))
+}
+
+/// An ISO metric internal-thread tolerance class SolidCraft accepts: `6H`, `7G` or a pitch
+/// and minor diameter class such as `5H6H`.
+fn iso_metric_class(class: &str) -> bool {
+    let bytes = class.as_bytes();
+    matches!(bytes.len(), 2 | 4)
+        && bytes
+            .chunks(2)
+            .all(|pair| matches!(pair, [b'3'..=b'9', b'G' | b'H']))
 }
 
 /// `a`, `a and b`, or `a, b, and c`.

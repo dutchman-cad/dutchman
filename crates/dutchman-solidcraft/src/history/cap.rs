@@ -92,7 +92,20 @@ fn cap_area(ctx: &Context, end: &End) -> Option<f64> {
 
 /// A planar face's area: its largest loop less the others.
 fn face_area(ctx: &Context, face: &Value, end: &End) -> Option<f64> {
-    let loops = face.get("loops")?;
+    let mut areas = Vec::new();
+    for id in face_loops(face) {
+        let ring = loop_ring(ctx, ctx.row("loops", id)?, end)?;
+        areas.push(super::crossing::ring_area(&ring));
+    }
+    let largest = areas.iter().copied().max_by(f64::total_cmp)?;
+    Some(largest - (areas.iter().sum::<f64>() - largest))
+}
+
+/// The ids of a face's loops, its outer one first.
+pub(super) fn face_loops(face: &Value) -> Vec<&str> {
+    let Some(loops) = face.get("loops") else {
+        return Vec::new();
+    };
     let mut ids: Vec<&str> = Vec::new();
     if let Some(outer) = loops.get("outer").and_then(Value::as_str) {
         ids.push(outer);
@@ -107,13 +120,7 @@ fn face_area(ctx: &Context, face: &Value, end: &End) -> Option<f64> {
                 .filter_map(Value::as_str),
         );
     }
-    let mut areas = Vec::new();
-    for id in ids {
-        let ring = loop_ring(ctx, ctx.row("loops", id)?, end)?;
-        areas.push(super::crossing::ring_area(&ring));
-    }
-    let largest = areas.iter().copied().max_by(f64::total_cmp)?;
-    Some(largest - (areas.iter().sum::<f64>() - largest))
+    ids
 }
 
 /// A loop followed as a polygon in the sketch's plane coordinates.
@@ -137,7 +144,7 @@ fn loop_ring(ctx: &Context, lp: &Value, end: &End) -> Option<Vec<P2>> {
 }
 
 /// Points along an edge from its start to its end, both included.
-fn edge_points(ctx: &Context, edge: &Value) -> Option<Vec<V3>> {
+pub(super) fn edge_points(ctx: &Context, edge: &Value) -> Option<Vec<V3>> {
     let vertex = |key: &str| -> Option<V3> {
         let point = ctx.row(
             "points",

@@ -13,15 +13,18 @@ use serde_json::{json, Value};
 use super::sketch::{dot, v3, V3};
 use super::Context;
 
-/// A single planar face parallel to the sketch, as a SolidCraft pick: a resolved face on an
-/// earlier named body, or a face of `feature`'s own input topology rebuilt from its boundary.
-/// Native and generated selections need their own topology resolver.
+/// A single planar face, as a SolidCraft pick: a resolved face on an earlier named body, or a
+/// face of `feature`'s own input topology rebuilt from its boundary. Native and generated
+/// selections need their own topology resolver. A face at a slant to the sketch is accepted
+/// when `slanted` (SolidCraft 0.44 extrudes from and to one); the returned flag says whether
+/// the picked face is slanted. A face along the travel is always refused.
 pub(super) fn pick(
     ctx: &Context,
     feature: &Value,
     selection: Option<&Value>,
     normal: V3,
-) -> Result<V3, String> {
+    slanted: bool,
+) -> Result<(V3, bool), String> {
     let selection = selection.ok_or("its face selection is missing")?;
     if selection.get("kind").and_then(Value::as_str) == Some("historical") {
         let (point, face_normal) = super::face_profile::planar_face(
@@ -29,12 +32,8 @@ pub(super) fn pick(
             selection.get("value").unwrap_or(&Value::Null),
             ctx,
         )?;
-        if dot(face_normal, normal).abs() < 1.0 - 1e-9 {
-            return Err(
-                "an extrude face not parallel to its sketch is not supported yet".to_owned(),
-            );
-        }
-        return Ok(point);
+        let tilted = flat_face(face_normal, normal, slanted)?;
+        return Ok((point, tilted));
     }
     let ids = match selection.get("kind").and_then(Value::as_str) {
         Some("faces") => selection.get("value"),
@@ -63,10 +62,10 @@ pub(super) fn pick(
         .pointer("/geometry/value/kind")
         .and_then(Value::as_str)
         != Some("plane")
-        || dot(face_normal, normal).abs() < 1.0 - 1e-9
     {
         return Err("an extrude face not parallel to its sketch is not supported yet".to_owned());
     }
+    let tilted = flat_face(face_normal, normal, slanted)?;
     let earlier = ctx.named_bodies.iter().any(|(body, _)| {
         ctx.row("bodies", body).is_some_and(|body| {
             faces(ctx, body)
@@ -114,7 +113,31 @@ pub(super) fn pick(
             return Err("a terminating face with curved edges is not supported yet".to_owned());
         }
     }
-    point_on(ctx, face).ok_or_else(|| "its face has no resolved planar interior point".to_owned())
+    point_on(ctx, face)
+        .map(|point| (point, tilted))
+        .ok_or_else(|| "its face has no resolved planar interior point".to_owned())
+}
+
+/// Whether a flat face is at a slant to the sketch, refusing what the target cannot reach.
+fn flat_face(face_normal: V3, normal: V3, slanted: bool) -> Result<bool, String> {
+    let along = dot(face_normal, normal).abs();
+    if along >= 1.0 - 1e-9 {
+        return Ok(false);
+    }
+    if !slanted {
+        return Err(
+            "an extrude face not parallel to its sketch needs SolidCraft 0.44 or newer as the target"
+                .to_owned(),
+        );
+    }
+    // A face nearly along the travel is never crossed by the sweep at one place.
+    if along < 1e-6 {
+        return Err(
+            "an extrude face not parallel to its sketch runs along the travel; it is not supported yet"
+                .to_owned(),
+        );
+    }
+    Ok(true)
 }
 
 /// The writer stores looks on shared component geometry, with no occurrence override.
@@ -830,7 +853,9 @@ mod tests {
         ]);
         let ctx = Context::testing(&model);
         let feature = json!({"id": "f"});
-        let point = pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0]).unwrap();
+        let (point, slanted) =
+            pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0], false).unwrap();
+        assert!(!slanted);
         assert!((point[2] - z).abs() < 1e-9, "{point:?}");
         assert!(
             point[0] > 10.0 && point[0] < 14.0 && point[1].abs() < 14.0,
@@ -845,11 +870,11 @@ mod tests {
         ]);
         let ctx = Context::testing(&wall);
         assert_eq!(
-            pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0]).unwrap_err(),
-            "an extrude face not parallel to its sketch is not supported yet"
+            pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0], false).unwrap_err(),
+            "an extrude face not parallel to its sketch needs SolidCraft 0.44 or newer as the target"
         );
         let other = json!({"id": "g"});
-        assert!(pick(&ctx, &other, Some(&historical()), [0.0, 0.0, 1.0]).is_err());
+        assert!(pick(&ctx, &other, Some(&historical()), [0.0, 0.0, 1.0], false).is_err());
     }
 
     #[test]
@@ -938,6 +963,24 @@ mod tests {
         let half = 5.0 * std::f64::consts::FRAC_1_SQRT_2;
         assert!((p[0] - half).abs() < 1e-9 && (p[1] - half).abs() < 1e-9);
         assert!((p[2] - 5.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod flat_face_tests {
+    use super::flat_face;
+
+    #[test]
+    fn slanted_faces_need_the_gate_and_faces_along_the_travel_are_refused() {
+        let up = [0.0, 0.0, 1.0];
+        let slant = [0.0, 0.6, 0.8];
+        assert_eq!(flat_face(up, up, false), Ok(false));
+        assert_eq!(flat_face([0.0, 0.0, -1.0], up, false), Ok(false));
+        assert!(flat_face(slant, up, false).is_err_and(|why| why.contains("SolidCraft 0.44")));
+        assert_eq!(flat_face(slant, up, true), Ok(true));
+        assert!(
+            flat_face([1.0, 0.0, 0.0], up, true).is_err_and(|why| why.contains("along the travel"))
+        );
     }
 }
 

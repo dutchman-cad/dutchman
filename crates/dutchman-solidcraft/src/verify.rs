@@ -422,6 +422,10 @@ pub const WINDOW_OLDEST: [u64; 3] = [0, 18, 2];
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
 pub enum VersionGate {
+    /// Linked Insert Design with cached bodies and a source file.
+    LinkedDesign,
+    /// Thin walls verified against the current SolidCraft document format.
+    ThinExtrude,
     /// Sweep paths selected from proven input edges.
     TopologicalEdges,
     /// Explicit flat tips compensate for changed entry-recess angle handling.
@@ -432,6 +436,19 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// A tapped hole's thread length and left hand (`thread_depth`, `hand`). SolidCraft has
+    /// stored a thread length since 0.22.1; the gate starts at the oldest release of the
+    /// support window, and older targets keep the full-length label and report the loss.
+    HoleThreadDepth,
+    /// A tapped hole's tolerance class (`thread_class`), first stored by SolidCraft 0.43.0.
+    HoleThreadClass,
+    /// Fillets and chamfers that blend only their listed edges (`tangent_chain: false`). Only
+    /// Onshape blends need it, so it does not count towards an installed release's history notice.
+    BlendListedEdges,
+    /// Extrude From and To Object on a flat face at a slant to the sketch.
+    SlantedFaceExtent,
+    /// Removals of whole bodies (`remove`).
+    RemoveBody,
     /// Earlier body snapshots used by editable history.
     HistoryBody,
     /// Coplanar input faces used as a Split Body tool.
@@ -445,11 +462,18 @@ pub enum VersionGate {
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::LinkedDesign => SolidCraftVersion::V0_44_0,
+            Self::ThinExtrude => SolidCraftVersion::V0_44_0,
             Self::TopologicalEdges => SolidCraftVersion::V0_44_0,
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::HistoryBody | Self::SplitFaces => SolidCraftVersion::V0_40_0,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
+            Self::HoleThreadDepth => SolidCraftVersion::V0_40_0,
+            Self::HoleThreadClass => SolidCraftVersion::V0_43_0,
+            Self::BlendListedEdges => SolidCraftVersion::V0_40_0,
+            Self::SlantedFaceExtent => SolidCraftVersion::V0_44_0,
+            Self::RemoveBody => SolidCraftVersion::V0_40_0,
             Self::ScopedBodies => SolidCraftVersion::V0_44_0,
             Self::ClosedCircleBlend => SolidCraftVersion::V0_44_1,
         }
@@ -463,6 +487,11 @@ impl VersionGate {
 
 /// Whether the writer's release gates can retain less history than the newest target.
 pub fn target_loses_history(target: SolidCraftVersion) -> bool {
+    if VersionGate::ThinExtrude.supported(SolidCraftVersion::default())
+        && !VersionGate::ThinExtrude.supported(target)
+    {
+        return true;
+    }
     if [
         VersionGate::HistoryBody,
         VersionGate::SplitFaces,
@@ -485,7 +514,8 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         !matches!(gate, VersionGate::EntryRecessTip)
             && gate.supported(SolidCraftVersion::default())
             && !gate.supported(target)
-    })
+    }) || (VersionGate::SlantedFaceExtent.supported(SolidCraftVersion::default())
+        && !VersionGate::SlantedFaceExtent.supported(target))
 }
 
 /// Installed-version status, independent of CLI discovery or network access.
@@ -523,6 +553,7 @@ impl SolidCraftVersion {
     pub const V0_44_0: Self = Self([0, 44, 0]);
 
     /// Oldest release in the window when history-body and face-tool mapping was added.
+    /// Also names a tapped hole's thread `hand` (earlier: `handedness`).
     pub const V0_40_0: Self = Self([0, 40, 0]);
 
     /// Release used to prove closed circular blend paths.
@@ -539,6 +570,9 @@ impl SolidCraftVersion {
 
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
+
+    /// First release that stores a tapped hole's `thread_class`.
+    pub const V0_43_0: Self = Self([0, 43, 0]);
 
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {
@@ -3659,7 +3693,9 @@ mod version_tests {
             );
         }
         assert_eq!(target.extension(), SolidCraftVersion::V0_30_0.extension());
-        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3676,7 +3712,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3693,7 +3731,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3710,7 +3750,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3757,13 +3799,22 @@ mod version_tests {
         let after: SolidCraftVersion = "0.25.1".parse().unwrap();
         assert_eq!(before.minor(), after.minor());
         assert!(target_loses_history(before));
-        assert!(VersionGate::MirrorChain.supported(after));
-        // Both lose the 0.44 scoped bodies; the patch release still adds its own gate.
-        assert!(target_loses_history(after));
         assert!(!VersionGate::SketchProfileCoil.supported(before));
         assert!(VersionGate::SketchProfileCoil.supported(after));
+        assert!(!VersionGate::MirrorChain.supported(before));
+        assert!(VersionGate::MirrorChain.supported(after));
+        // The patch-sensitive capabilities work, while current representations
+        // still require a newer target and keep the history-loss notice.
+        assert!(target_loses_history(after));
+        assert!(!VersionGate::ThinExtrude.supported(after));
+        assert!(VersionGate::ThinExtrude.supported(SolidCraftVersion::V0_44_0));
+        assert!(!target_loses_history(SolidCraftVersion::V0_44_0));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
+        assert!(!VersionGate::HoleThreadDepth.supported(SolidCraftVersion::V0_30_0));
+        assert!(VersionGate::HoleThreadDepth.supported(SolidCraftVersion::V0_40_0));
+        assert!(!VersionGate::HoleThreadClass.supported("0.42.0".parse().unwrap()));
+        assert!(VersionGate::HoleThreadClass.supported(SolidCraftVersion::V0_43_0));
         assert!(!VersionGate::ClosedCircleBlend.supported("0.44.0".parse().unwrap()));
         assert!(VersionGate::ClosedCircleBlend.supported(SolidCraftVersion::V0_44_1));
         assert!("0.18.1".parse::<SolidCraftVersion>().is_err());

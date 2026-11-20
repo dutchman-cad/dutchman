@@ -64,6 +64,75 @@ fixtures copy topology from `geometry` and bind that home to the history context
 Whole-sketch profile fixtures use the operation and planar-profile wrappers;
 rational spline checks change the poles' `kind` discriminator.
 
+The Onshape REST bundle reader emits the same v11 wire. Its feature definitions
+wrap an `operation` and that operation's `value`; extrusions additionally wrap
+planar profiles. Revolve and hole construction payloads, sketch loci, NURBS poles,
+and trimmed-region discriminators follow the pinned types. Equal-offset chamfers
+state the former default `flip_direction: false` explicitly. Required empty feature
+metadata, parameter dependencies and properties, sketch endpoint references, and
+historical vertex membership are explicit. Final bodies and their solved carriers
+come from the STEP decoder in `geometry`; the reader never rebuilds them from
+rollback selections. Parameter ordinals remain local to each owning feature.
+
+Onshape thin walls pair a typed `design.features` extrusion with the existing
+`model.features` projection by feature identity. The typed `output.body` carries
+the thin thickness and side; profile, direction, extent and Boolean semantics
+must agree with the projection before the writer uses it. This narrow bridge does
+not admit design-only histories or infer absent projection operands.
+
+## Changes after the original v11 port
+
+The IR diff from `ff2d6b32` to `f1338aa` covers 29 cadmpeg commits. Appearance
+bindings and source attributes now wrap their entity in `references::InstanceTarget`:
+`{"entity": <tagged target>}`, with optional `path` and `state`. An omitted path
+and state keep the old definition-level meaning, including every placement of that
+definition. Component slicing follows `target.entity.value`; body/face appearance
+mapping reads `target.entity.kind` and `target.entity.value`. Hidden-geometry
+filtering and saved-display-mesh removal inspect the typed `target.entity`.
+
+A path selects one placed instance; a state selects an evaluation's geometry.
+Dutchman currently stores colours on shared component geometry and has no
+per-occurrence appearance or attribute override. It therefore leaves scoped
+bindings out and reports whether the unsupported scope is a placed instance or
+an evaluation state. Scoped appearances never enter the reverse binding index
+used to build shared component slices. Unscoped bindings retain their previous
+colour mapping and loss classification. Source attributes have no SolidCraft
+mapping; scoped attributes now receive a specific dropped loss during planning
+and writing, without changing unscoped attribute handling.
+
+The design root gained `sketches`, `sketch_entities`, `sketch_constraints`,
+`spatial_sketches`, `spatial_sketch_entities`, and `spatial_sketch_constraints`.
+Its feature operation enum gained `place`, `place_set`, `joint`, `rigid_group`,
+`component_pattern`, `mirror_components`, and `assembly_feature`. The process root
+now has setups, operations, machining features, groups, tools, presets, machines,
+programs, parameters, toolpaths, and states. These are separate design/process
+records, not replacements for the retained model wire read by Dutchman's history
+mapper. They are not interpreted through the model's old operation wrappers.
+
+At `f1338aa`, Fusion's `decode/design_intent.rs`, Inventor's history projection,
+SolidWorks' history projection, and FreeCAD's `design.rs` still populate
+`model.features` and model sketch arenas. No native reader in this comparison
+switched to design-only history. No design-arena history reader is added here;
+the existing design-only history refusal remains in force.
+
+The JSON-read audit of core and SolidCraft found changed appearance-target reads
+in `assembly/slicing.rs` and `history/faces.rs`, both ported above. Neither crate
+reads source-attribute targets, PMI targets, presentation-layer items, physics
+targets, or drawing/annotation `ReferenceSelection` payloads through JSON. The
+new `AttributeTarget::Configuration`, `AttributeValue::Parameter`, declared
+measure state targets, and tessellation state field therefore need no new wire
+lookup there. Model sketch reads and assembly operation recognition keep their
+retained model forms; the newly added design records are not substituted by name.
+
+DXF page membership also used the removed `ReferenceSelection::local_target()`.
+FreeCAD now emits an unresolved target with a typed `NativeName` containing the
+complete source object name. DXF follows that name only when it names exactly
+one decoded drawing object. External links, model sub-elements, other codecs,
+and scoped entity references remain unresolved and reported; no geometry is
+inferred from a source name. Drawing traversal and projection offsets otherwise
+stay unchanged. Assembly joint operands still use their separate model
+`object`/`subelements` representation; those fields are not drawing references.
+
 
 ## Changes after the original v11 port
 

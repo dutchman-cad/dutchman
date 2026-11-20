@@ -60,7 +60,32 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     if let (Some(nest), [body]) = (history_body(feature, &ids, ctx), ids.as_slice()) {
         return import_history_body(feature, body, nest, ctx);
     }
-    let later = later_changes(feature, &ids, ctx);
+    place(feature, &ids, ctx)
+}
+
+/// Maps a paste that inserts copies of bodies (`definition` is its operation): its outputs,
+/// the copies, are stored bodies like a base feature's.
+pub(super) fn insert(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    let found = definition.pointer("/bodies/kind").and_then(Value::as_str);
+    if found != Some("resolved") {
+        return Err(super::unsupported_selection("body", found));
+    }
+    let ids: Vec<&str> = feature
+        .get("outputs")
+        .and_then(Value::as_array)
+        .map(|ids| ids.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    place(feature, &ids, ctx)
+}
+
+/// Imports the stored bodies `ids` at `feature`'s place in the timeline, unless a later
+/// feature changes them in a way that would apply twice.
+fn place(feature: &Value, ids: &[&str], ctx: &mut Context) -> Result<Value, String> {
+    let later = later_changes(feature, ids, ctx);
     if let Some(twice) = later.iter().find(|row| !reapplies(row)) {
         return Err(format!(
             "its body is stored only as the design ends, and the later feature \"{}\" \
@@ -68,7 +93,7 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
             name(twice).unwrap_or("?")
         ));
     }
-    let mapped = import(feature, &ids, ctx)?;
+    let mapped = import(feature, ids, ctx)?;
     if !later.is_empty() {
         ctx.final_body = true;
         ctx.reapplied.extend(

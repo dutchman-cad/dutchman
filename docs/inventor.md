@@ -5,7 +5,7 @@ Dutchman reads Inventor through cadmpeg's Inventor codec (cadmpeg-registry's
 when the pin is bumped. This page says what Dutchman makes of what that codec gives, and which
 upstream gaps keep Inventor history from replaying. It drives what is asked of cadmpeg next.
 
-State as of the cadmpeg commit Dutchman pins (`651fe819`, cadmpeg 0.6.11; see `Cargo.toml`).
+State as of the cadmpeg commit Dutchman pins (`f1338aa2`, after cadmpeg 0.6.12; see `Cargo.toml`).
 Fixed-spacing rectangular body patterns and more face operands now decode, and resolved
 split targets retain their earlier body producer for history mapping. Body patterns still
 need earlier mapped body names; feature-local body selections remain unsupported.
@@ -44,6 +44,10 @@ Final-body faces cannot establish that timeline state. A `from_plane` start para
 sketch maps as a start offset along the sketch normal. Tilted plane ends and native,
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
+
+Contour-flange history still needs upstream decoding: the pinned Inventor codec does not
+emit CADIR contour-flange operations. Dutchman can map that neutral operation when a codec
+supplies an open line/arc chain and a blind normal sweep; see [sheet metal](history.md#sheet-metal).
 
 On SolidCraft 0.44 and newer, the shared writer can confirm extrude body scope
 at the final body-building feature from resolved modified-body outputs and a

@@ -201,6 +201,7 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
                 extra: None,
                 trimmed: false,
                 path: true,
+                unequal: None,
             });
         } else {
             fields.insert("path_sketch".to_owned(), json!(path_sketch));

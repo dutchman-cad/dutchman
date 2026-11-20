@@ -1,8 +1,11 @@
-//! Body mirror, boolean and split operations.
+//! Body mirror, boolean, split and removal operations.
 //!
-//! Both act on whole bodies named by earlier mapped features, never on faces of the final
-//! body, which a later feature may already have removed or moved. Native and historical body
-//! selections remain unresolved; a single generated result can resolve through its producer.
+//! They act on whole bodies named by earlier mapped features, never on faces of the final
+//! body, which a later feature may already have removed or moved. A generated body selection
+//! names a body by the feature that made it; a selection in the feature's own input state
+//! names the one body that state holds. A generated result can also resolve through its
+//! producer's single named output, or captured result identities with unique earlier mapped
+//! names. Native selections and ambiguous or unproven identities are refused.
 
 use serde_json::{json, Value};
 
@@ -30,11 +33,27 @@ fn members(selection: &Value) -> Result<Vec<&Value>, String> {
     rows.ok_or_else(|| "its bodies are not resolved".to_owned())
 }
 
-pub(super) fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, String> {
-    if crate::VersionGate::ScopedBodies.supported(ctx.target_version)
-        && selection.get("kind").and_then(Value::as_str) == Some("generated")
-    {
-        return generated_names(selection, ctx);
+pub(super) fn body_names(
+    source: &Value,
+    selection: &Value,
+    ctx: &Context,
+) -> Result<Vec<String>, String> {
+    Ok(bodies(source, selection, ctx)?
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect())
+}
+
+/// The bodies a selection names, each as (CADIR body id when the final model keeps it, name).
+fn bodies(
+    source: &Value,
+    selection: &Value,
+    ctx: &Context,
+) -> Result<Vec<(Option<String>, String)>, String> {
+    match selection.get("kind").and_then(Value::as_str) {
+        Some("generated") => return generated_names(source, selection, ctx),
+        Some("historical") => return input_state_body(source, selection, ctx),
+        _ => {}
     }
     let mut names = Vec::new();
     for value in members(selection)? {
@@ -51,7 +70,7 @@ pub(super) fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>
         {
             return Err("its body name is not unique".to_owned());
         }
-        names.push(name.clone());
+        names.push((Some(id.to_owned()), name.clone()));
     }
     if names.is_empty() {
         return Err("it selects no bodies".to_owned());
@@ -59,16 +78,226 @@ pub(super) fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>
     Ok(names)
 }
 
+/// Captured identities resolve only through a stored result and a unique earlier name.
+fn captured_names(
+    selection: &Value,
+    ctx: &Context,
+) -> Result<Vec<(Option<String>, String)>, String> {
+    let bodies = selection
+        .pointer("/value/bodies")
+        .and_then(Value::as_array)
+        .ok_or("its generated bodies are missing")?;
+    let mut names: Vec<(Option<String>, String)> = Vec::new();
+    for body in bodies {
+        let feature = body
+            .get("feature")
+            .and_then(Value::as_str)
+            .filter(|id| ctx.feature_names.contains_key(*id))
+            .ok_or("its body creator is missing")?;
+        let local = body
+            .get("local_id")
+            .and_then(Value::as_str)
+            .ok_or("its body result identity is missing")?;
+        let owner = ctx
+            .row("features", feature)
+            .ok_or("its body creator is missing")?;
+        let known = super::reference::body_bindings(owner)?
+            .is_some_and(|bindings| bindings.iter().any(|(id, _)| id == local));
+        let proven = ctx.source.is_some_and(|source| {
+            source
+                .ir
+                .model
+                .feature_result_topologies
+                .iter()
+                .any(|state| {
+                    state.output_of.as_str() == feature
+                        && state.bodies().iter().any(|body| body.as_str() == local)
+                })
+        });
+        if !known || !proven {
+            return Err("its generated body is not a captured earlier feature result".into());
+        }
+        let matches: Vec<_> = ctx
+            .named_bodies
+            .iter()
+            .filter(|(id, _)| id == local)
+            .collect();
+        let [(_, name)] = matches.as_slice() else {
+            return Err("its generated body has no unique earlier name".into());
+        };
+        if ctx
+            .named_bodies
+            .iter()
+            .any(|(id, n)| id != local && n == name)
+            || names.iter().any(|(_, known)| known == name)
+        {
+            return Err("its generated body name is not unique".into());
+        }
+        names.push((Some(local.to_owned()), name.clone()));
+    }
+    if names.is_empty() {
+        return Err("it selects no generated bodies".into());
+    }
+    Ok(names)
+}
+
+/// Bodies named by their producer, its sole output, or proven captured result identities.
+/// Results absent from the final model can use producer names without a CADIR body id.
+fn generated_names(
+    source: &Value,
+    selection: &Value,
+    ctx: &Context,
+) -> Result<Vec<(Option<String>, String)>, String> {
+    let refs = selection
+        .pointer("/value/bodies")
+        .and_then(Value::as_array)
+        .filter(|refs| !refs.is_empty())
+        .ok_or("its generated body selection is malformed")?;
+    let mut names: Vec<(Option<String>, String)> = Vec::new();
+    for body in refs {
+        let (Some(feature), Some(local)) = (
+            body.get("feature").and_then(Value::as_str),
+            body.get("local_id").and_then(Value::as_str),
+        ) else {
+            return Err("its generated body reference is malformed".to_owned());
+        };
+        let resolved = if let Some((_, name)) = ctx
+            .generated_bodies
+            .iter()
+            .find(|((known, id), _)| known == feature && id == local)
+        {
+            (None, name.clone())
+        } else if ctx
+            .row("features", feature)
+            .map(super::reference::body_bindings)
+            .transpose()?
+            .flatten()
+            .is_some()
+        {
+            let selected = json!({"kind": "generated", "value": {"bodies": [body]}});
+            captured_names(&selected, ctx)?
+                .into_iter()
+                .next()
+                .ok_or("it selects no generated bodies")?
+        } else if crate::VersionGate::ScopedBodies.supported(ctx.target_version) {
+            let selected = json!({"kind": "generated", "value": {"bodies": [body]}});
+            generated_output_bodies(source, &selected, ctx)?
+                .into_iter()
+                .next()
+                .ok_or("its generated body has no single named output")?
+        } else {
+            return Err(
+                "it selects a body made by an earlier feature that did not name it".to_owned(),
+            );
+        };
+        if names.iter().any(|(_, known)| known == &resolved.1) {
+            return Err("it selects one body twice".to_owned());
+        }
+        names.push(resolved);
+    }
+    Ok(names)
+}
+
+/// The body of a selection in the feature's own input state, when that state holds exactly
+/// one body and the history so far has named exactly one: the two are then the same body.
+/// A state with several bodies says nothing about which named body each one is.
+fn input_state_body(
+    source: &Value,
+    selection: &Value,
+    ctx: &Context,
+) -> Result<Vec<(Option<String>, String)>, String> {
+    const UNSUPPORTED: &str = "a body from an earlier history state is not supported yet \
+        when that state holds several bodies";
+    let state = selection
+        .pointer("/value/state")
+        .and_then(Value::as_str)
+        .and_then(|id| ctx.row("feature_input_topologies", id))
+        .ok_or("its input body state is missing")?;
+    let own = source.get("id").and_then(Value::as_str);
+    if own.is_none() || state.get("input_of").and_then(Value::as_str) != own {
+        return Err("its input body state belongs to another feature".to_owned());
+    }
+    let [held] = state
+        .get("bodies")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    else {
+        return Err(UNSUPPORTED.to_owned());
+    };
+    let [selected] = selection
+        .pointer("/value/bodies")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    else {
+        return Err(UNSUPPORTED.to_owned());
+    };
+    if selected != held {
+        return Err("it selects a body its input state does not hold".to_owned());
+    }
+    let mut live = ctx
+        .named_bodies
+        .iter()
+        .map(|(id, name)| (Some(id.clone()), name.clone()))
+        .chain(
+            ctx.generated_bodies
+                .iter()
+                .map(|(_, name)| (None, name.clone())),
+        );
+    match (live.next(), live.next()) {
+        (Some(body), None) => Ok(vec![body]),
+        _ => Err("its one input body is not the one body an earlier feature named".to_owned()),
+    }
+}
+
+/// A removal of selected bodies from the model.
+pub(super) fn remove(
+    source: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    match definition.get("mode").and_then(Value::as_str) {
+        Some("delete_selected") => {}
+        Some("keep_selected") => {
+            return Err(
+                "removing every body except the selected ones is not supported yet".to_owned(),
+            )
+        }
+        _ => return Err("its removal mode is not resolved".to_owned()),
+    }
+    if !crate::VersionGate::RemoveBody.supported(ctx.target_version) {
+        return Err(format!(
+            "removing a body is written for SolidCraft 0.40 or newer (target {})",
+            ctx.target_version.minor()
+        ));
+    }
+    let bodies = body_names(
+        source,
+        definition.get("bodies").unwrap_or(&Value::Null),
+        ctx,
+    )?;
+    let out = feature(source, ctx, "remove", json!({"bodies": bodies}));
+    ctx.named_bodies.retain(|(_, name)| !bodies.contains(name));
+    ctx.generated_bodies
+        .retain(|(_, name)| !bodies.contains(name));
+    Ok(out)
+}
+
 /// A single generated body can be identified with its producer's single named output.
 /// Multi-body result order alone cannot establish that correspondence. The declared result
 /// state must contain exactly that local body and belong to the mapped producer.
-fn generated_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, String> {
-    let bodies = selection
+fn generated_output_bodies(
+    source: &Value,
+    selection: &Value,
+    ctx: &Context,
+) -> Result<Vec<(Option<String>, String)>, String> {
+    let refs = selection
         .pointer("/value/bodies")
         .and_then(Value::as_array)
         .ok_or("its generated bodies are not resolved")?;
     let mut names = Vec::new();
-    for body in bodies {
+    for body in refs {
         let producer = body
             .get("feature")
             .and_then(Value::as_str)
@@ -103,7 +332,7 @@ fn generated_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, Stri
             .filter(|outputs| outputs.len() == 1)
             .ok_or("its generated body has no single named output")?;
         let selected = json!({"kind": "bodies", "value": outputs});
-        let resolved = body_names(&selected, ctx)?;
+        let resolved = bodies(source, &selected, ctx)?;
         names.extend(resolved);
     }
     if names.is_empty() {
@@ -166,12 +395,12 @@ pub(super) fn combine(
     let operands = definition
         .get("operands")
         .ok_or("its boolean operands are missing")?;
-    let target = body_names(operands.get("target").unwrap_or(&Value::Null), ctx)?;
+    let target = body_names(source, operands.get("target").unwrap_or(&Value::Null), ctx)?;
     let target = match target.as_slice() {
         [target] => target.clone(),
         _ => return Err("combining several target bodies is not supported yet".to_owned()),
     };
-    let tools = body_names(operands.get("tools").unwrap_or(&Value::Null), ctx)?;
+    let tools = body_names(source, operands.get("tools").unwrap_or(&Value::Null), ctx)?;
     if tools.contains(&target) {
         return Err("its target is also a tool body".to_owned());
     }
@@ -192,6 +421,8 @@ pub(super) fn combine(
     );
     if !keep_tools {
         ctx.named_bodies.retain(|(_, name)| !tools.contains(name));
+        ctx.generated_bodies
+            .retain(|(_, name)| !tools.contains(name));
     }
     Ok(out)
 }
@@ -206,12 +437,16 @@ pub(super) fn mirror(
         .get("seeds")
         .and_then(Value::as_array)
         .ok_or("its mirror seeds are missing")?;
-    let mut bodies = Vec::new();
+    let mut seeds_found = Vec::new();
     let mut features = Vec::new();
     for seed in seeds {
         match seed.get("kind").and_then(Value::as_str) {
             Some("bodies") => {
-                bodies.extend(body_names(seed.get("value").unwrap_or(&Value::Null), ctx)?);
+                seeds_found.extend(bodies(
+                    source,
+                    seed.get("value").unwrap_or(&Value::Null),
+                    ctx,
+                )?);
             }
             Some("feature") => {
                 let mapped = seed
@@ -226,7 +461,7 @@ pub(super) fn mirror(
             }
         }
     }
-    if bodies.is_empty() || !features.is_empty() {
+    if seeds_found.is_empty() || !features.is_empty() {
         return Err("mixing body and feature mirror seeds is not supported yet".to_owned());
     }
     let pattern = definition
@@ -237,10 +472,13 @@ pub(super) fn mirror(
     let normal =
         v3(pattern.get("plane_normal")).ok_or("its mirror plane normal is not resolved")?;
     let plane = plane(origin, normal)?;
+    let combine = joins_its_seeds(source, &seeds_found);
+    let bodies: Vec<String> = seeds_found.into_iter().map(|(_, name)| name).collect();
     // One copied body and one new output have an unambiguous correspondence. A result
     // already named before this mirror is not a new copy, and duplicate display names
     // cannot identify the copy in SolidCraft.
     let names = if crate::VersionGate::ScopedBodies.supported(ctx.target_version)
+        && !combine
         && bodies.len() == 1
         && source
             .get("outputs")
@@ -268,12 +506,34 @@ pub(super) fn mirror(
         source,
         ctx,
         "mirror",
-        json!({"features": [], "bodies": bodies, "plane": plane, "combine": false}),
+        json!({"features": [], "bodies": bodies, "plane": plane, "combine": combine}),
     );
     if let (Some(names), Some(fields)) = (names, mapped.as_object_mut()) {
         fields.insert("body_names".to_owned(), json!(names));
     }
     Ok(mapped)
+}
+
+/// Whether a body mirror joins its copies to the bodies it mirrors: the bodies it outputs
+/// are exactly its seed bodies, so it changed them instead of making new ones.
+fn joins_its_seeds(source: &Value, seeds: &[(Option<String>, String)]) -> bool {
+    let outputs: Vec<&str> = source
+        .get("outputs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let Some(seeds) = seeds
+        .iter()
+        .map(|(id, _)| id.as_deref())
+        .collect::<Option<Vec<&str>>>()
+    else {
+        return false;
+    };
+    !outputs.is_empty()
+        && outputs.len() == seeds.len()
+        && seeds.iter().all(|id| outputs.contains(id))
 }
 
 /// The topology arenas a body's vertices are reached through.
@@ -398,9 +658,11 @@ pub(super) fn split(
     ctx: &mut Context,
 ) -> Result<Value, String> {
     let names = ctx.named_bodies.clone();
+    let generated = ctx.generated_bodies.clone();
     let mapped = split_bodies(source, definition, ctx);
     if mapped.is_err() {
         ctx.named_bodies = names;
+        ctx.generated_bodies = generated;
     }
     mapped
 }
@@ -461,7 +723,7 @@ fn split_bodies(source: &Value, definition: &Value, ctx: &mut Context) -> Result
     let selection = definition.get("targets").unwrap_or(&Value::Null);
     let targets = match consumed_target(source, selection, ctx)? {
         Some(name) => vec![name],
-        None => body_names(selection, ctx)?,
+        None => body_names(source, selection, ctx)?,
     };
     let target = match targets.as_slice() {
         [target] => target.clone(),
@@ -514,11 +776,12 @@ fn split_bodies(source: &Value, definition: &Value, ctx: &mut Context) -> Result
         .map_or_else(|| format!("{target} (split)"), str::to_owned);
     let mut piece = base.clone();
     let mut n = 2;
-    while ctx.named_bodies.iter().any(|(_, known)| *known == piece) {
+    while ctx.body_name_taken(&piece) {
         piece = format!("{base} ({n})");
         n += 1;
     }
     ctx.named_bodies.retain(|(_, name)| *name != target);
+    ctx.generated_bodies.retain(|(_, name)| *name != target);
     if let (2, Some((kept, _)), Some((cut, _))) = (outputs.len(), kept, cut) {
         ctx.named_bodies.push((kept.clone(), target.clone()));
         ctx.named_bodies.push((cut.clone(), piece.clone()));
@@ -529,4 +792,37 @@ fn split_bodies(source: &Value, definition: &Value, ctx: &mut Context) -> Result
         "split",
         json!({"body": target, "plane": plane, "body_names": [piece]}),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn removal_resolves_generated_bodies_from_both_identity_sources() {
+        let model = json!({
+            "features": [{"id": "producer", "outputs": ["body"]}],
+            "feature_result_topologies": [{"id": "result", "output_of": "producer",
+                "members": [{"kind": "body", "id": "local"}]}]
+        });
+        let mut ctx = Context::testing(&model);
+        ctx.feature_names
+            .insert("producer".into(), "Extrude".into());
+        ctx.named_bodies.push(("body".into(), "Kept".into()));
+        ctx.generated_bodies
+            .push((("omitted".into(), "local".into()), "Omitted".into()));
+        let selected = json!({"kind": "generated", "value": {"bodies": [
+            {"feature": "producer", "local_id": "local"},
+            {"feature": "omitted", "local_id": "local"}
+        ]}});
+        let removed = remove(
+            &json!({"id": "remove"}),
+            &json!({"mode": "delete_selected", "bodies": selected}),
+            &mut ctx,
+        )
+        .unwrap();
+        assert_eq!(removed["bodies"], json!(["Kept", "Omitted"]));
+        assert!(ctx.named_bodies.is_empty());
+        assert!(ctx.generated_bodies.is_empty());
+    }
 }

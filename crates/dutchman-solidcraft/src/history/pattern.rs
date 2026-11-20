@@ -412,6 +412,11 @@ fn mirror_plane(pattern: Option<&Value>) -> Result<Value, String> {
     Ok(json!({"type": "custom", "plane": {"origin": origin, "x_dir": x, "y_dir": y}}))
 }
 
+/// Whether a linear direction places its instances on both sides of the original.
+fn symmetric(direction: &Value) -> bool {
+    direction.get("symmetric").and_then(Value::as_bool) == Some(true)
+}
+
 /// The SolidCraft pattern layout for a CADIR pattern transform.
 fn layout(pattern: Option<&Value>) -> Result<Value, String> {
     let pattern = pattern.ok_or("it has no layout")?;
@@ -445,6 +450,13 @@ fn layout(pattern: Option<&Value>) -> Result<Value, String> {
                 "count1": instance_count(pattern.get("count"))?.to_string(),
                 "spacing1": format!("{spacing} mm"),
             });
+            // A symmetric direction alternates sides from the original; SolidCraft's
+            // centre alignment places its slots the same way.
+            if symmetric(pattern) {
+                if let Some(fields) = out.as_object_mut() {
+                    fields.insert("alignment".to_owned(), json!("center"));
+                }
+            }
             if let Some(second) = pattern.get("second").filter(|s| !s.is_null()) {
                 let dir2 = v3(second.get("direction"))
                     .and_then(unit)
@@ -459,6 +471,9 @@ fn layout(pattern: Option<&Value>) -> Result<Value, String> {
                         json!(instance_count(second.get("count"))?.to_string()),
                     );
                     fields.insert("spacing2".to_owned(), json!(format!("{spacing2} mm")));
+                    if symmetric(second) {
+                        fields.insert("alignment2".to_owned(), json!("center"));
+                    }
                 }
             }
             let count1 = instance_count(pattern.get("count"))?;
@@ -599,6 +614,7 @@ fn composite_layout(pattern: &Value) -> Result<Value, String> {
                         ("dir1", "dir2"),
                         ("count1", "count2"),
                         ("spacing1", "spacing2"),
+                        ("alignment", "alignment2"),
                     ] {
                         if let Some(value) = second.get(from) {
                             fields.insert(to.to_owned(), value.clone());
@@ -682,6 +698,37 @@ mod tests {
         );
         skipping["omitted_instances"] = json!([]);
         assert_eq!(layout(Some(&skipping)), layout(Some(&linear)));
+    }
+
+    #[test]
+    fn symmetric_directions_are_centred_on_the_original() {
+        let mut symmetric = json!({"kind": "linear", "direction": {"x": -1.0, "y": 0.0, "z": 0.0},
+            "spacing": 2.0, "count": 4, "symmetric": true,
+            "second": {"direction": {"x": 0.0, "y": 1.0, "z": 0.0}, "spacing": 3.0, "count": 3,
+                "symmetric": true}});
+        assert_eq!(
+            layout(Some(&symmetric)).unwrap(),
+            json!({"type": "rectangular", "dir1": [-1.0, 0.0, 0.0], "count1": "4",
+                   "spacing1": "2 mm", "alignment": "center", "dir2": [0.0, 1.0, 0.0],
+                   "count2": "3", "spacing2": "3 mm", "alignment2": "center"})
+        );
+        symmetric["symmetric"] = json!(false);
+        symmetric["second"]["symmetric"] = json!(false);
+        let one_sided = layout(Some(&symmetric)).unwrap();
+        assert!(one_sided.get("alignment").is_none() && one_sided.get("alignment2").is_none());
+
+        let stage = |x: f64, y: f64, symmetric: bool| {
+            json!({"pattern": {"kind": "linear", "direction": {"x": x, "y": y, "z": 0.0},
+                "spacing": 2.0, "count": 3, "symmetric": symmetric}})
+        };
+        let composite = json!({"kind": "composite",
+            "stages": [stage(1.0, 0.0, false), stage(0.0, 1.0, true)]});
+        assert_eq!(
+            layout(Some(&composite)).unwrap(),
+            json!({"type": "rectangular", "dir1": [1.0, 0.0, 0.0], "count1": "3",
+                   "spacing1": "2 mm", "dir2": [0.0, 1.0, 0.0], "count2": "3",
+                   "spacing2": "2 mm", "alignment2": "center"})
+        );
     }
 
     #[test]
