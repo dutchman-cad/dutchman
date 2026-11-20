@@ -148,10 +148,22 @@ pub(crate) fn original_looks(doc: &mut Value, looks: &History) {
     }
 }
 
+/// A reader can opt in to retaining parameters without a mapped sketch.
+fn retain_parameters(model: &Model) -> bool {
+    model.ir.model.parameters.iter().any(|parameter| {
+        parameter
+            .properties
+            .get("retain_without_sketches")
+            .map(String::as_str)
+            == Some("true")
+    })
+}
+
 /// Appends mapped sketches to the import's component, hidden but editable. Parameters stay
 /// available to their dimensions; none of the body-building history is retained.
-pub(crate) fn keep_sketches(doc: &mut Value, references: &History) {
-    if references.features.is_empty() {
+pub(crate) fn keep_sketches(doc: &mut Value, references: &History, model: &Model) {
+    if references.features.is_empty() && (!retain_parameters(model) || references.params.is_empty())
+    {
         return;
     }
     let mut references = references.clone();
@@ -438,7 +450,11 @@ pub(crate) fn report_unmapped(model: &Model, references: Option<&History>, repor
     } else {
         0
     };
-    let parameters = if references.is_some_and(|history| !history.features.is_empty()) {
+    let parameters = if retain_parameters(model) {
+        m.parameters
+            .len()
+            .saturating_sub(references.map_or(0, |history| history.params.len()))
+    } else if references.is_some_and(|history| !history.features.is_empty()) {
         0
     } else {
         m.parameters.len()

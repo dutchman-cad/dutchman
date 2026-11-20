@@ -14,3 +14,9 @@ crates/dutchman-gui/assets/fonts/, and in licences/ in the release archives):
 Dutchman uses sysinfo on Windows and macOS, under the MIT License (text in
 licences/sysinfo-MIT.txt, and in licences/ in the release archives):
 - sysinfo, Copyright (c) 2015 Guillaume Gomez.
+
+Dutchman uses keyring to keep Onshape API keys in the system credential store, and rpassword
+to read a secret key without showing it, on its own command line (MIT OR Apache-2.0 for
+keyring, which Dutchman uses under the Apache License, Version 2.0; Apache-2.0 for rpassword):
+- keyring, Copyright (c) Walther Chen and Daniel Brotsky.
+- rpassword, Copyright (c) Conrad Kleinespel.

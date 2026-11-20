@@ -21,6 +21,7 @@ pub enum Action {
 pub struct Card {
     pub row: usize,
     pub log: Option<PathBuf>,
+    pub file: Option<PathBuf>,
     pub log_ready: bool,
     pub prepared: Prepared,
     pub folder: PathBuf,
@@ -37,6 +38,7 @@ impl Card {
         Self {
             row,
             log: None,
+            file: None,
             log_ready: true,
             summary: prepared.bundle_sha256.is_none(),
             prepared,
@@ -126,6 +128,9 @@ impl Consent {
                     "Upload request: {size} bytes (limit 25 MiB, including overhead)"
                 ));
             }
+            if card.file.is_some() {
+                ui.label("Onshape bundles contain the document. To share a document with us, send the .onshape-bundle; never send your keys.");
+            }
             for part in &card.prepared.parts {
                 ui.label(format!("{}: {} bytes", part.role, part.bytes));
             }
@@ -214,14 +219,18 @@ impl Consent {
         ui.label(&card.status);
         // The other ways go back to the panel's steps, never to another window.
         if ui.button("Send the whole file privately").clicked() {
-            private = Some(Action::Private(card.row, None));
+            private = Some(Action::Private(card.row, card.file.clone()));
         }
         if card.prepared.bundle_sha256.is_some()
             && ui.button("Send this bundle privately").clicked()
         {
             private = Some(Action::Private(
                 card.row,
-                Some(card.folder.join("bundle.json.gz")),
+                Some(
+                    card.file
+                        .clone()
+                        .unwrap_or_else(|| card.folder.join("bundle.json.gz")),
+                ),
             ));
         }
         if ui.button("Get updates on Discord").clicked() {

@@ -24,6 +24,7 @@ pub mod investigate;
 pub mod issue;
 pub mod json;
 pub mod mcp;
+pub mod onshape;
 pub mod present;
 pub mod progress;
 pub mod report_policy;
@@ -82,6 +83,18 @@ pub enum OutputWriter {
 }
 
 impl Writer for OutputWriter {
+    fn companion_files(
+        &self,
+        encoded: &[u8],
+    ) -> Result<Vec<(String, Vec<u8>)>, dutchman_core::Error> {
+        match self {
+            Self::Configured { writer, .. } => writer.companion_files(encoded),
+            Self::SolidCraft(writer) => writer.companion_files(encoded),
+            Self::FreeCad(writer) => writer.companion_files(encoded),
+            Self::Dxf => Ok(Vec::new()),
+        }
+    }
+
     fn extension(&self) -> &'static str {
         match self {
             Self::Configured { writer, .. } => writer.extension(),
@@ -395,6 +408,13 @@ pub struct PreparedWriter {
 }
 
 impl Writer for PreparedWriter {
+    fn companion_files(
+        &self,
+        encoded: &[u8],
+    ) -> Result<Vec<(String, Vec<u8>)>, dutchman_core::Error> {
+        self.writer.companion_files(encoded)
+    }
+
     fn extension(&self) -> &'static str {
         self.writer.extension()
     }
@@ -881,6 +901,25 @@ impl Inspection {
 #[cfg(test)]
 mod option_tests {
     use super::*;
+
+    #[test]
+    fn prepared_writer_keeps_the_explicit_target_and_patch() {
+        for version in ["0.25.1", "0.44.1"] {
+            let target: SolidCraftVersion = version.parse().unwrap();
+            let options = ConvertOptions {
+                solidcraft_version: Some(target),
+                no_verify: true,
+                no_memory_check: true,
+                ..Default::default()
+            };
+            let prepared = options.prepare_writer(Path::new("synthetic.onshape-bundle"), None);
+            assert_eq!(prepared.solidcraft.unwrap()["target"], target.minor());
+            let OutputWriter::SolidCraft(writer) = prepared.writer else {
+                panic!("Expected the SolidCraft writer");
+            };
+            assert_eq!(writer.resolved_version(), target);
+        }
+    }
 
     #[test]
     fn a_skipped_final_assembly_check_cannot_claim_overall_verification() {

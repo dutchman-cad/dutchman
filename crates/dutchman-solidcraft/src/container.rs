@@ -47,6 +47,16 @@ impl Container {
         Ok(name)
     }
 
+    /// Retains a linked design so file conversion can publish it beside the main file.
+    pub(crate) fn add_companion(&mut self, name: &str, bytes: &[u8]) -> Result<(), Error> {
+        let path = format!("companions/{name}");
+        if !self.blobs.contains(&path) {
+            self.part(&path, bytes, CompressionMethod::Deflated)?;
+            self.blobs.push(path);
+        }
+        Ok(())
+    }
+
     /// The container path of the STEP payload, as the document refers to it.
     pub(crate) fn step_blob(&self) -> &str {
         &self.step_blob

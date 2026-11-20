@@ -4,6 +4,11 @@
 
 pub mod app;
 mod doctor;
+#[doc(hidden)]
+pub mod native_paste;
+mod onshape;
+#[doc(hidden)]
+pub mod paste;
 pub mod platform;
 pub mod report_consent;
 pub mod report_panel;
