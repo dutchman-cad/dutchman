@@ -53,9 +53,6 @@ fn authentication_defaults_to_keys_and_refuses_all_mixed_sources() {
     private_file(&path, &format!("{TOKEN}\n"));
     for api in [keys.to_vec(), vec![keys[0]], vec![keys[1]]] {
         for file in [false, true] {
-            if file && !cfg!(unix) {
-                continue;
-            }
             let mut pairs = api.clone();
             if !file {
                 pairs.push(("DUTCHMAN_ONSHAPE_BEARER_TOKEN", TOKEN));
@@ -67,6 +64,9 @@ fn authentication_defaults_to_keys_and_refuses_all_mixed_sources() {
             assert!(!format!("{error:?}").contains(TOKEN));
         }
     }
+    let missing = dir.path().join("missing-token");
+    let error = FetchAuth::find(&store(&keys), Some(&missing)).unwrap_err();
+    assert!(error.message.contains("Choose either"));
     #[cfg(unix)]
     {
         // Saved keys conflict too, with both token sources.
@@ -216,8 +216,12 @@ fn cli_file_and_environment_conflicts_are_redacted_in_text_and_json() {
                 let report: Value = serde_json::from_str(&stdout).unwrap();
                 assert_eq!(report["error"]["code"], "onshape/auth");
                 assert_eq!(report["calls"], 0);
+                assert!(report["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Choose either"));
             } else {
-                assert!(stderr.contains("Choose either"));
+                assert!(stderr.contains("Choose either"), "{stderr}");
             }
         }
     }

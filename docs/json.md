@@ -1675,6 +1675,8 @@ Token files that fail ownership, privacy, type, or size checks return `onshape/a
 with `calls: 0`. Windows refuses token files because privacy cannot be checked yet and
 directs users to clear the file selection and use the environment variable instead.
 Mixing a token with API keys (including saved keys) returns `onshape/auth` with `calls: 0`.
+Selecting a token file alongside API-key environment variables reports the authentication
+conflict before reading the file on every platform.
 Bearer HTTP 401/403 returns `onshape/auth` and explains that the token expired or lacks
 access, with instructions to obtain and supply a fresh token with read access. Echoed
 credential material returns `onshape/privacy` without echoing the credential.
