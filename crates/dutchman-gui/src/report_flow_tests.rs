@@ -170,3 +170,155 @@ fn rendered_partial_and_geometry_results_are_amber_in_both_themes() {
         }
     }
 }
+
+// Screenshot evidence uses synthetic reports only, without opening or sending a design.
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn report_panel_release_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let before = std::env::var_os("DUTCHMAN_SCREENSHOT_BEFORE").is_some();
+    let mut index = String::from(
+        "# Report panel screenshots\n\nSynthetic reports and held progress; every PNG is 1180 × 800. No design was decoded or sent.\n\n| Image | Panel visible | Partial / geometry amber | Selected file route |\n|---|---|---|---|\n",
+    );
+    for dark in [false, true] {
+        if before && dark {
+            continue;
+        }
+        let theme = if dark { "dark" } else { "light" };
+        for (cases, name) in [
+            (vec![1], "C1-full-success"),
+            (vec![2], "C2-partial-history"),
+            (vec![3], "C3-geometry-only"),
+            (vec![4], "C4-failure"),
+            (vec![5], "C5-slow-progress"),
+            (vec![1, 2, 3], "C6-three-results-expanded"),
+        ] {
+            let mut h = harness(&cases, dark);
+            if name == "C5-slow-progress" {
+                let mut running = row(5);
+                running.input = PathBuf::from("synthetic-large-assembly.f3z");
+                running.status = Status::Converting;
+                running.report = None;
+                running.size = Some(65_000_000);
+                running.progress = Some(dutchman_core::ProgressEvent {
+                    stage: dutchman_core::Stage::Decode,
+                    elapsed_ms: 179_000,
+                    designs_read: 0,
+                    designs_total: None,
+                    heartbeat: true,
+                    running: None,
+                });
+                h.state_mut().preview_running_for_test(running);
+                h.run_steps(16);
+                h.get_by_label("Stop");
+            }
+            if cases.len() == 3 {
+                expand(&mut h);
+            }
+            save_report_panel_shot(
+                &mut h,
+                &dir,
+                &format!("{name}-{theme}"),
+                "not clicked",
+                &mut index,
+            )
+            .unwrap();
+            if cases.len() == 3 {
+                assert!(h.state().output_expanded);
+                h.get_by_label("Feature history").scroll_to_me();
+                h.run_steps(16);
+                save_report_panel_shot(
+                    &mut h,
+                    &dir,
+                    &format!("{name}-controls-{theme}"),
+                    "not clicked; Advanced open, output choices expanded",
+                    &mut index,
+                )
+                .unwrap();
+            }
+            if name != "C5-slow-progress" {
+                for (position, case) in cases.iter().enumerate() {
+                    h.query_all_by_label(REPORT_THIS_FILE)
+                        .nth(position)
+                        .unwrap()
+                        .click_accesskit();
+                    h.run_steps(16);
+                    assert_eq!(h.state().report_row, Some(position));
+                    assert_eq!(
+                        h.state().rows.get(position).unwrap().input,
+                        PathBuf::from(format!("synthetic-{case}.f3d"))
+                    );
+                    save_report_panel_shot(
+                        &mut h,
+                        &dir,
+                        &format!("{name}-route-{case}-{theme}"),
+                        &format!("PASS: synthetic-{case}.f3d"),
+                        &mut index,
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+    std::fs::write(dir.join("index.md"), index).unwrap();
+}
+
+fn save_report_panel_shot(
+    h: &mut Harness<'static, App>,
+    dir: &std::path::Path,
+    name: &str,
+    route: &str,
+    index: &mut String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let viewport = egui::Rect::from_min_max(
+        egui::pos2(0.0, 80.0),
+        egui::pos2(
+            1180.0,
+            h.query_by_label("Convert")
+                .or_else(|| h.query_by_label("Stop"))
+                .ok_or("The footer has neither Convert nor Stop")?
+                .rect()
+                .top(),
+        ),
+    );
+    let question = h
+        .query_by_label(report_panel::QUESTION)
+        .map(|node| node.rect());
+    let dm = h
+        .query_by_label(present::SEND_DM_BUTTON)
+        .map(|node| node.rect());
+    let visible = question.is_some_and(|rect| viewport.contains_rect(rect))
+        && dm.is_some_and(|rect| viewport.contains_rect(rect));
+    let p = if h.ctx.style().visuals.dark_mode {
+        theme::NIGHT
+    } else {
+        theme::DAY
+    };
+    let amber = h
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.job.text == "Converted" => Some(text),
+            _ => None,
+        })
+        .filter(|text| {
+            text.galley.job.sections.iter().any(|section| {
+                text.override_text_color.unwrap_or_else(|| {
+                    if section.format.color == egui::Color32::PLACEHOLDER {
+                        text.fallback_color
+                    } else {
+                        section.format.color
+                    }
+                }) == p.lantern_text
+            })
+        })
+        .count();
+    let file = format!("{name}.png");
+    let image = h.render()?;
+    assert_eq!(image.dimensions(), (1180, 800));
+    image.save(dir.join(&file))?;
+    index.push_str(&format!("| [{file}]({file}) | {} (question {question:?}; DM {dm:?}) | {amber} amber result labels | {route} |\n", if visible { "Yes" } else { "No" }));
+    Ok(())
+}
