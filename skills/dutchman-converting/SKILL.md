@@ -458,6 +458,12 @@ A bend without its mapped attached plate remains blocked.
 - One file: `convert` with `input` and `output` (ending in `.sc`; legacy `.solidcraft`
   and `.solvecraft` names also work). Default names use `.solidcraft` for targets before
   SolidCraft 0.25.1.
+- Folder outputs keep paths relative to each input folder, so `in/ProjectA/part.f3d`
+  writes `out/ProjectA/part.sc`. Same-named files in other subfolders stay separate;
+  linked design companions and desktop reports stay beside the design. Repeating a run
+  into an explicit output folder reuses the paths and replaces designs unless overwrite
+  is disabled. Identical companions are reused; edited companions cause a conflict and
+  are kept. Single-file output paths are unchanged.
 - Many files or a folder: `convert_all` with `inputs` and `out_dir`. One failure does not stop
   the rest; the call is an error when any file failed, and each file has its own report in
   `results`.

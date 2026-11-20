@@ -97,6 +97,13 @@ counts before conversion. A new folder beside the input, named `Project (SolidCr
 is selected automatically; **Choose…** can select another output folder. Existing folders
 receive a numbered alternative.
 
+Folder runs keep the input tree under the selected output folder. For example,
+`in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`, with linked design companions
+and its `.report.json` beside it. Same-named designs in different subfolders stay
+separate. Repeating a run into the same selected folder reuses the output paths;
+existing designs and reports are replaced, identical linked companions are reused,
+and edited companions are kept with a conflict report.
+
 ZIP projects unpack into a private temporary folder, limited to 10,000 entries and 4 GiB
 of extracted data. Paths outside the project are refused and symbolic links are skipped.
 Temporary files are removed when the conversion and its retained retry rows are released.
