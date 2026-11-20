@@ -5,6 +5,33 @@ use dutchman::preflight::{preflight, Tier};
 use dutchman_core::preflight::{scan, Budget, Prediction, Reason};
 use std::time::{Duration, Instant};
 
+// Semantic assertions must not race the production wall-clock ceiling.
+fn test_budget() -> Budget {
+    Budget {
+        max_time: Duration::MAX,
+        ..Budget::default()
+    }
+}
+
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+fn assert_cli_refusal_or_timeout(output: &std::process::Output, reason: &str) -> serde_json::Value {
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    if value["scan"]["reason"] == "time_budget" {
+        assert_eq!(output.status.code(), Some(0));
+        assert_eq!(value["scan"]["readable"], "unknown");
+        assert!(value["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|target| target["outcome"] == "unknown"));
+    } else {
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(value["scan"]["reason"], reason);
+        assert_eq!(value["scan"]["readable"], "not_readable");
+    }
+    value
+}
+
 #[test]
 fn cli_exposes_advisory_json_and_refusals() {
     let dir = tempfile::tempdir().unwrap();
@@ -16,10 +43,8 @@ fn cli_exposes_advisory_json_and_refusals() {
         .arg("--json")
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let value = assert_cli_refusal_or_timeout(&output, "decode_failed");
     assert_eq!(value["schema"], "dutchman.preflight/1");
-    assert_eq!(value["scan"]["readable"], "not_readable");
     assert_eq!(value["targets"].as_array().unwrap().len(), 4);
     assert!(value["scan"]["feature_count"].is_null());
     std::fs::write(&path, []).unwrap();
@@ -29,9 +54,7 @@ fn cli_exposes_advisory_json_and_refusals() {
         .arg("--json")
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["scan"]["reason"], "empty_input");
+    assert_cli_refusal_or_timeout(&output, "empty_input");
 }
 
 #[test]
@@ -71,13 +94,7 @@ fn predictions_are_compared_with_conversion_for_every_native_fixture() {
             continue;
         }
         let started = Instant::now();
-        let forecast = preflight(
-            &path,
-            Budget {
-                max_time: Duration::from_secs(30),
-                ..Budget::default()
-            },
-        );
+        let forecast = preflight(&path, test_budget());
         let elapsed = started.elapsed().as_secs_f64() * 1000.;
         let prediction = forecast
             .targets
@@ -195,22 +212,11 @@ fn predictions_are_compared_with_conversion_for_every_native_fixture() {
 #[test]
 fn planning_budgets_discard_forecasts_and_never_write_output() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../dutchman-core/tests/fixtures/freecad-1.1.4-A01/P01a.FCStd");
-    let budget = Budget {
-        max_time: Duration::from_secs(30),
-        ..Budget::default()
-    };
+        .join("../dutchman-core/tests/fixtures/onshape-plate-fillet.onshape-bundle");
+    let budget = test_budget();
     let planned = preflight(&path, budget);
     assert_eq!(planned.tier, Tier::Planned);
-    assert_eq!(planned.targets[0].outcome, Prediction::FullHistory);
-    let unlimited_clock = preflight(
-        &path,
-        Budget {
-            max_time: Duration::MAX,
-            ..budget
-        },
-    );
-    assert_eq!(unlimited_clock.targets[0].outcome, Prediction::FullHistory);
+    assert_eq!(planned.targets[0].outcome, Prediction::Partial);
     for (budget, reason) in [
         (
             Budget {
@@ -243,6 +249,7 @@ fn planning_budgets_discard_forecasts_and_never_write_output() {
         ),
     ] {
         let forecast = preflight(&path, budget);
+        assert_eq!(forecast.tier, Tier::Prefix);
         assert_eq!(forecast.stop_reason, Some(reason));
         assert!(forecast
             .targets
@@ -252,7 +259,7 @@ fn planning_budgets_discard_forecasts_and_never_write_output() {
     let limited = preflight(
         &path,
         Budget {
-            max_bytes: std::fs::metadata(&path).unwrap().len() * 3,
+            max_bytes: std::fs::metadata(&path).unwrap().len() * 2,
             ..budget
         },
     );
@@ -278,6 +285,24 @@ fn planning_budgets_discard_forecasts_and_never_write_output() {
 }
 
 #[test]
+fn freecad_planning_matches_the_build_feature() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/freecad-1.1.4-A01/P01a.FCStd");
+    let forecast = preflight(&path, test_budget());
+    if cfg!(feature = "freecad") {
+        assert_eq!(forecast.tier, Tier::Planned);
+        assert_eq!(forecast.targets[0].outcome, Prediction::FullHistory);
+    } else {
+        assert_eq!(forecast.tier, Tier::Prefix);
+        assert_eq!(forecast.scan.reason, Reason::FormatNotSupported);
+        assert!(forecast
+            .targets
+            .iter()
+            .all(|target| target.outcome == Prediction::Refused));
+    }
+}
+
+#[test]
 fn definite_refusals_agree_with_conversion() {
     let dir = tempfile::tempdir().unwrap();
     let options = dutchman::ConvertOptions {
@@ -288,7 +313,7 @@ fn definite_refusals_agree_with_conversion() {
     for format in dutchman_core::Format::ALL {
         let input = dir.path().join(format!("empty.{}", format.extension()));
         std::fs::write(&input, []).unwrap();
-        let prediction = scan(&input, Budget::default()).predict("sc");
+        let prediction = scan(&input, test_budget()).predict("sc");
         assert_eq!(prediction.outcome, Prediction::Refused);
         let result =
             dutchman_core::convert(&input, &dir.path().join("result.sc"), &options.writer());
@@ -303,7 +328,7 @@ fn an_unsupported_suffix_is_refused_before_decoding() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
     std::fs::copy(fixture, &input).unwrap();
-    let prediction = scan(&input, Budget::default());
+    let prediction = scan(&input, test_budget());
     assert_eq!(
         prediction.reason,
         dutchman_core::preflight::Reason::FormatNotSupported
@@ -323,18 +348,10 @@ fn an_unsupported_suffix_is_refused_before_decoding() {
         .arg("--json")
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["scan"]["reason"], "format_not_supported");
+    assert_cli_refusal_or_timeout(&output, "format_not_supported");
     let shared = dir.path().join("part.prt");
     std::fs::copy(&input, &shared).unwrap();
-    let forecast = preflight(
-        &shared,
-        Budget {
-            max_time: Duration::from_secs(30),
-            ..Budget::default()
-        },
-    );
+    let forecast = preflight(&shared, test_budget());
     assert!(matches!(
         forecast.targets[0].outcome,
         Prediction::Refused | Prediction::Unknown

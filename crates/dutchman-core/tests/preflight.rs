@@ -3,6 +3,14 @@ use std::time::{Duration, Instant};
 
 use dutchman_core::preflight::{scan, scan_bytes, Budget, Prediction, Readability, Reason};
 
+// Semantic assertions must not race the production wall-clock ceiling.
+fn test_budget() -> Budget {
+    Budget {
+        max_time: Duration::MAX,
+        ..Budget::default()
+    }
+}
+
 #[test]
 fn fixtures_use_only_input_and_build_facts() {
     let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
@@ -47,7 +55,7 @@ fn fixtures_use_only_input_and_build_facts() {
     ];
     for input in inputs {
         let path = folder.join(input);
-        let result = scan(&path, Budget::default());
+        let result = scan(&path, test_budget());
         let available =
             dutchman_core::Format::from_path(&path).is_some_and(dutchman_core::Format::can_convert);
         if available {
@@ -59,9 +67,9 @@ fn fixtures_use_only_input_and_build_facts() {
         }
         assert!(result.feature_count.is_none());
         assert!(result.feature_kinds.is_none());
-        assert!(result.bytes_read <= Budget::default().max_bytes);
+        assert!(result.bytes_read <= test_budget().max_bytes);
         let bytes = std::fs::read(&path).unwrap();
-        let memory = scan_bytes(&path, &bytes, Budget::default());
+        let memory = scan_bytes(&path, &bytes, test_budget());
         if result.reason != Reason::TimeBudget && memory.reason != Reason::TimeBudget {
             assert_eq!(result.detected_codec, memory.detected_codec);
         }
@@ -80,7 +88,7 @@ fn recognised_suffix_refusals_follow_build_features() {
         let result = scan_bytes(
             Path::new(name),
             b"not decoded by a prefix scan",
-            Budget::default(),
+            test_budget(),
         );
         assert_eq!(
             result.reason,
@@ -110,8 +118,8 @@ fn an_unrecognised_suffix_and_inconclusive_prefix_remain_unknown() {
     let bytes = b"Conversion completed.\n";
     std::fs::write(&path, bytes).unwrap();
     for result in [
-        scan(&path, Budget::default()),
-        scan_bytes(&path, bytes, Budget::default()),
+        scan(&path, test_budget()),
+        scan_bytes(&path, bytes, test_budget()),
     ] {
         assert_eq!(result.format_hint, None);
         assert_eq!(result.detected_codec, None);
@@ -127,21 +135,21 @@ fn zero_and_short_budgets_do_not_claim_readability() {
         (
             Budget {
                 max_bytes: 0,
-                ..Budget::default()
+                ..test_budget()
             },
             Reason::ByteBudget,
         ),
         (
             Budget {
                 max_time: Duration::ZERO,
-                ..Budget::default()
+                ..test_budget()
             },
             Reason::TimeBudget,
         ),
         (
             Budget {
                 max_features: 0,
-                ..Budget::default()
+                ..test_budget()
             },
             Reason::FeatureBudget,
         ),
@@ -158,7 +166,7 @@ fn zero_and_short_budgets_do_not_claim_readability() {
         &[42; 1024],
         Budget {
             max_bytes: 1,
-            ..Budget::default()
+            ..test_budget()
         },
     );
     assert_eq!(result.reason, Reason::ByteBudget);
@@ -173,9 +181,9 @@ fn hostile_prefixes_are_bounded_and_never_optimistic() {
         b"PK\x03\x04".to_vec(),
         b"{\"features\":999999999999999999999}".to_vec(),
     ] {
-        let result = scan_bytes(Path::new("hostile.prt.12"), &bytes, Budget::default());
+        let result = scan_bytes(Path::new("hostile.prt.12"), &bytes, test_budget());
         assert_eq!(result.readable, Readability::Unknown);
-        assert!(result.bytes_read <= Budget::default().max_bytes);
+        assert!(result.bytes_read <= test_budget().max_bytes);
         assert_eq!(result.predict("test-writer").outcome, Prediction::Unknown);
     }
 }
@@ -183,16 +191,16 @@ fn hostile_prefixes_are_bounded_and_never_optimistic() {
 #[test]
 fn definite_input_refusals_are_distinct_from_unknown() {
     let dir = tempfile::tempdir().unwrap();
-    let missing = scan(&dir.path().join("missing.f3d"), Budget::default());
+    let missing = scan(&dir.path().join("missing.f3d"), test_budget());
     assert_eq!(missing.reason, Reason::InputUnavailable);
     assert_eq!(missing.predict("test-writer").outcome, Prediction::Refused);
-    assert_eq!(scan(dir.path(), Budget::default()).reason, Reason::NotAFile);
+    assert_eq!(scan(dir.path(), test_budget()).reason, Reason::NotAFile);
     let path = dir.path().join("empty.f3d");
     std::fs::write(&path, []).unwrap();
-    assert_eq!(scan(&path, Budget::default()).reason, Reason::EmptyInput);
+    assert_eq!(scan(&path, test_budget()).reason, Reason::EmptyInput);
     let file = std::fs::File::create(&path).unwrap();
     file.set_len(dutchman_core::MAX_INPUT_BYTES + 1).unwrap();
-    let result = scan(&path, Budget::default());
+    let result = scan(&path, test_budget());
     assert_eq!(result.reason, Reason::InputTooLarge);
     assert_eq!(result.bytes_read, 0);
 }
@@ -206,7 +214,7 @@ fn oversized_caller_budgets_still_use_the_detector_ceiling() {
         Budget {
             max_bytes: u64::MAX,
             max_features: usize::MAX,
-            ..Budget::default()
+            ..test_budget()
         },
     );
     assert_eq!(
@@ -223,8 +231,8 @@ fn known_suffix_refusals_match_the_conversion_gate_without_reading_bytes() {
     let bytes = b"This payload is never decoded";
     std::fs::write(&path, bytes).unwrap();
     for result in [
-        scan(&path, Budget::default()),
-        scan_bytes(&path, bytes, Budget::default()),
+        scan(&path, test_budget()),
+        scan_bytes(&path, bytes, test_budget()),
     ] {
         assert_eq!(result.reason, Reason::FormatNotSupported);
         assert_eq!(result.readable, Readability::NotReadable);
@@ -232,7 +240,7 @@ fn known_suffix_refusals_match_the_conversion_gate_without_reading_bytes() {
         assert_eq!(result.bytes_read, 0);
     }
     // Shared suffixes can identify an available reader after content detection.
-    let shared = scan_bytes(Path::new("part.prt.12"), bytes, Budget::default());
+    let shared = scan_bytes(Path::new("part.prt.12"), bytes, test_budget());
     assert_eq!(shared.predict("test-writer").outcome, Prediction::Unknown);
 }
 
@@ -240,7 +248,7 @@ fn known_suffix_refusals_match_the_conversion_gate_without_reading_bytes() {
 fn an_expired_planning_deadline_stops_before_opening_the_input() {
     let budget = Budget {
         max_time: Duration::from_millis(1),
-        ..Budget::default()
+        ..test_budget()
     };
     let started = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
     let prepared =
@@ -257,10 +265,7 @@ fn an_expired_planning_deadline_stops_before_opening_the_input() {
 fn onshape_planning_uses_the_bundle_reader_and_preserves_budget_unknowns() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/onshape-plate-fillet.onshape-bundle");
-    let budget = Budget {
-        max_time: Duration::from_secs(30),
-        ..Budget::default()
-    };
+    let budget = test_budget();
     let prepared = dutchman_core::preflight::prepare(&path, budget, Instant::now());
     assert_eq!(prepared.scan.readable, Readability::Readable);
     assert!(prepared.model.is_some());
