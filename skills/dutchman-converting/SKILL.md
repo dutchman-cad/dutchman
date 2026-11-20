@@ -6,6 +6,9 @@ description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, Fr
 Onshape history dependencies follow consumed operands in their stored order. Deterministic
 body, face and edge selections need a unique earlier producer proved by rollback
 transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+A created-by query may name the proved creator of an entity that later features
+modified; its dependency still follows the latest modification. Missing creation
+proof, unrelated producers and IDs reused after disappearance remain refused.
 Every present scope query list is validated, while an empty list keeps implicit scope.
 Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
 A record the reader cannot convert becomes a named loss and the remaining records continue.
@@ -17,6 +20,25 @@ Open, one-sided thin walls retain directed left/right data in the reader; writin
 those sides is not supported yet, so the final STEP geometry remains.
 
 # Converting CAD files with Dutchman
+
+Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
+components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
+Select target 0.44 explicitly when the existing default is older.
+Keep the generated `derived-<sha256>.sc` companion designs beside the main result;
+edit a companion and use SolidCraft's Update Links to rebuild the host. If conversion
+finds an edited companion, choose another output folder; that companion is kept even
+when overwriting is enabled. Parallel conversions safely share identical companions.
+Earlier targets
+report `design/reference.frozen` and keep frozen derived bodies. Missing references,
+part subsets, configurations or transformed inserts name the reason under
+`onshape/history.not-supported`; fetch a new bundle for missing references.
+
+Derived Boolean conversion requires an explicit stored `keepTools` boolean. Missing or
+contradictory choices retain `onshape/history.not-supported`; later records still convert.
+Captured studio responses are checked against their own manifest microversion, independently
+of the root studio. Fetch a new bundle when the reported reference evidence is missing.
+
+See [Onshape bundles](../../docs/onshape.md) for the supported reference forms.
 
 For Onshape bundles, review constraint losses even when body verification succeeds.
 Each dropped constraint names its source kind and reason; its solved geometry remains.
@@ -30,7 +52,7 @@ the report says its ordered selections and evaluation states are not mapped yet.
 See `docs/cadir-v11.md` for the pinned reader contract.
 
 Onshape `.onshape-bundle` inputs convert offline through the same inspect/convert
-tools and commands. They must contain one Part Studio, its feature responses,
+tools and commands. They must contain a root Part Studio, captured derived references when needed, its feature responses,
 bodydetails at needed rollback indices, and its final STEP export. Do not request
 credentials or upload a design. Explain `onshape/history.not-supported` as a named
 history gap with final STEP geometry preserved, and
@@ -653,6 +675,14 @@ effect through input preparation and geometry-only fallbacks; JSON displays its 
 Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
 and keep the original geometry. The existing history status and reason fields report refusals.
 
+Chamfers with unequal distances or a distance and an angle other than 45 degrees keep
+editable history when the source's final body proves which face takes the distance.
+Straight edges need a retained planar chamfer face; closed circles need a plane and a
+coaxial cylinder in the replay and both resulting circles in the source. Each body's
+chamfer is replayed in both face orders when needed and kept only where its cut matches.
+Missing evidence keeps the original geometry with a specific history reason. Existing
+history statuses, counts and report fields are unchanged.
+
 Constant-radius fillets and equal-setback chamfers map when the feature's own input edge
 geometry proves which edge each one acts on in SolidCraft's replay before the blend.
 Picks on several bodies become one independent blend per body with numbered source names;
@@ -943,8 +973,11 @@ explicit consent. CLI users can preview with `dutchman report --folder FOLDER --
 `dutchman report --folder FOLDER --send-summary --yes`. No free-text description is
 supported in the anonymous envelope. Describe the problem privately or in the GitHub
 form without private names or paths. The desktop offers these actions in its always-open
-**Is there a problem? Is something missing?** panel. The **Anonymous report** and **GitHub issue**
-pills sit directly below the three steps and also appear under **More**. Failure narrowing is for failed files.
+**Is there a problem? Is something missing?** panel, pinned below output controls in wide
+windows. Discord comes first; **GitHub issue** is a small backup link. **Anonymous report**
+is under **More**, alongside AI help and diagnosis. **Report this file…** selects the file
+in the same panel. Partial history, geometry-only and degraded results use a warning colour.
+Failure narrowing is for failed files.
 
 For report sending, call `report_preview` first and show the user the choices, part
 roles and sizes. Never show or transmit bundle contents through an assistant. Call

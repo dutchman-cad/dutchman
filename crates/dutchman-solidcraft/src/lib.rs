@@ -17,6 +17,7 @@ pub mod compare;
 mod container;
 mod document;
 mod evaluator;
+mod linked;
 mod output_links;
 #[cfg(not(target_family = "wasm"))]
 pub use evaluator::CliEvaluator;
@@ -587,6 +588,7 @@ impl SolidCraftWriter {
             looks.rename_bodies("Original geometry", &mut taken);
             document::original_looks(&mut doc, &looks);
         }
+        linked::store(&mut doc, &mut design)?;
         design.finish(&doc)
     }
 
@@ -1472,6 +1474,10 @@ impl SolidCraftWriter {
 }
 
 impl Writer for SolidCraftWriter {
+    fn companion_files(&self, encoded: &[u8]) -> Result<Vec<(String, Vec<u8>)>, Error> {
+        linked::companions(encoded)
+    }
+
     fn extension(&self) -> &'static str {
         self.resolved_version().extension()
     }

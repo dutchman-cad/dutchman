@@ -19,6 +19,7 @@ roxmltree.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
+tempfile.workspace = true
 zip = { workspace = true, optional = true }
 
 [features]
@@ -48,7 +49,6 @@ freecad = ["cadmpeg-registry/fcstd"]
 sysinfo.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 zip.workspace = true
 
 [lints]

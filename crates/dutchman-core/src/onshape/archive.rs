@@ -124,16 +124,45 @@ impl Bundle {
                 .map_err(crate::decode::onshape_failure)
         };
         let manifest = parse("manifest.json")?;
-        let prefix = manifest
-            .pointer("/elements/0/id")
-            .and_then(Value::as_str)
-            .map(|id| format!("partstudios/{id}/"));
         let mut json = BTreeMap::from([("manifest.json".to_owned(), manifest)]);
+        // Admit captured manifests first, then only the responses owned by each
+        // manifest's selected studio. Unrelated attachments remain opaque.
+        for name in members.keys().filter(|name| reference_manifest(name)) {
+            match parse(name) {
+                Ok(value) => {
+                    json.insert(name.clone(), value);
+                }
+                Err(error) => {
+                    if let Some(resource) = ctx.resource_refusal() {
+                        return Err(Error::Decode(format!(
+                            "{error} during {}",
+                            resource.operation
+                        )));
+                    }
+                    failures.insert(name.clone(), error.to_string());
+                }
+            }
+        }
+        let prefixes: Vec<_> = json
+            .iter()
+            .filter_map(|(path, manifest)| {
+                let folder = path.strip_suffix("manifest.json")?;
+                let element = manifest
+                    .get("root_element")
+                    .or_else(|| manifest.pointer("/elements/0/id"))?
+                    .as_str()?;
+                if element.is_empty()
+                    || !element
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                {
+                    return None;
+                }
+                Some(format!("{folder}partstudios/{element}/"))
+            })
+            .collect();
         for name in members.keys() {
-            if prefix
-                .as_deref()
-                .is_some_and(|prefix| schema_response(name, prefix))
-            {
+            if prefixes.iter().any(|prefix| schema_response(name, prefix)) {
                 // Syntax is member-local. Resource refusals retain the caller's budget.
                 let data = members
                     .get(name)
@@ -187,7 +216,33 @@ impl Bundle {
             .ok_or_else(|| failure(format!("{path} is missing")))
     }
     pub(super) fn validate_microversions(&mut self, expected: &str) {
+        // References have independent pins. The nearest enclosing manifest owns
+        // each member; never validate a referenced response against the host pin.
+        let pins: BTreeMap<_, _> = self
+            .json
+            .iter()
+            .filter_map(|(path, value)| {
+                let folder = path.strip_suffix("manifest.json")?;
+                let mid = value.get("document")?.get("microversion")?.as_str()?;
+                Some((folder.to_owned(), mid.to_owned()))
+            })
+            .collect();
         self.json.retain(|path, value| {
+            let expected = if let Some((folder, _)) = path.rsplit_once("partstudios/") {
+                if folder.is_empty() {
+                    expected
+                } else if let Some(mid) = pins.get(folder) {
+                    mid.as_str()
+                } else {
+                    self.failures.insert(
+                        path.clone(),
+                        "the referenced studio microversion is missing; fetch a new bundle".into(),
+                    );
+                    return false;
+                }
+            } else {
+                expected
+            };
             for key in ["sourceMicroversion", "microversionId"] {
                 if let Err(reason) = super::microversion(value, key, expected) {
                     self.failures.insert(path.clone(), reason);
@@ -433,6 +488,34 @@ fn directory(bytes: &[u8]) -> Option<()> {
 }
 
 // Only declared responses of the selected studio are JSON. Other attachments stay bytes.
+// Captures are nested under complete immutable document/version/element paths.
+// Keep the same eight-studio ceiling as reference traversal, including the root.
+fn reference_manifest(name: &str) -> bool {
+    let mut remaining = name;
+    for _ in 0..7 {
+        let Some(path) = remaining.strip_prefix("references/") else {
+            return false;
+        };
+        let mut parts = path.splitn(4, '/');
+        for _ in 0..3 {
+            if !parts
+                .next()
+                .is_some_and(|id| id.len() == 24 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                return false;
+            }
+        }
+        let Some(tail) = parts.next() else {
+            return false;
+        };
+        if tail == "manifest.json" {
+            return true;
+        }
+        remaining = tail;
+    }
+    false
+}
+
 fn schema_response(name: &str, prefix: &str) -> bool {
     let Some(member) = name.strip_prefix(prefix) else {
         return false;
@@ -455,4 +538,36 @@ fn schema_response(name: &str, prefix: &str) -> bool {
                 && !ordinal.is_empty()
                 && ordinal.bytes().all(|b| b.is_ascii_digit())
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reference_manifest;
+
+    #[test]
+    fn captured_manifest_admission_bounds_paths_and_nesting() {
+        let segment = format!(
+            "references/{}/{}/{}/",
+            "1".repeat(24),
+            "2".repeat(24),
+            "3".repeat(24)
+        );
+        for depth in 1..=8 {
+            assert_eq!(
+                reference_manifest(&format!("{}manifest.json", segment.repeat(depth))),
+                depth <= 7
+            );
+        }
+        for path in [
+            "manifest.json",
+            "attachments/manifest.json",
+            "references/short/short/short/manifest.json",
+            "references/../manifest.json",
+        ] {
+            assert!(!reference_manifest(path));
+        }
+        assert!(!reference_manifest(&format!(
+            "{segment}attachments/manifest.json"
+        )));
+    }
 }

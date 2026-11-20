@@ -228,13 +228,16 @@ curves retain a named refusal; older targets keep the original geometry. A refus
 proof failed: no rebuilt edge through the midpoint (with how far the nearest rebuilt edge is, which
 tells a rebuilt body that differs from the source from a rounding gap), more than one, or one with
 other ends, another length, another kind of curve or another direction. Equal two-distance chamfers also map; distance-and-angle chamfers map at
-45 degrees on perpendicular faces. Unequal distances and other angles map on straight edges
-when the source's final body still has the chamfer's face: the face order that puts it there,
-between that face's own boundary edges along the input edge, is taken. A selection on several
+45 degrees on perpendicular faces: at a full circle, a plane square to its axis and a coaxial
+cylinder of its radius, as SolidCraft's replay reports them. Unequal distances and other angles
+map on straight edges when the source's final body still has the chamfer's face: the face order
+that puts it there, between that face's own boundary edges along the input edge, is taken. On a
+full circle between such a plane and cylinder, the order is taken that puts both of the
+chamfer's edges on circles of the source's final body. A selection on several
 bodies becomes one chamfer per body, and each is flipped on its own when SolidCraft's first
 face (the one facing up most) would put the cut elsewhere on that body. A chamfer face the final body lost, an edge whose faces SolidCraft
-cannot tell apart, and SolidCraft cutting it elsewhere either way round are refused, saying
-which. Variable fillets lack a proven
+cannot tell apart (or, at a full circle, are not such a plane and cylinder), and SolidCraft
+cutting it elsewhere either way round are refused, saying which. Variable fillets lack a proven
 chain direction. A fillet with several radius groups becomes one SolidCraft blend per group,
 in the source's order; a later group's straight edge may be shorter than the source edge where
 an earlier group rounded its end. Final-body edge selections never stand in for input geometry.

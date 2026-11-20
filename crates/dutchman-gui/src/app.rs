@@ -1927,10 +1927,7 @@ impl App {
         self.page_scrolls = area.content_size.y > area.inner_rect.height() + 1.0;
     }
 
-    /// A wide window: Designs and Output folder on the left, then "Is there a problem?" in the
-    /// room left under them, and Results on the right. The page scrolls only if the window is
-    /// too short for Designs and Output folder; the left column scrolls on to the report panel
-    /// when it does not fit, and results scroll in their own column.
+    /// A wide window: choices scroll above a pinned report panel; results scroll separately.
     fn wide_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, view: &present::RunView) {
         let rect = ui.available_rect_before_wrap();
         let gap = theme::SPACE_8;
@@ -1940,31 +1937,55 @@ impl App {
             egui::pos2(rect.min.x + left_width + gap, rect.min.y),
             rect.max,
         );
-        let mut scrolls = false;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
-            let mut choices = 0.0;
-            let area = ScrollArea::vertical()
+        let height_id = ui.id().with("report-panel-height");
+        let measured = ui
+            .data(|data| data.get_temp::<f32>(height_id))
+            .unwrap_or(360.0);
+        // Bound long reviews and More so the input and output controls remain reachable.
+        let report_height = measured.min(left.height() * 0.7);
+        let report_top = left.bottom() - report_height;
+        let choices = egui::Rect::from_min_max(
+            left.min,
+            egui::pos2(left.right(), report_top - theme::SPACE_4),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(choices), |ui| {
+            ScrollArea::vertical()
                 .id_salt("main-left")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    let top = ui.cursor().top();
                     self.inputs_panel(ui);
                     ui.add_space(theme::SPACE_4);
                     self.output_panel(ui, ctx);
-                    choices = ui.cursor().top() - top;
-                    ui.add_space(theme::SPACE_4);
-                    self.report_panel(ui, view);
                 });
-            // The page "scrolls" when Designs and the output choices alone do not fit; the
-            // report panel under them takes the room that is left and scrolls into view.
-            scrolls = choices > area.inner_rect.height() + 1.0;
+        });
+        let report = egui::Rect::from_min_max(egui::pos2(left.left(), report_top), left.max);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(report), |ui| {
+            let top = ui.cursor().top();
+            let reveal = self.reveal_report;
+            self.report_heading(ui);
+            let heading_height = ui.cursor().top() - top;
+            // Keep the body width fixed while its measured height grows. A disappearing
+            // scrollbar would reflow the cards and change button IDs during a click.
+            let mut scroll = ScrollArea::vertical()
+                .id_salt("report-panel-body")
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                .auto_shrink([false, false]);
+            if reveal {
+                scroll = scroll.vertical_scroll_offset(0.0);
+            }
+            let area = scroll.show(ui, |ui| self.report_panel_body(ui, view));
+            let height = heading_height + area.content_size.y;
+            if (height - measured).abs() > 0.5 {
+                ui.data_mut(|data| data.insert_temp(height_id, height));
+                ui.ctx().request_repaint();
+            }
         });
         ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
             self.unfinished_notice(ui);
             self.results(ui, view, true);
         });
         ui.advance_cursor_after_rect(rect);
-        self.page_scrolls = scrolls;
+        self.page_scrolls = false;
     }
 
     fn title(&mut self, ui: &mut egui::Ui) {
@@ -2959,13 +2980,22 @@ impl App {
     /// "Is there a problem? Is something missing?": always in the window, with the numbered
     /// steps to tell us on Discord, GitHub as the backup, and the rarer tools under More.
     fn report_panel(&mut self, ui: &mut egui::Ui, view: &present::RunView) {
+        self.report_heading(ui);
+        self.report_panel_body(ui, view);
+    }
+
+    fn report_heading(&mut self, ui: &mut egui::Ui) {
         let p = *theme::palette(ui);
-        let selected = self.report_index(view);
-        let attachment = selected.and_then(|index| self.private_attachment(index));
         let heading = ui.label(RichText::new(report_panel::QUESTION).heading().color(p.ink));
         if std::mem::take(&mut self.reveal_report) {
             heading.scroll_to_me(Some(Align::Min));
         }
+    }
+
+    fn report_panel_body(&mut self, ui: &mut egui::Ui, view: &present::RunView) {
+        let p = *theme::palette(ui);
+        let selected = self.report_index(view);
+        let attachment = selected.and_then(|index| self.private_attachment(index));
         let busy = self.running() || self.diagnosis.is_some() || self.updater.blocks_conversions();
         let reveal_ai = std::mem::take(&mut self.reveal_ai);
         let mut action = None;
@@ -3073,22 +3103,9 @@ impl App {
                 Some(Step::Dm) => action = Some(Action::Dm(selected)),
                 Some(Step::Github) | None => {}
             }
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .add_enabled(
-                        !busy && report.is_some(),
-                        egui::Button::new("Anonymous report"),
-                    )
-                    .clicked()
-                {
-                    if let Some(index) = selected {
-                        action = Some(Action::Consent(index));
-                    }
-                }
-                if ui.button(present::REPORT_BUTTON).clicked() {
-                    action = Some(Action::Report(selected.filter(|_| report.is_some())));
-                }
-            });
+            if report_panel::backup_link(ui, &p, present::REPORT_BUTTON).clicked() {
+                action = Some(Action::Report(selected.filter(|_| report.is_some())));
+            }
             if let Some(text) = done(Step::Github) {
                 ui.label(RichText::new(text).small().strong().color(p.ink));
             }
@@ -3103,9 +3120,6 @@ impl App {
                                     .clicked()
                             {
                                 action = Some(Action::Consent(index));
-                            }
-                            if ui.button(present::REPORT_BUTTON).clicked() {
-                                action = Some(Action::Report(Some(index)));
                             }
                             if row.output.is_some() {
                                 if let Some(chosen) =
@@ -3207,6 +3221,31 @@ enum Action {
     SelectReport(usize),
 }
 
+/// Completed designs with missing history or degraded content need review.
+fn result_colour(p: &Palette, report: Option<&Value>, view: &FileView) -> egui::Color32 {
+    let needs_review = report
+        .and_then(|report| report.get("mode"))
+        .and_then(Value::as_str)
+        .is_some_and(|mode| matches!(mode, "partial_history" | "import"))
+        || view
+            .losses
+            .iter()
+            .any(|group| matches!(group.level.as_str(), "Degraded" | "Dropped"))
+        || view
+            .components
+            .iter()
+            .any(|component| component.severity_rank < 2);
+    match view.status {
+        present::Status::Incomplete | present::Status::Flattened => p.lantern_text,
+        present::Status::Converted | present::Status::ConvertedWithLosses if needs_review => {
+            p.lantern_text
+        }
+        present::Status::Converted | present::Status::ConvertedWithLosses => p.spectre,
+        present::Status::Failed => p.danger,
+        _ => p.tide,
+    }
+}
+
 /// One file's result: its status, what was written, and its losses.
 #[allow(clippy::too_many_arguments)]
 fn row_ui(
@@ -3220,28 +3259,7 @@ fn row_ui(
     log: Option<(&Path, bool)>,
 ) -> Option<Action> {
     let mut action = None;
-    // A partial history is not a full success: it is never shown in the success colour.
-    let partial = row
-        .report
-        .as_ref()
-        .and_then(|r| r.get("mode"))
-        .and_then(Value::as_str)
-        == Some("partial_history");
-    let colour = match view.status {
-        present::Status::Incomplete => p.lantern_text,
-        present::Status::Converted
-        | present::Status::ConvertedWithLosses
-        | present::Status::Flattened
-            if partial =>
-        {
-            p.lantern_text
-        }
-        present::Status::Converted
-        | present::Status::ConvertedWithLosses
-        | present::Status::Flattened => p.spectre,
-        present::Status::Failed => p.danger,
-        _ => p.tide,
-    };
+    let colour = result_colour(p, row.report.as_ref(), view);
     let word = view.status_word;
     let output = row
         .output
@@ -3652,9 +3670,15 @@ fn test_diagnostics_folder() -> Option<PathBuf> {
 
 /// The card's way into the "Is there a problem?" panel for its file.
 fn report_this_file(ui: &mut egui::Ui) -> bool {
-    ui.button(REPORT_THIS_FILE)
-        .on_hover_text("Choose this file in \"Is there a problem? Is something missing?\"")
-        .clicked()
+    let p = *theme::palette(ui);
+    ui.add(
+        egui::Button::new(RichText::new(REPORT_THIS_FILE).strong().color(p.spectre))
+            .fill(p.surface_2)
+            .stroke(Stroke::new(1.0_f32, p.spectre))
+            .min_size(egui::vec2(0.0, 30.0)),
+    )
+    .on_hover_text("Choose this file in \"Is there a problem? Is something missing?\"")
+    .clicked()
 }
 
 /// The button on every finished card that chooses its file in the report panel.
@@ -3862,9 +3886,15 @@ fn display(path: &Path) -> String {
 
 fn preset_description(preset: Preset) -> &'static str {
     match preset {
-        Preset::Fast => "Shape only; no feature history, sketches, parameters or joints. Least memory.",
-        Preset::Standard => "Feature history, sketches, parameters and joints that map; leaves history out if it would not fit in free memory.",
-        Preset::Full => "Feature history, sketches, parameters and joints that map. Most memory; keeps history regardless of free memory.",
+        Preset::Fast => {
+            "Shape only; no feature history, sketches, parameters or joints. Least memory."
+        }
+        Preset::Standard => {
+            "Feature history, sketches, parameters and joints that map; leaves history out if it would not fit in free memory."
+        }
+        Preset::Full => {
+            "Feature history, sketches, parameters and joints that map. Most memory; keeps history regardless of free memory."
+        }
     }
 }
 
@@ -3978,7 +4008,9 @@ mod tests {
             assert!(!app.running());
             assert_eq!(
                 app.notice.as_deref(),
-                Some("The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman.")
+                Some(
+                    "The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman."
+                )
             );
             assert!(!app.notice.as_ref().unwrap().contains("synthetic"));
             let scratch = app.download_root.as_ref().unwrap().path().to_path_buf();
@@ -4010,7 +4042,9 @@ mod tests {
         assert!(!harness.state().running());
         assert_eq!(
             harness.state().notice.as_deref(),
-            Some("The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman.")
+            Some(
+                "The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman."
+            )
         );
     }
 
@@ -4144,7 +4178,7 @@ mod tests {
             harness.run_steps(8);
             // The question and its steps show at once; the anonymous review is under More.
             harness.get_by_label(report_panel::QUESTION);
-            harness.get_by_label("Anonymous report");
+            assert!(harness.query_by_label("Anonymous report").is_none());
             let join = harness.get_by_label(present::SEND_JOIN_BUTTON).rect();
             let dm = harness.get_by_label(present::SEND_DM_BUTTON).rect();
             harness.get_by_label(report_panel::MORE).click_accesskit();
@@ -5009,7 +5043,10 @@ mod tests {
             row("Assembly.iam", Status::Converting, 151_000, 61_000),
             row("waiting.iam", Status::Waiting, 999_000, 999_000),
         ];
-        assert_eq!(running_file_line(&rows).unwrap(), "Assembly.iam: building history (1 other file running)\nStill checking Bracket (rebuilt history): 1 min 1 s");
+        assert_eq!(
+            running_file_line(&rows).unwrap(),
+            "Assembly.iam: building history (1 other file running)\nStill checking Bracket (rebuilt history): 1 min 1 s"
+        );
         rows.push(row("another.iam", Status::Converting, 10_000, 10_000));
         assert!(running_file_line(&rows)
             .unwrap()
@@ -5078,3 +5115,7 @@ mod tests {
         assert!(harness.query_by_label(message).is_some());
     }
 }
+
+#[cfg(all(test, feature = "test-support"))]
+#[path = "report_flow_tests.rs"]
+mod report_flow_tests;
