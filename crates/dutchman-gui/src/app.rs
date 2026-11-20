@@ -122,6 +122,9 @@ pub struct App {
     report_done: Option<(Step, &'static str)>,
     /// Bring the panel into view on the next frame.
     reveal_report: bool,
+    /// Whether the page's own report heading was on screen last frame; the narrow pinned bar
+    /// then shows only its button, so the question isn't shown twice.
+    report_heading_visible: bool,
     /// Bring the AI prompt into view on the next frame.
     reveal_ai: bool,
     pub updater: crate::update::Updater,
@@ -503,6 +506,7 @@ impl App {
             report_row: None,
             report_done: None,
             reveal_report: false,
+            report_heading_visible: false,
             reveal_ai: false,
             consent: crate::report_consent::Consent {
                 ids: stored
@@ -1860,12 +1864,20 @@ impl App {
                 .show(ctx, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         let p = *theme::palette(ui);
-                        let heading =
-                            ui.label(RichText::new(report_panel::QUESTION).heading().color(p.ink));
-                        heading.ctx.accesskit_node_builder(heading.id, |node| {
-                            node.set_role(egui::accesskit::Role::Heading);
-                            node.set_label(format!("Report options: {}", report_panel::QUESTION));
-                        });
+                        // While the page's own report heading is on screen, the bar keeps only
+                        // its button, so the question is not shown twice.
+                        if !self.report_heading_visible {
+                            let heading = ui.label(
+                                RichText::new(report_panel::QUESTION).heading().color(p.ink),
+                            );
+                            heading.ctx.accesskit_node_builder(heading.id, |node| {
+                                node.set_role(egui::accesskit::Role::Heading);
+                                node.set_label(format!(
+                                    "Report options: {}",
+                                    report_panel::QUESTION
+                                ));
+                            });
+                        }
                         let label = if self.report_index(&view).is_some() {
                             "Report this design…"
                         } else {
@@ -3018,6 +3030,7 @@ impl App {
     fn report_heading(&mut self, ui: &mut egui::Ui) {
         let p = *theme::palette(ui);
         let heading = ui.label(RichText::new(report_panel::QUESTION).heading().color(p.ink));
+        self.report_heading_visible = ui.clip_rect().intersects(heading.rect);
         if std::mem::take(&mut self.reveal_report) {
             heading.scroll_to_me(Some(Align::Min));
         }
@@ -4155,6 +4168,14 @@ mod tests {
             assert!(window.contains_rect(card), "{width}: {card:?}");
             assert!(card.bottom() < harness.get_by_label("Report this design…").rect().top());
             assert!(window.contains_rect(harness.get_by_label(present::SEND_JOIN_TITLE).rect()));
+            // With the full panel on screen, the pinned bar keeps only its button.
+            assert_eq!(
+                harness
+                    .query_all_by_label_contains(report_panel::QUESTION)
+                    .count(),
+                1,
+                "{width}"
+            );
             assert!(window.contains_rect(harness.get_by_label("Report this design…").rect()));
             harness.get_by_value("About synthetic-0.f3d");
         }
