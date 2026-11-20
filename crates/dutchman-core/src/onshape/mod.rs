@@ -2,6 +2,7 @@
 //! to the native-codec rule: STEP decoding remains in cadmpeg, all writer policy is shared.
 
 mod archive;
+mod derived;
 mod expression;
 mod extent;
 mod features;
@@ -320,7 +321,46 @@ pub(super) fn read(
     progress: Option<&Progress<'_>>,
 ) -> Result<Model, Error> {
     let mut bundle = Bundle::open(ctx, bytes)?;
+    let mid = text(
+        bundle
+            .json("manifest.json")?
+            .get("document")
+            .unwrap_or(&Value::Null),
+        "microversion",
+    )
+    .map_err(Error::Decode)?
+    .to_owned();
+    bundle.validate_microversions(&mid);
+    bundle.admit_topology(ctx)?;
+    bundle.admit_records();
+    bundle.report_losses(report);
     let manifest = bundle.json("manifest.json")?;
+    let mut reference_budget = 256 << 20;
+    read_studio(
+        ctx,
+        path,
+        &bundle,
+        manifest,
+        "",
+        0,
+        &mut reference_budget,
+        report,
+        progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_studio(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    path: &std::path::Path,
+    bundle: &Bundle,
+    manifest: &Value,
+    folder: &str,
+    depth: usize,
+    reference_budget: &mut usize,
+    report: &mut Report,
+    progress: Option<&Progress<'_>>,
+) -> Result<Model, Error> {
     if manifest.get("schema").and_then(Value::as_str) != Some(SCHEMA) {
         return Err(Error::Decode(
             "Onshape bundle schema is not supported yet; fetch a format 1 bundle".into(),
@@ -336,23 +376,44 @@ pub(super) fn read(
         )),
     }
     let document = manifest.get("document").unwrap_or(&Value::Null);
-    let mid = text(document, "microversion")
-        .map_err(Error::Decode)?
-        .to_owned();
+    let mid = text(document, "microversion").map_err(Error::Decode)?;
     let elements = rows(manifest, "elements").map_err(Error::Decode)?;
-    if elements.len() != 1
+    let root = manifest
+        .get("root_element")
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|root| !root.is_empty())
+                .ok_or_else(|| {
+                    Error::Decode(
+                        "Onshape bundle root element has no identity; fetch a new bundle".into(),
+                    )
+                })
+        })
+        .transpose()?;
+    if elements.is_empty()
         || elements
-            .first()
-            .and_then(|e| e.get("type"))
-            .and_then(Value::as_str)
-            != Some("PARTSTUDIO")
+            .iter()
+            .any(|e| e.get("type").and_then(Value::as_str) != Some("PARTSTUDIO"))
+        || (elements.len() > 1 && root.is_none())
     {
-        return Err(Error::Decode("Onshape bundles with assemblies or multiple elements are not supported yet; fetch one Part Studio".into()));
+        return Err(Error::Decode("Onshape bundles with assemblies or no root Part Studio are not supported yet; fetch one Part Studio".into()));
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for element in elements {
+        if !ids.insert(text(element, "id").map_err(Error::Decode)?) {
+            return Err(Error::Decode(
+                "Onshape element ids repeat; fetch a new bundle".into(),
+            ));
+        }
     }
     let element = elements
-        .first()
-        .ok_or_else(|| Error::Decode("Onshape bundle has no Part Studio".into()))?;
-    let eid = text(element, "id").map_err(Error::Decode)?.to_owned();
+        .iter()
+        .find(|e| root.is_none_or(|root| e.get("id").and_then(Value::as_str) == Some(root)))
+        .ok_or_else(|| {
+            Error::Decode("Onshape bundle has no root Part Studio; fetch a new bundle".into())
+        })?;
+    let eid = text(element, "id").map_err(Error::Decode)?;
     if !eid
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
@@ -361,11 +422,7 @@ pub(super) fn read(
             "Onshape element id cannot name a bundle folder; fetch a new bundle".into(),
         ));
     }
-    let prefix = format!("partstudios/{eid}");
-    bundle.validate_microversions(&mid);
-    bundle.admit_topology(ctx)?;
-    bundle.admit_records();
-    bundle.report_losses(report);
+    let prefix = format!("{folder}partstudios/{eid}");
     let features = match bundle
         .json(&format!("{prefix}/features.json"))
         .map_err(|e| e.to_string())
@@ -383,7 +440,7 @@ pub(super) fn read(
             &[]
         }
     };
-    let inputs = topology::Inputs::new(&bundle, &prefix, &mid, features).map_err(Error::Decode)?;
+    let inputs = topology::Inputs::new(bundle, &prefix, mid, features).map_err(Error::Decode)?;
     let step_path = format!("{prefix}/export.step");
     let empty = || Model {
         ir: cadmpeg_ir::CadIr::empty(),
@@ -460,7 +517,10 @@ pub(super) fn read(
         })
         .map(|(ordinal, _)| ordinal)
         .collect();
-    let single_body = (creators.len() == 1 && model.ir.geometry.bodies.len() == 1)
+    let has_derived = features
+        .iter()
+        .any(|feature| derived::is_derived(feature) && suppression(feature) != Ok(true));
+    let single_body = (!has_derived && creators.len() == 1 && model.ir.geometry.bodies.len() == 1)
         .then(|| model.ir.geometry.bodies.first().map(|body| body.id.clone()))
         .flatten();
     let parts = model.ir.geometry.bodies.len();
@@ -588,6 +648,7 @@ pub(super) fn read(
             model.ir.model.feature_input_topologies.len(),
             model.ir.design.features.len(),
         );
+        let mut reference = None;
         let mut dependencies = Vec::<String>::new();
         let mapped = if let Err(reason) = admission {
             Err(reason)
@@ -598,6 +659,26 @@ pub(super) fn read(
                 "native",
                 json!({"kind": "Suppressed Onshape feature", "parameters": {}}),
             ))
+        } else if derived::is_derived(feature) {
+            derived::map(
+                ctx,
+                feature,
+                ordinal,
+                &inputs,
+                bundle,
+                folder,
+                depth,
+                reference_budget,
+                report,
+            )
+            .map(|captured| {
+                reference = Some(captured);
+                definition("stored_geometry", json!({}))
+            })
+        } else if has_derived
+            && feature.get("featureType").and_then(Value::as_str) == Some("boolean")
+        {
+            derived::boolean(feature, ordinal, &inputs, &model.ir.model)
         } else {
             features::map(
                 feature,
@@ -636,7 +717,15 @@ pub(super) fn read(
                 Ok(definition)
             })
         };
-        let definition = match mapped {
+        // A referenced studio shares the caller's resource session. Record losses
+        // remain local, but an exhausted caller budget must still stop conversion.
+        if let Some(resource) = ctx.resource_refusal() {
+            return Err(Error::Decode(format!(
+                "Onshape resource budget exhausted during {}",
+                resource.operation
+            )));
+        }
+        let mut definition = match mapped {
             Ok(definition) => {
                 if suppressed != Ok(true)
                     && !matches!(
@@ -736,6 +825,114 @@ pub(super) fn read(
         {
             if let Some(properties) = source_properties.as_object_mut() {
                 properties.insert("symmetric_distance_parameter".into(), json!("total"));
+            }
+        }
+        let captured = (|| -> Mapping<()> {
+            let properties = source_properties
+                .as_object_mut()
+                .ok_or("the feature source properties are not supported yet")?;
+            if let Some(reference) = reference {
+                properties.insert("design_reference".into(), json!(reference));
+            }
+            // Historical bodies can be consumed by a later Boolean and absent from final STEP.
+            // Keep their proven rollback identities/names separate from the final geometry.
+            if has_derived
+                && creators.contains(&ordinal)
+                && matches!(
+                    definition.pointer("/value/kind").and_then(Value::as_str),
+                    Some("extrude" | "revolve")
+                )
+                && definition
+                    .pointer("/value/value/op")
+                    .and_then(Value::as_str)
+                    == Some("new_body")
+            {
+                if let (Ok(before), Ok(after)) = (
+                    inputs.parts(ordinal),
+                    inputs.parts(ordinal.saturating_add(1)),
+                ) {
+                    let made: Vec<_> = after
+                        .iter()
+                        .filter(|(key, _)| !before.contains_key(*key))
+                        .collect();
+                    if let [(native, Some(name))] = made.as_slice() {
+                        properties.insert(
+                            "historical_bodies".into(),
+                            json!(serde_json::to_string(
+                                &json!([{"id": id("body", native), "name": name}])
+                            )
+                            .map_err(|error| error.to_string())?),
+                        );
+                    }
+                }
+            }
+            let historical = properties
+                .get("historical_bodies")
+                .or_else(|| properties.get("design_reference"))
+                .and_then(Value::as_str)
+                .map(serde_json::from_str::<Value>)
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            let bodies = historical.as_ref().and_then(|value| {
+                value
+                    .as_array()
+                    .or_else(|| value.get("bodies").and_then(Value::as_array))
+            });
+            if let Some(bodies) = bodies {
+                let local: Vec<_> = bodies
+                    .iter()
+                    .filter_map(|body| body.get("id").and_then(Value::as_str))
+                    .collect();
+                push(
+                    &mut model.ir.model.feature_result_topologies,
+                    json!({"id":id("result",native),"output_of":feature_id,"members":local.iter().map(|id|json!({"kind":"body","id":id})).collect::<Vec<_>>()}),
+                )?;
+            }
+            Ok(())
+        })();
+        if let Err(reason) = captured {
+            dependencies.clear();
+            source_properties = json!({});
+            definition = self::definition(
+                "native",
+                json!({"kind":format!("Onshape feature: {reason}"),"parameters":{}}),
+            );
+            loss(
+                report,
+                name,
+                &reason,
+                model.source_step.is_some(),
+                "onshape/history.not-supported",
+            );
+        }
+        if has_derived {
+            // Generated body references require direct producer dependencies, even
+            // when the timeline's preceding feature already depends on that producer.
+            for role in feature
+                .get("parameters")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|parameter| {
+                    match parameter.get("parameterId").and_then(Value::as_str) {
+                        Some("targets") => Some("target"),
+                        Some("tools") => Some("tools"),
+                        _ => None,
+                    }
+                })
+            {
+                if let Some(bodies) = definition
+                    .pointer(&format!("/value/value/operands/{role}/value/bodies"))
+                    .and_then(Value::as_array)
+                {
+                    for body in bodies {
+                        if let Some(producer) = body.get("feature").and_then(Value::as_str) {
+                            if !dependencies.iter().any(|id| id == producer) {
+                                dependencies.push(producer.to_owned());
+                            }
+                        }
+                    }
+                }
             }
         }
         let outputs: Vec<_> = single_body

@@ -4,7 +4,8 @@
 //! body, which a later feature may already have removed or moved. A generated body selection
 //! names a body by the feature that made it; a selection in the feature's own input state
 //! names the one body that state holds. A generated result can also resolve through its
-//! producer's single named output; native selections are refused.
+//! producer's single named output, or captured result identities with unique earlier mapped
+//! names. Native selections and ambiguous or unproven identities are refused.
 
 use serde_json::{json, Value};
 
@@ -77,8 +78,71 @@ fn bodies(
     Ok(names)
 }
 
-/// Bodies an earlier feature makes, named when that feature was mapped. The final model
-/// leaves them out, so they have no CADIR body id.
+/// Captured identities resolve only through a stored result and a unique earlier name.
+fn captured_names(
+    selection: &Value,
+    ctx: &Context,
+) -> Result<Vec<(Option<String>, String)>, String> {
+    let bodies = selection
+        .pointer("/value/bodies")
+        .and_then(Value::as_array)
+        .ok_or("its generated bodies are missing")?;
+    let mut names: Vec<(Option<String>, String)> = Vec::new();
+    for body in bodies {
+        let feature = body
+            .get("feature")
+            .and_then(Value::as_str)
+            .filter(|id| ctx.feature_names.contains_key(*id))
+            .ok_or("its body creator is missing")?;
+        let local = body
+            .get("local_id")
+            .and_then(Value::as_str)
+            .ok_or("its body result identity is missing")?;
+        let owner = ctx
+            .row("features", feature)
+            .ok_or("its body creator is missing")?;
+        let known = super::reference::body_bindings(owner)?
+            .is_some_and(|bindings| bindings.iter().any(|(id, _)| id == local));
+        let proven = ctx.source.is_some_and(|source| {
+            source
+                .ir
+                .model
+                .feature_result_topologies
+                .iter()
+                .any(|state| {
+                    state.output_of.as_str() == feature
+                        && state.bodies().iter().any(|body| body.as_str() == local)
+                })
+        });
+        if !known || !proven {
+            return Err("its generated body is not a captured earlier feature result".into());
+        }
+        let matches: Vec<_> = ctx
+            .named_bodies
+            .iter()
+            .filter(|(id, _)| id == local)
+            .collect();
+        let [(_, name)] = matches.as_slice() else {
+            return Err("its generated body has no unique earlier name".into());
+        };
+        if ctx
+            .named_bodies
+            .iter()
+            .any(|(id, n)| id != local && n == name)
+            || names.iter().any(|(_, known)| known == name)
+        {
+            return Err("its generated body name is not unique".into());
+        }
+        names.push((Some(local.to_owned()), name.clone()));
+    }
+    if names.is_empty() {
+        return Err("it selects no generated bodies".into());
+    }
+    Ok(names)
+}
+
+/// Bodies named by their producer, its sole output, or proven captured result identities.
+/// Results absent from the final model can use producer names without a CADIR body id.
 fn generated_names(
     source: &Value,
     selection: &Value,
@@ -103,6 +167,18 @@ fn generated_names(
             .find(|((known, id), _)| known == feature && id == local)
         {
             (None, name.clone())
+        } else if ctx
+            .row("features", feature)
+            .map(super::reference::body_bindings)
+            .transpose()?
+            .flatten()
+            .is_some()
+        {
+            let selected = json!({"kind": "generated", "value": {"bodies": [body]}});
+            captured_names(&selected, ctx)?
+                .into_iter()
+                .next()
+                .ok_or("it selects no generated bodies")?
         } else if crate::VersionGate::ScopedBodies.supported(ctx.target_version) {
             let selected = json!({"kind": "generated", "value": {"bodies": [body]}});
             generated_output_bodies(source, &selected, ctx)?

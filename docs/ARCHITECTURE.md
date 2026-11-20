@@ -643,6 +643,28 @@ source profile frame, admitted through the existing source body comparison
 callback. No native selection strings are interpreted. Older targets use the
 previous spatial mapper output and profile refusals.
 
+## Linked design outputs
+
+The `Writer::companion_files` seam returns portable companion names and bytes from
+an encoded design. `convert` validates names and existing content before publishing
+companions beside the main output, reusing identical files and refusing to overwrite a
+different design. Each new companion is fully staged in its destination directory, then
+published without replacing an existing file. Concurrent publishers reuse identical
+completed files. Writers without linked outputs keep the single-file default.
+The SolidCraft adapter retains companion containers under `companions/` and writes
+its native Import/component/occurrence/links representation; the core knows no
+SolidCraft container fields.
+
+The Onshape reader keeps a captured Derived source as neutral CADIR and STEP in a
+feature's `source_properties.design_reference`, with body identity/name bindings.
+CADIR source properties are strings: this value contains versioned
+`dutchman.design-reference/1` JSON; `historical_bodies` contains a JSON body list.
+Earlier local creators use `source_properties.historical_bodies` for names of bodies
+that a later Boolean may consume. Their local identities belong to CADIR
+`feature_result_topologies`; Boolean operands use generated body selections tied to
+those producers. Intermediate bodies never enter final geometry or the host's
+verification reference. Writers consume neutral references without reading REST data.
+
 `dutchman-plugin` is the WebAssembly component front end, built for `wasm32-unknown-unknown`
 against SolidCraft's `craft:plugin` importer interface (no WASI). Its single ABI adapter
 streams host file capabilities into `dutchman_core::source`, then uses the normal SolidCraft

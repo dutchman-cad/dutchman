@@ -6,6 +6,7 @@
 //! not be carried across. See `docs/ARCHITECTURE.md`.
 
 mod assembly;
+mod companion;
 pub mod contents;
 mod decode;
 mod error;
@@ -174,6 +175,12 @@ pub const MAX_INPUT_BYTES: u64 = 1 << 30;
 /// Encodes the neutral [`Model`] into a target format. This is the plugin seam: a target
 /// (SolidCraft today) implements it and depends on nothing else in Dutchman.
 pub trait Writer {
+    /// Additional portable files needed by an encoded design, written beside its output.
+    /// The default writer produces one self-contained file.
+    fn companion_files(&self, _encoded: &[u8]) -> Result<Vec<(String, Vec<u8>)>, Error> {
+        Ok(Vec::new())
+    }
+
     /// Writes with local running-step progress when a frontend requests it.
     fn write_with_progress(
         &self,
@@ -492,6 +499,7 @@ fn decode_bytes(
 /// Converts the file at `input` into `output` through `writer`, replacing an existing output.
 ///
 /// The output file is only written once the whole conversion has succeeded.
+/// Required companion files are written beside it; edited companions are always kept.
 pub fn convert(input: &Path, output: &Path, writer: &dyn Writer) -> Result<Report, Error> {
     convert_to(input, output, writer, true)
 }
@@ -661,8 +669,60 @@ fn convert_impl(
     stage(Stage::Write);
     let output_name = output.file_name().map(|name| name.to_string_lossy());
     let _writing = progress.map(|p| p.step(StepKind::Writing, output_name.as_deref(), None, None));
+    let companions = writer.companion_files(&bytes)?;
+    let parent = output.parent().unwrap_or(Path::new("."));
+    let mut pending = Vec::new();
+    let mut names = std::collections::BTreeSet::new();
+    for (name, data) in companions {
+        if name.is_empty()
+            || name.contains(['/', '\\', ':'])
+            || name == "."
+            || name == ".."
+            || !names.insert(name.to_ascii_lowercase())
+        {
+            return Err(Error::Encode(
+                "A linked design has no portable output file name".into(),
+            ));
+        }
+        let path = parent.join(&name);
+        if output
+            .file_name()
+            .and_then(|file| file.to_str())
+            .is_some_and(|file| file.eq_ignore_ascii_case(&name))
+        {
+            return Err(Error::Encode(format!(
+                "{}: this output name is needed by a linked design; choose another output name",
+                path.display()
+            )));
+        }
+        // Links are content-addressed. Reusing identical bytes is safe; replacing a
+        // different design would change the meaning of another file's link.
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            if metadata.len() != data.len() as u64 || !metadata.is_file() {
+                return Err(companion_conflict(&path));
+            }
+        }
+        match std::fs::read(&path) {
+            Ok(existing) if existing == data => {}
+            Ok(_) => return Err(companion_conflict(&path)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                pending.push((path, data))
+            }
+            Err(source) => return Err(Error::Io { path, source }),
+        }
+    }
+    for (path, data) in pending {
+        companion::write(&path, &data)?;
+    }
     write_output(output, &bytes, replace)?;
     Ok(report)
+}
+
+fn companion_conflict(path: &Path) -> Error {
+    Error::Encode(format!(
+        "{}: a linked design already exists with different content; choose another output folder to keep that design",
+        path.display()
+    ))
 }
 
 /// Writes `bytes` to `output`; when `replace` is not set, only if no file is there.

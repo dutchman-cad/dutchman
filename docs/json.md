@@ -3,6 +3,9 @@
 Onshape history dependencies follow consumed operands in their stored order. Deterministic
 body, face and edge selections need a unique earlier producer proved by rollback
 transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+A created-by query may name the proved creator of an entity that later features
+modified; its dependency still follows the latest modification. Missing creation
+proof, unrelated producers and IDs reused after disappearance remain refused.
 Every present scope query list is validated, while an empty list keeps implicit scope.
 Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
 A record the reader cannot convert becomes a named loss and the remaining records continue.
@@ -31,6 +34,20 @@ rows and `verification` describe CADIR mapping and comparison with the bundle's
 STEP export; see [Onshape](onshape.md). Compressed default-plane and sketch-region
 queries use these existing rows and codes too. Unresolved source boundaries report
 a specific reason under `onshape/history.not-supported`; no report field changes.
+Derived inserts add the history kind `design_reference`. A target below SolidCraft
+0.44 reports the Degraded map-stage loss `design/reference.frozen`: its derived bodies
+remain as a frozen import and following supported booleans stay editable. Unresolved or
+unsupported Derived references use `onshape/history.not-supported`. Report schemas and
+fields are unchanged. Companion conflicts use the existing `encode` error code and ask
+for another output folder; edited companions are kept. Concurrent conversions reuse
+identical companions without changing report fields.
+Losses from converting a linked companion are prefixed with its Derived feature's name.
+
+Derived Boolean conversion requires an explicit stored `keepTools` boolean. Missing or
+contradictory choices retain `onshape/history.not-supported`; later records still convert.
+Captured studio responses are checked against their own manifest microversion, independently
+of the root studio. Fetch a new bundle when the reported reference evidence is missing.
+
 An active custom FeatureScript feature uses that same Degraded loss code, with the
 feature name as `subject` and a message naming the lack of complete per-feature body
 geometry in bundle format 1 to prove a frozen step. Its `history` row remains blocked,
@@ -1634,6 +1651,11 @@ source attributes are dropped with subject `attributes` and a message naming
 that scope. Neither assignment is applied to the shared component definition.
 No report fields or schema versions change.
 
+The desktop report panel stays visible below output controls in wide windows. Discord
+comes first, with a small **GitHub issue** backup link (a public issue under the user's
+GitHub name). **Anonymous report**, under **More**, opens review before direct cloud upload.
+Partial history, geometry-only and degraded results use a warning colour. Report fields
+and CLI/MCP behavior are unchanged.
 ## Onshape fetch (`dutchman.onshape-fetch/1`)
 
 CLI `onshape fetch --json` and MCP `onshape_fetch` share this report builder.
@@ -1660,7 +1682,8 @@ credential material returns `onshape/privacy` without echoing the credential.
 The ZIP's manifest uses separate schema `dutchman.onshape-bundle/1` and records
 `fetched_at` (RFC 3339), `fetcher`, `api_version` (`v17`), `document` (`id`, `name`,
 `workspace_or_version`, `wvid`, `microversion`), `elements` (`id`, `name`, `type`,
-`files`), `external`, and `calls`. `files` maps roles to archive paths, including
+`files`), `external`, and `calls`. New captures add `root_element`, the selected
+Part Studio or assembly element ID. `files` maps roles to archive paths, including
 `definition` and `features` for assemblies. `external` lists `documentId`,
 `elementId`, and `microversionId` for other-document references. Raw API responses
 are retained verbatim. Part Studio roles are `features`, `bodydetails` (the rollback
@@ -1675,7 +1698,11 @@ one HTTP attempt per uncached Part Studio to the existing `calls` count.
 
 Successful manifests also contain `consistent: true` and `file_sources`, mapping each
 archive path (including generated indices and manifest) to `path_kind` (`m`, `v`, or
-`w`) and `microversion`. Every file reflects the manifest's document microversion.
+`w`) and `microversion`. Each file records its owning document's microversion. Derived references are captured
+under `references/<document>/<version>/<element>/` with their own manifests and pins;
+their `file_sources` entries are also included in the root manifest. These captures may
+use a different document or version from the root. `external` continues to describe
+uncaptured assembly references.
 Version content reads use `v`; workspace reads use `m` where supported and `w` for
 STEP/variables. Exported STEP records its initiating request's path kind, since
 poll/download endpoints identify jobs/files directly. Generated files inherit the

@@ -538,6 +538,8 @@ fn generated_body_name(feature: &Value, ctx: &mut Context) -> Option<Vec<String>
 
 /// The names of the bodies a new-body extrude makes. A body the source leaves unnamed gets
 /// "Body N", the first number not yet taken, so later features can still target it.
+/// Captured historical identity/name bindings take precedence over final output names.
+/// Without final outputs, a sole generated result can instead be named by its producer.
 ///
 /// Each named body's colour is recorded in `ctx.looks` under its name, so the replayed body
 /// keeps the colour the source gave it.
@@ -548,6 +550,22 @@ pub(super) fn body_names(
 ) -> Option<Vec<String>> {
     if operation != "new_body" {
         return None;
+    }
+    if feature
+        .pointer("/source_properties/historical_bodies")
+        .is_some()
+    {
+        let bindings = super::reference::body_bindings(feature).ok().flatten()?;
+        if bindings.is_empty()
+            || bindings
+                .iter()
+                .any(|(_, name)| ctx.named_bodies.iter().any(|(_, taken)| taken == name))
+        {
+            return None;
+        }
+        let names = bindings.iter().map(|(_, name)| name.clone()).collect();
+        ctx.named_bodies.extend(bindings);
+        return Some(names);
     }
     let Some(outputs) = feature
         .get("outputs")

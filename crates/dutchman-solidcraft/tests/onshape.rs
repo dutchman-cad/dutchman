@@ -7,7 +7,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dutchman_core::{Check, FeatureStatus, Format, Model, Report, Writer};
-use dutchman_solidcraft::{SolidCraftEvaluator, SolidCraftVersion, SolidCraftWriter, Verification};
+use dutchman_solidcraft::{
+    solidcraft_version, SolidCraftEvaluator, SolidCraftVersion, SolidCraftWriter, Verification,
+    VersionGate,
+};
 use serde_json::{json, Value};
 
 fn model(name: &str) -> (Model, Report) {
@@ -1146,6 +1149,243 @@ fn part_studio_variables_drive_the_sketch_dimension_and_extrude_depth() {
         .map(expr)
         .collect();
     assert_eq!(driven, ["span"]);
+}
+
+#[test]
+fn derived_design_writes_insert_design_links_and_keeps_boolean_editable() {
+    for (target, linked) in [
+        ("0.44.0", true),
+        ("0.44.1", true),
+        ("0.43.0", false),
+        ("0.18.2", false),
+    ] {
+        let (model, mut report) = model("derived");
+        let writer = SolidCraftWriter::new()
+            .target_version(Some(target.parse().unwrap()))
+            .verification(Verification::Off);
+        let mut bytes = Vec::new();
+        writer.write(&model, &mut bytes, &mut report).unwrap();
+        let doc = document(&bytes);
+        let combine = doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["type"] == "combine");
+        assert!(combine.is_some(), "{doc:#}\n{:?}", report.losses());
+        let combine = combine.unwrap();
+        assert_eq!(combine["target"], "Plate");
+        assert_eq!(combine["tools"], json!(["Tool"]));
+        assert_eq!(combine["operation"], "cut");
+        let companions = writer.companion_files(&bytes).unwrap();
+        assert_eq!(!companions.is_empty(), linked);
+        assert_eq!(doc.get("links").is_some(), linked);
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.code.as_deref() == Some("design/reference.frozen")),
+            !linked
+        );
+        if linked {
+            let link = doc["links"].as_object().unwrap().values().next().unwrap();
+            assert_eq!(link["path"], companions[0].0);
+            assert!(document(&companions[0].1)["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["type"] == "extrude"));
+            assert_eq!(doc["components"].as_array().unwrap().len(), 1);
+            assert_eq!(doc["occurrences"].as_array().unwrap().len(), 1);
+        }
+    }
+}
+
+#[test]
+fn derived_boolean_requires_captured_results() {
+    let (mut source, mut report) = model("derived");
+    source.ir.model.feature_result_topologies.clear();
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .target_version(Some(SolidCraftVersion::V0_44_0))
+        .verification(Verification::Off)
+        .write(&source, &mut bytes, &mut report)
+        .unwrap();
+    assert!(!document(&bytes)["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|feature| feature["type"] == "combine"));
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("captured earlier feature result")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn derived_companion_conversion_losses_are_reported_under_the_insert() {
+    let (mut source, mut report) = model("derived");
+    let mut wire = serde_json::to_value(&source.ir).unwrap();
+    let mut reference: Value = serde_json::from_str(
+        wire["model"]["features"][2]["source_properties"]["design_reference"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    reference["ir"]["model"]["features"][1]["definition"] = json!({
+        "kind":"operation", "value":{"kind":"native", "value":{
+            "kind":"Synthetic unsupported source operation", "parameters":{}
+        }}
+    });
+    wire["model"]["features"][2]["source_properties"]["design_reference"] =
+        json!(serde_json::to_string(&reference).unwrap());
+    source.ir = serde_json::from_value(wire).unwrap();
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .target_version(Some(SolidCraftVersion::V0_44_0))
+        .verification(Verification::Off)
+        .write(&source, &mut bytes, &mut report)
+        .unwrap();
+    assert!(document(&bytes)["links"].is_object());
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject.starts_with("Derived: ") && loss.detail.contains("native")),
+        "{:?}",
+        report.losses()
+    );
+}
+
+#[test]
+fn derived_file_conversion_publishes_companion_and_cli_replays_the_cut() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/onshape-derived.onshape-bundle");
+    let output = dir.path().join("result.sc");
+    let writer = SolidCraftWriter::new()
+        .target_version(Some("0.44.1".parse().unwrap()))
+        .verification(Verification::Off);
+    dutchman_core::convert(&input, &output, &writer).unwrap();
+    let doc = document(&std::fs::read(&output).unwrap());
+    let link = doc["links"].as_object().unwrap().values().next().unwrap();
+    assert!(dir.path().join(link["path"].as_str().unwrap()).is_file());
+    let second = dir.path().join("second.sc");
+    dutchman_core::convert(&input, &second, &writer).unwrap();
+    assert_eq!(
+        document(&std::fs::read(&second).unwrap())["links"],
+        doc["links"]
+    );
+    let companion = dir.path().join(link["path"].as_str().unwrap());
+    let saved = std::fs::read(&companion).unwrap();
+    std::fs::write(&companion, b"a locally edited companion").unwrap();
+    let third = dir.path().join("third.sc");
+    let error = dutchman_core::convert(&input, &third, &writer).unwrap_err();
+    assert!(matches!(error, dutchman_core::Error::Encode(_)));
+    assert!(error.to_string().contains("choose another output folder"));
+    assert!(!third.exists());
+    assert_eq!(
+        std::fs::read(&companion).unwrap(),
+        b"a locally edited companion"
+    );
+    std::fs::write(&companion, saved).unwrap();
+    if let Ok(artifact) = std::env::var("DUTCHMAN_DERIVED_ARTIFACT") {
+        let artifact = Path::new(&artifact);
+        std::fs::create_dir_all(artifact).unwrap();
+        for file in std::fs::read_dir(dir.path()).unwrap() {
+            let file = file.unwrap();
+            std::fs::copy(file.path(), artifact.join(file.file_name())).unwrap();
+        }
+    }
+    let Ok(cli) = std::env::var("SOLIDCRAFT_CLI") else {
+        return;
+    };
+    let version = solidcraft_version(&Verification::With(PathBuf::from(&cli)))
+        .unwrap()
+        .split_whitespace()
+        .find_map(|word| word.parse::<SolidCraftVersion>().ok())
+        .unwrap();
+    if !VersionGate::LinkedDesign.supported(version) {
+        return;
+    }
+    let evaluation = std::process::Command::new(&cli)
+        .arg("eval")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        evaluation.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evaluation.stderr)
+    );
+    let measurements: Value = serde_json::from_slice(&evaluation.stdout).unwrap();
+    assert_eq!(
+        measurements["bodies"].as_array().unwrap().len(),
+        1,
+        "{measurements:#}"
+    );
+    assert!(
+        (measurements["bodies"][0]["volume_mm3"].as_f64().unwrap() - 300.).abs() < 0.1,
+        "{measurements:#}"
+    );
+    let replacement = dir.path().join("replacement.json");
+    std::fs::write(&replacement,json!([{"command":"solid.box","params":{"length":10,"width":2,"height":4,"corner":[5,2,0],"body_name":"Tool"}}]).to_string()).unwrap();
+    let replaced = std::process::Command::new(&cli)
+        .arg("run")
+        .arg(&replacement)
+        .arg("--save")
+        .arg(&companion)
+        .arg("--quiet")
+        .output()
+        .unwrap();
+    assert!(
+        replaced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replaced.stderr)
+    );
+    let update = dir.path().join("update.json");
+    std::fs::write(
+        &update,
+        json!([{"command":"component.update_links","params":{}}]).to_string(),
+    )
+    .unwrap();
+    let refreshed = dir.path().join("refreshed.sc");
+    let updated = std::process::Command::new(&cli)
+        .arg("run")
+        .arg(&update)
+        .arg("--in")
+        .arg(&output)
+        .arg("--save")
+        .arg(&refreshed)
+        .arg("--results")
+        .output()
+        .unwrap();
+    assert!(
+        updated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&updated.stderr)
+    );
+    let result: Value = serde_json::from_slice(&updated.stdout).unwrap();
+    assert_eq!(result[0]["failed"], json!([]));
+    assert_eq!(result[0]["updated"].as_array().unwrap().len(), 1);
+    let evaluated = std::process::Command::new(&cli)
+        .arg("eval")
+        .arg(&refreshed)
+        .output()
+        .unwrap();
+    assert!(
+        evaluated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evaluated.stderr)
+    );
+    let measured: Value = serde_json::from_slice(&evaluated.stdout).unwrap();
+    assert_eq!(measured["body_count"], 1);
+    assert!(
+        (measured["total"]["volume_mm3"].as_f64().unwrap() - 360.).abs() < 0.1,
+        "{measured:#}"
+    );
 }
 
 #[test]

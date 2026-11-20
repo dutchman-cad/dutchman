@@ -1,8 +1,30 @@
 # Getting started
 
+Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
+components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
+Select target 0.44 explicitly when the existing default is older.
+Keep the generated `derived-<sha256>.sc` companion designs beside the main result;
+edit a companion and use SolidCraft's Update Links to rebuild the host. If conversion
+finds an edited companion, choose another output folder; that companion is kept even
+when overwriting is enabled. Parallel conversions safely share identical companions.
+Earlier targets
+report `design/reference.frozen` and keep frozen derived bodies. Missing references,
+part subsets, configurations or transformed inserts name the reason under
+`onshape/history.not-supported`; fetch a new bundle for missing references.
+
+Derived Boolean conversion requires an explicit stored `keepTools` boolean. Missing or
+contradictory choices retain `onshape/history.not-supported`; later records still convert.
+Captured studio responses are checked against their own manifest microversion, independently
+of the root studio. Fetch a new bundle when the reported reference evidence is missing.
+
+See [Onshape bundles](onshape.md) for the supported reference forms.
+
 Onshape history dependencies follow consumed operands in their stored order. Deterministic
 body, face and edge selections need a unique earlier producer proved by rollback
 transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+A created-by query may name the proved creator of an entity that later features
+modified; its dependency still follows the latest modification. Missing creation
+proof, unrelated producers and IDs reused after disappearance remain refused.
 Every present scope query list is validated, while an empty list keeps implicit scope.
 Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
 A record the reader cannot convert becomes a named loss and the remaining records continue.
@@ -769,13 +791,19 @@ produced. These small controls establish basic behavior, not a false-positive ra
 for large assemblies or arbitrary designs.
 
 <a id="report-consent"></a>
-After a conversion, **Output folder** folds into a summary so the reporting steps stay
-in view. Click its folder path or **Change…** to reopen all output settings. **Clear**
-removes the designs and results and restores the expanded settings.
+In wide windows, **Is there a problem? Is something missing?** stays pinned below the
+output controls, even with **Advanced** and output choices expanded. Input and output
+controls scroll above it; long report reviews scroll below the question. Narrow windows
+keep one scrolling page. **Report this file…** selects that file in the panel, and the
+top-bar **Report a problem** opens the same panel. Partial history, geometry-only and
+degraded results use a warning colour; full history without degraded losses stays green.
+After a conversion, **Output folder** folds into a summary. Click its folder path or
+**Change…** to reopen all output settings. **Clear** removes the designs and results and
+restores the expanded settings.
 
-Report consent is per report. In the desktop app, the **Anonymous report** and **GitHub issue**
-pills sit directly below the three steps in **Is there a problem? Is something missing?**,
-and also appear under **More**. **Anonymous report** opens a review for the chosen file
+Report consent is per report. In the desktop app, Discord is the first route, with a small
+**GitHub issue** backup link below the three steps. **Anonymous report** is under **More**,
+with AI help and diagnosis. It opens a review for the chosen file
 with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
 problem signature only. Converted results use `converted-with-problem` and never
@@ -822,7 +850,9 @@ Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the s
 conversion report, so changing the installed CLI or verification setting afterward does
 not rewrite what checked that file. No schema fields change.
 
-The desktop scrollbars let you reach the report panel and every result.
+In wide desktop windows, the report question stays visible below the input and output
+controls. Its body has its own scrollbar, so **More** and long reviews remain reachable.
+The input controls and results scroll separately; narrow windows use one scrolling page.
 Each reporting step shows its own copied-message notice beside the action.
 **Check a folder** keeps the app header; **Part to check** selects a part for local checks.
 

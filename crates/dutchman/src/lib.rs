@@ -83,6 +83,18 @@ pub enum OutputWriter {
 }
 
 impl Writer for OutputWriter {
+    fn companion_files(
+        &self,
+        encoded: &[u8],
+    ) -> Result<Vec<(String, Vec<u8>)>, dutchman_core::Error> {
+        match self {
+            Self::Configured { writer, .. } => writer.companion_files(encoded),
+            Self::SolidCraft(writer) => writer.companion_files(encoded),
+            Self::FreeCad(writer) => writer.companion_files(encoded),
+            Self::Dxf => Ok(Vec::new()),
+        }
+    }
+
     fn extension(&self) -> &'static str {
         match self {
             Self::Configured { writer, .. } => writer.extension(),
@@ -396,6 +408,13 @@ pub struct PreparedWriter {
 }
 
 impl Writer for PreparedWriter {
+    fn companion_files(
+        &self,
+        encoded: &[u8],
+    ) -> Result<Vec<(String, Vec<u8>)>, dutchman_core::Error> {
+        self.writer.companion_files(encoded)
+    }
+
     fn extension(&self) -> &'static str {
         self.writer.extension()
     }

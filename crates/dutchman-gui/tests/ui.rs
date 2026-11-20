@@ -2540,7 +2540,7 @@ fn every_result_has_the_report_panel_and_a_button_for_it() {
     harness.get_by_label("Ask your AI about this file");
 }
 
-/// The backup pill opens the local review without starting any network request.
+/// The review under More opens locally without starting any network request.
 #[cfg(feature = "test-support")]
 #[test]
 fn anonymous_report_only_opens_review_and_sends_nothing() {
@@ -2551,11 +2551,16 @@ fn anonymous_report_only_opens_review_and_sends_nothing() {
         format!("http://{}/api/reports", listener.local_addr().unwrap()),
         None,
     );
-    let anonymous = h.get_by_label("Anonymous report").rect();
+    assert!(h.query_by_label("Anonymous report").is_none());
+    assert_eq!(h.query_all_by_label("GitHub issue").count(), 1);
     let github = h.get_by_label("GitHub issue").rect();
-    assert!(anonymous.right() < github.left());
-    assert!((anonymous.top() - github.top()).abs() < 1.0);
-    assert!((anonymous.height() - github.height()).abs() < 1.0);
+    let dm = h.get_by_label("Copy and open DM").rect();
+    assert!(github.top() > dm.bottom());
+    open_more(&mut h);
+    // The bottom-pinned panel grows upward when More opens; compare the current layout.
+    let github = h.get_by_label("GitHub issue").rect();
+    let anonymous = h.get_by_label("Anonymous report").rect();
+    assert!(anonymous.top() > github.bottom());
     assert!(h.query_by_label("No Discord?").is_none());
     h.get_by_label("Anonymous report").click_accesskit();
     h.run_steps(12);
@@ -3182,7 +3187,7 @@ fn fit_harness_for(
 }
 
 /// Every control and heading of the main screen sits inside the window, above the Convert row.
-fn assert_main_screen_in_view(h: &Harness<'_, App>, size: [f32; 2]) {
+fn assert_main_screen_in_view(h: &mut Harness<'_, App>, size: [f32; 2]) {
     let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0], size[1]));
     let convert_row = h.get_by_label("Convert").rect().top();
     for label in [
@@ -3199,7 +3204,17 @@ fn assert_main_screen_in_view(h: &Harness<'_, App>, size: [f32; 2]) {
         "RESULTS",
         "Open in SolidCraft",
     ] {
+        h.get_by_label(label).scroll_to_me();
+        h.run_steps(12);
         let rect = h.get_by_label(label).rect();
+        let question = h.get_by_label(dutchman_gui::report_panel::QUESTION).rect();
+        assert!(window.contains_rect(question) && question.bottom() <= convert_row);
+        if rect.left() < question.right() {
+            assert!(
+                rect.bottom() <= question.top(),
+                "{label}: {rect:?} overlaps {question:?}"
+            );
+        }
         assert!(
             window.contains_rect(rect),
             "{size:?}: {label} {rect:?} outside the window"
@@ -3218,13 +3233,13 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
         assert!(size[0] <= monitor[0] * 0.9 && size[1] <= monitor[1] * 0.9);
         assert!(size[0] >= dutchman_gui::WIDE_BREAKPOINT);
         let work = tempfile::tempdir().unwrap();
-        let h = fit_harness(size, ThemePreference::Light, work.path());
+        let mut h = fit_harness(size, ThemePreference::Light, work.path());
         assert_eq!(h.state().rows().len(), 1);
         assert!(
             !h.state().page_scrolls(),
             "{monitor:?}: the page scrolls at {size:?}"
         );
-        assert_main_screen_in_view(&h, size);
+        assert_main_screen_in_view(&mut h, size);
         // After a run that didn't finish, its notice still fits: nothing scrolls or moves out.
         let mut h = h;
         h.state_mut()
@@ -3235,7 +3250,7 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
             !h.state().page_scrolls(),
             "{monitor:?}: the unfinished-run notice makes the page scroll at {size:?}"
         );
-        assert_main_screen_in_view(&h, size);
+        assert_main_screen_in_view(&mut h, size);
         // Designs and the output choices sit beside the results, not above them.
         let designs = h.get_by_label("DESIGNS").rect();
         let results = h.get_by_label("RESULTS").rect();
@@ -3346,6 +3361,14 @@ fn many_results_scroll_in_their_own_column_and_not_the_page() {
     h.run_steps(8);
     assert!(!h.state().page_scrolls());
     let convert_row = h.get_by_label("Convert").rect().top();
+    h.get_by_label("Open diagnostics folder").scroll_to_me();
+    h.run_steps(12);
+    assert!(
+        h.get_by_label("Open diagnostics folder").rect().bottom()
+            <= h.get_by_label(dutchman_gui::report_panel::QUESTION)
+                .rect()
+                .top()
+    );
     assert!(h.get_by_label("Open diagnostics folder").rect().bottom() <= convert_row);
     assert!(h.get_by_label("RESULTS").rect().bottom() <= convert_row);
 }

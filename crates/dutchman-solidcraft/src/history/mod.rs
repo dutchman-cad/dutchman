@@ -31,6 +31,7 @@ pub(crate) mod params;
 mod pattern;
 mod primitive;
 mod profile;
+mod reference;
 mod revolve;
 mod sheet;
 mod shell;
@@ -2367,6 +2368,9 @@ fn map_feature(
             Ok(Mapped::Consumed)
         }
         Some("sheet_metal_bend") => Err(sheet::bend_refusal()),
+        Some("stored_geometry") if feature.pointer("/source_properties/design_reference").is_some() => {
+            reference::map(feature, feature.pointer("/source_properties/design_reference").unwrap_or(&Value::Null), ctx, report).map(Mapped::Feature)
+        }
         Some("stored_geometry") => base::stored(feature, ctx, report).map(Mapped::Feature),
         Some("base_feature") if base::holds_none(definition) => Ok(Mapped::Nothing),
         Some("base_feature") => base::map(feature, definition, ctx).map(Mapped::Feature),
@@ -2414,6 +2418,14 @@ fn operation_kind(feature: &Value) -> Option<&str> {
 
 /// The CADIR operation name of a feature (`extrude`, `fillet`, …).
 fn kind(feature: &Value) -> String {
+    if operation_kind(feature) == Some("stored_geometry")
+        && feature
+            .pointer("/source_properties/design_reference")
+            .is_some()
+    {
+        return "design_reference".into();
+    }
+
     operation_kind(feature).unwrap_or("unknown").to_owned()
 }
 

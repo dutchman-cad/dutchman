@@ -194,6 +194,17 @@ refusal and preservation of the final STEP; they add no captured document data.
 `dutchman/tests/onshape.rs` uses a synthetic response client to capture and convert
 a sketch-only Part Studio without any STEP request or network connection.
 
+### Onshape Derived two-studio bundle
+
+`onshape-derived.onshape-bundle` is generated only by `onshape-derived.py`, using
+`onshape.py`'s synthetic OpenAPI-shaped sketch/feature helpers and SolidCraft 0.44.1
+for elementary STEP references. It contains a 20 × 10 × 2 mm plate, a second studio's
+10 × 5 × 4 mm tool, a whole-studio Derived insert and a cut (300 mm³ remaining).
+The cut stores its explicit `keepTools: false` choice. Repeated-digit
+document/version/element identifiers are invented. No account,
+network request, owner design, private dimensions or third-party CAD file is used.
+Regenerate only this fixture with `python3 onshape-derived.py --cli /path/to/solidcraft-cli`.
+
 The repeated-carrier tests in `src/onshape/tests.rs` rebuild the default-plane
 bundle in memory with a generic ellipse and two solved chords. They encode
 intersection-order witnesses independently, including ambiguous endpoints and an
@@ -233,6 +244,9 @@ The re-review regressions in `src/onshape/rereview.rs` build bundle ZIPs and JSO
 records directly in Rust from the public response shapes. Generic line sketches,
 points, a straight edge and a planar face exercise dependency transitions, operand
 order, scopes, thread termination, midpoint admission and permissive recovery.
+Created-body scope regressions use those same code-built records to distinguish
+creation from later modification, unrelated producers, ambiguous creation intervals
+and deterministic IDs reused after disappearance.
 Additional thin tests extend the generated default-plane bundle in memory with a
 synthetic producer and rollback states. No new binary fixture or private design
 identifier is used.

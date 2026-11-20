@@ -419,6 +419,8 @@ pub const WINDOW_OLDEST: [u64; 3] = [0, 18, 2];
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
 pub enum VersionGate {
+    /// Linked Insert Design with cached bodies and a source file.
+    LinkedDesign,
     /// Thin walls verified against the current SolidCraft document format.
     ThinExtrude,
     /// Sweep paths selected from proven input edges.
@@ -457,6 +459,7 @@ pub enum VersionGate {
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::LinkedDesign => SolidCraftVersion::V0_44_0,
             Self::ThinExtrude => SolidCraftVersion::V0_44_0,
             Self::TopologicalEdges => SolidCraftVersion::V0_44_0,
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
@@ -3697,7 +3700,9 @@ mod version_tests {
             );
         }
         assert_eq!(target.extension(), SolidCraftVersion::V0_30_0.extension());
-        // Thin extrudes, slanted face extents and scoped bodies need 0.44, so earlier targets keep less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3714,7 +3719,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Thin extrudes, slanted face extents and scoped bodies need 0.44, so earlier targets keep less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3731,7 +3738,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Thin extrudes, slanted face extents and scoped bodies need 0.44, so earlier targets keep less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3748,7 +3757,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Thin extrudes, slanted face extents and scoped bodies need 0.44, so earlier targets keep less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3795,11 +3806,13 @@ mod version_tests {
         let after: SolidCraftVersion = "0.25.1".parse().unwrap();
         assert_eq!(before.minor(), after.minor());
         assert!(target_loses_history(before));
-        assert!(VersionGate::MirrorChain.supported(after));
-        // Both lose the 0.44 gates; the patch release still adds its own gate.
-        assert!(target_loses_history(after));
         assert!(!VersionGate::SketchProfileCoil.supported(before));
         assert!(VersionGate::SketchProfileCoil.supported(after));
+        assert!(!VersionGate::MirrorChain.supported(before));
+        assert!(VersionGate::MirrorChain.supported(after));
+        // The patch-sensitive capabilities work, while current representations
+        // still require a newer target and keep the history-loss notice.
+        assert!(target_loses_history(after));
         assert!(!VersionGate::ThinExtrude.supported(after));
         assert!(VersionGate::ThinExtrude.supported(SolidCraftVersion::V0_44_0));
         assert!(!target_loses_history(SolidCraftVersion::V0_44_0));
