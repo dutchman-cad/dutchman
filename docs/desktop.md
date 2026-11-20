@@ -80,8 +80,8 @@ Other links show **Dutchman can't open this link. Download the file and drop it 
 Fusion and Google Drive share links are not supported yet. Download those files first.
 Pasting into a focused text field edits that field normally.
 
-Once connected, **Onshape connected ✓** opens the account dialog, and the drop area
-also offers **or paste an Onshape link** and **Open**. See
+Once connected, **Onshape connected ✓** opens the account dialog with
+**Paste your Onshape Part Studio link** and **Open**. See
 [connecting your Onshape account](onshape.md#connect-your-onshape-account).
 
 ## Project inputs

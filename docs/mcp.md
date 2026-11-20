@@ -38,8 +38,9 @@ verification succeeds. Origin coincidences and midpoint construction carriers re
 editable relations. See [Onshape bundles](onshape.md).
 
 The desktop app also accepts pasted files, paths, Onshape links, and confirmed HTTPS
-downloads; see [pasting files and links](desktop.md#paste-files-and-links). This adds no CLI
-flags, MCP tools, or report fields.
+downloads; see [pasting files and links](desktop.md#paste-files-and-links).
+**Onshape connected ✓** opens the account dialog with the Part Studio link field.
+This adds no CLI flags, MCP tools, or report fields.
 
 Desktop Onshape jobs keep the `.onshape-bundle` beside the `.sc`; **Show bundle**
 reveals it and **Send to Dutchman** opens private report review with it attached.

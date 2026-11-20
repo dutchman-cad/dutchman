@@ -1091,7 +1091,8 @@ See `docs/onshape.md` for the exact consistency, cache, and reference behavior.
 
 In the desktop app, paste copied files or paths with no text field focused to queue
 them like dropped files. Onshape links continue through Connect Onshape when needed;
-Save closes setup and keeps the link. Direct HTTPS CAD file links (including GitHub blob
+Save continues a waiting link, or focuses the account dialog’s Part Studio link field.
+**Onshape connected ✓** reopens that dialog. Direct HTTPS CAD file links (including GitHub blob
 links) ask before downloading, with a 2 GB cap. See `docs/desktop.md` and `docs/onshape.md`.
 
 Desktop Onshape jobs retain the `.onshape-bundle` beside the `.sc` with the same base
