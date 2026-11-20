@@ -1,5 +1,11 @@
 # Machine-readable reports
 
+Folder conversions retain paths relative to each input folder in the existing
+`results[].output.path` field: `in/ProjectA/part.f3d` writes
+`out/ProjectA/part.sc`. Same-named files in other subfolders have distinct paths.
+Linked design companions and desktop `.report.json` files stay beside each design.
+Reruns into an explicit output folder reuse these paths. Report schemas are unchanged.
+
 The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
 Folder and selection summaries use the highest per-file memory estimate and sum the displayed
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show

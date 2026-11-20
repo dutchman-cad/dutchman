@@ -526,6 +526,88 @@ mod tests {
     }
 
     #[test]
+    fn folder_run_keeps_nested_duplicate_designs_and_reports_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in");
+        let output = dir.path().join("out");
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
+        let folders = ["ProjectA", "ProjectB/nested"];
+        for folder in folders {
+            std::fs::create_dir_all(input.join(folder)).unwrap();
+            std::fs::copy(&fixture, input.join(folder).join("part.f3d")).unwrap();
+            std::fs::copy(
+                fixture.with_file_name("onshape-derived.onshape-bundle"),
+                input.join(folder).join("linked.onshape-bundle"),
+            )
+            .unwrap();
+        }
+        let options = ConvertOptions {
+            verify: false,
+            solidcraft_version: Some("0.44.1".parse().unwrap()),
+            ..ConvertOptions::default()
+        };
+        for _ in 0..2 {
+            let (send, receive) = std::sync::mpsc::channel();
+            let _run = Run::start(
+                vec![input.clone()],
+                output.clone(),
+                &options,
+                send,
+                egui::Context::default(),
+            );
+            let mut reports = Vec::new();
+            loop {
+                match receive
+                    .recv_timeout(std::time::Duration::from_secs(30))
+                    .unwrap()
+                {
+                    Message::Progress(Event::Finished(_, report)) => reports.push(report),
+                    Message::ReportSaveFailed(message) => panic!("{message}"),
+                    Message::Done => break,
+                    _ => {}
+                }
+            }
+            assert_eq!(reports.len(), 4);
+            for folder in folders {
+                // Folders are written with '/'; join each part so Windows paths compare equal.
+                let nested = |root: &std::path::Path| {
+                    folder
+                        .split('/')
+                        .fold(root.to_path_buf(), |path, part| path.join(part))
+                };
+                let design = nested(&output).join("part.sc");
+                assert!(design.is_file());
+                let saved = dutchman::saved_report::read(&design).unwrap();
+                assert_eq!(saved["ok"], true);
+                let expected = nested(&input).join("part.f3d");
+                assert_eq!(saved["input"]["path"], expected.to_str().unwrap());
+                assert_eq!(saved["output"]["path"], design.to_str().unwrap());
+                assert!(!design.with_file_name("part-2.sc").exists());
+                let linked = nested(&output).join("linked.sc");
+                assert!(linked.is_file());
+                assert_eq!(dutchman::saved_report::read(&linked).unwrap()["ok"], true);
+                let companions: Vec<_> = std::fs::read_dir(nested(&output))
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .filter(|path| {
+                        path.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with("derived-")
+                    })
+                    .collect();
+                assert!(!companions.is_empty(), "{folder}");
+                for companion in companions {
+                    assert!(zip::ZipArchive::new(std::fs::File::open(companion).unwrap()).is_ok());
+                }
+            }
+            assert!(!output.join("part.sc").exists());
+            assert!(!output.join("part.report.json").exists());
+        }
+    }
+
+    #[test]
     fn conversion_worker_forwards_counts_before_the_final_report() {
         let dir = tempfile::tempdir().unwrap();
         let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
