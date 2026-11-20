@@ -651,7 +651,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `input` | string | Absolute path of a native CAD file: `.f3d`, `.f3z`, `.ipt`, `.iam` or `.sldprt` or `.FCStd`. |
 | `output` | string | Absolute path of the `.sc` file to write (`.solidcraft` and `.solvecraft` also work). An existing file is replaced, unless `overwrite` is false. |
 | `inputs` | array of strings, at least one | Absolute paths of files, and of folders to search (with their subfolders) for files Dutchman knows. |
-| `out_dir` | string | Absolute path of the folder for the designs, keeping each input folder's layout. Created if missing. |
+| `out_dir` | string | Absolute path of the folder for the designs, keeping paths relative to each input folder. Linked design companions stay beside each design. Created if missing; repeated runs reuse the same paths. |
 | `jobs` | integer, at least 1 | How many files to convert at once. Default: the machine's cores, at most 8. |
 | `timeout` | integer, at least 1 | Seconds one file may take before it is stopped and reported as failed. Default 900. |
 | `max_memory_mb` | integer | Megabytes one file may hold before it is stopped and reported as failed. Default 0, no limit; a file also stops if the computer really runs low on memory. |
