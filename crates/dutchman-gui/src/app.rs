@@ -122,6 +122,8 @@ pub struct App {
     report_done: Option<(Step, &'static str)>,
     /// Bring the panel into view on the next frame.
     reveal_report: bool,
+    /// Scroll the report panel to show More's buttons on the frame after it opens.
+    reveal_more: bool,
     /// Bring the AI prompt into view on the next frame.
     reveal_ai: bool,
     pub updater: crate::update::Updater,
@@ -492,6 +494,7 @@ impl App {
             report_row: None,
             report_done: None,
             reveal_report: false,
+            reveal_more: false,
             reveal_ai: false,
             consent: crate::report_consent::Consent {
                 ids: stored
@@ -2758,7 +2761,7 @@ impl App {
             }
             if let (Some((index, row)), Some(file)) = (row, file) {
                 if row.report.is_some() {
-                    egui::CollapsingHeader::new(report_panel::MORE)
+                    let more = egui::CollapsingHeader::new(report_panel::MORE)
                         .id_salt(("report-more", index, &row.input))
                         .show(ui, |ui| {
                             if file.can_report
@@ -2782,7 +2785,14 @@ impl App {
                             {
                                 action = Some(Action::Diagnose(index));
                             }
+                            // Opening More in the pinned panel shows its buttons, not a clipped edge.
+                            if std::mem::take(&mut self.reveal_more) {
+                                ui.scroll_to_cursor(Some(Align::BOTTOM));
+                            }
                         });
+                    if more.header_response.clicked() {
+                        self.reveal_more = true;
+                    }
                 }
             }
         }
