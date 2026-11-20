@@ -8,7 +8,7 @@ use crate::theme;
 const KEYS_URL: &str = "https://dev-portal.onshape.com/keys";
 
 enum Message {
-    Stored(Result<bool, String>),
+    Stored(Result<(bool, bool), String>),
     Profile(Result<String, String>),
     Tested(Result<String, String>),
     Saved(Result<String, String>),
@@ -18,6 +18,8 @@ enum Message {
 pub(crate) struct Panel {
     pub(crate) open: bool,
     connected: bool,
+    bearer: bool,
+    pub(crate) bearer_token_file: Option<std::path::PathBuf>,
     user: Option<String>,
     changing_keys: bool,
     access: String,
@@ -38,6 +40,8 @@ impl Panel {
         let mut panel = Self {
             open: false,
             connected: false,
+            bearer: false,
+            bearer_token_file: None,
             user: None,
             changing_keys: false,
             access: String::new(),
@@ -52,13 +56,7 @@ impl Panel {
             receiver,
         };
         // Local lookup only: launching the app never contacts Onshape.
-        panel.spawn(ctx, |sender| {
-            let result = dutchman::onshape::Store::system()
-                .find()
-                .map(|found| found.is_some())
-                .map_err(|why| why.message.to_owned());
-            let _ = sender.send(Message::Stored(result));
-        });
+        panel.refresh_auth(ctx);
         panel
     }
 
@@ -72,7 +70,7 @@ impl Panel {
         if self.focus_link {
             crate::paste::prefill_onshape(&mut self.link, clipboard);
         }
-        if self.open && self.connected && self.user.is_none() && !self.busy {
+        if self.open && self.connected && !self.bearer && self.user.is_none() && !self.busy {
             self.spawn(ctx, |sender| {
                 let result = dutchman::onshape::Store::system()
                     .load()
@@ -108,6 +106,22 @@ impl Panel {
         std::thread::spawn(move || {
             work(&sender);
             ctx.request_repaint();
+        });
+    }
+
+    fn refresh_auth(&mut self, ctx: &egui::Context) {
+        let token_file = self.bearer_token_file.clone();
+        self.connected = false;
+        self.bearer = false;
+        self.user = None;
+        self.spawn(ctx, move |sender| {
+            let result = dutchman::onshape::FetchAuth::find(
+                &dutchman::onshape::Store::system(),
+                token_file.as_deref(),
+            )
+            .map(|found| (found.is_some(), found.is_some_and(|auth| auth.is_bearer())))
+            .map_err(|why| why.message.to_owned());
+            let _ = sender.send(Message::Stored(result));
         });
     }
 
@@ -152,7 +166,21 @@ impl Panel {
         while let Ok(message) = self.receiver.try_recv() {
             self.busy = false;
             match message {
-                Message::Stored(Ok(connected)) => self.connected = connected,
+                Message::Stored(Ok((connected, bearer))) => {
+                    self.connected = connected;
+                    self.bearer = bearer;
+                    self.user = None;
+                    if bearer {
+                        self.changing_keys = false;
+                        self.access.clear();
+                        self.secret.clear();
+                    }
+                    if connected && self.continue_link {
+                        link = Some(std::mem::take(&mut self.link));
+                        self.continue_link = false;
+                        self.open = false;
+                    }
+                }
                 Message::Profile(Ok(user)) => self.user = Some(user),
                 Message::Tested(Ok(user)) => {
                     self.outcome = Some((true, format!("The keys work. Connected as {user}.")));
@@ -173,6 +201,7 @@ impl Panel {
                 }
                 Message::Forgotten(Ok(())) => {
                     self.connected = false;
+                    self.changing_keys = false;
                     self.user = None;
                     self.access.clear();
                     self.secret.clear();
@@ -206,7 +235,30 @@ impl Panel {
             .resizable(false)
             .default_width(480.0)
             .show(ctx, |ui| {
-                if self.connected {
+                if ui
+                    .add_enabled(!self.busy, egui::Button::new("Use bearer token file"))
+                    .clicked()
+                {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Choose private Onshape bearer token file")
+                        .pick_file()
+                    {
+                        self.bearer_token_file = Some(path);
+                        self.refresh_auth(ctx);
+                    }
+                }
+                if self.bearer_token_file.is_some()
+                    && ui
+                        .add_enabled(!self.busy, egui::Link::new("Clear token file"))
+                        .clicked()
+                {
+                    self.bearer_token_file = None;
+                    self.refresh_auth(ctx);
+                }
+                if self.bearer {
+                    ui.label("Using an OAuth bearer token for fetching.");
+                }
+                if self.connected && !self.bearer {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(self.user.as_ref().map_or_else(
                             || "Connected to Onshape".to_owned(),
@@ -230,7 +282,7 @@ impl Panel {
                         }
                     });
                 }
-                if !self.connected || self.changing_keys {
+                if (!self.connected || self.changing_keys) && !self.bearer {
                     self.keys_ui(ui, ctx);
                 }
                 if self.connected && !self.changing_keys {
@@ -346,6 +398,14 @@ pub(crate) fn link_ui(
 }
 
 pub(crate) fn fetch(link: String, folder: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    fetch_with_token_file(link, folder, None)
+}
+
+pub(crate) fn fetch_with_token_file(
+    link: String,
+    folder: &std::path::Path,
+    bearer_token_file: Option<std::path::PathBuf>,
+) -> Result<std::path::PathBuf, String> {
     let element = dutchman::onshape::DocumentUrl::parse(&link, None)
         .map_err(|why| why.message.to_owned())?
         .element;
@@ -354,6 +414,7 @@ pub(crate) fn fetch(link: String, folder: &std::path::Path) -> Result<std::path:
         document_url: link,
         out: Some(out.clone()),
         version: None,
+        bearer_token_file,
         max_calls: 50,
         json: false,
     });
@@ -403,6 +464,84 @@ impl dutchman::report_send::BundleSource for ReportBundle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bearer_setup_continues_the_link_and_keeps_only_the_file_selection() {
+        let mut panel = Panel::new(&egui::Context::default());
+        panel.preview(None);
+        panel.bearer_token_file = Some(std::path::PathBuf::from("private-token-file"));
+        panel.keep_link("kept-link".into());
+        panel
+            .sender
+            .send(Message::Stored(Ok((true, true))))
+            .unwrap();
+        assert_eq!(panel.poll().as_deref(), Some("kept-link"));
+        assert!(panel.connected());
+        assert!(panel.bearer);
+        assert!(panel.user.is_none());
+        assert!(panel.access.is_empty());
+        assert!(panel.secret.is_empty());
+        assert!(!panel.open);
+        assert_eq!(
+            panel.bearer_token_file.as_deref(),
+            Some(std::path::Path::new("private-token-file"))
+        );
+    }
+
+    #[test]
+    fn bearer_lookup_restores_link_controls_after_abandoned_key_editing() {
+        let mut panel = Panel::new(&egui::Context::default());
+        panel.preview(Some("Synthetic designer"));
+        panel.open = true;
+        panel.changing_keys = true;
+        panel.access = "synthetic-abandoned-access".into();
+        panel.secret = "synthetic-abandoned-secret".into();
+        panel
+            .sender
+            .send(Message::Stored(Ok((true, true))))
+            .unwrap();
+        assert!(panel.poll().is_none());
+        assert!(panel.open);
+        assert!(panel.connected());
+        assert!(panel.bearer);
+        assert!(!panel.changing_keys);
+        assert!(panel.access.is_empty());
+        assert!(panel.secret.is_empty());
+        assert!(panel.user.is_none());
+    }
+
+    #[test]
+    fn disconnect_abandons_key_editing_before_selecting_a_bearer_file() {
+        let mut panel = Panel::new(&egui::Context::default());
+        panel.preview(Some("Synthetic designer"));
+        panel.changing_keys = true;
+        panel.access = "synthetic-abandoned-access".into();
+        panel.secret = "synthetic-abandoned-secret".into();
+        panel.sender.send(Message::Forgotten(Ok(()))).unwrap();
+        panel.poll();
+        assert!(!panel.changing_keys);
+        assert!(panel.access.is_empty());
+        assert!(panel.secret.is_empty());
+        panel.bearer_token_file = Some(std::path::PathBuf::from("synthetic-token-file"));
+        panel
+            .sender
+            .send(Message::Stored(Ok((true, true))))
+            .unwrap();
+        panel.poll();
+        assert!(panel.connected());
+        assert!(panel.bearer);
+        assert!(!panel.changing_keys);
+    }
+
+    #[test]
+    fn desktop_fetch_uses_the_selected_token_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let missing = folder.path().join("missing-token");
+        let link = "https://cad.onshape.com/documents/111111111111111111111111/v/222222222222222222222222/e/333333333333333333333333";
+        let error = fetch_with_token_file(link.into(), folder.path(), Some(missing)).unwrap_err();
+        assert!(error.contains("bearer token file"));
+        assert!(!error.contains("missing-token"));
+    }
 
     #[test]
     fn saving_uses_the_profile_name_erases_keys_closes_setup_and_continues_the_link() {

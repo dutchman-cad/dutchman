@@ -1637,7 +1637,17 @@ stable `onshape/` code: `url`, `auth`, `budget`, `yearly-limit`, `throttle`,
 `transport`, `response`, `io`, `limit`, `privacy`, `not-supported`, `export`, or
 `changed`. `changed` reports “the document changed while fetching; try again, or
 use a version link” after the workspace changes during both allowed captures.
-No supplied URL, key, authorization header, or remote error body is echoed.
+No supplied URL, key, bearer token, authorization header, or remote error body is echoed.
+Authentication options add no report fields or schema version. CLI `--bearer-token-file`
+and MCP `bearer_token_file` accept only a local path; `DUTCHMAN_ONSHAPE_BEARER_TOKEN`
+is read from the process environment. A file takes precedence over that variable.
+Token files that fail ownership, privacy, type, or size checks return `onshape/auth`
+with `calls: 0`. Windows refuses token files because privacy cannot be checked yet and
+directs users to clear the file selection and use the environment variable instead.
+Mixing a token with API keys (including saved keys) returns `onshape/auth` with `calls: 0`.
+Bearer HTTP 401/403 returns `onshape/auth` and explains that the token expired or lacks
+access, with instructions to obtain and supply a fresh token with read access. Echoed
+credential material returns `onshape/privacy` without echoing the credential.
 
 The ZIP's manifest uses separate schema `dutchman.onshape-bundle/1` and records
 `fetched_at` (RFC 3339), `fetcher`, `api_version` (`v17`), `document` (`id`, `name`,

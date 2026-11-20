@@ -1802,7 +1802,9 @@ impl App {
         if self.diagnosis.as_mut().is_some_and(|wizard| wizard.ui(ctx)) {
             self.diagnosis = None;
         }
-        if let Some(link) = self.onshape.poll() {
+        let onshape_link = self.onshape.poll();
+        self.intake.bearer_token_file = self.onshape.bearer_token_file.clone();
+        if let Some(link) = onshape_link {
             self.queue_link(crate::paste::Source::Onshape(link), ctx);
         }
         if std::mem::take(&mut self.onshape.saved) && !self.running() {
