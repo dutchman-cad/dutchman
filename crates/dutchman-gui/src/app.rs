@@ -2498,13 +2498,6 @@ impl App {
                 ),
                 Layout::left_to_right(Align::Center).with_main_wrap(true),
                 |ui| {
-                    if let Some(available) = self.estimate_available().filter(|bytes| *bytes > 0) {
-                        ui.label(
-                            RichText::new(format!("{:.1} GB of memory free", gigabytes(available)))
-                                .small()
-                                .color(p.tide),
-                        );
-                    }
                     ui.small(if cfg!(target_os = "macos") {
                         "Drop, or paste files or links (⌘V)"
                     } else {

@@ -885,6 +885,10 @@ fn wait_for_estimate(harness: &mut Harness<'static, App>) {
         .count()
         == 0
         && harness.query_all_by_label_contains("GB, ").count() == 0
+        && harness
+            .query_all_by_label_contains("GB of memory at peak and ")
+            .count()
+            == 0
     {
         assert!(
             started.elapsed() < Duration::from_secs(30),
@@ -4686,29 +4690,42 @@ fn designs_header_screenshots() {
         folder.join("generated_unit_cube.f3d"),
     )
     .unwrap();
-    let mut index = String::from("# Designs header\n\nSynthetic cube selected by folder.\n\n");
-    for (theme, name) in [
-        (ThemePreference::Light, "light"),
-        (ThemePreference::Dark, "dark"),
+    let multiple = work.path().join("synthetic-designs/three-designs");
+    std::fs::create_dir_all(&multiple).unwrap();
+    for name in ["cube-one.f3d", "cube-two.f3d", "cube-three.f3d"] {
+        std::fs::copy(fixture("generated_unit_cube.f3d"), multiple.join(name)).unwrap();
+    }
+    let mut index = String::from("# Designs header\n\nSynthetic designs selected by folder.\n\n");
+    for (case, input, connected) in [
+        ("single", &folder, false),
+        ("three", &multiple, false),
+        ("connected", &folder, true),
     ] {
-        for width in [1180.0, 900.0] {
-            let mut h = Harness::builder()
-                .with_size(egui::vec2(width, 800.0))
-                .build_eframe(|cc| test_app(cc));
-            h.ctx.set_theme(theme);
-            h.state_mut().set_checker_for_test(true);
-            h.state_mut().preview_solidcraft(Some("0.44.9"));
-            h.state_mut().add_inputs([folder.clone()]);
-            h.state_mut().set_out_dir(work.path().join("converted"));
-            wait_for_estimate(&mut h);
-            shot(
-                &mut h,
-                &dir,
-                &mut index,
-                &format!("{width:.0}x800"),
-                name,
-                "Folder and per-file conversion estimate.",
-            );
+        for (theme, name) in [
+            (ThemePreference::Light, "light"),
+            (ThemePreference::Dark, "dark"),
+        ] {
+            for width in [1180.0, 900.0] {
+                let mut h = Harness::builder()
+                    .with_size(egui::vec2(width, 800.0))
+                    .build_eframe(|cc| test_app(cc));
+                h.ctx.set_theme(theme);
+                h.state_mut().set_checker_for_test(true);
+                h.state_mut().preview_solidcraft(Some("0.44.9"));
+                h.state_mut()
+                    .preview_onshape(connected.then_some("Test designer"));
+                h.state_mut().add_inputs([input.clone()]);
+                h.state_mut().set_out_dir(work.path().join("converted"));
+                wait_for_estimate(&mut h);
+                shot(
+                    &mut h,
+                    &dir,
+                    &mut index,
+                    &format!("{case}-{width:.0}x800"),
+                    name,
+                    "Folder and conversion estimate.",
+                );
+            }
         }
     }
     std::fs::write(dir.join("index.md"), index).unwrap();
