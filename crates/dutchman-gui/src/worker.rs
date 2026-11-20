@@ -570,22 +570,24 @@ mod tests {
             }
             assert_eq!(reports.len(), 4);
             for folder in folders {
-                let design = output.join(folder).join("part.sc");
+                // Folders are written with '/'; join each part so Windows paths compare equal.
+                let nested = |root: &std::path::Path| {
+                    folder
+                        .split('/')
+                        .fold(root.to_path_buf(), |path, part| path.join(part))
+                };
+                let design = nested(&output).join("part.sc");
                 assert!(design.is_file());
                 let saved = dutchman::saved_report::read(&design).unwrap();
                 assert_eq!(saved["ok"], true);
-                // Folders are written with '/'; join each part so Windows paths compare equal.
-                let expected = folder
-                    .split('/')
-                    .fold(input.to_path_buf(), |path, part| path.join(part))
-                    .join("part.f3d");
+                let expected = nested(&input).join("part.f3d");
                 assert_eq!(saved["input"]["path"], expected.to_str().unwrap());
                 assert_eq!(saved["output"]["path"], design.to_str().unwrap());
                 assert!(!design.with_file_name("part-2.sc").exists());
-                let linked = output.join(folder).join("linked.sc");
+                let linked = nested(&output).join("linked.sc");
                 assert!(linked.is_file());
                 assert_eq!(dutchman::saved_report::read(&linked).unwrap()["ok"], true);
-                let companions: Vec<_> = std::fs::read_dir(output.join(folder))
+                let companions: Vec<_> = std::fs::read_dir(nested(&output))
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
                     .filter(|path| {
