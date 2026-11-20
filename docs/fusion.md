@@ -286,6 +286,13 @@ feature finds it; any other such sketch is kept for reference after the timeline
 
 ## Trimmed and unresolved profile regions
 
+One stored sketch loop does not prove a native profile selection when other solid
+curves remain, including curves needed by a later trimmed cut. Dutchman requires
+source-confirmed inference in that case; otherwise it preserves the final shape
+and reference sketches instead of rebuilding extra regions. A later fillet may
+therefore be reported behind the earlier unresolved profile.
+
+
 Trimmed regions select a point strictly inside their stored boundary, for revolves and other
 profile consumers. Parameter intervals and traversal directions distinguish regions that share
 whole curves, including the two halves of a circle split by a diameter. Boundaries must close

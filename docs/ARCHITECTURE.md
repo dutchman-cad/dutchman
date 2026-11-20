@@ -261,7 +261,9 @@ revolves; unresolved or ambiguous boundaries are blockers. Otherwise unresolved 
 selections try at most two candidates through the normal feature mapper, selected neutral curves
 and the whole carrier. A writer callback admits each only after the existing source body check,
 or the complete shape comparison at the final body-building feature, confirms its replay;
-planning has no callback and keeps the blocker. Every admitted candidate has a named loss. When
+planning has no callback and keeps the blocker. A native pick with one stored loop also requires
+this confirmation when other solid mapped curves remain after sketch demotion; the loop
+table cannot establish how many regions the written sketch contains. Every admitted candidate has a named loss. When
 neither is confirmed, measured inference (`history/infer.rs`) maps every region of the sketch the
 pick can name by explicit loop boundaries (bounded, see fusion.md) and asks the same callback to
 measure each; discovery with only centroid selectors is refused. One 120 s feature deadline covers

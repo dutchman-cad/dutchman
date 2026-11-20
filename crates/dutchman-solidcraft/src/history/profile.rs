@@ -101,6 +101,33 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
                             .to_owned(),
                     );
                 }
+                // A stored loop is not a count of the regions SolidCraft will find.
+                // Curves needed by a later trimmed consumer remain solid, including
+                // curved arrangements split_loop cannot enumerate. Taking `all` would
+                // revolve or extrude those extra regions without proving the native pick.
+                let members = source_members(ctx, sketch, &json!(0))?;
+                let own: BTreeSet<&str> = members
+                    .iter()
+                    .filter_map(|member| member.get("entity").and_then(Value::as_str))
+                    .collect();
+                let demoted = super::crossing::demoted(source, &entities, ctx.arena("features"));
+                if entities.iter().any(|entity| {
+                    entity.get("construction").and_then(Value::as_bool) != Some(true)
+                        && entity.pointer("/geometry/kind").and_then(Value::as_str)
+                            != Some("reference_line")
+                        && entity.get("id").and_then(Value::as_str).is_some_and(|id| {
+                            !own.contains(id)
+                                && !demoted.crossing.contains(id)
+                                && !demoted.stray.contains(id)
+                                && matches!(mapped.shapes.get(id), Some(Shape::Curve(_)))
+                        })
+                }) {
+                    return Err(
+                        "its unresolved profile region cannot be proven from the sketch's one \
+                         stored loop yet: other solid curves remain"
+                            .to_owned(),
+                    );
+                }
                 json!({"type": "all"})
             } else if let Some(outer) = super::crossing::single_region(source, &entities) {
                 let boundary = source_loop(ctx, sketch, &json!(outer), mapped)?;

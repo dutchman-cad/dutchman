@@ -360,6 +360,13 @@ has not named". Older targets keep the previous mapping.
 Successful consumed-tool replay confirmation adds an Info note: "The source
 body check confirmed the consumed tool bodies". Report fields are unchanged.
 
+An unresolved profile with one stored loop and other solid sketch curves does not
+map directly to all regions. Without source-confirmed inference the feature is
+`blocked`; its reason may say `its unresolved profile region cannot be proven from
+the sketch's one stored loop yet: other solid curves remain` or report the failed
+source body check. Later features stay behind that blocker, with the final shape
+and reference sketches retained. Report fields are unchanged.
+
 When neither candidate is confirmed, every region of the carrier sketch the selection can name is
 measured in SolidCraft ([fusion.md](fusion.md)). A unique match is kept with the `Degraded` loss
 `history/profile-region-measured`, which names the feature in `subject` and says how many candidate
