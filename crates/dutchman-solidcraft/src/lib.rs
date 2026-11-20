@@ -1014,7 +1014,7 @@ impl SolidCraftWriter {
             Ok(cli) => cli,
             Err(why) => return Ok(unavailable(why.to_string(), report)),
         };
-        let original = self.history_design(model, history, step, Live::Original)?;
+        let original = self.history_design(model, history, step, Live::Original, false)?;
         if let Some(why) = self.memory_refusal() {
             return Ok(unavailable(why, report));
         }
