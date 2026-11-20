@@ -16320,7 +16320,8 @@ impl dutchman_solidcraft::SolidCraftEvaluator for RecordedEvaluator {
         let document: Value =
             serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
         if self.require_untransformed {
-            for occurrence in document["occurrences"].as_array().unwrap() {
+            // A verification-parameters document carries no occurrences to check.
+            for occurrence in document["occurrences"].as_array().into_iter().flatten() {
                 assert_eq!(
                     occurrence["transform"],
                     json!([
