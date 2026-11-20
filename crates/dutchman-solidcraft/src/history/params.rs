@@ -870,7 +870,7 @@ mod map_tests {
     }
 
     #[test]
-    fn degree_signs_keep_their_expressions() {
+    fn degree_signs_keep_their_expressions_as_deg() {
         let angle = |deg: f64| json!({"kind": "angle", "value": deg.to_radians()});
         let parameters = json!([
             parameter(1, "d1", "15", json!({"kind": "real", "value": 15.0}), false),
@@ -885,9 +885,9 @@ mod map_tests {
             params,
             [
                 json!({"name": "d1", "expr": "15", "unit": "", "model": false}),
-                json!({"name": "a0", "expr": "0.0 °", "unit": "deg", "model": false}),
-                json!({"name": "a30", "expr": "30°", "unit": "deg", "model": false}),
-                json!({"name": "a2", "expr": "d1 * 2 °", "unit": "deg", "model": false}),
+                json!({"name": "a0", "expr": "0.0 deg", "unit": "deg", "model": false}),
+                json!({"name": "a30", "expr": "30 deg", "unit": "deg", "model": false}),
+                json!({"name": "a2", "expr": "d1 * 2 deg", "unit": "deg", "model": false}),
             ]
         );
         assert!(report.losses().is_empty(), "{:?}", report.losses());
