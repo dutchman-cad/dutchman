@@ -115,13 +115,33 @@ mod guest {
                     "Conversion options exceed 16 KiB; use the declared conversion options".into(),
                 ));
             }
-            let options = serde_json::from_str(&options)
+            let options: crate::Options = serde_json::from_str(&options)
                 .map_err(|e| invalid("options", format!("Conversion options: {e}")))?;
             if control::cancelled() {
                 return Err(PluginError::Cancelled);
             }
             control::progress(0.0, "Reading the design");
             let budget = Cell::new(0u64);
+            let index_error = RefCell::new(None);
+            let checked =
+                if let Some(format) = dutchman_core::Format::from_path(Path::new(&file.name)) {
+                    crate::preflight::check(
+                        format,
+                        file.size,
+                        HostIndex {
+                            size: file.size,
+                            position: 0,
+                            error: &index_error,
+                        },
+                        options.editable_history,
+                    )
+                } else {
+                    Ok(())
+                };
+            if let Some(error) = index_error.into_inner() {
+                return Err(error);
+            }
+            checked.map_err(error)?;
             let main_bytes = RefCell::new(Some(read("", file.size, &budget)?));
             let files = Cell::new(1usize);
             // The first error a host import returned, passed back to the host unchanged.
@@ -214,12 +234,65 @@ mod guest {
         use dutchman_core::Error;
         match e {
             Error::TooLarge { .. } | Error::MemoryBudget(_) => {
-                PluginError::LimitExceeded(e.to_string())
+                PluginError::LimitExceeded(crate::notice::failure(&e))
             }
             Error::Encode(ref reason) if reason.contains("exceeds") => {
-                PluginError::LimitExceeded(e.to_string())
+                PluginError::LimitExceeded(crate::notice::failure(&e))
             }
-            _ => invalid("file", e.to_string()),
+            _ => invalid("file", crate::notice::failure(&e)),
+        }
+    }
+
+    /// Random access for metadata: never materialize the input before checking its budget.
+    struct HostIndex<'a> {
+        size: u64,
+        position: u64,
+        error: &'a RefCell<Option<PluginError>>,
+    }
+    impl std::io::Read for HostIndex<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.error.borrow().is_some() {
+                return Err(std::io::Error::other("Input stopped"));
+            }
+            if control::cancelled() {
+                *self.error.borrow_mut() = Some(PluginError::Cancelled);
+                return Err(std::io::Error::other("Cancelled"));
+            }
+            let length = (buf.len() as u64)
+                .min(self.size.saturating_sub(self.position))
+                .min(crate::CHUNK_BYTES as u64) as u32;
+            if length == 0 {
+                return Ok(0);
+            }
+            let data = source::read("", self.position, length).map_err(|error| {
+                *self.error.borrow_mut() = Some(error);
+                std::io::Error::other("Could not read archive index")
+            })?;
+            if data.len() > length as usize {
+                return Err(std::io::Error::other(
+                    "Archive index exceeds requested bytes",
+                ));
+            }
+            let target = buf
+                .get_mut(..data.len())
+                .ok_or_else(|| std::io::Error::other("Archive index exceeds buffer"))?;
+            target.copy_from_slice(&data);
+            self.position = self.position.saturating_add(data.len() as u64);
+            Ok(data.len())
+        }
+    }
+    impl std::io::Seek for HostIndex<'_> {
+        fn seek(&mut self, from: std::io::SeekFrom) -> std::io::Result<u64> {
+            let position = match from {
+                std::io::SeekFrom::Start(n) => i128::from(n),
+                std::io::SeekFrom::Current(n) => i128::from(self.position) + i128::from(n),
+                std::io::SeekFrom::End(n) => i128::from(self.size) + i128::from(n),
+            };
+            if position < 0 || position > i128::from(self.size) {
+                return Err(std::io::Error::other("Archive index exceeds file"));
+            }
+            self.position = position as u64;
+            Ok(self.position)
         }
     }
 

@@ -75,6 +75,11 @@ crates come from the same git revision; `scripts/use-cadmpeg-main.sh` updates th
 IGES is also refused before opening the input: cadmpeg does not yet sew its faces into
 solids, so Dutchman directs users to SolidCraft's own IGES importer (File > Import).
 
+The pure memory and time cost model lives in `dutchman-core::estimate`. Desktop and CLI
+planners keep their existing archive sizing and choice policy; the SolidCraft plugin
+uses the same coefficients with bounded host reads before native decoding. Its fixed
+budget is declared once in `dutchman-plugin/src/preflight.rs`.
+
 ## The plugin seam
 
 ```rust

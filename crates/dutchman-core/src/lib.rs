@@ -10,6 +10,7 @@ mod companion;
 pub mod contents;
 mod decode;
 mod error;
+pub mod estimate;
 mod format;
 mod hidden;
 mod input_edges;

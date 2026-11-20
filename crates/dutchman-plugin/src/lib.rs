@@ -4,6 +4,8 @@ mod adapter;
 // The guest's evaluator over the host's `evaluate` import, and its tests.
 #[cfg(any(test, target_arch = "wasm32"))]
 mod evaluator;
+mod notice;
+mod preflight;
 mod report;
 mod stand_up;
 
@@ -119,13 +121,31 @@ pub fn convert(
     ) {
         return Err(Error::NotSupportedYet { format });
     }
+    let bytes = reader(path, dutchman_core::MAX_INPUT_BYTES)?;
+    preflight::check(
+        format,
+        bytes.len() as u64,
+        std::io::Cursor::new(&bytes),
+        options.editable_history,
+    )?;
+    let main_bytes = std::cell::RefCell::new(Some(bytes));
+    let checked_reader = |requested: &Path, limit| {
+        if requested == path {
+            main_bytes
+                .borrow_mut()
+                .take()
+                .ok_or_else(|| Error::Decode("Main file requested more than once".into()))
+        } else {
+            reader(requested, limit)
+        }
+    };
     let mut report = Report::default();
     let model = dutchman_core::source::read(
         format,
         path,
         options.include_hidden_bodies,
         dutchman_core::PartPositions::Smart,
-        reader,
+        &checked_reader,
         resolve,
         &mut report,
     )?;

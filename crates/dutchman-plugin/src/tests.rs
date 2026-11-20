@@ -24,9 +24,8 @@ fn native_options_and_structured_report() {
     assert!(report["summary"].as_str().unwrap().len() <= 240);
     assert!(report["items"].is_array());
     let details = &report["details"];
-    assert_eq!(details["schema"], "dutchman.plugin.loss/1");
-    assert_eq!(details["stages"].as_array().unwrap().len(), 6);
-    assert!(details["outcome"]["verification"]["status"] != "verified");
+    assert_eq!(details["schema"], "dutchman.plugin.report/2");
+    assert!(details["shape_check"]["result"] != "Checked against the original shape");
     let (stood, _) = run(r#"{"up_axis":"stand_up"}"#);
     let original = document(&design);
     let stood = document(&stood);
@@ -100,13 +99,13 @@ fn history_off_is_worded_as_the_plugin_option() {
     .unwrap();
     assert!(!report.contains("--import-only"), "{report}");
     let report: Value = serde_json::from_str(&report).unwrap();
-    let verification = &report["details"]["outcome"]["verification"];
-    assert_eq!(verification["status"], "not_applicable");
-    assert_eq!(verification["message"], crate::EDITABLE_HISTORY_OFF);
+    let verification = &report["details"]["shape_check"];
+    assert_eq!(verification["result"], "No editable history to check");
+    assert_eq!(verification["reason"], crate::EDITABLE_HISTORY_OFF);
     assert!(report["summary"]
         .as_str()
         .unwrap()
-        .starts_with("Geometry without editable history"));
+        .starts_with("Converted, no history"));
 }
 #[test]
 fn history_off_keeps_the_command_line_wording_elsewhere() {
@@ -166,4 +165,155 @@ fn every_stood_up_assembly_occurrence_has_a_component_parent() {
             "occurrence parent must resolve to a component: {occurrence}"
         );
     }
+}
+
+#[test]
+fn large_synthetic_design_is_refused_before_native_decoding() {
+    use std::{cell::Cell, io::Write, time::Instant};
+    // This is deliberately not a CAD model: decoding it would fail with no geometry.
+    // The ZIP directory advertises a large stream without allocating its contents.
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file("synthetic", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(b"not native CAD").unwrap();
+    let mut data = zip.finish().unwrap().into_inner();
+    let directory = data.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+    data[directory + 24..directory + 28].copy_from_slice(&400_000_000u32.to_le_bytes());
+    let reads = Cell::new(0);
+    let start = Instant::now();
+    let error = convert(
+        "synthetic.f3d",
+        Options::default(),
+        &|_, _| {
+            reads.set(reads.get() + 1);
+            Ok(data.clone())
+        },
+        &|_, _| panic!("Refused before assembly resolution"),
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, dutchman_core::Error::MemoryBudget(_)),
+        "{error}"
+    );
+    let message = crate::notice::failure(&error);
+    assert!(
+        message.starts_with(
+            "This design is too large to open inside SolidCraft (about 1 part). Open it in the Dutchman app"
+        ),
+        "{message}"
+    );
+    assert!(message
+        .contains("Open it in the Dutchman app, which converts it to a .sc you can open here."));
+    assert!(message.contains(crate::preflight::DOWNLOAD));
+    assert_eq!(reads.get(), 1);
+    assert!(start.elapsed() < std::time::Duration::from_secs(2));
+}
+
+#[test]
+fn report_and_failure_offer_discord_before_github_without_archive_paths() {
+    let reason =
+        "Feature Fillet1: FusionAssetName[Active]/Breps.BlobParts/opaque is not supported yet";
+    let failure = crate::notice::failure(&dutchman_core::Error::Decode(reason.into()));
+    assert!(failure.contains("Fillet1"));
+    assert!(!failure.contains("FusionAssetName"));
+    assert!(!failure.contains("BlobParts"));
+    assert!(failure.contains(
+        "If this file opens in the app that made it, it's a bug in Dutchman. Help us fix it:"
+    ));
+    let (_, report) = convert(
+        "cube.f3d",
+        Options::default(),
+        &|_, _| Ok(CUBE.into()),
+        &|_, _| None,
+        None,
+    )
+    .unwrap();
+    let report: Value = serde_json::from_str(&report).unwrap();
+    for text in [
+        failure,
+        report["details"]["help"].as_str().unwrap().to_owned(),
+    ] {
+        assert!(text.contains(crate::notice::QUESTION));
+        assert!(text.find("Join our Discord server").unwrap() < text.find("DM Dutchy").unwrap());
+        assert!(text.find("DM Dutchy").unwrap() < text.find("GitHub issue").unwrap());
+        assert!(text.contains("https://discord.gg/yTcseBEdeu"));
+        assert!(text.contains("https://discord.com/users/1563591265810129088"));
+    }
+    let details = report["details"].to_string();
+    assert!(!details.contains("not_applicable"));
+    assert!(report["details"].get("mode").is_none());
+    assert!(!report["items"].to_string().contains("Notes about"));
+}
+
+#[test]
+fn all_conversion_results_use_the_desktop_words() {
+    use dutchman_core::{Check, Mode, Outcome, Report};
+    for (mode, check, expected) in [
+        (Mode::History, Check::Verified, "Converted"),
+        (
+            Mode::PartialHistory,
+            Check::Unverified("Not checked".into()),
+            "Partly converted",
+        ),
+        (
+            Mode::Import,
+            Check::NotApplicable(crate::EDITABLE_HISTORY_OFF.into()),
+            "Converted, no history",
+        ),
+        (
+            Mode::History,
+            Check::Flattened("Original shape retained".into()),
+            "Converted, no history",
+        ),
+    ] {
+        let mut report = Report::default();
+        report.set_outcome(Outcome {
+            mode,
+            check,
+            features: Vec::new(),
+        });
+        let host = crate::report::host(&report);
+        assert_eq!(host["summary"], expected);
+        assert_eq!(host["details"]["result"], expected);
+    }
+}
+
+#[test]
+fn manifest_tells_people_where_to_open_files() {
+    let manifest: Value = serde_json::from_str(include_str!("../plugin.json")).unwrap();
+    assert_eq!(
+        manifest["description"],
+        "Open Fusion, Inventor, SolidWorks or FreeCAD files with File > Open."
+    );
+}
+
+#[test]
+fn loss_rows_keep_readable_feature_names_and_match_desktop_counts() {
+    use dutchman_core::{Report, Severity};
+    let mut report = Report::default();
+    report.push(Severity::Info, "Sketch1", "Sketch retained");
+    report.push(
+        Severity::Degraded,
+        "Fillet1",
+        "FusionAssetName[Active]/Breps.BlobParts/opaque is not supported yet",
+    );
+    report.push(Severity::Dropped, "Hole1", "Hole left out");
+    let host = crate::report::host(&report);
+    assert_eq!(
+        host["summary"],
+        "Converted; Losses: 1 Info, 1 Degraded, 1 Dropped"
+    );
+    assert_eq!(host["items"][1]["subject"], "Fillet1");
+    assert!(!host.to_string().contains("FusionAssetName"));
+    assert!(!host.to_string().contains("BlobParts"));
+    assert!(!host.to_string().contains("Notes about"));
+}
+
+#[test]
+fn failures_keep_a_readable_part_name_without_its_folders() {
+    let text = crate::notice::plain(r"Parts/bracket.ipt: feature Fillet1 is not supported yet");
+    assert!(text.contains("bracket.ipt"));
+    assert!(text.contains("Fillet1"));
+    assert!(!text.contains("Parts/"));
 }

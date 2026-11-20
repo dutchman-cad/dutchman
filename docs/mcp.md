@@ -1318,3 +1318,10 @@ See [preflight](preflight.md) for tiers, counts and limits.
 
 Library planning outcomes used by preflight keep empty output ids with
 `not_written`; preflight saves no design.
+
+The SolidCraft plugin checks estimated memory and time before native decoding. When it
+says the design is too large to open inside SolidCraft, use the
+[Dutchman desktop app](https://github.com/dutchman-cad/dutchman/releases/latest) to save a
+`.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
+"Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
+See [the plugin guide](plugin.md).

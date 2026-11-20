@@ -1848,17 +1848,17 @@ A planar 3D sketch profile copy carries at most 400,000 constraints, including
 repeated line occurrences across all relations. If it exceeds that copy limit,
 reduce repeated relations and convert again; the original shape is retained.
 
-## `dutchman.plugin.loss/1`
+## `dutchman.plugin.report/2`
 
-The plugin returns SolidCraft's loss report (a summary line and one item per loss) with a
-structured projection of the core report under `details`: stage counts, coded losses,
-per-feature mapping results, assembly completeness, and verification.
-See [the plugin's loss report](plugin.md#loss-report) for the complete contract.
-CLI and MCP `dutchman.convert/1` reports are unchanged.
-
-The plugin aborts on host input failures before writing output. Its bounded loss report
-prioritizes dropped and degraded losses and includes an explicit truncation notice and
-`details.truncation` counts when shortened; see [the plugin contract](plugin.md).
+The plugin returns SolidCraft's loss report (`summary`, `items`, and `details`). Version 2
+replaces the earlier `dutchman.plugin.loss/1` details projection with plain-language
+`result`, `shape_check`, `features`, `parts`, `losses`, and `help` fields. Results use the
+desktop app's wording; help offers the Discord invite and Dutchy DM before GitHub.
+See [the plugin report](plugin.md#loss-report) for field shapes and truncation bounds.
+Internal archive paths are omitted from this host-facing report and failure notices.
+CLI and MCP `dutchman.convert/1` schemas are unchanged. The plugin checks its memory and
+time budget before native decoding; a refusal returns an importer error, without output,
+and directs the user to the desktop app download.
 
 `history/body-fallback-imported` is a `Degraded` loss naming the feature in `subject`.
 Its stored result becomes a timeline Import and the feature row has status

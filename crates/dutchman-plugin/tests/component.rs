@@ -13,6 +13,9 @@ mod limits;
 #[path = "../src/report.rs"]
 #[allow(dead_code)]
 mod loss_report;
+#[path = "../src/notice.rs"]
+#[allow(dead_code)]
+mod notice;
 #[path = "../src/stand_up.rs"]
 mod stand_up;
 use adapter::host::{
@@ -369,6 +372,46 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut linker = Linker::new(&engine);
     add_to_linker(&mut linker)?;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../dutchman-core/tests/fixtures");
+    // A tiny synthetic archive advertises a large payload. Refuse from the index,
+    // under a small fuel budget, before decoding or sending any design bytes.
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    zip.start_file("synthetic", zip::write::SimpleFileOptions::default())?;
+    zip.write_all(b"not native CAD")?;
+    let mut bytes = zip.finish()?.into_inner();
+    let directory = bytes
+        .windows(4)
+        .position(|w| w == b"PK\x01\x02")
+        .ok_or("Synthetic ZIP directory")?;
+    bytes[directory + 24..directory + 28].copy_from_slice(&400_000_000u32.to_le_bytes());
+    let size = bytes.len() as u64;
+    let mut store = Store::new(&engine, host(&root, bytes));
+    store.limiter(|host| &mut host.limits);
+    store.set_fuel(20_000_000)?;
+    let instance = ImporterPlugin::instantiate(&mut store, &component, &linker)?;
+    let started = Instant::now();
+    let refused = import_file(
+        &instance,
+        &mut store,
+        "convert",
+        &source::FileInfo {
+            name: "synthetic.f3d".into(),
+            size,
+        },
+        "{}",
+    )?;
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    match refused {
+        Err(PluginError::LimitExceeded(reason)) => {
+            assert!(
+                reason.starts_with("This design is too large to open inside SolidCraft"),
+                "{reason}"
+            );
+            assert!(reason.contains("https://github.com/dutchman-cad/dutchman/releases/latest"));
+        }
+        other => return Err(format!("Expected early size refusal, got {other:?}").into()),
+    }
+    assert!(store.data().output.is_empty());
+    assert!(store.data().read < 4096);
     // Guest-side checks remain strict even when a caller bypasses a host form.
     for (entry, params, size, expected) in [
         ("convert", r#"{"extra":true}"#, 0, "invalid options"),
@@ -421,8 +464,8 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         result,
         Err(PluginError::InvalidInput(FieldFailure { ref field, .. })) if field == "file"
     ));
-    assert_eq!(store.data().calls, 3);
-    assert_eq!(store.data().read, stream_len);
+    assert_eq!(store.data().calls, 4);
+    assert_eq!(store.data().read, stream_len + 65_633);
     assert!(store.data().output.is_empty());
     drop(store);
 
@@ -507,18 +550,18 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .keys()
             .all(|key| matches!(key.as_str(), "summary" | "items" | "details")));
         let details = &report["details"];
-        assert_eq!(details["schema"], "dutchman.plugin.loss/1");
-        let native_report = loss_report::json(&cli_report);
+        assert_eq!(details["schema"], "dutchman.plugin.report/2");
+        let native_report = loss_report::readable(&cli_report);
         // The harness's evaluate refuses every check where the CLI had verification off: the
         // same unchecked status, and the CLI's reason within the plugin's, which names the host's
         // refusal where the CLI says verification is off (and may say which check it was).
-        let guest = &details["outcome"]["verification"];
-        let native = &native_report["outcome"]["verification"];
+        let guest = &details["shape_check"];
+        let native = &native_report["shape_check"];
         assert_eq!(
-            guest["status"], native["status"],
+            guest["result"], native["result"],
             "{fixture}: verification must retain the CLI's unchecked status"
         );
-        let message = |value: &serde_json::Value| value["message"].as_str().map(str::to_owned);
+        let message = |value: &serde_json::Value| value["reason"].as_str().map(str::to_owned);
         let guest_message =
             message(guest).map(|text| text.replace(NO_HOST_EVALUATION, "verification turned off"));
         match (guest_message, message(native)) {
@@ -685,12 +728,13 @@ fn stand_up_replays(
             .any(|f| f["type"] == "fillet"),
         "{report}"
     );
-    let verified = report["details"]["outcome"]["verification"]["status"] == "verified"
+    let verified = report["details"]["shape_check"]["result"]
+        == "Checked against the original shape"
         || report["details"]["parts"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|p| p["verification"]["status"] == "verified");
+            .any(|p| p["shape_check"]["result"] == "Checked against the original shape");
     assert!(verified, "fillet conversion was not verified: {report}");
     for feature in doc["features"]
         .as_array()

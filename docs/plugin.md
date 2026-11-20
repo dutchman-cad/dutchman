@@ -13,6 +13,16 @@ design; the plugin never modifies the active design. `wit/craft-plugin.wit` is a
 SolidCraft's `crates/craft-plugin/wit/plugin.wit`. No host checkout is needed to build or
 test this component.
 
+Open Fusion, Inventor, SolidWorks or FreeCAD files with **File > Open**. Before reading
+native geometry, the plugin checks bounded archive indexes and the desktop app's measured
+memory/time estimate. It refuses work above its memory budget (2 GiB less 512 MiB of
+headroom) or five-minute deadline, and links to the [Dutchman app download](https://github.com/dutchman-cad/dutchman/releases/latest).
+The app can convert larger designs and save a `.sc` to open in SolidCraft. Compressed inner archive checks are bounded to 16 MiB in total; larger checks also
+direct you to the app. The estimate is
+approximate; it is not a guarantee that every smaller design fits. SolidCraft 0.45's importer
+API has no dialog call: refusal errors appear in its status area; the Import report dialog
+is available only after a successful conversion.
+
 The manifest supplies native host forms: Keep editable history (true), Up axis
 (As in the file, `as_is`, the default, or Stand up (Y-up to Z-up), `stand_up`), Include
 hidden bodies (false). The up axis lists its options as `oneOf` entries of `const` and
@@ -112,7 +122,7 @@ All generated guest and harness bindings are in `src/adapter.rs`, from
 - `design.write(bytes)` appends the converted SolidCraft design, at most 1 MiB per call.
 - `control.progress` reports reading and writing; `control.cancelled` is checked before
   each member read and before the design is written.
-- The result is the loss report below. Errors: an unsupported, corrupt or truncated file
+- The result is the loss report below. Errors: a file that is not supported yet or cannot be read
   is `invalid-input` with field `file` (`options` and `entry` for bad options or entry
   names); size budgets are `limit-exceeded`; an error returned by a host import is passed
   back unchanged. A member read, size, or resolution failure aborts the whole conversion,
@@ -186,9 +196,9 @@ The return value is UTF-8 JSON under 1 MiB, in the shape SolidCraft shows to the
 
 | Field | Shape and meaning |
 |---|---|
-| `summary` | One line, at most 240 bytes, such as `Editable history: 12 of 14 features mapped; 3 losses` |
-| `items` | At most 4096 rows, with dropped losses first, then degraded losses, then informational losses (source order within each severity). One per retained Dutchman loss: `severity` (`info`, `degraded`, `dropped`), `title` (the kind of loss in plain words, shared by every loss of that kind, such as "Parts of the file kept as-is" or "Sketches carried over with changes"; at most 120 bytes), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). SolidCraft shows one line per title with its count and keeps codes and messages under Details. |
-| `details` | The `dutchman.plugin.loss/1` report below. When the whole result exceeds 1 MiB, its `losses` array is left out; items are reduced further if needed, retaining the severity priority. Stage counts always describe all losses. |
+| `summary` | One line, at most 240 bytes, such as `Partly converted; Losses: 2 Info, 1 Degraded` |
+| `items` | At most 4096 rows, with dropped losses first, then degraded losses, then informational losses (source order within each severity). One per retained Dutchman loss: `severity` (`info`, `degraded`, `dropped`), `title` (a plain description of the change; at most 120 bytes), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). SolidCraft shows one line per title with its count and keeps codes and messages under Details. |
+| `details` | The `dutchman.plugin.report/2` report below. When the whole result exceeds 1 MiB, its `losses` array is left out; items are reduced further if needed, retaining the severity priority. |
 
 When losses exceed the item or byte limit, a reserved final item has code
 `dutchman.report.truncated`, title `Conversion report shortened`, severity `info`, and
@@ -199,36 +209,29 @@ full loss details were omitted. The notice counts toward the 4096-item limit. A
 Loss text still has the per-field limits above; an oversized report that cannot fit even
 without loss rows fails before output is sent.
 
-### `details`: `dutchman.plugin.loss/1`
+### `details`: `dutchman.plugin.report/2`
 
-Fields are additive within this version.
-The report describes the untransformed conversion, even when Stand up is selected. It may
-contain design, file and feature names; it stays local and is not an anonymous report.
-This schema projects `dutchman_core::Report`; CLI and MCP keep their existing shared
-`dutchman.convert/1` serializer and behavior.
+Version 2 replaces the earlier machine-oriented `dutchman.plugin.loss/1` projection in
+this host-facing surface. CLI and MCP `dutchman.convert/1` reports are unchanged.
+The report describes conversion before Stand up. It stays local and may include readable
+part and feature names; archive member paths are replaced with plain descriptions.
 
 | Field | Shape and meaning |
 |---|---|
-| `schema` | Literal `dutchman.plugin.loss/1` |
-| `stages` | Six rows in pipeline order: `stage`, `total`, `info`, `degraded`, `dropped` loss counts |
-| `losses` | Ordered rows: `stage`, `severity`, `subject`, nullable stable `code`, `message`, nullable `upstream` (`cadmpeg` or `solidcraft`) |
-| `outcome` | Nullable object: `mode` (`history`, `partial_history`, `import`), `verification`, `features` |
-| `outcome.features` | Source feature rows: `name`, `kind`, `ordinal`, `variant`, `status` (`mapped`, `not_needed`, `left_out`, `blocked`), nullable `message`, `profile_unverified`, `reapplied`, `final_body` |
-| `parts` | Assembly history rows: `name`, `verification`, `mapped`, `total`, `rebuilt`, `needing`, `reapplied` |
-| `completeness` | Nullable object: `placed`, `placed_empty`, `left_out` rows (`file`, `message`, `stage`, `count`) |
-| `joints` | Object mapping joint kind to count |
-| `truncation` | Present only when shortened: `omitted_items` count and `details_losses_omitted` boolean; see the omission notice above |
+| `schema` | Literal `dutchman.plugin.report/2` |
+| `result` | `Converted`, `Partly converted`, `Converted, no history`, or `Incomplete`, using the desktop app's wording |
+| `help` | "Is there a problem? Is something missing?", followed by the Discord invite, DM Dutchy, and GitHub issue links, in that order |
+| `shape_check` | Nullable `{result, reason}` with plain descriptions such as "Not checked" or "No editable history to check" |
+| `features` | Nullable list of `{name, feature, result, reason}` in source order; results are `Converted`, `Not needed`, `Left out`, or `Not supported yet` |
+| `assembly` | Nullable `{placed_parts, empty_parts, missing_parts}`; missing rows contain `{part, reason, placements}` |
+| `parts` | List of `{name, shape_check, converted_features, source_features}` |
+| `losses` | List of `{level, part_or_feature, reason}`; `level` is `Info`, `Degraded`, or `Dropped` |
+| `truncation` | Present only when shortened: `omitted_items` count and `details_losses_omitted` boolean |
 
-Every `verification` is `{status, message}`. With Keep editable history off, the message is
-`Keep editable history is turned off`, the plugin's own option, where the CLI names `--import-only`. `status` is `verified`, `partial`, `differs`,
-`unverified`, `flattened` or `not_applicable`; `message` is null for verified, otherwise
-Dutchman's reason. `stage` is `input`, `decode`, `project`, `map`, `write` or `solidcraft`.
-Severity is `info`, `degraded` or `dropped`. Feature messages and stage losses preserve
-Dutchman's existing reasons; `code` remains null where the core assigns no stable code.
-Counts and ordinals are nonnegative integers; feature `name`, `ordinal` and `variant`
-may be null. `profile_unverified`, `reapplied` and `final_body` are booleans.
-A host should show feature blockers together with the relevant stage losses rather than
-inventing a code from a feature name.
+With Keep editable history off, the reason is `Keep editable history is turned off`.
+Failure notices use the desktop app's help wording, with Discord before GitHub. Neither
+notices nor report details expose internal archive paths. Links are text in the host's
+report; opening or copying them depends on the host UI.
 
 Placement regressions check component parents, hidden occurrence and joint endpoint
 paths, and hidden-body world names when adding the wrapper. The component harness also

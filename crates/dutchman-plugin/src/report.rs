@@ -1,45 +1,7 @@
-use dutchman_core::{Check, FeatureStatus, Mode, Report, Severity, Stage};
+use dutchman_core::{Check, FeatureStatus, Mode, Report, Severity};
 use serde_json::{json, Value};
-fn check(check: &Check) -> Value {
-    let (status, message) = match check {
-        Check::Verified => ("verified", None),
-        Check::Partial(s) => ("partial", Some(s)),
-        Check::Differs(s) => ("differs", Some(s)),
-        Check::Unverified(s) => ("unverified", Some(s)),
-        Check::Flattened(s) => ("flattened", Some(s)),
-        Check::NotApplicable(s) => ("not_applicable", Some(s)),
-    };
-    json!({"status":status,"message":message})
-}
-pub(crate) fn json(report: &Report) -> Value {
-    let losses: Vec<_> = report.losses().iter().map(|loss| json!({
-        "stage":loss.stage.id(),
-        "severity":match loss.severity { Severity::Info=>"info", Severity::Degraded=>"degraded", Severity::Dropped=>"dropped" },
-        "subject":loss.subject, "code":loss.code, "message":loss.detail,
-        "upstream":loss.upstream(),
-    })).collect();
-    let stages: Vec<_> = Stage::ALL.iter().map(|stage| {
-        let mut info=0; let mut degraded=0; let mut dropped=0;
-        for loss in report.losses().iter().filter(|l| l.stage==*stage) {
-            match loss.severity { Severity::Info=>info+=1, Severity::Degraded=>degraded+=1, Severity::Dropped=>dropped+=1 }
-        }
-        json!({"stage":stage.id(),"total":info+degraded+dropped,"info":info,"degraded":degraded,"dropped":dropped})
-    }).collect();
-    let outcome = report.outcome().map(|o| json!({
-        "mode":match o.mode { Mode::History=>"history", Mode::PartialHistory=>"partial_history", Mode::Import=>"import" },
-        "verification":check(&o.check),
-        "features":o.features.iter().map(|f| json!({"name":f.name,"kind":f.kind,"ordinal":f.ordinal,"variant":f.variant,
-            "status":match f.status { FeatureStatus::Mapped=>"mapped",FeatureStatus::NotNeeded=>"not_needed",FeatureStatus::LeftOut=>"left_out",FeatureStatus::Blocked=>"blocked" },
-            "message":f.reason,"profile_unverified":f.profile_unverified,"reapplied":f.reapplied,"final_body":f.final_body})).collect::<Vec<_>>()
-    }));
-    json!({"schema":"dutchman.plugin.loss/1", "stages":stages,"losses":losses,"outcome":outcome,
-        "parts":report.parts().iter().map(|p| json!({"name":p.name,"verification":check(&p.check),"mapped":p.mapped,"total":p.total,"rebuilt":p.rebuilt,"needing":p.needing,"reapplied":p.reapplied})).collect::<Vec<_>>(),
-        "completeness":report.completeness().map(|c| json!({"placed":c.placed,"placed_empty":c.placed_empty,"left_out":c.left_out.iter().map(|l| json!({"file":l.file,"message":l.reason,"stage":l.stage.id(),"count":l.count})).collect::<Vec<_>>()})),
-        "joints":report.joints()})
-}
-
-/// The loss report SolidCraft shows: a one-line summary, one item per loss, and the full
-/// `dutchman.plugin.loss/1` report under `details`.
+/// The loss report SolidCraft shows: a one-line summary, one item per loss, and plain-language
+/// conversion details.
 pub(crate) fn host(report: &Report) -> Value {
     const MAX_ITEMS: usize = 4096;
     let mut losses: Vec<_> = report.losses().iter().collect();
@@ -59,22 +21,15 @@ pub(crate) fn host(report: &Report) -> Value {
             let subject = if loss.subject == code { "" } else { loss.subject.as_str() };
             json!({
                 "severity": match loss.severity { Severity::Info=>"info", Severity::Degraded=>"degraded", Severity::Dropped=>"dropped" },
-                "title": clip(&loss.title(), 120),
+                "title": clip(&crate::notice::plain(&loss.detail), 120),
                 "code": clip(code, 128),
-                "subject": clip(subject, 256),
+                "subject": clip(&crate::notice::plain(subject), 256),
                 // The host refuses a blank message.
-                "message": clip(
-                    [loss.detail.as_str(), loss.code.as_deref().unwrap_or_default(), loss.subject.as_str()]
-                        .into_iter()
-                        .find(|text| !text.trim().is_empty())
-                        .unwrap_or("No further detail"),
-                    1024,
-                ),
+                "message": clip(&crate::notice::plain(if loss.detail.trim().is_empty() { "No further detail" } else { &loss.detail }), 1024),
             })
         })
         .collect();
-    let mut host =
-        json!({"summary": clip(&summary(report), 240), "items": items, "details": json(report)});
+    let mut host = json!({"summary": clip(&summary(report), 240), "items": items, "details": readable(report)});
     if truncated {
         truncation(&mut host, report.losses().len(), false);
     }
@@ -144,35 +99,70 @@ pub(crate) fn encode(report: &Report) -> Result<String, dutchman_core::Error> {
     }
 }
 
-fn summary(report: &Report) -> String {
-    let losses = report.losses().len();
-    let losses = match losses {
-        0 => String::new(),
-        1 => "; 1 loss".to_owned(),
-        n => format!("; {n} losses"),
-    };
-    let Some(outcome) = report.outcome() else {
-        return format!("Converted{losses}");
-    };
-    let needing = outcome
-        .features
-        .iter()
-        .filter(|f| f.status != FeatureStatus::NotNeeded)
-        .count();
-    let mapped = outcome
-        .features
-        .iter()
-        .filter(|f| f.status == FeatureStatus::Mapped)
-        .count();
-    match outcome.mode {
-        Mode::History => {
-            format!("Editable history: {mapped} of {needing} features mapped{losses}")
-        }
-        Mode::PartialHistory => format!(
-            "Partial editable history: {mapped} of {needing} features mapped, original shape visible{losses}"
-        ),
-        Mode::Import => format!("Geometry without editable history{losses}"),
+fn status(report: &Report) -> &'static str {
+    if report.completeness().is_some_and(|c| !c.is_complete()) {
+        return "Incomplete";
     }
+    match report.outcome() {
+        Some(o) if matches!(o.check, Check::Flattened(_)) => "Converted, no history",
+        Some(o) => match o.mode {
+            Mode::History => "Converted",
+            Mode::PartialHistory => "Partly converted",
+            Mode::Import => "Converted, no history",
+        },
+        None => "Converted",
+    }
+}
+fn summary(report: &Report) -> String {
+    let counts: Vec<_> = [
+        (Severity::Info, "Info"),
+        (Severity::Degraded, "Degraded"),
+        (Severity::Dropped, "Dropped"),
+    ]
+    .into_iter()
+    .filter_map(|(severity, label)| {
+        let count = report
+            .losses()
+            .iter()
+            .filter(|l| l.severity == severity)
+            .count();
+        (count > 0).then(|| format!("{count} {label}"))
+    })
+    .collect();
+    if counts.is_empty() {
+        status(report).into()
+    } else {
+        format!("{}; Losses: {}", status(report), counts.join(", "))
+    }
+}
+fn verification(check: &Check) -> Value {
+    let (result, reason) = match check {
+        Check::Verified => ("Checked against the original shape", None),
+        Check::Partial(s) => ("Partly checked", Some(s)),
+        Check::Differs(s) => ("The rebuilt shape differs", Some(s)),
+        Check::Unverified(s) => ("Not checked", Some(s)),
+        Check::Flattened(s) => ("Original shape kept without editable history", Some(s)),
+        Check::NotApplicable(s) => ("No editable history to check", Some(s)),
+    };
+    json!({"result": result, "reason": reason.map(|s| crate::notice::plain(s))})
+}
+/// The host renders every details field, so keep machine enums out of this surface.
+pub(crate) fn readable(report: &Report) -> Value {
+    json!({
+        "schema": "dutchman.plugin.report/2",
+        "result": status(report),
+        "help": crate::notice::help(),
+        "shape_check": report.outcome().map(|o| verification(&o.check)),
+        "features": report.outcome().map(|o| o.features.iter().map(|f| json!({
+            "name": f.name.as_deref().map(crate::notice::plain),
+            "feature": crate::notice::plain(&f.kind.replace('_', " ")),
+            "result": match f.status { FeatureStatus::Mapped => "Converted", FeatureStatus::NotNeeded => "Not needed", FeatureStatus::LeftOut => "Left out", FeatureStatus::Blocked => "Not supported yet" },
+            "reason": f.reason.as_deref().map(crate::notice::plain)
+        })).collect::<Vec<_>>()),
+        "assembly": report.completeness().map(|c| json!({"placed_parts": c.placed, "empty_parts": c.placed_empty, "missing_parts": c.left_out.iter().map(|p| json!({"part": p.file.as_deref().map(crate::notice::plain), "reason": crate::notice::plain(&p.reason), "placements": p.count})).collect::<Vec<_>>()})),
+        "parts": report.parts().iter().map(|p| json!({"name": crate::notice::plain(&p.name), "shape_check": verification(&p.check), "converted_features": p.mapped, "source_features": p.total})).collect::<Vec<_>>(),
+        "losses": report.losses().iter().map(|l| json!({"level": match l.severity { Severity::Info => "Info", Severity::Degraded => "Degraded", Severity::Dropped => "Dropped" }, "part_or_feature": crate::notice::plain(&l.subject), "reason": crate::notice::plain(&l.detail)})).collect::<Vec<_>>()
+    })
 }
 
 /// At most `max` bytes, cut at a character boundary.

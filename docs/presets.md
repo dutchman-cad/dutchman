@@ -45,8 +45,8 @@ History on/off have independent conversion and checking fits. For each stage, hi
 memory and time use the greater of the history-on and history-off fits: retaining history
 cannot reduce either estimate. Combined models for other formats enforce the same minimum,
 including platform-specific timing. Tiny parts can consequently have equal history-on/off
-memory estimates. Estimates never stop a conversion or change what it keeps: an estimate comes
-from a file's size, which can't reveal the geometry, and can be far off in either direction.
+memory estimates. In the desktop app and CLI, estimates never stop a conversion or change
+what it keeps: an estimate comes from a file's size, which can't reveal the geometry, and can be far off in either direction.
 Memory is measured instead. A running conversion stops with a message when the computer has
 less than 1 GB free while the conversion holds at least 1 GB, including what it started.
 The SolidCraft check stops earlier, under 1.5 GB free, and the design is kept, marked unverified with the reason, so a built design isn't lost to its check. `--no-memory-check` turns that off.
@@ -59,7 +59,7 @@ Memory is `fixed MB + content bytes × B/B + member count × MB/member` after co
 MB to bytes. A fitted content plateau, where listed, limits only the variable memory
 cost. It is an empirical estimate, not a ceiling on allocations. Time is `fixed seconds +
 content MiB × s/MiB + member count × s/member`. All coefficients live in `COEFFICIENTS`
-in `crates/dutchman/src/choices.rs`. Decimal MB/GB are used for memory; MiB is 1,048,576
+in `crates/dutchman-core/src/estimate.rs`. Decimal MB/GB are used for memory; MiB is 1,048,576
 bytes. Fractional phase times add before `seconds` rounds up. Desktop labels instead add
 the displayed stage durations, preserving sub-minute bounds (see [the desktop guide](desktop.md)).
 
@@ -208,3 +208,6 @@ geometry copy. Checking adds its own allowance as described above.
 `--no-verify` keeps checking off. `--no-memory-check` forces requested checking even if
 memory is low. Desktop Advanced offers the same override as **Convert and check history
 even if memory is low**. CLI, desktop, web conversions and MCP use the same policy.
+
+The SolidCraft plugin uses the same measured costs to refuse designs above its fixed
+memory or time budget before native decoding. See [plugin limits](plugin.md).
