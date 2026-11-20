@@ -334,9 +334,12 @@ profile edge must be proven, with a square plate of matching thickness. Curved, 
 disconnected, or collinear base edges and base holes or partial regions remain unsupported
 by this proof. Other dimensions
 or unproven selections keep geometry and explain the blocked feature. CADIR's hem developed
-length has no exact mapping to SolidCraft's outer-face length. Do not claim
-that K-factor or relief settings were preserved: sheet rules use SolidCraft defaults. A bend without its mapped attached plate remains blocked.
-Contour flanges and unfold/refold operations are not mapped yet.
+length has no exact mapping to SolidCraft's outer-face length. Contour flanges map when cadmpeg supplies an open line/arc chain, one blind normal sweep
+and material on one side. Their thickness, inside bend radius and supplied K-factor become a
+sheet rule; unsupported contour forms keep geometry with the specific reason. Relief settings
+use SolidCraft defaults. The pinned Inventor codec does not yet decode contour flanges; do not
+promise Inventor contour history until that decoding reaches the pin.
+A bend without its mapped attached plate remains blocked.
 
 ## 3. Convert
 
@@ -1045,3 +1048,12 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](../../docs/json.md).
+
+### Y-up orientation
+
+Use `--stand-up` with `convert` or `convert-all` to rotate a Y-up design +90°
+about +X, so its +Y axis becomes SolidCraft's +Z axis. Source axes are preserved
+by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
+`convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
+cannot be combined. This changes the saved design's orientation, while history
+checks use the source coordinates.

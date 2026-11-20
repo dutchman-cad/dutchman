@@ -540,7 +540,9 @@ base holes or partial regions remain unsupported by this proof. These reasons us
 `blocked` status and `reason` field. Other flanges report `blocked` with the specific selection or dimension reason
 (for example, "its input edge midpoint does not identify exactly one rebuilt edge"). Hems
 report the form or developed length SolidCraft cannot express. A blocked history falls back
-to geometry. These use the existing report fields; no schema fields change.
+to geometry. Contour flanges with an open line/arc chain, a blind normal sweep and material on one side
+also report `mapped`; unsupported contour forms report `blocked` with their specific reason.
+These use the existing report fields; no schema fields change.
 
 Renamed parameter names are included in `names` so anonymous reports can remove them.
 Fusion consumed tools and removed bodies are omitted only when cadmpeg marks them hidden
@@ -1606,3 +1608,10 @@ to the replacement geometry merely because it contains the source feature's shap
 For example, a split row can contain `"output_ids": [12, 8], "output_match": "emitted"`;
 ids follow timeline order rather than numeric order. A dropped row contains
 `"output_ids": [], "output_match": "no_output"`.
+
+## Output orientation
+
+The CLI options `--stand-up` and `--no-stand-up` (MCP `stand_up` and
+`no_stand_up`) control the saved design orientation. Reports retain the existing
+schemas and source coordinates; these options add no report fields. See
+[the command reference](command-line.md) for the rotation and default.
