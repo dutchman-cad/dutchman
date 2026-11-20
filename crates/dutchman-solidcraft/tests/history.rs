@@ -14012,7 +14012,8 @@ fn a_fillet_remains_mapped_when_standing_up() {
             "edges",
             "original",
             "history",
-            "verification-parameters"
+            "verification-parameters",
+            "opening"
         ]
     );
     assert_eq!(
@@ -16337,7 +16338,7 @@ impl dutchman_solidcraft::SolidCraftEvaluator for RecordedEvaluator {
         let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
         let document: Value =
             serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
-        if self.require_untransformed {
+        if self.require_untransformed && label != "opening" {
             // A verification-parameters document carries no occurrences to check.
             for occurrence in document["occurrences"].as_array().into_iter().flatten() {
                 assert_eq!(
@@ -16422,7 +16423,8 @@ fn a_host_evaluator_proves_a_blend_and_verifies_the_fixture() {
             "edges",
             "original",
             "history",
-            "verification-parameters"
+            "verification-parameters",
+            "opening"
         ]
     );
 }
@@ -16438,7 +16440,10 @@ fn a_host_evaluator_skips_parameter_verification_for_history_without_parameters(
     let (_, report) = convert(&model, &writer);
     assert_eq!(report.outcome().unwrap().mode, Mode::History);
     assert_eq!(report.outcome().unwrap().check, Check::Verified);
-    assert_eq!(*host.calls.lock().unwrap(), ["original", "history"]);
+    assert_eq!(
+        *host.calls.lock().unwrap(),
+        ["original", "history", "opening"]
+    );
 }
 
 #[test]
@@ -16460,7 +16465,13 @@ fn a_host_evaluator_reports_geometry_warnings_after_replacing_a_differing_replay
     ));
     assert_eq!(
         *host.calls.lock().unwrap(),
-        ["original", "history", "verification-parameters", "import"]
+        [
+            "original",
+            "history",
+            "verification-parameters",
+            "import",
+            "opening"
+        ]
     );
     assert!(report
         .losses()
@@ -18935,4 +18946,165 @@ fn unresolved_revolve_keeps_construction_and_reference_helpers() {
         "{report:?}"
     );
     assert_eq!(document["features"][1]["profiles"]["type"], "all");
+}
+
+/// Synthetic refusals follow the actual feature rows, including hidden history.
+#[derive(Debug)]
+struct FailedRebuild {
+    feature_type: &'static str,
+    original_unavailable: bool,
+}
+
+impl dutchman_solidcraft::SolidCraftEvaluator for FailedRebuild {
+    fn evaluate(
+        &self,
+        design: &[u8],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Value, String> {
+        if label == "original" && self.original_unavailable {
+            return Ok(json!({"evaluation_failed": "Synthetic source measurement refusal"}));
+        }
+        let mut result = dutchman_solidcraft::SolidCraftEvaluator::evaluate(
+            &RecordedEvaluator::default(),
+            design,
+            timeout,
+            label,
+        )?;
+        let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
+        let document: Value =
+            serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        result["timeline"] = json!(document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|feature| feature["type"] == self.feature_type && feature["suppressed"] != true)
+            .map(
+                |feature| json!({"id": feature["id"], "name": feature["name"],
+                "error": "Synthetic rebuild refusal"})
+            )
+            .collect::<Vec<_>>());
+        Ok(result)
+    }
+
+    fn run(
+        &self,
+        design: &[u8],
+        commands: &[Value],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Vec<Value>, String> {
+        dutchman_solidcraft::SolidCraftEvaluator::run(
+            &RecordedEvaluator::default(),
+            design,
+            commands,
+            timeout,
+            label,
+        )
+    }
+}
+
+#[test]
+fn failed_rebuilds_keep_the_final_shape_and_name_the_feature_even_without_source_measurements() {
+    for original_unavailable in [false, true] {
+        let model = cube_with_history(10.0, first_profile(), None);
+        let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(FailedRebuild {
+            feature_type: "extrude",
+            original_unavailable,
+        }));
+        let (document, report) = convert(&model, &writer);
+        let (source, _) = convert(
+            &model,
+            &SolidCraftWriter::new()
+                .import_only(true)
+                .verification(Verification::Off),
+        );
+        let source_blob = source["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|feature| feature["type"] == "import")
+            .unwrap()["step_blob"]
+            .clone();
+        let features = document["features"].as_array().unwrap();
+        assert!(features
+            .iter()
+            .any(|feature| feature["type"] == "import" && feature["step_blob"] == source_blob));
+        assert!(
+            features.iter().all(|feature| feature["type"] != "extrude"),
+            "{document}"
+        );
+        assert!(
+            features
+                .iter()
+                .any(|feature| feature["type"] == "import" && feature["suppressed"] == false),
+            "{document}"
+        );
+        let blocked = report
+            .outcome()
+            .unwrap()
+            .features
+            .iter()
+            .find(|feature| feature.kind == "extrude")
+            .unwrap();
+        assert_eq!(blocked.status, dutchman_core::FeatureStatus::Blocked);
+        let reason = blocked.reason.as_ref().unwrap();
+        assert!(reason.contains(blocked.name.as_ref().unwrap()), "{reason}");
+        assert!(reason.contains("Synthetic rebuild refusal"), "{reason}");
+    }
+}
+
+#[test]
+fn a_refused_source_import_reports_missing_geometry_as_a_last_resort() {
+    let model = cube_with_history(10.0, first_profile(), None);
+    let host = std::sync::Arc::new(FailedRebuild {
+        feature_type: "import",
+        original_unavailable: false,
+    });
+    let writer = SolidCraftWriter::new()
+        .import_only(true)
+        .evaluator(host.clone());
+    let (document, report) = convert(&model, &writer);
+    assert!(
+        document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|feature| feature["type"] != "import"),
+        "{document}"
+    );
+    assert!(
+        report.losses().iter().any(
+            |loss| loss.code.as_deref() == Some("geometry/import-failed")
+                && loss.detail.contains("MISSING")
+                && loss.detail.contains("Synthetic rebuild refusal")
+                && loss.detail.contains(&loss.subject)
+        ),
+        "{report:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_nonzero_evaluator_exit_without_named_failures_writes_an_unverified_design() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = tempfile::tempdir().unwrap();
+    let cli = scratch.path().join("solidcraft-cli");
+    std::fs::write(&cli, "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.45.0'; exit 0; fi\nexit 1\n").unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let writer = SolidCraftWriter::new().verification(Verification::With(cli));
+    let (document, report) = convert(&cube_with_history(10.0, first_profile(), None), &writer);
+    assert!(!document["features"].as_array().unwrap().is_empty());
+    assert!(
+        matches!(&report.outcome().unwrap().check,
+        Check::Unverified(why) if why.contains("exited with")),
+        "{report:?}"
+    );
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("geometry/import-failed")),
+        "{report:?}"
+    );
 }

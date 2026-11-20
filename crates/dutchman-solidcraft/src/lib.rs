@@ -18,6 +18,7 @@ mod container;
 mod document;
 mod evaluator;
 mod linked;
+mod opening;
 mod output_links;
 #[cfg(not(target_family = "wasm"))]
 pub use evaluator::CliEvaluator;
@@ -1610,6 +1611,7 @@ impl Writer for SolidCraftWriter {
         }
         if let Some(assembly) = &model.assembly {
             let bytes = assembly::write(self, model, assembly, report, progress)?;
+            let bytes = self.check_opening(bytes, report)?;
             // Each part is placed any number of times, so only SolidCraft's own warnings count.
             let expected = verify::Expected {
                 sheets: placed_sheets(assembly, 0),
@@ -1661,6 +1663,7 @@ impl Writer for SolidCraftWriter {
                 check: self.check_sketches(&bytes),
                 features: mapping.features,
             });
+            let bytes = self.check_opening(bytes, report)?;
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
@@ -1920,6 +1923,7 @@ impl Writer for SolidCraftWriter {
         }
         state_tolerances(report, &outcome);
         report.set_outcome(outcome);
+        let bytes = self.check_opening(bytes, report)?;
         out.write_all(&bytes)
             .map_err(|err| Error::Encode(format!("cannot write the design: {err}")))
     }
