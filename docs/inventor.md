@@ -45,6 +45,10 @@ sketch maps as a start offset along the sketch normal. Tilted plane ends and nat
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
 
+Contour-flange history still needs upstream decoding: the pinned Inventor codec does not
+emit CADIR contour-flange operations. Dutchman can map that neutral operation when a codec
+supplies an open line/arc chain and a blind normal sweep; see [sheet metal](history.md#sheet-metal).
+
 On SolidCraft 0.44 and newer, the shared writer can confirm extrude body scope
 at the final body-building feature from resolved modified-body outputs and a
 matching replay against the final source geometry. Intermediate body centres

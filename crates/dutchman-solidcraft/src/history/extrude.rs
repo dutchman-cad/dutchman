@@ -471,6 +471,36 @@ pub(super) fn operation(op: Option<&Value>) -> Result<&'static str, String> {
     }
 }
 
+/// The name of the one body a new-body extrude makes when the final model leaves it out and
+/// cadmpeg lists it in the extrude's result state, so a later feature can select it.
+fn generated_body_name(feature: &Value, ctx: &mut Context) -> Option<Vec<String>> {
+    let id = feature.get("id").and_then(Value::as_str)?;
+    let states: Vec<&Value> = ctx
+        .arena("feature_result_topologies")
+        .iter()
+        .filter(|state| state.get("output_of").and_then(Value::as_str) == Some(id))
+        .collect();
+    let [state] = states.as_slice() else {
+        return None;
+    };
+    let bodies: Vec<&str> = state
+        .get("members")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter(|member| member.get("kind").and_then(Value::as_str) == Some("body"))
+        .filter_map(|member| member.get("id").and_then(Value::as_str))
+        .collect();
+    let [local] = bodies.as_slice() else {
+        return None;
+    };
+    let name = (1..)
+        .map(|next| format!("Body {next}"))
+        .find(|candidate| !ctx.body_name_taken(candidate))?;
+    ctx.generated_bodies
+        .push(((id.to_owned(), (*local).to_owned()), name.clone()));
+    Some(vec![name])
+}
+
 /// The names of the bodies a new-body extrude makes. A body the source leaves unnamed gets
 /// "Body N", the first number not yet taken, so later features can still target it.
 ///
@@ -484,10 +514,13 @@ pub(super) fn body_names(
     if operation != "new_body" {
         return None;
     }
-    let outputs = feature.get("outputs").and_then(Value::as_array)?;
-    if outputs.is_empty() {
-        return None;
-    }
+    let Some(outputs) = feature
+        .get("outputs")
+        .and_then(Value::as_array)
+        .filter(|outputs| !outputs.is_empty())
+    else {
+        return generated_body_name(feature, ctx);
+    };
     let rows: Vec<Option<&Value>> = outputs
         .iter()
         .map(|id| Some(ctx.row("bodies", id.as_str()?)))
@@ -517,7 +550,9 @@ pub(super) fn body_names(
     let mut taken: std::collections::BTreeSet<String> = ctx
         .named_bodies
         .iter()
-        .map(|(_, name)| name.clone())
+        .map(|(_, name)| name)
+        .chain(ctx.generated_bodies.iter().map(|(_, name)| name))
+        .cloned()
         .collect();
     let given: Vec<Option<String>> = rows
         .iter()

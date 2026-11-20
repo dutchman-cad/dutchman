@@ -532,7 +532,9 @@ base holes or partial regions remain unsupported by this proof. These reasons us
 `blocked` status and `reason` field. Other flanges report `blocked` with the specific selection or dimension reason
 (for example, "its input edge midpoint does not identify exactly one rebuilt edge"). Hems
 report the form or developed length SolidCraft cannot express. A blocked history falls back
-to geometry. These use the existing report fields; no schema fields change.
+to geometry. Contour flanges with an open line/arc chain, a blind normal sweep and material on one side
+also report `mapped`; unsupported contour forms report `blocked` with their specific reason.
+These use the existing report fields; no schema fields change.
 
 Renamed parameter names are included in `names` so anonymous reports can remove them.
 Fusion consumed tools and removed bodies are omitted only when cadmpeg marks them hidden
