@@ -14,8 +14,9 @@ Open, one-sided thin walls retain directed left/right data in the reader; writin
 those sides is not supported yet, so the final STEP geometry remains.
 
 The desktop app also accepts pasted files, paths, Onshape links, and confirmed HTTPS
-downloads; see [pasting files and links](desktop.md#paste-files-and-links). This adds no CLI
-flags, MCP tools, or report fields.
+downloads; see [pasting files and links](desktop.md#paste-files-and-links).
+**Onshape connected ✓** opens the account dialog with the Part Studio link field.
+This adds no CLI flags, MCP tools, or report fields.
 
 Onshape bundles add the format identifier `onshape_bundle` and extension
 `onshape-bundle` to the existing format fields and listings. Existing report
