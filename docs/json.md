@@ -1994,6 +1994,9 @@ cannot be safely repaired stops conversion before the output is written. An eval
 nonzero exit without named failed features is unavailable verification: output is still written
 with `verification.status: "unverified"` and the reason. Disabled verification remains
 unverified.
+Linked components the file places but doesn't contain are reported as a Dropped `linked components`
+loss naming them, counted under `completeness.left_out`, and the design is `unverified`: its parts are
+not all there, whatever the replay says.
 The final opening check has its own time, at least 15 minutes, not what earlier checks left.
 When SolidCraft doesn't finish it, verification is `unverified` with the reason "Not verified:
 SolidCraft didn't finish checking the written design in N min".

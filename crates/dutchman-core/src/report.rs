@@ -262,6 +262,9 @@ pub struct Report {
     completeness: Option<Completeness>,
     joints: std::collections::BTreeMap<String, u64>,
     names: std::collections::BTreeSet<String>,
+    /// Linked components the source file places but doesn't contain: how many, and why the
+    /// design can't be verified complete.
+    missing_links: Option<(u64, String)>,
 }
 
 /// How much of an assembly was placed: every placement its file and its placed sub-assemblies'
@@ -766,8 +769,40 @@ impl Report {
     }
 
     /// Records what the writer made of the design.
-    pub fn set_outcome(&mut self, outcome: Outcome) {
+    pub fn set_outcome(&mut self, mut outcome: Outcome) {
+        // A design missing linked components is never verified complete, whatever its replay says.
+        if let (Some((_, why)), Check::Verified) = (&self.missing_links, &outcome.check) {
+            outcome.check = Check::Unverified(why.clone());
+        }
         self.outcome = Some(outcome);
+    }
+
+    /// The source places linked components whose designs aren't in the file. The written
+    /// design leaves them out, says so, and is not marked verified.
+    pub fn record_missing_links(&mut self, names: &[String]) {
+        let count = names.len() as u64;
+        if count == 0 {
+            return;
+        }
+        let named = if names.iter().all(|name| name.is_empty()) {
+            String::new()
+        } else {
+            format!(" ({})", names.join(", "))
+        };
+        let why = format!(
+            "{count} linked component{} {} in this file{named}. In Fusion, export the assembly \
+             as .f3z, or put the linked designs' .f3d files next to it",
+            if count == 1 { "" } else { "s" },
+            if count == 1 { "isn't" } else { "aren't" },
+        );
+        self.push(Severity::Dropped, "linked components", why.clone());
+        self.missing_links = Some((count, why));
+        if let Some(completeness) = self.completeness.take() {
+            self.set_completeness(completeness);
+        }
+        if let Some(outcome) = self.outcome.take() {
+            self.set_outcome(outcome);
+        }
     }
 
     /// What the writer made of the design, when it said.
@@ -791,7 +826,21 @@ impl Report {
     }
 
     /// Records how much of the assembly was placed.
-    pub fn set_completeness(&mut self, completeness: Completeness) {
+    pub fn set_completeness(&mut self, mut completeness: Completeness) {
+        if let Some((count, why)) = &self.missing_links {
+            if !completeness
+                .left_out
+                .iter()
+                .any(|group| &group.reason == why)
+            {
+                completeness.left_out.push(LeftOutGroup {
+                    file: None,
+                    reason: why.clone(),
+                    stage: Stage::Decode,
+                    count: *count,
+                });
+            }
+        }
         self.completeness = Some(completeness);
     }
 
@@ -823,6 +872,45 @@ impl Report {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn missing_linked_components_are_left_out_and_never_verified() {
+        let mut report = Report::default();
+        report.set_completeness(Completeness {
+            placed: 2,
+            placed_empty: 0,
+            left_out: Vec::new(),
+        });
+        report.record_missing_links(&["Pin".to_owned()]);
+        report.set_outcome(Outcome {
+            mode: Mode::History,
+            check: Check::Verified,
+            features: Vec::new(),
+        });
+        let Some(Check::Unverified(why)) = report.outcome().map(|outcome| &outcome.check) else {
+            panic!("expected unverified");
+        };
+        assert!(
+            why.contains("1 linked component isn't in this file (Pin)"),
+            "{why}"
+        );
+        assert!(why.contains("export the assembly as .f3z"), "{why}");
+        let left_out = &report.completeness().unwrap().left_out;
+        assert_eq!(left_out.len(), 1);
+        assert_eq!(left_out[0].count, 1);
+        // A conversion with no missing links keeps its verified result.
+        let mut clean = Report::default();
+        clean.record_missing_links(&[]);
+        clean.set_outcome(Outcome {
+            mode: Mode::History,
+            check: Check::Verified,
+            features: Vec::new(),
+        });
+        assert_eq!(
+            clean.outcome().map(|outcome| &outcome.check),
+            Some(&Check::Verified)
+        );
+    }
     use super::*;
 
     #[test]
