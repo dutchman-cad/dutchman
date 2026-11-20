@@ -3846,7 +3846,9 @@ mod version_tests {
         assert!(target_loses_history(after));
         assert!(!VersionGate::ThinExtrude.supported(after));
         assert!(VersionGate::ThinExtrude.supported(SolidCraftVersion::V0_44_0));
-        assert!(!target_loses_history(SolidCraftVersion::V0_44_0));
+        // The newest target also retains closed-circle blends, added in 0.44.1.
+        assert!(target_loses_history(SolidCraftVersion::V0_44_0));
+        assert!(!target_loses_history(SolidCraftVersion::V0_44_1));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
         assert!(!VersionGate::HoleThreadDepth.supported(SolidCraftVersion::V0_30_0));
