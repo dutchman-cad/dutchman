@@ -2887,7 +2887,11 @@ fn converted_report_screenshots() {
             h.get_by_label("Drag the file in (its folder is open).");
             assert!(h.query_by_label("Diagnose this file").is_none());
             assert_eq!(h.query_all_by_label_contains("/home/").count(), 0);
-            assert!(h.get_by_label("Converted").rect().top() > 70.0);
+            let word = dutchman::present::FileView::from_report(
+                h.state().rows()[0].report.as_ref().unwrap(),
+            )
+            .status_word;
+            assert!(h.get_by_label(word).rect().top() > 70.0);
             assert!(
                 h.query_all_by_label(dutchman::present::REPORT_BUTTON)
                     .next()
@@ -4715,5 +4719,105 @@ fn connected_onshape_keeps_results_in_their_own_column() {
         h.run_steps(4);
         h.get_by_label("Paste your Onshape Part Studio link");
         assert!(!h.state().page_scrolls());
+    }
+}
+
+/// Synthetic result cards, identical in both revisions for screenshot comparison.
+#[cfg(feature = "test-support")]
+#[test]
+fn report_labels_screenshots() {
+    let Some(dir) = std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS") else {
+        return;
+    };
+    let dir = PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index =
+        String::from("# Result labels at 1180 × 800\n\nSynthetic reports in both themes.\n\n");
+    for (theme, name) in [
+        (ThemePreference::Light, "light"),
+        (ThemePreference::Dark, "dark"),
+    ] {
+        for (case, mode) in [
+            ("partial", "partial_history"),
+            ("geometry-only", "import"),
+            ("full", "history"),
+        ] {
+            let mut h = screenshot_harness(theme);
+            h.set_size(egui::vec2(1180.0, 800.0));
+            h.state_mut().add_inputs([PathBuf::from("synthetic.f3d")]);
+            h.state_mut().preview_solidcraft(Some("0.44.1"));
+            h.state_mut().set_checker_for_test(true);
+            h.state_mut().set_out_dir(PathBuf::from("converted"));
+            let report = serde_json::json!({
+                "ok": true, "mode": mode,
+                "history": {"mapped": if case == "partial" {2} else {3}, "total": 3},
+                "verification": {"status": if case == "partial" {"partial"} else {"verified"}},
+                "losses": []
+            });
+            h.state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: PathBuf::from("synthetic.f3d"),
+                    output: Some(PathBuf::from("converted/synthetic.sc")),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: Some(100_000),
+                    report: Some(report),
+                });
+            h.run_steps(16);
+            let gap = h
+                .get_by_label(dutchman_gui::report_panel::QUESTION)
+                .rect()
+                .top()
+                - h.get_by_label("Change…").rect().bottom();
+            let description = format!(
+                "One synthetic result, Advanced closed. Report heading is {gap:.1} points below the output control."
+            );
+            shot(&mut h, &dir, &mut index, case, name, &description);
+        }
+    }
+    std::fs::write(dir.join("index.md"), index).unwrap();
+}
+
+/// The 48-point allowance includes the output card's padding and the section gap.
+#[cfg(feature = "test-support")]
+#[test]
+fn a_single_result_keeps_reporting_close_below_output() {
+    for (theme, height) in [
+        (ThemePreference::Light, 800.0),
+        (ThemePreference::Dark, 800.0),
+        (ThemePreference::Light, 1000.0),
+        (ThemePreference::Dark, 1000.0),
+    ] {
+        let mut h = screenshot_harness(theme);
+        h.set_size(egui::vec2(1180.0, height));
+        h.state_mut().add_inputs([PathBuf::from("synthetic.f3d")]);
+        h.state_mut()
+            .preview_result_for_test(dutchman_gui::app::Row {
+                input: PathBuf::from("synthetic.f3d"),
+                output: Some(PathBuf::from("converted/synthetic.sc")),
+                status: Status::Converted,
+                progress: None,
+                job: None,
+                size: Some(100_000),
+                report: Some(serde_json::json!({"ok": true, "mode": "partial_history"})),
+            });
+        h.run_steps(16);
+        let output_bottom = h.get_by_label("Change…").rect().bottom();
+        let report_top = h
+            .get_by_label(dutchman_gui::report_panel::QUESTION)
+            .rect()
+            .top();
+        let gap = report_top - output_bottom;
+        assert!(
+            (0.0..=48.0).contains(&gap),
+            "report gap {gap} points exceeds 48"
+        );
+        assert!(
+            h.get_by_label(dutchman::present::SEND_JOIN_BUTTON)
+                .rect()
+                .bottom()
+                < h.get_by_label("Convert").rect().top()
+        );
     }
 }

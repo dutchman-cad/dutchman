@@ -1646,7 +1646,9 @@ No report fields or schema versions change.
 The desktop report panel stays visible below output controls in wide windows. Discord
 comes first, with a small **GitHub issue** backup link (a public issue under the user's
 GitHub name). **Anonymous report**, under **More**, opens review before direct cloud upload.
-Partial history, geometry-only and degraded results use a warning colour. Report fields
+Partial history says **Partly converted**; geometry-only or flattened results say
+**Converted, no history**, in amber. Full history keeps **Converted** in green unless
+degraded content needs review. Report fields
 and CLI/MCP behavior are unchanged.
 ## Onshape fetch (`dutchman.onshape-fetch/1`)
 

@@ -260,7 +260,9 @@ The window's title and top row show its version beside **Dutchman Convert**, for
 with `dutchman --version`).
 
 **Is there a problem? Is something missing?** is always in the window: at the bottom left,
-under **Output folder**, in a wide window, and at the end of the page in a narrow one. It is
+under **Output folder**, in a wide window, and at the end of the page in a narrow one.
+With one result and compact output controls, it sits directly below **Output folder**.
+It stays pinned and visible with several results or expanded choices. It is
 there before a run, while files convert, and after, whatever the cards say: Dutchman never
 decides for you that a result has no problem. **Report a problem**, at the top right beside
 the **System / Day / Night** theme switch, brings the same panel into view.
@@ -346,10 +348,11 @@ summaries use the signature `converted-with-problem` and contain no design geome
 they never reuse an earlier failure's bundle. The review shows the exact metadata,
 including sharing choices, and nothing is sent until **Send** is clicked.
 
-A result with partial history shows its status word in the warning colour, not the success
-colour. Errors that name a web address show it as a link. **Diagnose this file** narrows
-reproducible conversion failures, not visual problems in a converted result; its window opens
-below the top row. **Add matching STEP** can check a converted file locally against an export.
+Partial history says **Partly converted**; geometry-only or flattened results say
+**Converted, no history**, in amber. Full history keeps **Converted** in green unless
+degraded content needs review. Errors that name a web address show it as a link.
+**Diagnose this file** narrows reproducible conversion failures, not visual problems in a
+converted result; its window opens below the top row. **Add matching STEP** can check a converted file locally against an export.
 
 The panel takes the invite, the limits, and the message from a small policy built into the app.
 Once a day at most, where update checks run, the app reads a newer copy from

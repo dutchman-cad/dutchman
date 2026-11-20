@@ -145,7 +145,11 @@ fn converted_results_with_missing_history_or_degraded_losses_use_warning_colour(
 fn rendered_partial_and_geometry_results_are_amber_in_both_themes() {
     for dark in [false, true] {
         let p = if dark { theme::NIGHT } else { theme::DAY };
-        for case in [1, 2, 3] {
+        for (case, label) in [
+            (1, "Converted"),
+            (2, "Partly converted"),
+            (3, "Converted, no history"),
+        ] {
             let h = harness(&[case], dark);
             let expected = if case == 1 { p.spectre } else { p.lantern_text };
             let text = h
@@ -153,7 +157,7 @@ fn rendered_partial_and_geometry_results_are_amber_in_both_themes() {
                 .shapes
                 .iter()
                 .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) if text.galley.job.text == "Converted" => Some(text),
+                    egui::Shape::Text(text) if text.galley.job.text == label => Some(text),
                     _ => None,
                 })
                 .unwrap();
@@ -300,7 +304,14 @@ fn save_report_panel_shot(
         .shapes
         .iter()
         .filter_map(|shape| match &shape.shape {
-            egui::Shape::Text(text) if text.galley.job.text == "Converted" => Some(text),
+            egui::Shape::Text(text)
+                if matches!(
+                    text.galley.job.text.as_str(),
+                    "Converted" | "Partly converted" | "Converted, no history"
+                ) =>
+            {
+                Some(text)
+            }
             _ => None,
         })
         .filter(|text| {

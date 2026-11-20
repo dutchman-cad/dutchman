@@ -1943,13 +1943,14 @@ impl App {
             .unwrap_or(360.0);
         // Bound long reviews and More so the input and output controls remain reachable.
         let report_height = measured.min(left.height() * 0.7);
-        let report_top = left.bottom() - report_height;
+        let pinned_top = left.bottom() - report_height;
+        let mut report_top = pinned_top;
         let choices = egui::Rect::from_min_max(
             left.min,
             egui::pos2(left.right(), report_top - theme::SPACE_4),
         );
         ui.scope_builder(egui::UiBuilder::new().max_rect(choices), |ui| {
-            ScrollArea::vertical()
+            let area = ScrollArea::vertical()
                 .id_salt("main-left")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -1957,6 +1958,11 @@ impl App {
                     ui.add_space(theme::SPACE_4);
                     self.output_panel(ui, ctx);
                 });
+            // Use spare room below compact controls, while retaining the pinned
+            // boundary when Advanced or a long input list needs its own scroll area.
+            if self.rows.len() == 1 {
+                report_top = (choices.top() + area.content_size.y + theme::SPACE_4).min(pinned_top);
+            }
         });
         let report = egui::Rect::from_min_max(egui::pos2(left.left(), report_top), left.max);
         ui.scope_builder(egui::UiBuilder::new().max_rect(report), |ui| {
@@ -3224,9 +3230,7 @@ enum Action {
 /// Completed designs with missing history or degraded content need review.
 fn result_colour(p: &Palette, report: Option<&Value>, view: &FileView) -> egui::Color32 {
     let needs_review = report
-        .and_then(|report| report.get("mode"))
-        .and_then(Value::as_str)
-        .is_some_and(|mode| matches!(mode, "partial_history" | "import"))
+        .is_some_and(|report| report.get("mode").and_then(Value::as_str) != Some("history"))
         || view
             .losses
             .iter()
@@ -4915,6 +4919,44 @@ mod tests {
         let (outcome, notes) = outcome_and_history("Editable history; unverified.", Some(&report));
         assert_eq!(outcome, "Editable history; unverified.");
         assert_eq!(notes.len(), 2);
+    }
+
+    #[test]
+    fn result_labels_keep_their_history_colours() {
+        for palette in [&theme::DAY, &theme::NIGHT] {
+            for (report, label, colour) in [
+                (
+                    json!({"ok": true, "mode": "partial_history"}),
+                    "Partly converted",
+                    palette.lantern_text,
+                ),
+                (
+                    json!({"ok": true, "mode": "import"}),
+                    "Converted, no history",
+                    palette.lantern_text,
+                ),
+                (
+                    json!({"ok": true}),
+                    "Converted, no history",
+                    palette.lantern_text,
+                ),
+                (
+                    json!({"ok": true, "mode": "history", "verification": {"status": "flattened"}}),
+                    "Converted, no history",
+                    palette.lantern_text,
+                ),
+                (
+                    json!({"ok": true, "mode": "history"}),
+                    "Converted",
+                    palette.spectre,
+                ),
+                (json!({"ok": false}), "Failed", palette.danger),
+            ] {
+                let view = FileView::from_report(&report);
+                assert_eq!(view.status_word, label);
+                assert_eq!(result_colour(palette, Some(&report), &view), colour);
+            }
+        }
     }
 
     #[test]
