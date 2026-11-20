@@ -801,6 +801,10 @@ After a conversion, **Output folder** folds into a summary. Click its folder pat
 **Change…** to reopen all output settings. **Clear** removes the designs and results and
 restores the expanded settings.
 
+In narrow desktop windows, **Report a problem…** (or **Report this design…** with a result
+selected) stays above **Convert** and scrolls to the full numbered cards in the page.
+See [reporting a problem](desktop.md#reporting-a-problem).
+
 Report consent is per report. In the desktop app, Discord is the first route, with a small
 **GitHub issue** backup link below the three steps. **Anonymous report** is under **More**,
 with AI help and diagnosis. It opens a review for the chosen file

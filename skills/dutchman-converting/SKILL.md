@@ -974,7 +974,9 @@ explicit consent. CLI users can preview with `dutchman report --folder FOLDER --
 supported in the anonymous envelope. Describe the problem privately or in the GitHub
 form without private names or paths. The desktop offers these actions in its always-open
 **Is there a problem? Is something missing?** panel, pinned below output controls in wide
-windows. Discord comes first; **GitHub issue** is a small backup link. **Anonymous report**
+windows. In narrow windows, **Report a problem…** (or **Report this design…** with a result
+selected) stays above **Convert** and scrolls to the full numbered cards in the page.
+Discord comes first; **GitHub issue** is a small backup link. **Anonymous report**
 is under **More**, alongside AI help and diagnosis. **Report this file…** selects the file
 in the same panel. Partial history, geometry-only and degraded results use a warning colour.
 Failure narrowing is for failed files.

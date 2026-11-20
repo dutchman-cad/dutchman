@@ -260,8 +260,11 @@ The window's title and top row show its version beside **Dutchman Convert**, for
 with `dutchman --version`).
 
 **Is there a problem? Is something missing?** is always in the window: at the bottom left,
-under **Output folder**, in a wide window, and at the end of the page in a narrow one. It is
-there before a run, while files convert, and after, whatever the cards say: Dutchman never
+under **Output folder**, in a wide window. In a narrow window, a compact bar above **Convert**
+keeps the question and **Report a problem…** visible. With a result selected, the button says
+**Report this design…**. Click it to scroll to the full panel and its three numbered cards at
+the end of the page; you can also scroll there yourself. The route is there before a run,
+while files convert, and after, whatever the cards say: Dutchman never
 decides for you that a result has no problem. **Report a problem**, at the top right beside
 the **System / Day / Night** theme switch, brings the same panel into view.
 
