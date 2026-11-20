@@ -268,7 +268,7 @@ impl<'a> Trial<'a> {
         prefix.sheet_rules = trial
             .sheet_rules
             .iter()
-            .map(|(thickness, name)| super::sheet::rule(name, *thickness))
+            .map(super::sheet::SheetRule::value)
             .collect();
         Some(Trial {
             ctx: trial,
@@ -562,7 +562,7 @@ fn solidcraft_regions(
     prefix.sheet_rules = ctx
         .sheet_rules
         .iter()
-        .map(|(thickness, name)| super::sheet::rule(name, *thickness))
+        .map(super::sheet::SheetRule::value)
         .collect();
     let remaining = MEASURE_BUDGET.saturating_sub(started.elapsed());
     if remaining.is_zero() {
@@ -660,7 +660,7 @@ fn body_scope(feature: &Value, ctx: &Context) -> Option<Vec<String>> {
         return None;
     }
     let selection = json!({"kind": "bodies", "value": outputs});
-    super::modify::body_names(&selection, ctx).ok()
+    super::modify::body_names(feature, &selection, ctx).ok()
 }
 
 /// Try the selected neutral curve identities first, then the whole carrier sketch. Native

@@ -174,6 +174,7 @@ pub(super) fn map(
         face: Some(proof),
         extra: None,
         trimmed: false,
+        path: false,
     });
     Ok((key, json!({"type": "all"})))
 }
@@ -423,6 +424,7 @@ impl EntryFace {
             face: Some(self.proof),
             extra: None,
             trimmed: false,
+            path: false,
         }
     }
 }

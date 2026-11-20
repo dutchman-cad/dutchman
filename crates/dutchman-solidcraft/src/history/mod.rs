@@ -16,6 +16,7 @@ mod crossing;
 mod datum;
 mod delete_face;
 mod dof;
+mod edge_path;
 mod extrude;
 mod face_profile;
 mod faces;
@@ -81,6 +82,8 @@ pub(crate) struct History {
     pub(crate) next_id: u64,
     /// New pattern instance sets must fall back if an attempted replay cannot finish.
     pub(crate) pattern_replay_required: bool,
+    /// Newly mapped topological picks cannot replace the original after an inconclusive check.
+    pub(crate) topological_replay_required: bool,
     /// Source features that became SolidCraft features or needed none.
     pub(crate) mapped: usize,
     /// Of those, the ones that needed no feature: a component insert, a joint, a default plane.
@@ -89,7 +92,7 @@ pub(crate) struct History {
     pub(crate) reapplied: usize,
     /// Active source features.
     pub(crate) total: usize,
-    /// Blends whose input edges wait for SolidCraft's replay of the history before them
+    /// Features whose input edges or faces wait for SolidCraft's replay before them
     /// ([`prove_blends`]); until then each has no body.
     pub(crate) blends: Vec<blend::Pending>,
     /// Ids of sketch features whose source sketch is hidden in the source.
@@ -368,6 +371,9 @@ impl History {
             };
             for key in ["id", "sketch", "path_sketch"] {
                 if let Some(id) = fields.get(key).and_then(Value::as_u64) {
+                    if key == "path_sketch" && id == 0 {
+                        continue;
+                    }
                     fields.insert(key.to_owned(), Value::from(id.saturating_add(offset)));
                 }
             }
@@ -540,7 +546,7 @@ impl History {
                     }
                 }
             }
-            for key in ["target", "body"] {
+            for key in ["target", "body", "path_body"] {
                 if let Some(value) = feature.get_mut(key) {
                     if let Some(old) = value.as_str() {
                         *value = Value::String(rename(old));
@@ -635,8 +641,12 @@ struct Context<'a> {
     /// All features making a composite pattern's instance set, including its seeds.
     pattern_features: BTreeMap<String, Vec<String>>,
     pattern_replay_required: bool,
+    topological_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
+    /// Bodies an earlier feature makes that the final model leaves out, under their names:
+    /// ((CADIR producing feature id, feature-local body id), name).
+    generated_bodies: Vec<((String, String), String)>,
     /// Trial names that must be discarded unless the complete source body check passes.
     confirming_consumed_bodies: bool,
     default_bodies: BTreeMap<String, String>,
@@ -649,8 +659,8 @@ struct Context<'a> {
     /// Whether a feature that builds geometry has been mapped.
     builds: bool,
     /// The sheet thicknesses (mm) its sheet-metal features use, each with its rule's name.
-    sheet_rules: Vec<(f64, String)>,
-    /// Blends and face profiles mapped so far, waiting for SolidCraft's replay to prove them.
+    sheet_rules: Vec<sheet::SheetRule>,
+    /// Blends, sweep paths and face profiles waiting for SolidCraft's replay to prove them.
     blends: Vec<blend::Pending>,
     /// Features the feature being mapped needs before it (a sketch of a face's boundary).
     extra: Vec<Value>,
@@ -706,7 +716,9 @@ impl<'a> Context<'a> {
             consumed_bends: std::collections::BTreeSet::new(),
             pattern_features: BTreeMap::new(),
             pattern_replay_required: false,
+            topological_replay_required: false,
             named_bodies: Vec::new(),
+            generated_bodies: Vec::new(),
             confirming_consumed_bodies: false,
             default_bodies: BTreeMap::new(),
             imported_regions: BTreeMap::new(),
@@ -777,6 +789,15 @@ impl<'a> Context<'a> {
         rows.get(id).map_or(&[], Vec::as_slice)
     }
 
+    /// Whether a body the history makes already has this name.
+    fn body_name_taken(&self, name: &str) -> bool {
+        self.named_bodies
+            .iter()
+            .map(|(_, known)| known)
+            .chain(self.generated_bodies.iter().map(|(_, known)| known))
+            .any(|known| known == name)
+    }
+
     /// A row of a CADIR arena by id.
     fn row(&self, arena: &str, id: &str) -> Option<&'a Value> {
         let rows = self.rows.get(arena)?.get_or_init(|| {
@@ -828,15 +849,42 @@ impl<'a> Context<'a> {
 
     /// The name of the sheet rule of `thickness` mm, made the first time it is asked for.
     fn sheet_rule(&mut self, thickness: f64) -> String {
-        if let Some((_, name)) = self
-            .sheet_rules
-            .iter()
-            .find(|(known, _)| (known - thickness).abs() < 1e-9)
-        {
-            return name.clone();
+        self.sheet_rule_of(thickness, None, None)
+    }
+
+    /// The name of the sheet rule of `thickness` mm with the given bend radius and K-factor
+    /// (SolidCraft's defaults where `None`), made the first time it is asked for.
+    fn sheet_rule_of(
+        &mut self,
+        thickness: f64,
+        radius: Option<f64>,
+        k_factor: Option<f64>,
+    ) -> String {
+        let same = |a: Option<f64>, b: Option<f64>| match (a, b) {
+            (None, None) => true,
+            (Some(a), Some(b)) => (a - b).abs() < 1e-9,
+            _ => false,
+        };
+        if let Some(known) = self.sheet_rules.iter().find(|known| {
+            (known.thickness - thickness).abs() < 1e-9
+                && same(known.radius, radius)
+                && same(known.k_factor, k_factor)
+        }) {
+            return known.name.clone();
         }
-        let name = format!("Sheet {thickness} mm");
-        self.sheet_rules.push((thickness, name.clone()));
+        let mut name = format!("Sheet {thickness} mm");
+        if let Some(radius) = radius {
+            name.push_str(&format!(" R{radius}"));
+        }
+        if let Some(k_factor) = k_factor {
+            name.push_str(&format!(" K{k_factor}"));
+        }
+        self.sheet_rules.push(sheet::SheetRule {
+            thickness,
+            radius,
+            k_factor,
+            name: name.clone(),
+        });
         name
     }
 
@@ -1515,10 +1563,11 @@ fn map_into(
     history.sheet_rules = ctx
         .sheet_rules
         .iter()
-        .map(|(thickness, name)| sheet::rule(name, *thickness))
+        .map(sheet::SheetRule::value)
         .collect();
     history.next_id = ctx.next_id;
     history.pattern_replay_required = ctx.pattern_replay_required;
+    history.topological_replay_required = ctx.topological_replay_required;
     history.blends = std::mem::take(&mut ctx.blends);
     Ok(history)
 }
@@ -1727,6 +1776,8 @@ fn split_blend(
 enum Proven {
     /// The blend is proven and emitted, with this many additional per-body operations.
     Bodies(usize),
+    /// A sweep path bound to the unique earlier body carrying all its edges.
+    Path,
     /// A face profile's sketch rewritten on the other side of its plane, if it had to be.
     Sketch(Option<Value>),
     /// A hole axis signed to enter the proven face.
@@ -1773,7 +1824,11 @@ pub(crate) fn prove_blends(
     let mut inserted = 0usize;
     for (index, (pending, marker)) in blends.iter().zip(&after).enumerate() {
         let proven = match (marker, &replayed) {
-            (None, _) => Err("no feature before it builds a body to blend".to_owned()),
+            (None, _) => Err(if pending.path {
+                "no feature before it builds a body carrying its path".to_owned()
+            } else {
+                "no feature before it builds a body to blend".to_owned()
+            }),
             (Some(_), Err(why)) => Err(format!(
                 "its input edges are found only on SolidCraft's replay of the history before \
                  it, and there is none: {why}"
@@ -1784,6 +1839,18 @@ pub(crate) fn prove_blends(
                 match at {
                     Some(Ok(replay)) => match &pending.face {
                         None => blend::prove(pending, &replay.bodies).and_then(|selections| {
+                            if pending.path {
+                                let [selection] = selections.as_slice() else {
+                                    return Err("its input edge path crosses several rebuilt bodies, which is not supported yet".to_owned());
+                                };
+                                let fields = history.features
+                                    .get_mut(pending.feature.saturating_add(inserted))
+                                    .and_then(Value::as_object_mut)
+                                    .ok_or("the mapped sweep is missing")?;
+                                fields.insert("path_body".to_owned(), json!(selection.body));
+                                fields.insert("path_edges".to_owned(), json!(selection.points));
+                                return Ok(Proven::Path);
+                            }
                             let added = selections.len().saturating_sub(1);
                             split_blend(
                                 history,
@@ -1851,9 +1918,13 @@ pub(crate) fn prove_blends(
             proven => proven,
         };
         match proven {
-            Ok(Proven::Bodies(added)) => {
+            Ok(proven @ (Proven::Bodies(_) | Proven::Path)) => {
+                let (added, path) = match proven {
+                    Proven::Bodies(added) => (added, false),
+                    _ => (0, true),
+                };
                 inserted = inserted.saturating_add(added);
-                if added > 0 && index.saturating_add(1) < blends.len() {
+                if (added > 0 || path) && index.saturating_add(1) < blends.len() {
                     // Later blends must see all per-body operations, including earlier
                     // radius groups. Their original last IDs remain rollback markers.
                     let remaining: Vec<u64> = after
@@ -1865,7 +1936,7 @@ pub(crate) fn prove_blends(
                     let faces = blends
                         .iter()
                         .skip(index.saturating_add(1))
-                        .any(|p| p.face.is_some());
+                        .any(|pending| pending.face.is_some());
                     replayed = replay(history, &remaining, faces);
                     step = 0;
                 }
@@ -1897,7 +1968,7 @@ pub(crate) fn prove_blends(
                         let faces = blends
                             .iter()
                             .skip(index.saturating_add(1))
-                            .any(|p| p.face.is_some());
+                            .any(|pending| pending.face.is_some());
                         replayed = replay(history, &remaining, faces);
                         step = 0;
                     }
@@ -2158,6 +2229,7 @@ fn map_feature(
         Some("draft") => Err("draft waits on input face geometry".to_owned()),
         Some("combine") => modify::combine(feature, definition, ctx).map(Mapped::Feature),
         Some("split_body") => modify::split(feature, definition, ctx).map(Mapped::Feature),
+        Some("delete_body") => modify::remove(feature, definition, ctx).map(Mapped::Feature),
         Some("mirror_shape") => Err(
             "replacing a source shape with its mirror is not supported yet; SolidCraft mirrors keep the original body".to_owned(),
         ),
@@ -2193,6 +2265,9 @@ fn map_feature(
         Some("sheet_metal_base_flange") => {
             sheet::base_flange(feature, definition, ctx).map(Mapped::Feature)
         }
+        Some("sheet_metal_contour_flange") => {
+            sheet::contour_flange(feature, definition, ctx).map(Mapped::Feature)
+        }
         Some("sheet_metal_edge_flange") => {
             sheet::edge_flange(feature, definition, ctx, preceding).map(Mapped::Feature)
         }
@@ -2212,6 +2287,7 @@ fn map_feature(
         Some("stored_geometry") => base::stored(feature, ctx, report).map(Mapped::Feature),
         Some("base_feature") if base::holds_none(definition) => Ok(Mapped::Nothing),
         Some("base_feature") => base::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("insert_bodies") => base::insert(feature, definition, ctx).map(Mapped::Feature),
         _ => Err(format!("{} is not mapped yet", kind(feature))),
     }
 }
@@ -2770,6 +2846,197 @@ mod tests {
         .result
         .unwrap_err();
         assert_eq!(err, "no feature in the history builds geometry");
+    }
+
+    /// A v11 feature row whose operation is `kind` with payload `value`.
+    fn op_row(
+        id: &str,
+        ordinal: u64,
+        name: &str,
+        kind: &str,
+        value: Value,
+        outputs: Value,
+    ) -> Value {
+        json!({"id": id, "ordinal": ordinal, "name": name, "suppressed": false,
+            "definition": {"kind": "operation", "value": {"kind": kind, "value": value}},
+            "dependencies": [], "source_properties": {}, "source_content": [], "outputs": outputs})
+    }
+
+    #[test]
+    fn a_body_the_final_model_omits_is_named_mirrored_and_removed() {
+        let model = json!({"features": [], "feature_result_topologies": [
+            {"id": "r", "output_of": "f:extrude", "members": [{"kind": "body", "id": "1"}]}]});
+        let mut ctx = Context::testing(&model);
+        let extrude = json!({"id": "f:extrude", "name": "Extrude 1", "outputs": []});
+        assert_eq!(
+            extrude::body_names(&extrude, &mut ctx, "new_body"),
+            Some(vec!["Body 1".to_owned()])
+        );
+        let generated = json!({"kind": "generated", "value": {
+            "bodies": [{"feature": "f:extrude", "local_id": "1"}], "native": "n"}});
+        let mut features = Vec::new();
+        let mirror = op_row(
+            "f:mirror",
+            3,
+            "Mirror 1",
+            "pattern",
+            json!({"seeds": [{"kind": "bodies", "value": generated}],
+                "pattern": {"kind": "mirror", "plane_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}}),
+            json!(["copy"]),
+        );
+        let Ok(Mapped::Feature(mapped)) =
+            map_feature(&mirror, &mut ctx, &mut Report::default(), &mut features)
+        else {
+            panic!("the mirror maps");
+        };
+        assert_eq!(mapped["bodies"], json!(["Body 1"]));
+        assert_eq!(mapped["combine"], json!(false));
+        let remove = op_row(
+            "f:remove",
+            4,
+            "Remove 1",
+            "delete_body",
+            json!({"bodies": generated, "mode": "delete_selected"}),
+            json!([]),
+        );
+        let Ok(Mapped::Feature(mapped)) =
+            map_feature(&remove, &mut ctx, &mut Report::default(), &mut features)
+        else {
+            panic!("the removal maps");
+        };
+        assert_eq!(mapped["type"], "remove");
+        assert_eq!(mapped["bodies"], json!(["Body 1"]));
+        assert_eq!(
+            map_feature(&remove, &mut ctx, &mut Report::default(), &mut features).err(),
+            Some("its generated body has no earlier mapped producer".to_owned())
+        );
+        let keep = op_row(
+            "f:keep",
+            5,
+            "Keep 1",
+            "delete_body",
+            json!({"bodies": generated, "mode": "keep_selected"}),
+            json!([]),
+        );
+        assert_eq!(
+            map_feature(&keep, &mut ctx, &mut Report::default(), &mut features).err(),
+            Some("removing every body except the selected ones is not supported yet".to_owned())
+        );
+        ctx.target_version = "0.30.0".parse().unwrap();
+        assert_eq!(
+            map_feature(&remove, &mut ctx, &mut Report::default(), &mut features).err(),
+            Some(
+                "removing a body is written for SolidCraft 0.40 or newer (target 0.30)".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn a_generated_body_name_is_not_given_to_a_later_body() {
+        let model = json!({"features": [], "bodies": [{"id": "b", "name": null}],
+            "feature_result_topologies": [
+                {"id": "r", "output_of": "f:first", "members": [{"kind": "body", "id": "1"}]}]});
+        let mut ctx = Context::testing(&model);
+        let first = json!({"id": "f:first", "outputs": []});
+        let later = json!({"id": "f:later", "outputs": ["b"]});
+        assert_eq!(
+            extrude::body_names(&first, &mut ctx, "new_body"),
+            Some(vec!["Body 1".to_owned()])
+        );
+        assert_eq!(
+            extrude::body_names(&later, &mut ctx, "new_body"),
+            Some(vec!["Body 2".to_owned()])
+        );
+    }
+
+    #[test]
+    fn a_mirror_of_the_one_body_in_its_input_state_joins_when_it_outputs_that_body() {
+        let state = |id: &str, of: &str, bodies: Value| {
+            json!({"id": id, "input_of": of, "bodies": bodies, "faces": [], "edges": [],
+                "vertices": [], "edge_geometry": []})
+        };
+        let model = json!({"features": [], "bodies": [{"id": "c", "name": null}],
+            "feature_input_topologies": [
+            state("one", "f:mirror", json!(["one:1"])),
+            state("two", "f:two", json!(["two:1", "two:2"])),
+            state("other", "f:else", json!(["other:1"]))]});
+        let mut ctx = Context::testing(&model);
+        ctx.named_bodies.push(("b".into(), "Body 1".into()));
+        let seed = |state: &str, body: &str| {
+            json!([{"kind": "bodies", "value": {"kind": "historical",
+                "value": {"state": state, "bodies": [body], "native": "n"}}}])
+        };
+        let plane = json!({"kind": "mirror", "plane_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "plane_normal": {"x": 0.0, "y": -1.0, "z": 0.0}});
+        let mirror = |id: &str, seeds: Value, outputs: Value| {
+            op_row(
+                id,
+                2,
+                "Mirror 1",
+                "pattern",
+                json!({"seeds": seeds, "pattern": plane.clone()}),
+                outputs,
+            )
+        };
+        let mut features = Vec::new();
+        let mut run = |row: &Value, ctx: &mut Context| match map_feature(
+            row,
+            ctx,
+            &mut Report::default(),
+            &mut features,
+        ) {
+            Ok(Mapped::Feature(mapped)) => Ok(mapped),
+            Ok(_) => Err("built nothing".to_owned()),
+            Err(reason) => Err(reason),
+        };
+        let joined = run(
+            &mirror("f:mirror", seed("one", "one:1"), json!(["b"])),
+            &mut ctx,
+        )
+        .unwrap();
+        assert_eq!(joined["bodies"], json!(["Body 1"]));
+        assert_eq!(joined["combine"], json!(true));
+        let copied = run(
+            &mirror("f:mirror", seed("one", "one:1"), json!(["c"])),
+            &mut ctx,
+        )
+        .unwrap();
+        assert_eq!(copied["combine"], json!(false));
+        assert_eq!(copied["body_names"], json!(["Body 2"]));
+        let removed = modify::remove(
+            &json!({"id": "f:remove"}),
+            &json!({"mode": "delete_selected", "bodies": {"kind": "bodies", "value": ["c"]}}),
+            &mut ctx,
+        )
+        .unwrap();
+        assert_eq!(removed["bodies"], copied["body_names"]);
+        assert_eq!(
+            run(
+                &mirror("f:two", seed("two", "two:1"), json!(["b"])),
+                &mut ctx
+            )
+            .unwrap_err(),
+            "a body from an earlier history state is not supported yet when that state holds \
+             several bodies"
+        );
+        assert_eq!(
+            run(
+                &mirror("f:mirror", seed("other", "other:1"), json!(["b"])),
+                &mut ctx
+            )
+            .unwrap_err(),
+            "its input body state belongs to another feature"
+        );
+        ctx.named_bodies.push(("d".into(), "Body 2".into()));
+        assert_eq!(
+            run(
+                &mirror("f:mirror", seed("one", "one:1"), json!(["b"])),
+                &mut ctx
+            )
+            .unwrap_err(),
+            "its one input body is not the one body an earlier feature named"
+        );
     }
 
     #[test]

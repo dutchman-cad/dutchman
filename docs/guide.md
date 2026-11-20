@@ -539,6 +539,11 @@ without looking for or launching an installed SolidCraft CLI.
 
 [Feature history and the SolidCraft check](history.md)
 
+Contour flanges map when cadmpeg supplies an open sketch chain of lines and arcs, a blind
+sweep along the sketch normal, and material on one side. Their thickness, bend radius and
+supplied K-factor become a sheet rule. Unsupported contour forms keep the original geometry
+and report the reason; see [sheet-metal history](history.md#sheet-metal).
+
 A trimmed profile region, including a revolve's, is selected by a point inside its boundary. When a
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
@@ -589,6 +594,22 @@ has not named". Older targets keep the previous mapping.
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
+
+For SolidCraft 0.44 and newer, sweep paths may select a connected open chain of proven input
+edges on one earlier body. Missing source geometry, ambiguous matches, topological guide rails, and older
+targets keep the original geometry and report a specific history blocker. Closed sweep
+paths, including loops assembled from open edges, still require a proven start and traversal
+direction and remain refused. An unavailable exact curve measurement blocks only the feature
+that needs it; earlier straight-edge blends remain editable. These proofs
+require a SolidCraft replay for body-edge selections; `--no-verify` cannot establish those
+edges. A stored sketch wire instead resolves to its owning earlier sketch when every edge
+matches one entire mapped curve, including the midpoint and length of an arc.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
 
 
 Offset datum planes need no building feature when their support resolves or all their
@@ -921,3 +942,12 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](json.md).
+
+## Orient a Y-up design
+
+Use `--stand-up` with `convert` or `convert-all` to rotate a Y-up design +90°
+about +X, so its +Y axis becomes SolidCraft's +Z axis. Source axes are preserved
+by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
+`convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
+cannot be combined. This changes the saved design's orientation, while history
+checks use the source coordinates.
