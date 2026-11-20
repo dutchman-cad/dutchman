@@ -189,15 +189,26 @@ with a parameter and at most four loose points (nothing in the source fixes them
 where it was drawn, tied to the origin when it sits there and otherwise at its drawn distance
 from it, so one edit cannot move it across the profile.
 
-Cosmetic thread features carry an exact ISO metric diameter and pitch, with a blind length
-or the whole cylindrical face. A missing standard or designation does not block a known
-metric size: `3 mm` and `0.5 mm` become `M3x0.5` without rounding. The face must resolve to a
-complete cylindrical band between two circular rims. Historical face IDs without input
-surface geometry remain unresolved; Dutchman does not infer faces from opaque ID text.
-Modeled threads, conflicting designations, nonmetric standards, and unresolved extents or
-face geometry remain reported losses. When the source does not resolve whether the thread is
-modeled, the annotation is kept with a Degraded note; helical geometry is not reconstructed.
-Cosmetic annotations do not change the body's geometry.
+Cosmetic thread features use the designation's nominal ISO metric size, with a blind length
+or the whole cylindrical face. Secondary diameter and pitch numbers may be rounded to their
+stated decimal precision; floating-point unit-conversion noise does not create a conflict.
+Integer numbers must agree apart from arithmetic roundoff. A designation without a pitch
+uses the ISO coarse series, so a conflicting explicit pitch is reported. A missing standard
+or designation does not block a known metric size: `3 mm` and `0.5 mm` become `M3x0.5`
+without rounding. A genuine contradiction names the designation's dimensions and the
+secondary numbers and asks you to check the source thread table.
+
+UNC/UNF designations are checked in millimetres (25.4 mm per inch), with pitch expressed as
+millimetres or threads per inch. Even when those numbers agree, a separate UNC/UNF cosmetic
+Thread feature remains not supported yet by SolidCraft; this limitation is reported rather
+than mislabeling it as an ISO metric thread. Tapped-hole support is separate.
+
+The face must resolve to a complete cylindrical band between two circular rims. Historical
+face IDs without input surface geometry remain unresolved; Dutchman does not infer faces
+from opaque ID text. Modeled threads, unsupported designation controls, other standards,
+and unresolved extents or face geometry remain reported losses. When the source does not
+resolve whether the thread is modeled, the annotation is kept with a Degraded note; helical
+geometry is not reconstructed. Cosmetic annotations do not change the body's geometry.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain

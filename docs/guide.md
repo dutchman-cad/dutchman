@@ -586,6 +586,12 @@ without looking for or launching an installed SolidCraft CLI.
 
 [Feature history and the SolidCraft check](history.md)
 
+Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
+secondary numeric values. ISO metric table designations tolerate decimal rounding and
+floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
+separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
+[cosmetic threads](history.md) for details.
+
 One stored sketch loop does not prove a native profile selection when other solid
 curves remain, including curves needed by a later trimmed cut. Dutchman requires
 source-confirmed inference in that case; otherwise it preserves the final shape
@@ -1058,7 +1064,6 @@ by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.
-
 
 Parallel directed hole placements on one entry plane can supply complete locations
 without a source sketch. For SolidCraft 0.44.1 or newer, Dutchman writes an editable

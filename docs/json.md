@@ -186,7 +186,10 @@ Sketch losses describe unresolved distance operands and ambiguous curve-only coi
 specifically, including dimension values that match neither the line nor its finite endpoint. Cosmetic thread blockers distinguish missing diameter/pitch from historical
 faces without input surface geometry. Unspecified modeled construction, when an annotation
 can be placed, adds a Degraded loss explaining that only the cosmetic annotation is kept.
-These use the existing loss fields; no report schema or field changes.
+Cosmetic thread contradictions name the designation’s nominal dimensions and secondary numeric
+values. Decimal rounding and floating-point conversion noise are accepted for metric labels.
+A matching UNC/UNF designation reports the separate SolidCraft cosmetic Thread limitation
+instead of a numeric conflict. These use the existing loss fields; no report schema or field changes.
 
 When bodies belonging only to inactive configurations are left out, `losses` includes an
 Info entry with code `dutchman/configuration.inactive-bodies-left-out`, subject

@@ -621,6 +621,12 @@ Entry recesses with drill points report "SolidCraft holes take a drill point onl
 plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
 points, but Dutchman retains this limit for compatibility with older releases.
 
+Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
+secondary numeric values. ISO metric table designations tolerate decimal rounding and
+floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
+separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
+[cosmetic threads](history.md) for details.
+
 Offset datum planes need no building feature when their support resolves or all their
 consumers carry independent resolved sketch placements. Otherwise the history reason
 names the unresolved plane reference; resolved skipped planes count as `not_needed`.
@@ -1284,7 +1290,6 @@ Each history row in `dutchman.convert/1` and `dutchman.inspect/1` now includes
 can have several ids; dropped or merged rows have none. Inspection returns empty ids
 with `not_written`. These fields are additive; schemas and existing fields are unchanged.
 See [the JSON report reference](json.md) for the matching values.
-
 
 ## Counts-only anonymous reports
 

@@ -407,6 +407,11 @@ threads, and entry recesses with drill points block history: explain the reporte
 "SolidCraft holes take a drill point only on a plain drilled hole" means SolidCraft 0.21.0
 ignores drill points on counterbores and countersinks; conversion keeps the original geometry.
 
+Cosmetic thread contradictions name both the designation's nominal size and secondary
+numeric values. Metric labels tolerate decimal rounding and unit-conversion noise.
+Matching UNC/UNF values still report that SolidCraft's separate cosmetic Thread feature
+is not supported yet; tapped-hole support does not imply separate Thread support.
+
 Planar hole-entry faces can have rounded corners or existing circular holes. Their own
 source boundary and SolidCraft replay must prove the face before drilling; placements must
 stay inside the filled face and drill inward. A blocked boundary or replay reason means the
@@ -1228,7 +1233,6 @@ can have several ids; dropped or merged rows have none. Inspection returns empty
 with `not_written`. These fields are additive; schemas and existing fields are unchanged.
 See [the JSON report reference](../../docs/json.md) for the matching values.
 
-
 ## Counts-only anonymous reports
 
 Use `--report-counts --report-anon FILE` with `convert` or `convert-all` to write
@@ -1261,7 +1265,6 @@ by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.
-
 
 Parallel directed hole placements on one entry plane can supply complete locations
 without a source sketch. For SolidCraft 0.44.1 or newer, Dutchman writes an editable
