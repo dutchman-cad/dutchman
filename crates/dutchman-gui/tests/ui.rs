@@ -3932,8 +3932,10 @@ mod paste_inputs {
     #[test]
     fn onshape_open_enables_only_for_a_document_link_and_keeps_text_paste_in_the_field() {
         let mut h = window(true);
+        h.get_by_label("Onshape connected ✓").click_accesskit();
+        h.run_steps(4);
         assert!(h.get_by_label("Open").accesskit_node().is_disabled());
-        let field = h.get_by_label("or paste an Onshape link");
+        let field = h.get_by_label("Paste your Onshape Part Studio link");
         assert_eq!(field.accesskit_node().value().unwrap_or_default(), "");
         field.focus();
         h.step();
@@ -3942,7 +3944,8 @@ mod paste_inputs {
         assert!(h.get_by_label("Open").accesskit_node().is_disabled());
         assert!(h.query_by_label("Download file").is_none());
         // Replace the text through ordinary keyboard editing, preserving the focused field.
-        h.get_by_label("or paste an Onshape link").click_accesskit();
+        h.get_by_label("Paste your Onshape Part Studio link")
+            .click_accesskit();
         h.input_mut().events.push(egui::Event::Key {
             key: egui::Key::A,
             physical_key: None,
@@ -4034,6 +4037,20 @@ mod paste_inputs {
             .starts_with(output.path()));
         assert!(h.state().rows()[0].report.is_some());
         assert_bundle_survives_exit(h, output.path());
+    }
+
+    #[test]
+    fn saving_without_a_pending_link_focuses_the_account_link_field() {
+        let mut h = window(false);
+        h.state_mut()
+            .set_clipboard_for_test(|| (vec![], LINK.into()));
+        h.state_mut().preview_onshape_saved("Test designer");
+        h.run_steps(4);
+        let field = h.get_by_label("Paste your Onshape Part Studio link");
+        assert_eq!(field.accesskit_node().value().as_deref(), Some(LINK));
+        assert!(field.accesskit_node().is_focused());
+        assert!(h.query_by_label("Your Onshape API keys").is_none());
+        assert!(h.state().rows().is_empty());
     }
 
     #[test]
@@ -4623,5 +4640,57 @@ fn report_flow_case_screenshots() {
     } else {
         std::fs::write(dir.join("MEASUREMENTS.md"), measurements).unwrap();
         std::fs::write(dir.join("INDEX.md"), index).unwrap();
+    }
+}
+
+fn many_results_onshape_harness(
+    out: &Path,
+    theme: ThemePreference,
+    connected: bool,
+) -> Harness<'static, App> {
+    let size = dutchman_gui::FIT_SIZE;
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(size[0], size[1]))
+        .build_eframe(|cc| test_app(cc));
+    h.ctx.set_theme(theme);
+    h.state_mut()
+        .preview_onshape(connected.then_some("Test designer"));
+    let folder = out.join("Designs");
+    std::fs::create_dir_all(&folder).unwrap();
+    for name in [
+        "generated_unit_cube.f3d",
+        "synthetic_cube.ipt",
+        "solidworks_cube.sldprt",
+    ] {
+        std::fs::copy(fixture(name), folder.join(name)).unwrap();
+    }
+    h.state_mut().add_inputs([folder]);
+    h.state_mut().set_out_dir(out.join("converted"));
+    h.state_mut().set_verify(false);
+    h.run_steps(8);
+    h.get_by_label("Advanced").click_accesskit();
+    h.run_steps(8);
+    convert(&mut h);
+    h.get_by_label("Change…").click_accesskit();
+    h.run_steps(8);
+    h
+}
+
+#[test]
+fn connected_onshape_keeps_results_in_their_own_column() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let out = tempfile::tempdir().unwrap();
+        let mut h = many_results_onshape_harness(out.path(), theme, true);
+        assert_eq!(h.state().rows().len(), 3);
+        assert!(!h.state().page_scrolls());
+        assert!(h
+            .query_by_label("Paste your Onshape Part Studio link")
+            .is_none());
+        let convert = h.get_by_label("Convert").rect();
+        assert!(h.get_by_label("Open diagnostics folder").rect().bottom() <= convert.top());
+        h.get_by_label("Onshape connected ✓").click_accesskit();
+        h.run_steps(4);
+        h.get_by_label("Paste your Onshape Part Studio link");
+        assert!(!h.state().page_scrolls());
     }
 }

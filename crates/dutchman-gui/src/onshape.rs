@@ -86,6 +86,12 @@ impl Panel {
         }
     }
 
+    pub(crate) fn offer_link(&mut self, clipboard: &str) {
+        self.open = true;
+        self.focus_link = true;
+        crate::paste::prefill_onshape(&mut self.link, clipboard);
+    }
+
     pub(crate) fn keep_link(&mut self, link: String) {
         self.link = link;
         self.continue_link = true;

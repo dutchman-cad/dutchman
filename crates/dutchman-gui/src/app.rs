@@ -136,8 +136,6 @@ pub struct App {
     doctor: Option<crate::doctor::Page>,
     onshape: crate::onshape::Panel,
     intake: crate::paste::Inbox,
-    onshape_link: String,
-    focus_onshape_link: bool,
     output_picker: Box<dyn Fn(Sender<Message>, egui::Context)>,
     clipboard: Box<dyn Fn() -> (Vec<PathBuf>, String)>,
     project_summary: String,
@@ -455,8 +453,6 @@ impl App {
             doctor: None,
             onshape: crate::onshape::Panel::new(&cc.egui_ctx),
             intake: crate::paste::Inbox::new(),
-            onshape_link: String::new(),
-            focus_onshape_link: false,
             output_picker: Box::new(|sender, ctx| worker::pick(Pick::Output, sender, ctx)),
             clipboard: Box::new(crate::paste::clipboard),
             project_summary: String::new(),
@@ -1806,16 +1802,14 @@ impl App {
         if self.diagnosis.as_mut().is_some_and(|wizard| wizard.ui(ctx)) {
             self.diagnosis = None;
         }
-        let was_connected = self.onshape.connected();
         let onshape_link = self.onshape.poll();
         self.intake.bearer_token_file = self.onshape.bearer_token_file.clone();
         if let Some(link) = onshape_link {
             self.queue_link(crate::paste::Source::Onshape(link), ctx);
         }
-        if std::mem::take(&mut self.onshape.saved) || (!was_connected && self.onshape.connected()) {
+        if std::mem::take(&mut self.onshape.saved) && !self.running() {
             let (_, clipboard) = (self.clipboard)();
-            crate::paste::prefill_onshape(&mut self.onshape_link, &clipboard);
-            self.focus_onshape_link = true;
+            self.onshape.offer_link(&clipboard);
         }
         self.receive_links(ctx);
         self.take_dropped_files(ctx);
@@ -2380,34 +2374,27 @@ impl App {
                     },
                 );
             });
-            ui.horizontal_wrapped(|ui| {
-                if let Some(available) = self.estimate_available().filter(|bytes| *bytes > 0) {
-                    ui.label(
-                        RichText::new(format!("{:.1} GB of memory free", gigabytes(available)))
-                            .small()
-                            .color(p.tide),
-                    );
-                }
-                ui.small(if cfg!(target_os = "macos") {
-                    "Drop, or paste files or links (⌘V)"
-                } else {
-                    "Drop, or paste files or links (Ctrl+V)"
-                });
-            });
-            if self.onshape.connected() {
-                let focus = std::mem::take(&mut self.focus_onshape_link);
-                let enabled = !self.running();
-                if crate::onshape::link_ui(
-                    ui,
-                    &mut self.onshape_link,
-                    "or paste an Onshape link",
-                    focus,
-                    enabled,
-                ) {
-                    let link = std::mem::take(&mut self.onshape_link);
-                    self.queue_link(crate::paste::Source::Onshape(link), ui.ctx());
-                }
-            }
+            ui.allocate_ui_with_layout(
+                egui::vec2(
+                    ui.available_width(),
+                    ui.text_style_height(&egui::TextStyle::Small),
+                ),
+                Layout::left_to_right(Align::Center).with_main_wrap(true),
+                |ui| {
+                    if let Some(available) = self.estimate_available().filter(|bytes| *bytes > 0) {
+                        ui.label(
+                            RichText::new(format!("{:.1} GB of memory free", gigabytes(available)))
+                                .small()
+                                .color(p.tide),
+                        );
+                    }
+                    ui.small(if cfg!(target_os = "macos") {
+                        "Drop, or paste files or links (⌘V)"
+                    } else {
+                        "Drop, or paste files or links (Ctrl+V)"
+                    });
+                },
+            );
         });
     }
 
