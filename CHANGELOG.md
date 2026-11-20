@@ -8,6 +8,239 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.3.0 (2026-11-20)
+
+### Known issues
+
+- A kept feature can replay from the wrong sketch region and still be counted as kept; the final
+  shape is unaffected, because it comes from the source design
+  ([dutchman-cad/dutchman#489](https://github.com/dutchman-cad/dutchman/issues/489)).
+- Some large Fusion `.f3d` designs reach the 900 s limit for one file while being read
+  ([dutchman-cad/dutchman#604](https://github.com/dutchman-cad/dutchman/issues/604)).
+
+### Formats
+
+- Open Fusion, Inventor, SolidWorks and FreeCAD files straight from SolidCraft with the Dutchman plugin, keeping editable history.
+- See what could not be carried over in SolidCraft's Import report, one plain line per kind of loss ("Parts of the file kept as-is", "Sketches carried over with changes").
+- The plugin checks the editable history in SolidCraft itself, so a history that matches the original geometry opens as the visible model.
+- A Fusion design whose only bodies are meshes without a mesh-import feature, such as a
+  mesh-workspace design, now says how many mesh bodies it has and that Dutchman does not convert
+  meshes yet. Convert the meshes to solids in Fusion and save a new copy.
+- Siemens NX parts (`.prt`) now convert their geometry, as solids and surfaces SolidCraft
+  can import; feature history is not carried yet.
+- Convert offline Onshape Part Studio bundles, keeping editable sketches and supported solid features.
+- Preserve the final STEP shape with named losses when a feature or selection is not supported yet.
+- Refuse bundles marked inconsistent, while continuing to read older v1 bundles.
+- Stand up keeps placed components, hidden bodies, and checked editable fillets intact.
+- Input-folder failures stop plugin conversion before a partial design is written; requested
+  part positions also apply inside external assemblies.
+- Large plugin reports show dropped and degraded losses first and say explicitly when details
+  are shortened.
+
+### History
+
+- A Fusion Base Feature whose body later features change (an offset face, a fillet, a deleted
+  face) now keeps its editable history: Dutchman imports the body as it stood when the Base
+  Feature ended and rebuilds the later features on it.
+- Keep circular rims editable as fillets and equal-setback chamfers when targeting
+  SolidCraft 0.44.1 or newer, including rims rebuilt with a different seam or several edges.
+- Keep the selected SolidCraft patch release when converting, so feature checks and file
+  extensions follow `--solidcraft-version`.
+- Require exact source circle geometry and select rims only on their original body, so
+  elliptical edges and coincident rims on another body cannot receive the wrong blend.
+- Keep captured Derived body booleans editable alongside selections named by earlier features and their input states.
+- Fillets and chamfers on a full circle, such as the rim of a hole or a pin, keep editable
+  history when targeting SolidCraft 0.44.1 or newer, including unequal chamfers when the
+  source shape proves their face order.
+- Preserve clockwise sketch arcs, rounded corners and slot boundaries when rebuilding
+  editable history, including sketches on reversed planes.
+- Keep editable contour flanges made from an open sketch chain, including their thickness,
+  bend radius and supplied K-factor.
+- Parameter expressions with a degree sign (118°) keep their expression.
+- Keep decoded 3D sketch dimensions, joins, axis directions and endpoint tangencies when
+  targeting SolidCraft 0.44 or newer, without adding relations from endpoint proximity.
+- Convert selected planar loops from 3D sketches into extrudes when the source body check confirms the result.
+- Keep large 3D sketch relation lookups efficient and refuse planar profile copies that exceed the constraint budget.
+- Fusion Copy/Paste Bodies into another component keeps its editable history when cadmpeg reads it
+  as a paste: the copies are imported where the paste stands in the timeline, under Fusion's name.
+- Fusion bodies that are mirrored and then removed keep editable history: the mirror and the
+  Remove step rebuild instead of falling back to the imported shape.
+- A Fusion mirror of the design's only body keeps editable history, and joins its copy to that
+  body when Fusion did.
+- Symmetric Fusion patterns, with copies on both sides of the original, rebuild in place.
+- Keep editable holes on proven planar faces with rounded corners or existing circular holes.
+- A hole drilled into a face of a box primitive now converts to a SolidCraft hole instead of being refused.
+- Tapped blind holes keep their thread length, and left-hand threads their hand, for
+  SolidCraft 0.40 and newer; SolidCraft 0.43 and newer also keep an ISO tolerance class.
+- Keep editable attached plates and their bends on L-shaped and notched sheet-metal bases
+  when the actual attachment edge can be proven.
+- Preserve rectangular attached plates when their sketch coordinates are far from the origin.
+- An extrude whose sketch profile Fusion does not record is now kept when exactly one region of
+  its sketch, rebuilt in SolidCraft, matches the original. Incomplete measurements, unproven
+  region selections, a tie or no match keep it out.
+- The last fillet or chamfer of a part is kept the same way when its edges cannot be found
+  exactly on the rebuilt body.
+- The JSON report marks such features `inferred`, never exact, with what they were measured
+  against.
+- Keep selected bodies for more extrude joins, cuts and intersections on SolidCraft 0.44, at the final body-building feature when the source geometry confirms them.
+- Keep names for consumed boolean tools on SolidCraft 0.44 only when the source retains their producer’s unambiguous history body or a complete replay matches the source; otherwise stop editable history at the later selection.
+- Keep editable features that select narrow profile regions, such as small belt tooth gaps, when their boundaries prove a unique interior point.
+- Refuse narrow profile picks when merging sketch points could move a boundary past the pick.
+- Keep a complete extrusion profile when another feature selects a region that unused curves, such as a notch drawn from the profile's edge, cut out of it. SolidCraft used to refuse the extrude ("unknown complete source profile").
+- Keep final Onshape geometry with a specific loss when thin walls, attachment frames, next-face extents or required hole facts are unresolved.
+- Refuse ambiguous regions, malformed options and stale variable bindings before they can change an editable result.
+- Read complete dimensioned arithmetic and bound bundle JSON and history in one resource session.
+- Convert Onshape holes whose scope names the body's creator after an earlier hole modified it, while retaining checks against contradictory selections.
+- Keep Onshape feature dependencies in operand order, with named losses when producer, scope or wall-side evidence is missing.
+- Preserve finite thread depth in through bores and complete midpoint relations within the selected resource budget.
+- Continue converting supported records when one feature, sketch, body or bundle member cannot be read.
+- Keep captured Onshape Derived Part Studios linked to local SolidCraft designs, with following body booleans editable.
+- Check each referenced studio at its own pinned version; report missing Boolean choices while continuing conversion.
+- Safely share identical companion designs between parallel conversions while preserving edited companions.
+- Explain which custom Onshape feature stops history and why its frozen shape cannot be proved, while keeping the final shape.
+- Keep Onshape ellipses, repeated trimmed regions, blends, revolve axes and holes editable, and thin walls editable when their stored controls and body selections resolve.
+- Carry symmetric extrudes and variable expressions with their units; convert sketch-only and multi-part Part Studios with part names and colours.
+- Prove up-to-next extents from stored input faces and region holes from closed boundaries; keep the final shape with a named loss when required data is missing.
+- Keep default-plane sketches and explicit sketch-region extrudes editable when Onshape bundles use compressed REST queries.
+- Keep face-attached Onshape sketches editable when their saved placement is complete, including at the start of a history.
+- Keep the final shape with a named loss when a saved placement is missing, malformed or contradicts its support plane.
+- Onshape sketch points coincident with the Origin, and Midpoint relations, now come across
+  as SolidCraft constraints, so those sketches stay fully constrained.
+- Dropped Onshape sketch constraints name their source kind and the reason.
+- Keep face-attached Onshape sketches editable using placements saved by a fresh fetch.
+- Explain missing placements in older bundles and keep their final shape; fetch again to capture the frames.
+- Keep Onshape fillets and chamfers with tangent propagation (Onshape's default) editable: they round or cut exactly the edges Onshape did.
+- Keep fillets and chamfers editable when their edges include arcs left by an earlier round.
+- Onshape tapped holes convert as editable holes with their ISO metric thread label, and
+  blind Onshape holes keep their drill point.
+- More offsets of perforated planar faces retain editable history, including thin frames
+  whose interior points were previously missed.
+- When the target is SolidCraft 0.44 or newer, an extrude that starts on or ends at a flat
+  face at a slant to its sketch stays editable.
+- Keep Fusion Split Body editable with plane or coplanar face tools on SolidCraft 0.40 and newer.
+- Bring along bodies stored earlier in the timeline so a Split can rebuild them, reusing an earlier Base Feature import when available.
+- Keep later editable features when a new-body extrude, revolve, sweep or loft needs a profile or path absent from the source and retains a stored result, after mapping and measured inference fail.
+- Keep existing refusal reasons for unsupported recipes and unconfirmed selections in sketches that the source contains.
+- A surface revolve of open sketch curves, such as a single line, keeps its history instead of
+  being written as a profile SolidCraft cannot build.
+- Keep editable sweep paths selected from connected edges when each input edge matches its source geometry.
+- Keep the original shape and position visible when checking cannot confirm a new topological edge history.
+- Refuse closed sweep chains made from open edges until their start and
+  traversal direction can be proven.
+- Chamfers with two different distances, or a distance and an angle other than 45 degrees,
+  keep editable history on straight edges and circular rims when the source shape proves
+  which face takes the distance. Each body's cut is checked in SolidCraft.
+- Designs with surface bodies are checked against the original again on SolidCraft 0.23 and
+  newer, instead of being reported as unverified.
+
+### Assemblies
+
+- The SolidCraft plugin refuses oversized referenced parts before reading their bytes.
+- A SolidWorks assembly whose part files cannot be found now says so ("none of the assembly's parts could be found or read") instead of saying its parts have no geometry SolidCraft can import.
+
+### Desktop app
+
+- Choosing a `solidcraft-cli` older than the oldest SolidCraft Dutchman supports (0.18.2) now says
+  so, instead of using it.
+- Paste copied files, local paths, Onshape links, or direct HTTPS CAD file links into the desktop app. Online downloads ask first and show progress with the conversion results.
+- Connecting Onshape now hides saved keys, shows your connected account, and puts the Part Studio link field in the main window. Pasted links continue after setup, with an output-folder picker when needed.
+- While a design's history is built, the desktop app and the command line show which feature
+  it is on, such as "Feature 29 of 37 · Extrude 1", and say when SolidCraft is checking a
+  feature by measurement, which takes longer.
+- The desktop feature progress bar fills the results card width and tracks the current
+  feature count; the converting card omits the format capability line.
+- Keep Onshape links and confirmed file downloads available alongside public Fusion and Google Drive share links.
+- Keep fetched Onshape bundles beside converted designs, with Show bundle and Send to Dutchman actions for private sharing without keys.
+- Paste a public Fusion or Google Drive file link, or drop its saved link shortcut, to
+  download and convert it.
+  The command line also accepts links with `dutchman convert <url>`.
+- Private links and shares without public downloads explain how to download the file yourself.
+- "Is there a problem? Is something missing?" is always in the window, at the bottom left: join
+  our Discord server, then DM Dutchy, with a GitHub issue as the backup. Report a problem in the
+  top row and Report this file… on every result card open it. Output settings fold after
+  conversion; click the folder path or Change… to reopen them.
+- The copied DM says what happened and leaves a line for your own words, and each step shows on
+  its own card what it did. The anonymous review opens in the panel instead of another window,
+  and keeps the SolidCraft version that checked the file. The secondary pills are
+  Anonymous report and GitHub issue; private bundles use their own size for sending.
+- Stop promptly ends the converter and its children; partial histories and large
+  estimates show in the warning colour.
+- Keep problem reporting visible with Advanced and output choices expanded; choose a result to report that file in the shared panel.
+- Show partial history, geometry-only and degraded results in the warning colour.
+- Keep Discord first, with a small GitHub backup link and anonymous review and file diagnosis reachable under More.
+- Keep insecure share links refused with an error that omits the original link.
+- Check missing-SolidCraft guidance even on machines that find its CLI on PATH.
+
+### Command line and install
+
+- Add `--stand-up` and `--no-stand-up` options to rotate Y-up models (such as older Fusion 360
+  designs) +90° about +X into SolidCraft's Z-up coordinate system. Source axes are preserved by
+  default.
+- Fetch your Onshape documents with an OAuth bearer token from a private file or environment
+  variable, through the command line, MCP, or desktop app.
+- Mixed credentials are refused, tokens stay out of reports and logs, and expired tokens come
+  with instructions for reconnecting.
+- Token files stay checked when their path changes; Windows directs you to the environment
+  variable, and switching from key editing restores the desktop's document-link controls.
+- Connect Onshape from the app (a Connect Onshape window with Test connection, Save and
+  Disconnect, and Open from Onshape for a pasted Part Studio link) or with
+  `dutchman onshape login`, `logout` and `status`. Keys are kept in the system credential
+  store, or a private file Dutchman creates itself where there is none. Environment variables
+  still override both for scripts, and no setup of files or permissions is needed.
+- Fetch your own Onshape Part Studios and assemblies into offline bundles with feature data,
+  input topology, and STEP verification geometry, using your own API keys and a local cache.
+- Bound API calls and verify workspace consistency before writing; use version links for
+  immutable snapshots, or refetch once when a workspace changes.
+- Selecting an Onshape token file alongside API-key environment variables now reports the authentication conflict consistently on Windows and Unix.
+- Refuse share links that resolve to local, private or cloud metadata addresses.
+- Keep share downloads within their total time limit, including stalled DNS and TLS.
+- Remove CLI download scratch files on cancellation, errors and closed output pipes.
+- Designs open in SolidCraft 0.18.2 to 0.44.
+- SolidCraft 0.44 is the newest known target.
+- Attach `dutchman-plugin-X.Y.Z.zip` to each release: Dutchman as a SolidCraft plugin, which
+  opens Fusion, Inventor, SolidWorks, and FreeCAD files in SolidCraft with editable history.
+  Install it from Preferences > Plugins in SolidCraft 0.44 or newer (desktop only for now); see
+  `docs/solidcraft-plugin.md`.
+- On Windows, the command line no longer crashes with a stack overflow (exit 0xC0000409),
+  for example when refusing an IGES file: it now runs with the same stack on every platform.
+
+### Reports
+
+- `dutchman contents` and the MCP `contents` tool list a file's bodies, feature timeline and
+  parameters, and say for each feature whether it maps to SolidCraft, needs SolidCraft's check,
+  or is not supported yet and why. Nothing is converted or written, and SolidCraft is not run.
+- Assembly-owned features and parameters appear under their component paths in contents reports.
+- Contents checks cover builds with and without the FreeCAD reader.
+- Link each history row to the features it produced in the saved design, including split features and assembly parts.
+- Add output links within the existing version 1 reports, keeping their schemas and fields unchanged.
+- Stop reporting lost Onshape variable links for suppressed features and variables used only by them.
+- Choose a counts-only anonymous report with fixed categories and no messages or file identifiers.
+- Write the same profile from the command line and MCP, then review it before sharing.
+- Avoid long pauses when reporting many attributes scoped to placed instances or evaluation states.
+- The README and the history guide now state the exact tolerances Dutchman uses to check a history in SolidCraft.
+- Conversion reports, from the command line, the MCP server and batch runs, carry `verification_tolerances`: the numbers the check used for that run.
+
+### cadmpeg
+
+- Keep definition-level body and face colours with the updated CAD reader.
+- Report colours and attributes that belong to one placed instance or an evaluation state instead
+  of applying them to every placement.
+- Keep native conversion and editable history working with cadmpeg's CADIR v11.
+- Keep diagnostic checks and minimum reproductions working with v11 geometry.
+- Preserve trimmed face colours and point-to-line sketch dimensions with v11 geometry.
+
+### Docs
+
+- The cadmpeg canary issue lists the first compiler errors; colour codes in the build log left
+  its error block empty.
+- ARM merge queue checks use a faster linker and record link times for diagnosing slow builds.
+- Linux checks skip lengthy toolchain deletion when the runner already has ample free disk.
+- Merge queue checks finish without waiting for release archives and installers; tags and explicit builds still check release packaging.
+- Merge queue image checks reuse the programs built for placement checks, while keeping conversion, MCP and web smoke tests.
+- Pull requests get fast Linux checks; the merge queue checks all platforms and release
+  packages together. Run the full matrix on a PR branch by starting CI manually.
+- Dutchman website links now use https://dutchmancad.xyz/, including test-file recipes.
+
 ## 0.2.10 (2026-11-16)
 
 ### Known issues
