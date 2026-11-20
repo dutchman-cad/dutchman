@@ -58,6 +58,11 @@ kept. Compressed REST queries can resolve built-in plane frames and explicit ske
 region boundaries. Do not treat a deterministic region ID as a whole-sketch pick;
 explain a refused boundary using its specific loss. The ordinary history/verification
 report still applies. See `docs/onshape.md`.
+An active custom FeatureScript feature names why a frozen step cannot be proved:
+bundle format 1 has no complete per-feature body geometry. Explain that rollback
+bodydetails supply selections and STEP supplies only the final shape. Use the retained
+final shape; do not promise that fetching v1 again will make custom features editable
+or let later body-building features continue. Suppressed custom features are left out.
 Ellipses and elliptical arcs retain editable curves. Variables keep units and
 expressions, and remain design parameters alongside the STEP fallback even when no
 sketch maps. Thin extrudes map stored thicknesses, sides and directions after proving
@@ -352,6 +357,22 @@ Call `inspect` with `input`. It writes nothing. Read:
 - `history.features`: each feature's `status`; a `blocked` one has a `reason`.
 - `losses`: everything that will not carry across intact.
 
+For SolidCraft 0.44 and newer, a sweep can follow a connected chain of proven historical
+input edges on one body. Closed chains made from open edges also remain refused until
+their start and traversal can be proven. If exact curve measurements are unavailable,
+earlier straight-edge blends remain editable. Body-edge proofs need SolidCraft replay
+and cannot be proven with
+verification off. A stored sketch wire can instead resolve to its own earlier sketch after
+matching every entire curve by its source geometry.
+Topological guide rails, unproven edges and older targets retain the original geometry
+with a named blocker. Explain that reason without guessing an edge of the final body.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
+
 Sweep histories support twist, end scale, supported orientations, and one guide rail, with
 single-curve whole sketches accepted as paths or rails. A blocked sweep's reason names
 unsupported corner transitions, section interpolation, tangent-path extension or
@@ -402,9 +423,12 @@ profile edge must be proven, with a square plate of matching thickness. Curved, 
 disconnected, or collinear base edges and base holes or partial regions remain unsupported
 by this proof. Other dimensions
 or unproven selections keep geometry and explain the blocked feature. CADIR's hem developed
-length has no exact mapping to SolidCraft's outer-face length. Do not claim
-that K-factor or relief settings were preserved: sheet rules use SolidCraft defaults. A bend without its mapped attached plate remains blocked.
-Contour flanges and unfold/refold operations are not mapped yet.
+length has no exact mapping to SolidCraft's outer-face length. Contour flanges map when cadmpeg supplies an open line/arc chain, one blind normal sweep
+and material on one side. Their thickness, inside bend radius and supplied K-factor become a
+sheet rule; unsupported contour forms keep geometry with the specific reason. Relief settings
+use SolidCraft defaults. The pinned Inventor codec does not yet decode contour flanges; do not
+promise Inventor contour history until that decoding reaches the pin.
+A bend without its mapped attached plate remains blocked.
 
 ## 3. Convert
 
@@ -1069,12 +1093,25 @@ losses for meshes it could not decode.
 For the user's own Onshape document, `onshape_fetch` or
 `dutchman onshape fetch URL --out FILE --max-calls 50 --json` saves raw API responses
 in a private `.onshape-bundle`; it does not convert CAD. Inputs are `document_url`,
-optional `out`, `version` (immutable version ID), and `max_calls`. Read
+optional `out`, `version` (immutable version ID), `bearer_token_file` (local path), and `max_calls`. Read
 `dutchman.onshape-fetch/1`: `ok`, `calls`, `output`, `microversion`, `cache_hits`,
 and failure `error.code`/`message`. The tool has input and output schemas.
 Keys must already be in the local environment (`ONSHAPE_ACCESS_KEY` and
 `ONSHAPE_SECRET_KEY`) or the mode-600 `~/.config/dutchman/onshape.json`; never ask
-for them in chat or pass them as tool arguments. Fetch only the user's own documents.
+for them in chat or pass them as tool arguments. For OAuth, the user can provide a private
+UTF-8 token file (mode 600 on Unix, at most 16 KiB) through CLI `--bearer-token-file PATH`
+or MCP `bearer_token_file`, or set `DUTCHMAN_ONSHAPE_BEARER_TOKEN` in the CLI/server/app
+environment. The file takes precedence. Never ask for a token in chat or put its value in
+argv or tool arguments. Tokens cannot be mixed with API keys: remove both key environment
+variables and run `dutchman onshape logout` first. HTTP 401/403 means the token expired or
+lacks access; ask the user to obtain a fresh token with read access and replace their local
+file or environment variable. Reports and logs never echo tokens. The desktop supports
+**Use bearer token file** in Connect Onshape and the same environment variable.
+Unix token files must belong to the current user; ownership, permissions, type, and size
+are checked on the opened handle, and symlinks and special files are refused. Windows
+token files are not supported yet because privacy cannot be checked: clear the file
+selection or omit the file option and use the process environment variable instead.
+Fetch only the user's own documents.
 Requests go directly to Onshape; nothing is sent to Dutchman. Keep bundles and caches
 private. Version cache hits cost no calls; cached workspace URLs require two head checks.
 402 means the yearly allowance is exhausted; 429 honors Retry-After with bounded
@@ -1149,3 +1186,12 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](../../docs/json.md).
+
+### Y-up orientation
+
+Use `--stand-up` with `convert` or `convert-all` to rotate a Y-up design +90°
+about +X, so its +Y axis becomes SolidCraft's +Z axis. Source axes are preserved
+by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
+`convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
+cannot be combined. This changes the saved design's orientation, while history
+checks use the source coordinates.

@@ -274,6 +274,107 @@ fn each_bundle_converts_with_expected_history_rows_and_losses() {
 }
 
 #[test]
+fn custom_feature_without_a_proven_shape_blocks_later_topology_features() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/onshape-plate-fillet.onshape-bundle");
+    let mut input = zip::ZipArchive::new(Cursor::new(std::fs::read(path).unwrap())).unwrap();
+    let mut bundle = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..input.len() {
+        let mut member = input.by_index(i).unwrap();
+        let mut name = member.name().unwrap().into_owned();
+        let mut data = Vec::new();
+        member.read_to_end(&mut data).unwrap();
+        if name.ends_with("features.json") {
+            let mut response: Value = serde_json::from_slice(&data).unwrap();
+            response["features"].as_array_mut().unwrap().insert(
+                2,
+                json!({"featureId":"custom", "name":"Custom shape",
+                    "namespace":"synthetic", "featureType":"fixtureCustom", "parameters":[]}),
+            );
+            data = serde_json::to_vec(&response).unwrap();
+        } else if name.ends_with("bodydetails/index.json") {
+            data = serde_json::to_vec(&json!([3])).unwrap();
+        } else if name.ends_with("bodydetails/2.json") {
+            // The later fillet still has its own rollback selection geometry.
+            name = name.replace("bodydetails/2.json", "bodydetails/3.json");
+        }
+        bundle
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        bundle.write_all(&data).unwrap();
+    }
+    let bytes = bundle.finish().unwrap().into_inner();
+    let mut report = Report::default();
+    let source = dutchman_core::read_bytes(
+        Format::OnshapeBundle,
+        Path::new("synthetic.onshape-bundle"),
+        &bytes,
+        &mut report,
+    )
+    .unwrap();
+    // The custom feature has no proven shape, so the fillet's stored edge has no
+    // proven producer and the reader keeps no input topology for it.
+    assert!(source.ir.model.feature_input_topologies.is_empty());
+    let mut output = Vec::new();
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .write(&source, &mut output, &mut report)
+        .unwrap();
+    let outcome = report.outcome().unwrap();
+    assert_eq!(outcome.features[2].status, FeatureStatus::Blocked);
+    assert_eq!(outcome.features[2].name.as_deref(), Some("Custom shape"));
+    // The format-neutral writer gives native rows a generic reason; the reader's
+    // named diagnostic must survive in the shared loss report.
+    let loss = report
+        .losses()
+        .iter()
+        .find(|loss| {
+            loss.subject == "Custom shape"
+                && loss.code.as_deref() == Some("onshape/history.not-supported")
+        })
+        .unwrap();
+    assert!(loss
+        .detail
+        .contains("custom FeatureScript feature Custom shape"));
+    assert!(loss
+        .detail
+        .contains("lacks complete per-feature body geometry"));
+    assert_eq!(loss.severity, dutchman_core::Severity::Degraded);
+    // With no proven input edge the reader keeps the fillet as a native step.
+    assert_eq!(outcome.features[3].kind, "native");
+    assert_eq!(outcome.features[3].status, FeatureStatus::Blocked);
+    assert!(outcome.features[3]
+        .reason
+        .as_deref()
+        .unwrap()
+        .contains("after the first blocking feature"));
+    assert_ne!(outcome.check, Check::Verified);
+    let doc = document(&output);
+    assert!(doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "import"));
+    assert!(!doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "fillet"));
+    let mut written = zip::ZipArchive::new(Cursor::new(output)).unwrap();
+    let mut found_step = false;
+    for i in 0..written.len() {
+        let mut member = written.by_index(i).unwrap();
+        if member.name().unwrap().ends_with(".step") {
+            let mut step = String::new();
+            member.read_to_string(&mut step).unwrap();
+            assert_eq!(Some(step), source.source_step);
+            found_step = true;
+        }
+    }
+    assert!(found_step);
+}
+
+#[test]
 fn export_step_is_the_reference_and_body_mismatches_preserve_it() {
     for mismatch in ["", "position", "box", "volume"] {
         let (model, mut report) = model("plate-fillet");

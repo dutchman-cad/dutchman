@@ -45,6 +45,12 @@ contradictory choices retain `onshape/history.not-supported`; later records stil
 Captured studio responses are checked against their own manifest microversion, independently
 of the root studio. Fetch a new bundle when the reported reference evidence is missing.
 
+An active custom FeatureScript feature uses that same Degraded loss code, with the
+feature name as `subject` and a message naming the lack of complete per-feature body
+geometry in bundle format 1 to prove a frozen step. Its `history` row remains blocked,
+as do later body-building rows; the final STEP shape is preserved. No frozen-step loss
+is emitted, because v1 cannot prove a frozen shape. Suppressed custom features are left
+out without this loss. No report schema or field changes.
 `onshape/extrude.thin-not-supported` is a Degraded loss at stage `map` for
 thin construction with missing or contradictory domain, input-body scope, thickness,
 side or direction values. Proven controls emit a typed design feature.
@@ -513,6 +519,7 @@ in conversion, inspection, batch results and MCP reports. Its `error.message` is
 `Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).`,
 with `error.stage: "decode"` and `error.upstream: null`. Batch results count it as a refused
 file (`ok: false`); the CLI and GUI do not offer a fixtures invitation for IGES.
+The command exits with status 1 for a refused IGES file, on every platform.
 The formats listing reports `status: "not_supported"`, `words: "open it in SolidCraft directly"`
 and `converts: "SolidCraft imports IGES itself (File > Import)"`.
 
@@ -551,6 +558,22 @@ and keep the original geometry. The existing history status and reason fields re
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
+
+For SolidCraft 0.44 and newer, sweep paths may select a connected open chain of proven input
+edges on one earlier body. Missing source geometry, ambiguous matches, topological guide rails, and older
+targets keep the original geometry and report a specific history blocker. Closed sweep
+paths, including loops assembled from open edges, still require a proven start and traversal
+direction and remain refused. An unavailable exact curve measurement blocks only the feature
+that needs it; earlier straight-edge blends remain editable. These proofs
+require a SolidCraft replay for body-edge selections; `--no-verify` cannot establish those
+edges. A stored sketch wire instead resolves to its owning earlier sketch when every edge
+matches one entire mapped curve, including the midpoint and length of an arc.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
 
 For FreeCAD fillets and chamfers, `history.features[].reason` reports missing stored input
 edge geometry or a failed replay proof. Resolved edges without proven membership in an
@@ -604,7 +627,9 @@ base holes or partial regions remain unsupported by this proof. These reasons us
 `blocked` status and `reason` field. Other flanges report `blocked` with the specific selection or dimension reason
 (for example, "its input edge midpoint does not identify exactly one rebuilt edge"). Hems
 report the form or developed length SolidCraft cannot express. A blocked history falls back
-to geometry. These use the existing report fields; no schema fields change.
+to geometry. Contour flanges with an open line/arc chain, a blind normal sweep and material on one side
+also report `mapped`; unsupported contour forms report `blocked` with their specific reason.
+These use the existing report fields; no schema fields change.
 
 Renamed parameter names are included in `names` so anonymous reports can remove them.
 Fusion consumed tools and removed bodies are omitted only when cadmpeg marks them hidden
@@ -1626,7 +1651,17 @@ stable `onshape/` code: `url`, `auth`, `budget`, `yearly-limit`, `throttle`,
 `transport`, `response`, `io`, `limit`, `privacy`, `not-supported`, `export`, or
 `changed`. `changed` reports “the document changed while fetching; try again, or
 use a version link” after the workspace changes during both allowed captures.
-No supplied URL, key, authorization header, or remote error body is echoed.
+No supplied URL, key, bearer token, authorization header, or remote error body is echoed.
+Authentication options add no report fields or schema version. CLI `--bearer-token-file`
+and MCP `bearer_token_file` accept only a local path; `DUTCHMAN_ONSHAPE_BEARER_TOKEN`
+is read from the process environment. A file takes precedence over that variable.
+Token files that fail ownership, privacy, type, or size checks return `onshape/auth`
+with `calls: 0`. Windows refuses token files because privacy cannot be checked yet and
+directs users to clear the file selection and use the environment variable instead.
+Mixing a token with API keys (including saved keys) returns `onshape/auth` with `calls: 0`.
+Bearer HTTP 401/403 returns `onshape/auth` and explains that the token expired or lacks
+access, with instructions to obtain and supply a fresh token with read access. Echoed
+credential material returns `onshape/privacy` without echoing the credential.
 
 The ZIP's manifest uses separate schema `dutchman.onshape-bundle/1` and records
 `fetched_at` (RFC 3339), `fetcher`, `api_version` (`v17`), `document` (`id`, `name`,
@@ -1743,3 +1778,10 @@ to the replacement geometry merely because it contains the source feature's shap
 For example, a split row can contain `"output_ids": [12, 8], "output_match": "emitted"`;
 ids follow timeline order rather than numeric order. A dropped row contains
 `"output_ids": [], "output_match": "no_output"`.
+
+## Output orientation
+
+The CLI options `--stand-up` and `--no-stand-up` (MCP `stand_up` and
+`no_stand_up`) control the saved design orientation. Reports retain the existing
+schemas and source coordinates; these options add no report fields. See
+[the command reference](command-line.md) for the rotation and default.

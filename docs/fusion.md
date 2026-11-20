@@ -116,13 +116,15 @@ Bodies a Combine used up as a tool, or that a Remove step took out of the design
 | The design's B-rep, with body transforms applied. | Converts it: restated as STEP, written as SolidCraft's import. |
 | A design saved while Fusion was offline, which records no cloud lineage. | Reads it like any other design. |
 | A Base Feature that holds a stored solid (no recipe), typed as a base body. | Writes it as a SolidCraft Import at its place in the timeline; later features keep their history. When cadmpeg keeps the Base Feature's own body (a history body, as it stood when the Base Feature ended, kept when a later feature changes it), that body is imported and the later features rebuild on it; the replay right after it is compared with the bodies the source stores there. Otherwise cadmpeg gives a base body only as the design ends: later joins and cuts on it re-apply without changing the shape, so they are kept but counted as re-applied, not rebuilt; a Base Feature whose body any other later feature changes (a Move, a blend, a deleted face) is refused, naming that feature. A Base Feature proven to hold no bodies is not needed. |
+| A Copy/Paste Bodies that pastes copies into another component (`insert_bodies`). | Writes the copies as a SolidCraft Import at the paste's place in the timeline, using their final bodies. Later joins and cuts re-apply without changing the shape and are counted as re-applied; other later changes are refused, naming the feature. |
 | A Canvas: a reference image placed in the design. | Needs no feature: it builds no geometry, so it is counted as not needed and doesn't stop the history. |
 | Stored geometry from any format (`stored_geometry`) with output bodies, solids and sheets. | The same Import, holding exactly the bodies it outputs. |
 | A mesh body whose container cadmpeg cannot decode. | Leaves it out and reports it as an undecoded mesh body. |
 | Parameters, planar sketches with typed and native constraints. | Mapped, including point-on-curve coincidences, point-to-line distances, resolved finite-endpoint distances, and parallel-line spacing. Dimensions keep their parameter expressions, so user parameters drive the editable geometry. Native constraints without neutral operands are reported as not carried. |
 | Spatial (3D) sketches. | Mapped as SolidCraft 3D sketches at their solved positions (lines, arcs, circles, splines, points). On targets 0.44 and newer, neutral point joins, point distances, line lengths (including repeated lengths), principal-axis directions and line-to-line and line-to-arc endpoint tangencies carry across; dimensions keep their parameters. Meeting endpoints alone do not create relations. Sweep paths and rails follow their selected curves. Other constraints and links to model edges are reported as not carried. |
 | Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. An absent designation is derived exactly from diameter and pitch; conflicting or nonmetric designations, modeled threads, and unresolved faces remain reported losses. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
-| Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map, on a face of the extrusion or box made just before them; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
+| Body Mirror and Remove steps. | A Mirror of bodies maps when its bodies are named by earlier features, are a body the final model leaves out that cadmpeg names by the extrude that made it, or are the only body in the Mirror's own input; it joins its copy to the body when Fusion did. A Remove of such bodies maps as a SolidCraft Remove on SolidCraft 0.40 and newer. |
+| Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map, on a face of the extrusion or box made just before them; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, and unequal chamfers on straight edges with the face their distance runs along proven on the source's final body, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
 
 Fusion stores consumed Combine tools (with keep-tools off) and bodies removed by the
 timeline alongside its live bodies. For `.f3d`, designs inside `.f3z`, and component parts,
@@ -344,6 +346,16 @@ curved) within 2 mm of its midpoint; every combination using distinct edges, up 
 and the complete replay compared with the original final shape. Blends before the last stay
 refused: the bodies the source stores after them barely move with a fillet, so they cannot tell
 candidate edges apart.
+
+## Coordinate orientation
+
+Fusion 360 models in a right-handed coordinate system that defaults to Y-up in older versions
+(Autodesk made Z-up default for new installations around 2019). SolidCraft uses Z-up.
+
+By default, Dutchman preserves the source coordinates unchanged (`--no-stand-up`).
+For models created with Y-up orientation, `--stand-up` rotates the model +90° about +X
+(mapping source +Y to SolidCraft +Z and +Z to -Y). The rotation applies to imported geometry,
+assemblies, and rebuilt history.
 
 ## Assembly placements
 
