@@ -42,7 +42,11 @@ fn stub(statuses: Vec<u16>, receipt: Value) -> (String, std::thread::JoinHandle<
     let task = std::thread::spawn(move || {
         let mut calls = Vec::new();
         for status in statuses {
-            let (mut stream, _) = listener.accept().unwrap();
+            let mut stream = crate::test_support::accept_blocking(
+                &listener,
+                std::time::Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();

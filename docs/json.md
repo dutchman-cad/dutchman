@@ -454,6 +454,13 @@ has not named". Older targets keep the previous mapping.
 Successful consumed-tool replay confirmation adds an Info note: "The source
 body check confirmed the consumed tool bodies". Report fields are unchanged.
 
+An unresolved profile with one stored loop and other solid sketch curves does not
+map directly to all regions. Without source-confirmed inference the feature is
+`blocked`; its reason may say `its unresolved profile region cannot be proven from
+the sketch's one stored loop yet: other solid curves remain` or report the failed
+source body check. Later features stay behind that blocker, with the final shape
+and reference sketches retained. Report fields are unchanged.
+
 When neither candidate is confirmed, every region of the carrier sketch the selection can name is
 measured in SolidCraft ([fusion.md](fusion.md)). A unique match is kept with the `Degraded` loss
 `history/profile-region-measured`, which names the feature in `subject` and says how many candidate
@@ -685,6 +692,12 @@ The mesh-body refusal keeps `error.stage: "decode"` when no geometry was transfe
 or `"project"` when mesh geometry was read but no B-rep bodies can be converted.
 `error.upstream` stays `"cadmpeg"`; no report fields or error kinds are added.
 
+When cadmpeg reports `f3d/design.mesh-only-untransferred` for a Fusion design with no decoded
+B-rep bodies or placed components (its only bodies are meshes, and none of them could be
+read), Dutchman says "it holds only mesh bodies, which Dutchman doesn't convert yet, and none
+of them could be read" with the same advice, at `error.stage: "decode"`. That loss carries no
+mesh count, so the message names none.
+
 `error.message` is for people; do not parse its wording. Unreadable-container errors retain
 cadmpeg's cause and add recovery advice and a link to the
 **A file didn't convert** issue form. The CLI and MCP return the same message, stage, and upstream.
@@ -793,6 +806,60 @@ Dutchman all the same: Dutchman's maintainers take it upstream.
 A cadmpeg loss is at `decode` when its code says the bytes could not be read (`…-undecoded`,
 `…-unparsed`, `…-untyped`, framing, a missing or unreadable stream, `…not-transferred`), else
 at `project`.
+
+### Source comparison evidence
+
+`verification_checks` is an additive array in conversion reports. Each entry names `part`
+and `comparison` (`final_history_against_source_geometry`). Entries describe the attempted
+final history, including a rejected replay when conversion retained original geometry instead.
+They are preserved when part reports are merged. An absent array means this comparison was
+not attempted; it must never be interpreted as a pass.
+
+`geometry.body_count` records source and written counts. `geometry.bodies` pairs bodies by
+box position, then volume, retaining zero-based `source_index` and `written_index`.
+Indices refer to the evaluated source and replay body lists, rather than native topology ids.
+Each body's `checks` contains `volume`, `surface_area`, `bounding_box`, `centroid`, `faces`,
+`edges`, `shells`, `closed_shell` and `manifold`. Geometric, closure and parameter checks
+use `status`: `pass`, `fail` or `not_checked`. Kernel face, edge and shell counts are
+informational: `info` when equal, `differs` when unequal, or `not_checked` when unavailable.
+Count differences never reject a history. Available counts retain `source` and `written`
+integers. Failures retain compared evidence. Continuous measurements also
+record absolute `difference` and inclusive `tolerance`.
+Unavailable checks carry `reason`.
+An unmatched source body has `written_index: null`, `status: not_checked`, a reason and
+unavailable per-body checks; body count still fails. If evaluation cannot complete,
+`geometry.checks` lists unavailable checks with reasons. An entry with no evaluator also
+has `status: not_checked` and `reason`, with an empty `parameters` array.
+
+Volume, area and box checks use the existing measured replay tolerances above.
+The box difference is the larger of the distance between box centres and the largest
+absolute difference of a minimum or maximum coordinate, preserving both existing criteria. Centroid
+compares the actual centre of mass in source coordinates with the existing position allowance;
+a box centre is never substituted. Kernel face, edge and shell counts are informational.
+The existing descriptive `replay.face_count` and `replay.centre` tolerance fields describe
+the base geometry comparator retained for inference; `source_comparison` describes these
+additional final history checks.
+These counts describe the evaluated representation: splitting or merging equivalent faces
+can change them without changing the shape. Closure must match the source, allowing sheets
+that are open in both. Manifoldness is `not_checked` because the evaluator exposes no explicit
+manifold result; closure and counts do not establish it.
+
+`parameters` lists source parameter ids, mapped `name`, canonical `unit` (`mm`, `deg`,
+empty for scalars, or null), declared replay `written_unit` (or null), and a `check`.
+Both numeric values use the canonical `unit`, even when the declared replay unit differs.
+Replay parameter lists above 100,000 rows are not checked and carry a limit reason.
+Quantity kinds must match: lengths, angles and scalars cannot substitute for one another;
+an unavailable or unrecognised replay unit is `not_checked`. Values come directly
+from the source model and the replay's evaluated named parameters, in millimetres, degrees,
+or scalar units. Serialization roundoff allows 5e-12 times the larger of one and the source magnitude.
+`verification_tolerances.source_comparison` records `parameter_relative` (5e-12),
+`parameter_scale_floor` (1), `centroid_min_mm` (0.01),
+`centroid_diagonal_relative` (2e-4), and explanatory `counts` and `manifold` fields. Evaluation errors and mismatched available
+values fail; omitted or renamed parameters, absent source numeric values and unavailable
+replay values are `not_checked`. A parameter renamed by mapping is not checked, even when
+its mapped name is present; a missing mapped name is also `not_checked`. Source expressions and written expressions are not used as proof of equality.
+A failed check prevents an otherwise matching final history from being reported as verified.
+Unavailable checks never strengthen the existing overall verification status.
 
 ## `dutchman.convert-all/1`
 
@@ -1651,9 +1718,11 @@ source attributes are dropped with subject `attributes` and a message naming
 that scope. Neither assignment is applied to the shared component definition.
 No report fields or schema versions change.
 
-The desktop report panel stays visible below output controls in wide windows. Discord
-comes first, with a small **GitHub issue** backup link (a public issue under the user's
-GitHub name). **Anonymous report**, under **More**, opens review before direct cloud upload.
+The desktop report panel stays visible below output controls in wide windows. Narrow
+windows pin **Report a problem…** (or **Report this design…** with a result selected) above
+**Convert**; it scrolls to the full numbered cards in the page. Discord comes first, with
+a small **GitHub issue** backup link (a public issue under the user's GitHub name).
+**Anonymous report**, under **More**, opens review before direct cloud upload.
 Partial history, geometry-only and degraded results use a warning colour. Report fields
 and CLI/MCP behavior are unchanged.
 ## Onshape fetch (`dutchman.onshape-fetch/1`)
@@ -1788,14 +1857,82 @@ order. One source feature may produce several output features. Ids are recorded 
 emission and adjusted when parts join an assembly; names are never used for matching.
 `output_match` is `emitted` when the ids link to retained features, `no_output` when
 no independently produced feature survives (including dropped or merged rows), or
-`not_written` for inspection, which saves no design. Empty arrays do not change the
-existing status or counts: a feature can map during planning and be removed by fallback.
+`not_written` for inspection, which saves no design. Library planning outcomes used
+by preflight follow the same rule. Empty arrays do not change the existing status
+or counts: a feature can map during planning and be removed by fallback.
 Retained reference sketches link to their final ids even after fallback. No link points
 to the replacement geometry merely because it contains the source feature's shape.
 
 For example, a split row can contain `"output_ids": [12, 8], "output_match": "emitted"`;
 ids follow timeline order rather than numeric order. A dropped row contains
 `"output_ids": [], "output_match": "no_output"`.
+
+## Preflight
+
+`dutchman preflight <file> --json` returns `dutchman.preflight/1`.
+The following partial-history example abbreviates the repeated unknown target
+entries; actual output always includes `sc`, `fcmacro`, `fcstd` and `dxf`:
+
+```json
+{
+  "schema": "dutchman.preflight/1",
+  "advisory": true,
+  "tier": "planned",
+  "stop_reason": null,
+  "detail": null,
+  "scan": {
+    "format_hint": "freecad_document", "detected_codec": null,
+    "source_version": null, "assembly_hint": false,
+    "document_kind": "part", "size_bytes": 4096,
+    "max_input_bytes": 1073741824, "bytes_read": 8192,
+    "readable": "readable", "reason": "planned",
+    "feature_count": 3, "feature_kinds": ["extrude", "native", "sketch"]
+  },
+  "message": "The design was read and its history planned without writing output.",
+  "targets": [{
+    "target": "sc", "target_version": "0.43.0", "outcome": "partial", "reason": "planned",
+    "driving_feature_kinds": ["extrude", "native", "sketch"],
+    "mapped_features": 2, "total_features": 3,
+    "first_blocking_feature": {"kind": "native", "reason": "This feature is not supported yet."},
+    "detail": null
+  }]
+}
+```
+
+`tier` is `prefix` or `planned`; only the latter ran target planning. A decode
+refusal can still have prefix tier and a specific decoding `detail`.
+`stop_reason` is null or `byte_budget`, `time_budget`, `feature_budget`,
+`resource_limit`.
+Budget exhaustion makes every forecast unknown, even if some planning completed.
+Time enforcement is cooperative; see [bounds and limitations](preflight.md).
+
+Hints describe the suffix; `assembly_hint` does not establish actual contents.
+`document_kind` is `part`, `assembly` or null. `detected_codec` requires a unique
+strong prefix signal. Null means unknown, including counts and kind lists.
+`readable` is `readable`, `not_readable` or `unknown`. Decoded feature counts
+include suppressed features and aggregate local part models; target totals count
+active timeline outcomes only. Target mapped counts include features needing no
+row. `first_blocking_feature` identifies the first blocked active timeline row.
+Assemblies aggregate their mapped part outcomes in the writer's planning order.
+Leaves without exportable geometry contribute no timeline outcomes, as in
+conversion.
+
+Target outcomes are `full_history`, `partial`, `solid_only`, `refused`, `unknown`.
+Only the default writer currently exposes planning without producing output;
+other targets use `target_planner_unavailable` rather than borrow its forecast.
+Drawing-only conversion may work even when design decoding does not.
+`target_version` identifies the build-known release used by the default planner;
+it is null for other targets. No target installation is probed. Static planning
+does not perform final replay
+or establish output permissions and capacity.
+
+Reasons are `planned`, `reader_unavailable`, `target_planner_unavailable`,
+`decode_failed`, `byte_budget`, `time_budget`, `feature_budget`, `resource_limit`,
+`input_unavailable`, `not_a_file`, `empty_input`, `input_too_large`,
+`format_not_supported`, `format_mismatch`. The suffix refusal follows the existing
+conversion gate;
+shared part suffixes need content evidence. Messages and decoding details are
+human-readable; use reason codes in programs.
 
 ## Output orientation
 

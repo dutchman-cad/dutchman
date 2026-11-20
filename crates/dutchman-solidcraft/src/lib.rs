@@ -90,6 +90,7 @@ pub struct SolidCraftWriter {
     prepare_hook: Option<fn(&Model)>,
     #[cfg(test)]
     prepare_available: Option<u64>,
+    plan_deadline: Option<std::time::Instant>,
     import_only: bool,
     import_only_reason: String,
     sketches: bool,
@@ -114,6 +115,7 @@ impl Default for SolidCraftWriter {
             prepare_hook: None,
             #[cfg(test)]
             prepare_available: None,
+            plan_deadline: None,
             import_only: false,
             import_only_reason: IMPORT_ONLY_REASON.to_owned(),
             sketches: true,
@@ -368,9 +370,27 @@ impl SolidCraftWriter {
         }
     }
 
-    /// What writing `model` would do, without restating its geometry, writing anything or
-    /// replaying geometry in SolidCraft: the history's mapping, as `dutchman inspect` shows it.
+    /// Cooperatively stop planning at the deadline; an expired plan supplies no forecast.
+    pub fn plan_until(
+        &self,
+        model: &Model,
+        report: &mut Report,
+        deadline: std::time::Instant,
+    ) -> Option<Outcome> {
+        let mut bounded = self.clone();
+        bounded.plan_deadline = Some(deadline);
+        let outcome = bounded.plan(model, report);
+        (std::time::Instant::now() < deadline).then_some(outcome)
+    }
+
+    /// Maps history without writing output or replaying geometry.
     pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {
+        if self
+            .plan_deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        {
+            return empty_outcome();
+        }
         document::report_scoped_attributes(model, report);
         if let Some(flat) = flattened_assembly(model) {
             report.push(Severity::Degraded, GEOMETRY, FLATTENED_ASSEMBLY);
@@ -393,14 +413,13 @@ impl SolidCraftWriter {
             };
         }
         let mut history_report = Report::default();
-        let mut mapping = history::map_with_source_profile_check(
+        let mut mapping = history::map_until(
             model,
             &mut history_report,
             self.resolved_version(),
             self.sketches,
-            &mut history::infer::Unmeasured,
-            None,
             report.losses(),
+            self.plan_deadline,
         );
         self.plan_blends(&mut mapping);
         output_links::not_written(&mut mapping.features);
@@ -993,6 +1012,7 @@ impl SolidCraftWriter {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check(
         &self,
         model: &Model,
@@ -1000,8 +1020,48 @@ impl SolidCraftWriter {
         step: &str,
         written: &[u8],
         progress: Option<&dutchman_core::Progress<'_>>,
+        report: &mut Report,
     ) -> Result<verify::Outcome, Error> {
-        self.check_measurements(model, history, step, written, progress, false)
+        let unavailable = |reason: String, report: &mut Report| {
+            verify::record_unavailable(report, &model.name, &reason);
+            verify::Outcome::Unverified(reason)
+        };
+        if let Some(why) = self.memory_refusal() {
+            return Ok(unavailable(why, report));
+        }
+        let cli = match self.selected_evaluator(&self.verification) {
+            Ok(cli) => cli,
+            Err(why) => return Ok(unavailable(why.to_string(), report)),
+        };
+        let original = self.history_design(model, history, step, Live::Original, false)?;
+        if let Some(why) = self.memory_refusal() {
+            return Ok(unavailable(why, report));
+        }
+        let result = verify::compare_report(
+            cli.as_ref(),
+            self.timeout,
+            written,
+            &original,
+            verify::Expected {
+                solids: solid_bodies(model),
+                sheets: sheet_bodies(model),
+            },
+            progress,
+            model,
+            dutchman_core::progress_words::history_limit(
+                history.pattern_replay_required,
+                self.keep_unverified_hidden(),
+            ),
+            report,
+        );
+        Ok(match result {
+            verify::Outcome::Unverified(why) if history.pattern_replay_required => {
+                verify::Outcome::Differs(format!(
+                    "the pattern instance set could not be verified: {why}"
+                ))
+            }
+            result => result,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1623,7 +1683,7 @@ impl Writer for SolidCraftWriter {
                 if history.stop.is_none() && !only_stored_geometry(&mapping.features) {
                     let written =
                         self.history_design(model, history, &step, Live::History, false)?;
-                    checked = Some(self.check(model, history, &step, &written, progress)?);
+                    checked = Some(self.check(model, history, &step, &written, progress, report)?);
                 }
             }
             let partial_check = if let Some(verify::Outcome::Differs(why)) = &checked {

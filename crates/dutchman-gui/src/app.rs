@@ -122,6 +122,9 @@ pub struct App {
     report_done: Option<(Step, &'static str)>,
     /// Bring the panel into view on the next frame.
     reveal_report: bool,
+    /// Whether the page's own report heading was on screen last frame; the narrow pinned bar
+    /// then shows only its button, so the question isn't shown twice.
+    report_heading_visible: bool,
     /// Bring the AI prompt into view on the next frame.
     reveal_ai: bool,
     pub updater: crate::update::Updater,
@@ -503,6 +506,7 @@ impl App {
             report_row: None,
             report_done: None,
             reveal_report: false,
+            report_heading_visible: false,
             reveal_ai: false,
             consent: crate::report_consent::Consent {
                 ids: stored
@@ -1847,6 +1851,45 @@ impl App {
             )
             .show(ctx, |ui| self.actions_ui(ui, ctx, view.summary.as_deref()));
 
+        if ctx.available_rect().width() < crate::WIDE_BREAKPOINT {
+            egui::TopBottomPanel::bottom("narrow-report")
+                .frame(
+                    Frame::new()
+                        .fill(ctx.style().visuals.panel_fill)
+                        .inner_margin(Margin::symmetric(
+                            theme::SPACE_8 as i8,
+                            theme::SPACE_2 as i8,
+                        )),
+                )
+                .show(ctx, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let p = *theme::palette(ui);
+                        // While the page's own report heading is on screen, the bar keeps only
+                        // its button, so the question is not shown twice.
+                        if !self.report_heading_visible {
+                            let heading = ui.label(
+                                RichText::new(report_panel::QUESTION).heading().color(p.ink),
+                            );
+                            heading.ctx.accesskit_node_builder(heading.id, |node| {
+                                node.set_role(egui::accesskit::Role::Heading);
+                                node.set_label(format!(
+                                    "Report options: {}",
+                                    report_panel::QUESTION
+                                ));
+                            });
+                        }
+                        let label = if self.report_index(&view).is_some() {
+                            "Report this design…"
+                        } else {
+                            "Report a problem…"
+                        };
+                        if ui.button(label).clicked() {
+                            self.reveal_report = true;
+                        }
+                    });
+                });
+        }
+
         egui::CentralPanel::default()
             .frame(
                 Frame::new()
@@ -2977,8 +3020,8 @@ impl App {
             .or_else(|| (!self.rows.is_empty()).then_some(view.first_to_show))
     }
 
-    /// "Is there a problem? Is something missing?": always in the window, with the numbered
-    /// steps to tell us on Discord, GitHub as the backup, and the rarer tools under More.
+    /// The full report panel in the narrow page, reached by scrolling or the pinned bar.
+    /// Numbered steps lead to Discord, with GitHub as the backup and rarer tools under More.
     fn report_panel(&mut self, ui: &mut egui::Ui, view: &present::RunView) {
         self.report_heading(ui);
         self.report_panel_body(ui, view);
@@ -2987,6 +3030,7 @@ impl App {
     fn report_heading(&mut self, ui: &mut egui::Ui) {
         let p = *theme::palette(ui);
         let heading = ui.label(RichText::new(report_panel::QUESTION).heading().color(p.ink));
+        self.report_heading_visible = ui.clip_rect().intersects(heading.rect);
         if std::mem::take(&mut self.reveal_report) {
             heading.scroll_to_me(Some(Align::Min));
         }
@@ -4076,6 +4120,113 @@ mod tests {
         let (anonymous, _, _) = harness.state().anonymous(0).unwrap().unwrap();
         assert!(anonymous["versions"]["solidcraft"].is_null());
         assert_eq!(anonymous["run"]["verify"], false);
+    }
+
+    fn narrow_report_harness(
+        width: f32,
+        theme: egui::ThemePreference,
+    ) -> egui_kittest::Harness<'static, App> {
+        let harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(width, 800.0))
+            .build_eframe(|cc| {
+                let mut app = App::new(cc);
+                app.preview_solidcraft(Some("0.44.9"));
+                app.out_dir = Some(PathBuf::from("converted"));
+                for index in 0..3 {
+                    let input = PathBuf::from(format!("synthetic-{index}.f3d"));
+                    app.inputs.push(input.clone());
+                    app.rows.push(Row {
+                        input,
+                        output: Some(PathBuf::from(format!("converted/synthetic-{index}.sc"))),
+                        status: Status::Converted,
+                        progress: None,
+                        job: None,
+                        size: Some(100),
+                        report: Some(json!({"ok": true, "input": {"format": "fusion_archive"}})),
+                    });
+                }
+                app
+            });
+        harness.ctx.set_theme(theme);
+        harness
+    }
+
+    #[test]
+    fn narrow_report_bar_reveals_the_first_card() {
+        use egui_kittest::kittest::Queryable;
+        for width in [900.0, 760.0] {
+            let mut harness = narrow_report_harness(width, egui::ThemePreference::Light);
+            harness.run_steps(8);
+            assert!(harness.state().page_scrolls());
+            let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 800.0));
+            let button = harness.get_by_label("Report this design…").rect();
+            assert!(window.contains_rect(button), "{width}: {button:?}");
+            assert!(button.bottom() < harness.get_by_label("Convert").rect().top());
+            harness.get_by_label("Report this design…").click();
+            harness.run_steps(20);
+            let card = harness.get_by_label(present::SEND_JOIN_BUTTON).rect();
+            assert!(window.contains_rect(card), "{width}: {card:?}");
+            assert!(card.bottom() < harness.get_by_label("Report this design…").rect().top());
+            assert!(window.contains_rect(harness.get_by_label(present::SEND_JOIN_TITLE).rect()));
+            // With the full panel on screen, the pinned bar keeps only its button.
+            assert_eq!(
+                harness
+                    .query_all_by_label_contains(report_panel::QUESTION)
+                    .count(),
+                1,
+                "{width}"
+            );
+            assert!(window.contains_rect(harness.get_by_label("Report this design…").rect()));
+            harness.get_by_value("About synthetic-0.f3d");
+        }
+    }
+
+    #[test]
+    fn narrow_report_bar_is_available_before_conversion() {
+        use egui_kittest::kittest::Queryable;
+        for width in [900.0, 760.0] {
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(width, 800.0))
+                .build_eframe(|cc| App::new(cc));
+            harness.run_steps(8);
+            let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 800.0));
+            assert!(window.contains_rect(harness.get_by_label("Report a problem…").rect()));
+            harness.get_by_label("Report a problem…").click();
+            harness.run_steps(20);
+            assert!(window.contains_rect(harness.get_by_label(present::SEND_JOIN_BUTTON).rect()));
+        }
+    }
+
+    #[test]
+    fn narrow_report_screenshots() {
+        use egui_kittest::kittest::Queryable;
+        let Some(dir) = std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").map(PathBuf::from) else {
+            return;
+        };
+        std::fs::create_dir_all(&dir).unwrap();
+        for width in [900.0, 760.0] {
+            for (theme, name) in [
+                (egui::ThemePreference::Light, "light"),
+                (egui::ThemePreference::Dark, "dark"),
+            ] {
+                let mut harness = narrow_report_harness(width, theme);
+                harness.run_steps(8);
+                harness
+                    .render()
+                    .unwrap()
+                    .save(dir.join(format!("{width}x800-{name}.png")))
+                    .unwrap();
+                if let Some(button) = harness.query_by_label("Report this design…") {
+                    button.click();
+                    harness.run_steps(20);
+                    harness
+                        .render()
+                        .unwrap()
+                        .save(dir.join(format!("{width}x800-{name}-opened.png")))
+                        .unwrap();
+                }
+            }
+        }
     }
 
     #[test]

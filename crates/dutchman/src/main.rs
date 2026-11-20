@@ -52,6 +52,12 @@ enum OnshapeCommand {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Scan and plan within budgets without writing a design.
+    Preflight {
+        input: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     /// Fetch a private snapshot of your own Onshape document.
     Onshape {
         #[command(subcommand)]
@@ -501,6 +507,58 @@ fn run_cli() -> ExitCode {
         return contents_command(&cli.command, quiet, verbose);
     }
     match cli.command {
+        Command::Preflight {
+            input,
+            json: as_json,
+        } => {
+            let forecast =
+                dutchman::preflight::preflight(&input, dutchman_core::preflight::Budget::default());
+            let scan = &forecast.scan;
+            if as_json {
+                println!("{}", json::preflight(&forecast));
+            } else {
+                let status = match scan.readable {
+                    dutchman_core::preflight::Readability::Readable => "readable",
+                    dutchman_core::preflight::Readability::NotReadable => "not readable",
+                    dutchman_core::preflight::Readability::Unknown => "unknown",
+                };
+                println!("Preflight: {status}. {}", scan.reason.message());
+                if let Some(detail) = &forecast.detail {
+                    println!("Reason: {detail}");
+                }
+                for prediction in &forecast.targets {
+                    use dutchman_core::preflight::Prediction;
+                    let outcome = match prediction.outcome {
+                        Prediction::FullHistory => "full history",
+                        Prediction::Partial => "partial history",
+                        Prediction::SolidOnly => "solid only",
+                        Prediction::Refused => "refused",
+                        Prediction::Unknown => "unknown",
+                    };
+                    println!(
+                        "{}: {outcome} ({} of {} features)",
+                        prediction.target,
+                        prediction
+                            .mapped_features
+                            .map_or_else(|| "unknown".to_owned(), |n| n.to_string()),
+                        prediction
+                            .total_features
+                            .map_or_else(|| "unknown".to_owned(), |n| n.to_string())
+                    );
+                    if let Some(blocker) = &prediction.first_blocking_feature {
+                        println!("  {}: {}", blocker.kind, blocker.reason);
+                    } else if let Some(detail) = &prediction.detail {
+                        println!("  {detail}");
+                    }
+                }
+            }
+            if scan.readable == dutchman_core::preflight::Readability::NotReadable {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+
         Command::Onshape {
             command: OnshapeCommand::Login,
         } => onshape_login(),
@@ -2201,3 +2259,7 @@ mod output_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/net.rs"]
+mod test_support;

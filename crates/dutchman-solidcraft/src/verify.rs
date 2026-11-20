@@ -4,7 +4,10 @@
 //! against what the model holds.
 
 use crate::SolidCraftEvaluator;
+
+mod evidence;
 use dutchman_core::time::Instant;
+pub(crate) use evidence::{compare_report, record_unavailable};
 use std::path::{Path, PathBuf};
 #[cfg(not(target_family = "wasm"))]
 use std::process::{Command, Stdio};
@@ -1091,6 +1094,7 @@ pub(crate) fn compare_with_progress(
         part,
         consequence,
         false,
+        None,
     )
 }
 
@@ -1116,6 +1120,7 @@ pub(crate) fn compare_complete(
         part,
         consequence,
         true,
+        None,
     )
 }
 
@@ -1130,6 +1135,7 @@ fn compare_measurements(
     part: &str,
     consequence: &str,
     complete: bool,
+    evidence: Option<&mut Value>,
 ) -> Outcome {
     let evaluate = |timeout: Duration, name: &str, design: &[u8]| {
         let _checking = progress.map(|p| {
@@ -1159,6 +1165,9 @@ fn compare_measurements(
         }
         Err(why) => return Outcome::Unverified(why),
     };
+    if let Some(evidence) = evidence {
+        *evidence = evidence::measurements(&expected, &replayed);
+    }
     if let Some(error) = replayed.errors.first() {
         return Outcome::Differs(error.clone());
     }
@@ -1608,6 +1617,7 @@ struct Measured {
 
 /// One design as SolidCraft evaluated it.
 struct Eval {
+    raw: Value,
     bodies: Vec<Measured>,
     errors: Vec<String>,
     /// Warnings on timeline features, such as faces that could not be meshed.
@@ -2268,6 +2278,9 @@ fn parse(value: &Value) -> Result<Eval, String> {
         .get("bodies")
         .and_then(Value::as_array)
         .ok_or_else(|| format!("{CLI_NAME} result has no bodies"))?;
+    if bodies.len() > 100_000 {
+        return Err("Verification body count exceeds the supported limit".to_owned());
+    }
     let bodies = bodies
         .iter()
         .map(|body| {
@@ -2330,6 +2343,7 @@ fn parse(value: &Value) -> Result<Eval, String> {
         .map(str::to_owned)
         .collect();
     Ok(Eval {
+        raw: serde_json::json!({"bodies": value.get("bodies")}),
         bodies,
         errors,
         warnings,
@@ -3106,6 +3120,7 @@ mod tests {
     #[test]
     fn solids_without_a_volume_or_inside_out_are_reported() {
         let eval = |volumes: &[f64]| Eval {
+            raw: Value::Null,
             bodies: volumes_of(volumes),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -3644,6 +3659,7 @@ mod cli_tests {
     #[test]
     fn sheets_are_not_reported_as_inside_out_or_open() {
         let eval = |volumes: &[f64], warnings: &[&str]| Eval {
+            raw: Value::Null,
             bodies: super::tests::volumes_of(volumes),
             errors: Vec::new(),
             warnings: warnings.iter().map(|w| (*w).to_owned()).collect(),

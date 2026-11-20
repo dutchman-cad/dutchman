@@ -101,6 +101,12 @@ be decoded, a mesh-import feature may instead retain native body members with th
 `f3d/feature.mesh-import-tessellations-unresolved`. Those references carry no triangles.
 Dutchman does not reconstruct mesh geometry from native records.
 
+When cadmpeg reports `f3d/design.mesh-only-untransferred` for a Fusion design with no decoded
+B-rep bodies or placed components (its only bodies are meshes, and none of them could be
+read), Dutchman says "it holds only mesh bodies, which Dutchman doesn't convert yet, and none
+of them could be read" with the same advice, at `error.stage: "decode"`. That loss carries no
+mesh count, so the message names none.
+
 ## Parts and history
 
 As-built joints build no geometry and do not stop the part's feature history. Typed
@@ -287,6 +293,13 @@ alone. A feature whose profile uses such a sketch gets it written just before it
 feature finds it; any other such sketch is kept for reference after the timeline, as before.
 
 ## Trimmed and unresolved profile regions
+
+One stored sketch loop does not prove a native profile selection when other solid
+curves remain, including curves needed by a later trimmed cut. Dutchman requires
+source-confirmed inference in that case; otherwise it preserves the final shape
+and reference sketches instead of rebuilding extra regions. A later fillet may
+therefore be reported behind the earlier unresolved profile.
+
 
 Trimmed regions select a point strictly inside their stored boundary, for revolves and other
 profile consumers. Parameter intervals and traversal directions distinguish regions that share

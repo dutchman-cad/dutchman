@@ -996,6 +996,49 @@ pub(crate) fn map_with_source_profile_check(
     progress: Option<&dutchman_core::Progress<'_>>,
     source_losses: &[dutchman_core::Loss],
 ) -> Mapping {
+    map_checked_until(
+        model,
+        report,
+        target_version,
+        keep_sketches,
+        check,
+        progress,
+        source_losses,
+        None,
+    )
+}
+
+pub(crate) fn map_until(
+    model: &Model,
+    report: &mut Report,
+    target_version: crate::SolidCraftVersion,
+    keep_sketches: bool,
+    source_losses: &[dutchman_core::Loss],
+    deadline: Option<std::time::Instant>,
+) -> Mapping {
+    map_checked_until(
+        model,
+        report,
+        target_version,
+        keep_sketches,
+        &mut infer::Unmeasured,
+        None,
+        source_losses,
+        deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn map_checked_until(
+    model: &Model,
+    report: &mut Report,
+    target_version: crate::SolidCraftVersion,
+    keep_sketches: bool,
+    check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
+    source_losses: &[dutchman_core::Loss],
+    deadline: Option<std::time::Instant>,
+) -> Mapping {
     let mut features_out = Vec::new();
     let mut references = History::default();
     let mut notes = Report::default();
@@ -1010,6 +1053,7 @@ pub(crate) fn map_with_source_profile_check(
         check,
         progress,
         source_losses,
+        deadline,
     );
     // A missing consumed identity may be tried only in an isolated complete replay.
     // Failed, unavailable or partial checks leave the original mapping and its blocker.
@@ -1034,6 +1078,7 @@ pub(crate) fn map_with_source_profile_check(
             check,
             progress,
             source_losses,
+            deadline,
         );
         if trial.as_ref().is_ok_and(|history| {
             history.stop.is_none()
@@ -1193,7 +1238,11 @@ fn map_into(
     check: &mut infer::Check<'_>,
     progress: Option<&dutchman_core::Progress<'_>>,
     source_losses: &[dutchman_core::Loss],
+    deadline: Option<std::time::Instant>,
 ) -> Result<History, String> {
+    if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+        return Err("planning time budget reached".to_owned());
+    }
     if model.ir.model.features.is_empty() && !model.ir.design.features.is_empty() {
         return Err(
             "CADIR v11 design-only history is not mapped yet: its ordered selections and evaluation states have no model-history projection".to_owned(),
@@ -1264,6 +1313,9 @@ fn map_into(
     for (position, feature) in features.into_iter().enumerate() {
         if let Some(timeline) = &timeline {
             timeline.at(position as u64 + 1, name(feature));
+        }
+        if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+            return Err("planning time budget reached".to_owned());
         }
         let outcome = |status, reason: Option<String>| FeatureOutcome {
             output: Default::default(),
@@ -1502,6 +1554,9 @@ fn map_into(
     // Some decoders supply sketches without timeline rows. Their resolved frames are
     // independent of replayed topology; unresolved attachments are refused by sketch::map.
     for sketch in ctx.arena("sketches") {
+        if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+            return Err("planning time budget reached".to_owned());
+        }
         let Some(id) = sketch.get("id").and_then(Value::as_str) else {
             continue;
         };

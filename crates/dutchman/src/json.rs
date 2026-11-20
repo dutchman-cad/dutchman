@@ -18,6 +18,9 @@ pub const INSPECT: &str = "dutchman.inspect/1";
 /// The schema of `dutchman contents --json`.
 pub const CONTENTS: &str = "dutchman.contents/1";
 
+/// The schema of the bounded advisory scan.
+pub const PREFLIGHT: &str = "dutchman.preflight/1";
+
 /// The schema of `dutchman diagnose`'s report.
 pub const DIAGNOSE: &str = "dutchman.diagnose/1";
 
@@ -438,6 +441,12 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
                 history.insert("parts".to_owned(), part_fields(report.parts()));
             }
         }
+    }
+    if !report.verification_checks().is_empty() {
+        out.insert(
+            "verification_checks".to_owned(),
+            json!(report.verification_checks()),
+        );
     }
     if let Some(tolerances) = report.verification_tolerances() {
         out.insert("verification_tolerances".to_owned(), tolerances.clone());
@@ -1286,6 +1295,20 @@ pub fn choice_values(preset: crate::choices::Preset, choices: crate::choices::Ch
     json!({"preset": preset.name(), "history": choices.history, "sketches": choices.sketches, "joints": choices.joints})
 }
 
+/// Output ids shared with the conversion command, independent of target installation.
+pub const PREFLIGHT_TARGETS: [&str; 4] = ["sc", "fcmacro", "fcstd", "dxf"];
+
+/// A bounded scan is advisory; unknown is never a promise of conversion success.
+pub fn preflight(forecast: &crate::preflight::Forecast) -> Value {
+    let mut value = serde_json::to_value(forecast).unwrap_or(Value::Null);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("schema".to_owned(), json!(PREFLIGHT));
+        object.insert("advisory".to_owned(), json!(true));
+        object.insert("message".to_owned(), json!(forecast.scan.reason.message()));
+    }
+    value
+}
+
 /// Shared CLI/MCP result for an Onshape fetch. Never contains the supplied URL or credentials.
 pub fn onshape_fetch(result: &crate::onshape::Result<crate::onshape::FetchReport>) -> Value {
     match result {
@@ -1868,6 +1891,23 @@ mod tests {
         assert_eq!(out["history"]["needing"], 2);
         assert_eq!(out["history"]["features"][3]["status"], "left_out");
         assert_eq!(out["losses"], json!([]));
+    }
+
+    #[test]
+    fn verification_checks_are_additive_and_preserve_all_outcomes() {
+        let mut report = Report::default();
+        let plain = Value::Object(success(CONVERT, json!({}), &report));
+        assert!(plain.get("verification_checks").is_none());
+        let checks = json!({"part":"Cube", "geometry":{"bodies":[{"source_index":0,"written_index":0,
+            "checks":{"volume":{"status":"fail","source":1000,"written":8000,"difference":7000,"tolerance":1},
+                "centroid":{"status":"pass","source":[5,5,5],"written":[5,5,5],"difference":0,"tolerance":0.01},
+                "manifold":{"status":"not_checked","reason":"No evaluator result"},
+                "faces":{"status":"differs","source":6,"written":7},
+                "edges":{"status":"info","source":12,"written":12}}}]}});
+        report.record_verification_checks(checks.clone());
+        let out = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(out["schema"], plain["schema"]);
+        assert_eq!(out["verification_checks"], json!([checks]));
     }
 
     #[test]

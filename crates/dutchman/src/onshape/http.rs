@@ -289,18 +289,7 @@ mod bearer_tests {
         let handle = thread::spawn(move || {
             for (status, body) in replies {
                 let deadline = Instant::now() + Duration::from_secs(10);
-                let mut stream = loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => break stream,
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            assert!(Instant::now() < deadline, "request did not arrive");
-                            thread::sleep(Duration::from_millis(5));
-                        }
-                        Err(e) => panic!("{e}"),
-                    }
-                };
-                // An accepted stream inherits the listener's non-blocking mode on macOS and Windows.
-                stream.set_nonblocking(false).unwrap();
+                let mut stream = crate::test_support::accept_blocking(&listener, deadline).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();

@@ -1582,19 +1582,9 @@ mod consent_e2e {
             let thread = std::thread::spawn(move || {
                 for attempt in 0..if status == 503 { 2 } else { 1 } {
                     let started = Instant::now();
-                    let mut stream = loop {
-                        match listener.accept() {
-                            Ok((stream, _)) => break stream,
-                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                assert!(started.elapsed() < Duration::from_secs(30));
-                                std::thread::sleep(Duration::from_millis(10));
-                            }
-                            Err(e) => panic!("{e}"),
-                        }
-                    };
-                    // On Windows an accepted socket inherits the listener's non-blocking mode;
-                    // this server reads with a timeout instead.
-                    stream.set_nonblocking(false).unwrap();
+                    let mut stream =
+                        test_support::accept_blocking(&listener, started + Duration::from_secs(30))
+                            .unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(10)))
                         .unwrap();
@@ -2567,8 +2557,10 @@ fn anonymous_report_only_opens_review_and_sends_nothing() {
     h.get_by_label(dutchman_gui::report_consent::REVIEW_TITLE);
     h.get_by_label("Send");
     assert_eq!(
-        listener.accept().unwrap_err().kind(),
-        std::io::ErrorKind::WouldBlock
+        test_support::accept_blocking(&listener, std::time::Instant::now())
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::TimedOut
     );
     assert!(!h.state().running());
     assert!(!dir.path().join("submission.json").exists());
@@ -4717,3 +4709,7 @@ fn connected_onshape_keeps_results_in_their_own_column() {
         assert!(!h.state().page_scrolls());
     }
 }
+
+#[cfg(feature = "test-support")]
+#[path = "../../dutchman/tests/support/net.rs"]
+mod test_support;

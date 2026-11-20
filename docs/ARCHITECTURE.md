@@ -119,6 +119,17 @@ An unavailable answer is `Err`; a design refusal uses `evaluation_failed` in the
 JSON. Measurement parsing, matching, tolerances and fallback policy remain shared in
 `verify.rs`, independent of the transport.
 
+Final history comparison evidence lives in `verify/evidence.rs`. The existing geometry
+comparison supplies paired source and replay measurements; the final check adds actual
+centroids, kernel counts and closure when available. Named replay parameters are queried
+separately and compared with CADIR values, using the existing parameter name mapper.
+The core report carries opaque comparison entries through part merges; shared JSON reporting
+exposes them additively as `verification_checks`. A failed available check rejects the final
+history; kernel face, edge and shell counts remain informational. Omitted or renamed
+parameters are not checked. An unavailable check records a reason and cannot upgrade
+the existing outcome.
+Earlier inference and partial-history geometry policies keep their existing checks.
+
 A plugin host must open a design archive with its STEP blobs, evaluate it with `inspect.measure` plus `document.inspect` (the same combined JSON
 that CLI eval returns), and dispatch `timeline.roll_to`, `document.inspect`,
 `model.edges` and `model.faces`. Edge results include names, endpoints, midpoints and
@@ -284,7 +295,9 @@ revolves; unresolved or ambiguous boundaries are blockers. Otherwise unresolved 
 selections try at most two candidates through the normal feature mapper, selected neutral curves
 and the whole carrier. A writer callback admits each only after the existing source body check,
 or the complete shape comparison at the final body-building feature, confirms its replay;
-planning has no callback and keeps the blocker. Every admitted candidate has a named loss. When
+planning has no callback and keeps the blocker. A native pick with one stored loop also requires
+this confirmation when other solid mapped curves remain after sketch demotion; the loop
+table cannot establish how many regions the written sketch contains. Every admitted candidate has a named loss. When
 neither is confirmed, measured inference (`history/infer.rs`) maps every region of the sketch the
 pick can name by explicit loop boundaries (bounded, see fusion.md) and asks the same callback to
 measure each; discovery with only centroid selectors is refused. One 120 s feature deadline covers

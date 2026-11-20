@@ -7,7 +7,7 @@ on:
   pull_request:
   schedule:
     - cron: "0 6 * * *"
-  # The merge queue runs Linux checks; main and tags run the full matrix.
+  # The merge queue runs Linux checks; selected PRs add platform coverage.
   merge_group:
     types: [checks_requested]
   # Started by hand, and by the SolidCraft window workflow for the pull request it opens (pull
@@ -37,7 +37,7 @@ env:
 # runs started by hand on main) save, so pull requests and merge queue groups never evict each other's or main's cache.
 
 jobs:
-  # Pull requests and queue groups share path filters. Main, nightly, tags and manual runs
+  # Pull requests add selected platform checks; queue groups keep Linux coverage. Other runs
   # always exercise the full matrix after merge.
   changes:
     runs-on: ubuntu-latest
@@ -47,6 +47,8 @@ jobs:
       rust: ${{ steps.diff.outputs.rust }}
       code: ${{ steps.diff.outputs.code }}
       docker: ${{ steps.diff.outputs.docker }}
+      platform: ${{ steps.platform.outputs.platform }}
+      floor: ${{ steps.platform.outputs.floor }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -93,6 +95,12 @@ jobs:
             echo "docker=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Select platform and compatibility coverage
+        id: platform
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+        run: python3 scripts/ci-platform-tests.py --base "$BASE" >> "$GITHUB_OUTPUT"
+
   fmt:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -129,6 +137,7 @@ jobs:
             BASE=HEAD
           fi
           python3 scripts/check-version-gates.py --base "$BASE"
+      - run: python3 scripts/check-test-accept.py
       - run: python3 scripts/changelog.py check
       # The installed guidance (docs/, skills/) the archives and installer carry: a change to docs/
       # no longer starts the release builds, so check here that it still stages.
@@ -173,7 +182,7 @@ jobs:
 
   test:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || (github.event_name == 'pull_request' && needs.changes.outputs.platform == 'true')
     # Debug-profile build and tests on Linux x86_64 and ARM64 and Windows (macOS is test-macos
     # below). Inventor and SolidWorks users are mostly on Windows; macOS has a case-insensitive
     # filesystem. Both matter to finding an assembly's part files. The optimised release builds
@@ -182,7 +191,7 @@ jobs:
       fail-fast: false
       matrix:
         # ARM64 is test-arm below, which gets a second try when its runner is shut down.
-        os: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
+        os: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && needs.changes.outputs.platform != 'true')) && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 30 || 25 }}
     env:
@@ -341,11 +350,11 @@ jobs:
       - run: cargo test --locked -p dutchman --test readme
       - run: cargo test --locked -p dutchman --test cli formats_markdown_matches_the_formats_page
 
-  # The same on macOS, only when Rust code changed: the account runs few macOS jobs at once.
+  # macOS runs for selected platform-sensitive PRs and Rust changes in full runs.
   test-macos:
     name: test (macos-latest)
     needs: changes
-    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.rust == 'true'
+    if: (needs.changes.outputs.full == 'true' && needs.changes.outputs.rust == 'true') || (github.event_name == 'pull_request' && needs.changes.outputs.platform == 'true')
     runs-on: macos-latest
     timeout-minutes: 95
     env:
@@ -455,20 +464,17 @@ jobs:
 
   # Opens converted designs in the newest and oldest releases in the rolling 14-day
   # window (NEWEST_SOLIDCRAFT and WINDOW_OLDEST), plus the fixed 0.18.2 opens-in floor.
-  # Required on main, nightly, tags and manual full runs; excluded from pre-merge checks.
+  # Full runs check both versions; selected PRs check the fixed opens-in floor.
   solidcraft-roundtrip:
     name: solidcraft-roundtrip (${{ matrix.solidcraft.version }})
     needs: changes
-    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
+    if: (needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true') || (github.event_name == 'pull_request' && needs.changes.outputs.floor == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        solidcraft:
-          - version: 0.18.2
-            sha256: 9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff
-          - version: newest
+        solidcraft: ${{ fromJSON(needs.changes.outputs.full == 'true' && '[{"version":"0.18.2","sha256":"9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff"},{"version":"newest"}]' || '[{"version":"0.18.2","sha256":"9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff"}]') }}
     env:
       SOLIDCRAFT_VERSION: ${{ matrix.solidcraft.version }}
       SOLIDCRAFT_SHA256: ${{ matrix.solidcraft.sha256 }}
@@ -566,9 +572,11 @@ jobs:
           native = full and code
           required = {
               "changes": True, "release-notes": True,
-              "fmt": code, "clippy": code, "test": code, "docs": not code,
-              "wasm": native, "msrv": native, "solidcraft-roundtrip": native,
-              "test-macos": full and outputs.get("rust") == "true",
+              "fmt": code, "clippy": code,
+              "test": code or (event == "pull_request" and outputs.get("platform") == "true"), "docs": not code,
+              "wasm": native, "msrv": native,
+              "solidcraft-roundtrip": native or (event == "pull_request" and outputs.get("floor") == "true"),
+              "test-macos": (full and outputs.get("rust") == "true") or (event == "pull_request" and outputs.get("platform") == "true"),
               "docker": full and outputs.get("docker") == "true",
               "placements": full or (event == "merge_group" and code),
               "release-build": event == "workflow_dispatch" and os.environ["RELEASE_BUILDS"] == "true",
@@ -584,13 +592,13 @@ jobs:
           retry = needs["test-arm-again"]["result"]
           if (native and (arm, retry) not in (("success", "skipped"), ("failure", "success"), ("cancelled", "success"))) or (not native and (arm, retry) != ("skipped", "skipped")):
               bad["test-arm"] = arm + "; retry: " + retry
-          if any(outputs.get(key) not in ("true", "false") for key in ("full", "code", "rust", "docker")):
+          if any(outputs.get(key) not in ("true", "false") for key in ("full", "code", "rust", "docker", "platform", "floor")):
               bad["changes"] = "missing or unexpected filter outputs"
           if event not in ("pull_request", "merge_group"):
               if not full or not code or outputs.get("rust") != "true" or outputs.get("docker") != "true":
                   bad["changes"] = "full matrix filters must all be true"
           if event in ("pull_request", "merge_group") and full:
-              bad["changes"] = "pre-merge checks must use the Linux set"
+              bad["changes"] = "pre-merge checks must use selective coverage"
           for job, need in sorted(needs.items()):
               print(job + ": " + need["result"])
           sys.exit(f"unexpected job results: {bad}" if bad else 0)

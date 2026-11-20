@@ -69,24 +69,14 @@ pub(crate) fn decode_with_progress(
 ) -> Result<Model, Error> {
     let codec_id = format.codec_id().ok_or(Error::NotSupportedYet { format })?;
     catch_unwind(AssertUnwindSafe(|| {
-        #[cfg(feature = "onshape")]
-        if format == Format::OnshapeBundle {
-            let arena = DecodeArena::new();
-            let policy = policy();
-            let (ctx, _) =
-                DecodeContext::from_root_bytes(bytes, &arena, &policy).map_err(onshape_failure)?;
-            let result = crate::onshape::read(&ctx, path, bytes, report, progress);
-            ctx.finish_session().map_err(onshape_failure)?;
-            let mut model = result?;
-            with_fallback(&mut model.ir, report, &policy, bytes.len() as u64)?;
-            return Ok(model);
-        }
         decode_unguarded(
             format,
             codec_id,
             path,
             bytes,
             DecodeDepth::Full,
+            policy(),
+            None,
             false,
             report,
             progress,
@@ -98,6 +88,114 @@ pub(crate) fn decode_with_progress(
             format.name()
         )))
     })
+}
+
+/// Planning needs design history; this depth includes geometry but skips process data.
+pub(crate) fn planned(
+    format: Format,
+    path: &Path,
+    bytes: &[u8],
+    max_bytes: u64,
+    max_features: usize,
+    deadline: Option<std::time::Instant>,
+    report: &mut Report,
+) -> PlannedRead {
+    let Some(codec_id) = format.codec_id() else {
+        return PlannedRead {
+            model: Err(PlanningError::Decode(Error::NotSupportedYet { format })),
+            features: 0,
+        };
+    };
+    let mut policy = policy();
+    policy.limits.max_input_bytes = policy.limits.max_input_bytes.min(max_bytes);
+    policy.limits.max_decompressed_bytes_total =
+        policy.limits.max_decompressed_bytes_total.min(max_bytes);
+    policy.limits.max_decompressed_bytes_per_expand = policy
+        .limits
+        .max_decompressed_bytes_per_expand
+        .min(max_bytes);
+    policy.limits.max_retained_bytes = policy.limits.max_retained_bytes.min(max_bytes);
+    let limits = PlanningLimits {
+        max_features,
+        deadline,
+        features: std::cell::Cell::new(0),
+        stop: std::cell::Cell::new(None),
+    };
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        decode_unguarded(
+            format,
+            codec_id,
+            path,
+            bytes,
+            DecodeDepth::Design,
+            policy,
+            Some(&limits),
+            false,
+            report,
+            None,
+        )
+    }))
+    .unwrap_or_else(|_| {
+        Err(Error::Decode(
+            "the decoder failed unexpectedly during planning".to_owned(),
+        ))
+    });
+    let model = match limits.stop.get() {
+        Some(PlanningStop::Features) => Err(PlanningError::FeatureBudget),
+        Some(PlanningStop::Time) => Err(PlanningError::TimeBudget),
+        None => result.map_err(PlanningError::Decode),
+    };
+    PlannedRead {
+        model,
+        features: limits.features.get(),
+    }
+}
+
+pub(crate) struct PlannedRead {
+    pub(crate) model: Result<Model, PlanningError>,
+    pub(crate) features: usize,
+}
+
+pub(crate) enum PlanningError {
+    Decode(Error),
+    FeatureBudget,
+    TimeBudget,
+}
+
+#[derive(Clone, Copy)]
+enum PlanningStop {
+    Features,
+    Time,
+}
+
+struct PlanningLimits {
+    max_features: usize,
+    deadline: Option<std::time::Instant>,
+    features: std::cell::Cell<usize>,
+    stop: std::cell::Cell<Option<PlanningStop>>,
+}
+
+impl PlanningLimits {
+    fn check_time(&self) -> Result<(), Error> {
+        if self
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        {
+            self.stop.set(Some(PlanningStop::Time));
+            return Err(Error::Decode("planning time budget reached".to_owned()));
+        }
+        Ok(())
+    }
+
+    fn check_features(&self, features: usize) -> Result<(), Error> {
+        self.features.set(features);
+        self.check_time()?;
+        if features > self.max_features {
+            self.stop.set(Some(PlanningStop::Features));
+            return Err(Error::Decode("planning feature budget reached".to_owned()));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(feature = "onshape")]
@@ -173,6 +271,8 @@ pub(crate) fn drawings(
             path,
             bytes,
             DecodeDepth::Full,
+            policy(),
+            None,
             true,
             report,
             None,
@@ -226,11 +326,45 @@ fn decode_unguarded(
     path: &Path,
     bytes: &[u8],
     depth: DecodeDepth,
+    policy: DecodePolicy,
+    planning: Option<&PlanningLimits>,
     drawings: bool,
     report: &mut Report,
     progress: Option<&crate::Progress<'_>>,
 ) -> Result<Model, Error> {
-    let policy = policy();
+    if let Some(planning) = planning {
+        planning.check_time()?;
+    }
+    #[cfg(feature = "onshape")]
+    if !drawings && format == Format::OnshapeBundle {
+        let failure = |error| {
+            if planning.is_some() && matches!(&error, CodecError::ResourceLimit(_)) {
+                Error::MemoryBudget(format!("planning decoder resource limit reached: {error}"))
+            } else {
+                onshape_failure(error)
+            }
+        };
+        let arena = DecodeArena::new();
+        let (ctx, _) = DecodeContext::from_root_bytes(bytes, &arena, &policy).map_err(failure)?;
+        let result = crate::onshape::read(&ctx, path, bytes, report, progress);
+        ctx.finish_session().map_err(failure)?;
+        let mut model = result?;
+        if let Some(planning) = planning {
+            planning.check_features(
+                model
+                    .ir
+                    .model
+                    .features
+                    .len()
+                    .max(model.ir.design.features.len()),
+            )?;
+        }
+        with_fallback(&mut model.ir, report, &policy, bytes.len() as u64)?;
+        if let Some(planning) = planning {
+            planning.check_time()?;
+        }
+        return Ok(model);
+    }
     let catalog = InputCatalog::with_builtins();
     let selection = Phase::new(
         progress.and_then(|p| p.members.clone()),
@@ -239,6 +373,9 @@ fn decode_unguarded(
     );
     let codec = select_codec(&catalog, &policy, format, codec_id, bytes)?;
     drop(selection);
+    if let Some(planning) = planning {
+        planning.check_time()?;
+    }
 
     if let Some(progress) = progress {
         progress.stage(Stage::Decode);
@@ -267,10 +404,27 @@ fn decode_unguarded(
     // Also closes preparation on a refusal before the first member callback.
     drop(members);
     drop(reading);
-    let decoded = decoded.map_err(|err| decode_failure(format, err))?;
+    let decoded = decoded.map_err(|err| {
+        if depth == DecodeDepth::Design
+            && matches!(&err, DecodeFailure::Codec(CodecError::ResourceLimit(_)))
+        {
+            Error::MemoryBudget(format!("planning decoder resource limit reached: {err}"))
+        } else {
+            decode_failure(format, err)
+        }
+    })?;
     let (mut ir, decode_report, fidelity) = decoded.into_parts();
+    if let Some(planning) = planning {
+        planning.check_features(ir.model.features.len().max(ir.design.features.len()))?;
+    }
+
     if let Some(error) =
         mesh_only_error(format, &ir, decode_report.geometry_transferred()).filter(|_| !drawings)
+    {
+        return Err(error);
+    }
+    if let Some(error) =
+        undecoded_mesh_only_error(format, &ir, &decode_report.losses).filter(|_| !drawings)
     {
         return Err(error);
     }
@@ -308,6 +462,9 @@ fn decode_unguarded(
     } else {
         with_fallback(&mut ir, report, &policy, bytes.len() as u64)
     };
+    if let Some(planning) = planning {
+        planning.check_time()?;
+    }
     drop_removed_bodies(&mut ir, report);
     drop_inactive_configuration_bodies(&mut ir, report);
 
@@ -398,6 +555,34 @@ fn mesh_only_error(
     } else {
         Error::Decode(message)
     })
+}
+
+/// cadmpeg's loss for a Fusion part whose stored mesh bodies, its only bodies, did not decode.
+const MESH_ONLY_UNTRANSFERRED: (&str, &str) = ("f3d", "design.mesh-only-untransferred");
+
+/// Name a Fusion design whose only bodies are meshes that cadmpeg could not read. The loss
+/// carries no structured count, so the message names none.
+fn undecoded_mesh_only_error(
+    format: Format,
+    ir: &cadmpeg_ir::CadIr,
+    losses: &[cadmpeg_ir::report::loss::LossNote],
+) -> Option<Error> {
+    if !matches!(format, Format::FusionArchive | Format::FusionMultiDocument)
+        || !ir.geometry.bodies.is_empty()
+        || !ir.model.occurrences.is_empty()
+    {
+        return None;
+    }
+    let (namespace, code) = MESH_ONLY_UNTRANSFERRED;
+    losses
+        .iter()
+        .any(|note| note.code.namespace() == namespace && note.code.local_code() == code)
+        .then(|| {
+            Error::Decode(
+                "it holds only mesh bodies, which Dutchman doesn't convert yet, and none of them could be read. Convert the meshes to solids in Fusion, then save a new copy"
+                    .to_owned(),
+            )
+        })
 }
 
 /// Visit independent F3Z members through cadmpeg's bounded session API. Models are released
@@ -1000,6 +1185,32 @@ fn design_name(path: &Path) -> String {
         .unwrap_or_else(|| "Design".to_owned())
 }
 
+/// Prefix evidence only: a weak container signature never selects a format.
+pub(crate) fn preflight_codec(prefix: &[u8]) -> Option<&'static str> {
+    catch_unwind(AssertUnwindSafe(|| {
+        let arena = DecodeArena::new();
+        let mut policy = policy();
+        policy.limits.max_input_bytes = prefix.len() as u64;
+        policy.limits.max_retained_bytes = prefix.len() as u64;
+        policy.limits.max_entities = prefix.len() as u64;
+        policy.limits.max_decompressed_bytes_total = 0;
+        policy.limits.max_decompressed_bytes_per_expand = 0;
+        let (ctx, root) = DecodeContext::from_root_bytes(prefix, &arena, &policy).ok()?;
+        let catalog = InputCatalog::with_builtins();
+        let found = match catalog.detect(&ctx, root).ok()? {
+            cadmpeg_registry::DetectionOutcome::Detected {
+                codec,
+                confidence: cadmpeg_ir::codec::Confidence::High,
+            } => Format::from_codec_id(codec.id().as_str()).and_then(Format::codec_id),
+            _ => None,
+        };
+        ctx.finish_session().ok()?;
+        found
+    }))
+    .ok()
+    .flatten()
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -1101,6 +1312,46 @@ mod tests {
         }
         model.ir.model.features.clear();
         assert!(mesh_only_error(Format::FusionArchive, &model.ir, false).is_none());
+    }
+
+    fn mesh_only_untransferred(namespace: &str, code: &str) -> cadmpeg_ir::report::loss::LossNote {
+        use cadmpeg_ir::report::loss::{LossNote, LossTaxonomy, NamespacedLossKind};
+        LossNote::new(
+            NamespacedLossKind::new_owned(
+                namespace.to_owned(),
+                code.to_owned(),
+                LossTaxonomy::GeometryNotTransferred,
+            )
+            .unwrap(),
+            "mesh-only design: the Design asset stores no BREP entry, and 1 of its mesh geometry container(s) transferred no mesh body",
+        )
+    }
+
+    #[test]
+    fn undecoded_mesh_only_design_is_named_from_cadmpeg_loss() {
+        let mut model = cube();
+        let losses = vec![mesh_only_untransferred(
+            "f3d",
+            "design.mesh-only-untransferred",
+        )];
+        // A design with B-rep bodies keeps its conversion.
+        assert!(undecoded_mesh_only_error(Format::FusionArchive, &model.ir, &losses).is_none());
+        model.ir.geometry.bodies.clear();
+        let error = undecoded_mesh_only_error(Format::FusionArchive, &model.ir, &losses).unwrap();
+        assert_eq!(error.stage(), Stage::Decode);
+        assert_eq!(error.upstream(), Some("cadmpeg"));
+        assert_eq!(error.to_string(), "cannot read this design: it holds only mesh bodies, which Dutchman doesn't convert yet, and none of them could be read. Convert the meshes to solids in Fusion, then save a new copy");
+        assert!(
+            undecoded_mesh_only_error(Format::FusionMultiDocument, &model.ir, &losses).is_some()
+        );
+        assert!(undecoded_mesh_only_error(Format::InventorPart, &model.ir, &losses).is_none());
+        for (namespace, code) in [
+            ("f3d", "mesh.container-undecoded"),
+            ("inventor", "design.mesh-only-untransferred"),
+        ] {
+            let other = vec![mesh_only_untransferred(namespace, code)];
+            assert!(undecoded_mesh_only_error(Format::FusionArchive, &model.ir, &other).is_none());
+        }
     }
 
     #[test]

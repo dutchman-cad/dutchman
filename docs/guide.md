@@ -459,6 +459,15 @@ minimum/maximum coordinate; volume and area retain their measuring mesh toleranc
 A face-count difference alone does not establish a defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
 `solidcraft-cli mcp --in cube.sc` and call its `measure` tool.
 
+Conversion JSON includes `verification_checks` when a final history comparison is attempted.
+It records each body's measurements, counts, closure and centre of mass against source
+geometry, plus source parameter values and quantity kinds after replay. Geometric, closure
+and parameter checks say `pass`, `fail` or `not_checked` with evidence or a reason. A failed check can cause conversion to retain the
+original geometry. Face, edge and shell counts are informational: `info` when equal and
+`differs` when unequal. Split or merged equivalent faces never reject a history on counts
+alone. Omitted or renamed parameters are `not_checked`. Manifoldness remains explicitly unchecked because
+there is no evaluator result proving it. See [JSON reports](json.md#source-comparison-evidence).
+
 Which SolidCraft a design is written for, and how Dutchman finds the installed one, is in
 [SolidCraft versions](command-line.md#solidcraft-versions).
 
@@ -564,6 +573,12 @@ without looking for or launching an installed SolidCraft CLI.
 ### Feature history and the SolidCraft check
 
 [Feature history and the SolidCraft check](history.md)
+
+One stored sketch loop does not prove a native profile selection when other solid
+curves remain, including curves needed by a later trimmed cut. Dutchman requires
+source-confirmed inference in that case; otherwise it preserves the final shape
+and reference sketches instead of rebuilding extra regions. A later fillet may
+therefore be reported behind the earlier unresolved profile.
 
 Contour flanges map when cadmpeg supplies an open sketch chain of lines and arcs, a blind
 sweep along the sketch normal, and material on one side. Their thickness, bend radius and
@@ -801,6 +816,10 @@ After a conversion, **Output folder** folds into a summary. Click its folder pat
 **Change…** to reopen all output settings. **Clear** removes the designs and results and
 restores the expanded settings.
 
+In narrow desktop windows, **Report a problem…** (or **Report this design…** with a result
+selected) stays above **Convert** and scrolls to the full numbered cards in the page.
+See [reporting a problem](desktop.md#reporting-a-problem).
+
 Report consent is per report. In the desktop app, Discord is the first route, with a small
 **GitHub issue** backup link below the three steps. **Anonymous report** is under **More**,
 with AI help and diagnosis. It opens a review for the chosen file
@@ -997,6 +1016,22 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](json.md).
+
+## Scan before converting
+
+Run `dutchman preflight part.f3d` (or add `--json`) for bounded input evidence.
+The planned tier reads geometry and history, then forecasts the default target
+without writing a design. Partial results include retained feature counts and
+the first blocker. Other targets and budget overruns stay unknown. Exit 0
+includes unknown; it does not promise that conversion will succeed.
+See [preflight](preflight.md) for bounds and available facts.
+
+Preflight also refuses suffixes the current build cannot convert, following the
+existing converter gate before reading payload bytes. A shared part suffix stays
+unknown until its contents identify a reader.
+
+Library planning outcomes used by preflight keep empty output ids with
+`not_written`; preflight saves no design.
 
 ## Orient a Y-up design
 

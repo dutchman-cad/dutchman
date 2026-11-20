@@ -255,6 +255,7 @@ pub struct Report {
     placement_assumptions: Vec<(String, crate::PlacementAssumption)>,
     history_check_skipped: Option<(u64, u64)>,
     verification_tolerances: Option<serde_json::Value>,
+    verification_checks: Vec<serde_json::Value>,
     losses: Vec<Loss>,
     outcome: Option<Outcome>,
     parts: Vec<PartHistory>,
@@ -695,8 +696,23 @@ impl Report {
         }
     }
 
+    /// Source comparisons that ran, including explicit reasons for unavailable checks.
+    pub fn verification_checks(&self) -> &[serde_json::Value] {
+        &self.verification_checks
+    }
+
+    /// Records a bounded comparison report for one part.
+    pub fn record_verification_checks(&mut self, checks: serde_json::Value) {
+        if self.verification_checks.len() < MAX_NAMES {
+            self.verification_checks.push(checks);
+        }
+    }
+
     /// Records every loss of `other`, after this report's own.
     pub fn append(&mut self, other: Report) {
+        for checks in other.verification_checks {
+            self.record_verification_checks(checks);
+        }
         self.merge_threads(other.threads);
         if let Some((mode, counts)) = other.part_positions {
             self.record_part_positions(mode, counts);
@@ -713,6 +729,9 @@ impl Report {
 
     /// Records every loss of `other` under `prefix` (`part.ipt: …`), after this report's own.
     pub fn append_prefixed(&mut self, other: Report, prefix: &str) {
+        for checks in other.verification_checks {
+            self.record_verification_checks(checks);
+        }
         self.merge_threads(other.threads);
         if let Some((mode, counts)) = other.part_positions {
             self.record_part_positions(mode, counts);
@@ -805,6 +824,17 @@ impl Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verification_evidence_survives_both_report_merges() {
+        let evidence = serde_json::json!({"part":"Cube", "geometry":{"body_count":{"status":"pass","source":1,"written":1}}});
+        let mut a = Report::default();
+        a.record_verification_checks(evidence.clone());
+        let mut b = Report::default();
+        b.append(a.clone());
+        b.append_prefixed(a, "part");
+        assert_eq!(b.verification_checks(), &[evidence.clone(), evidence]);
+    }
 
     #[test]
     fn cadmpeg_losses_are_staged_by_their_code() {
