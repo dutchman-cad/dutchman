@@ -222,6 +222,16 @@ impl<'a> Inputs<'a> {
         native: &str,
         kind: OperandKind,
     ) -> Mapping<String> {
+        self.producer_with_explicit(ordinal, native, kind, &[])
+    }
+
+    pub(super) fn producer_with_explicit(
+        &self,
+        ordinal: usize,
+        native: &str,
+        kind: OperandKind,
+        explicit: &[String],
+    ) -> Mapping<String> {
         let mut provenance = self
             .provenance
             .try_borrow_mut()
@@ -284,13 +294,65 @@ impl<'a> Inputs<'a> {
             }
             .into());
         };
-        Ok(text(
+        let latest = text(
             self.features
                 .get(*producer)
                 .ok_or("feature dependency producer is missing")?,
             "featureId",
-        )?
-        .to_owned())
+        )?;
+        // A created-by query can name the first producer while rollback records
+        // prove a later modification. Only use the current uninterrupted lifetime:
+        // disappearance and reuse of a deterministic id must not inherit its creator.
+        let lifetime = history
+            .get(..position)
+            .ok_or("feature dependency lifetime is unresolved")?;
+        let creation = lifetime
+            .iter()
+            .rev()
+            .take_while(|transition| transition.interval.is_some())
+            .last()
+            .and_then(|transition| transition.interval.as_ref());
+        for named in explicit {
+            if named == latest {
+                continue;
+            }
+            let creator = creation.and_then(|interval| {
+                let first = self.body_features.partition_point(|i| *i < interval.start);
+                let end = self.body_features.partition_point(|i| *i < interval.end);
+                let [index] = self.body_features.get(first..end)? else {
+                    return None;
+                };
+                self.features.get(*index)?.get("featureId")?.as_str()
+            });
+            if creator != Some(named.as_str()) {
+                return Err(
+                    "feature dependency explicit producer contradicts stored topology".into(),
+                );
+            }
+            self.unique_feature(named, ordinal)?;
+        }
+        Ok(latest.to_owned())
+    }
+
+    /// Whole-studio references need every row accounted for. An unknown body must
+    /// not disappear from the evidence and make a subset look like the whole studio.
+    pub(super) fn solid_parts(&self, ordinal: usize) -> Mapping<BTreeMap<String, Option<String>>> {
+        let parts = self.parts(ordinal)?;
+        let response = self
+            .bundle
+            .json(&format!("{}/bodydetails/{ordinal}.json", self.prefix))
+            .map_err(|_| "the whole-studio rollback snapshot is unreadable")?;
+        for body in rows(response, "bodies")? {
+            if text(body, "type")? != "SOLID"
+                || body
+                    .get("consumedByComposite")
+                    .is_some_and(|value| value.as_bool() != Some(false))
+            {
+                return Err("the whole-studio selection contains an unresolved or non-solid body; select a studio of separate solids".into());
+            }
+            text(body, "id")?;
+        }
+        Ok(parts)
     }
 
     pub(super) fn parts(&self, ordinal: usize) -> Mapping<BTreeMap<String, Option<String>>> {

@@ -476,3 +476,99 @@ fn repeated_feature_ids_refuse_ambiguous_consumers_and_keep_independent_records(
         .any(|loss| loss.detail.contains("ambiguous")));
     validate(result);
 }
+
+#[test]
+fn created_body_scope_survives_modification_but_refuses_contradictions_and_id_reuse() {
+    let hole = |native: &str| {
+        json!({"featureType":"hole","featureId":native,"parameters":[
+            {"parameterId":"locations","queries":[{"queryString":"query=qCompressed(1.0,\"%M5Sa$entityTypeS6$VERTEXSb$historyTypeS8$CREATIONSb$operationIdA1Se$profile.wireOpS9$queryTypeSd$SKETCH_ENTITYSe$sketchEntityIdS6$middle\",id);"}]},
+            {"parameterId":"style","value":"SIMPLE"},{"parameterId":"endStyle","value":"THROUGH"},
+            {"parameterId":"holeDiameter","expression":"3 mm"}]})
+    };
+    for case in [
+        "creator",
+        "latest",
+        "unrelated",
+        "reused",
+        "ambiguous",
+        "ambiguous-creation",
+    ] {
+        let mut changed = body();
+        changed["faces"][0]["surface"]["origin"]["z"] = json!(0.001);
+        let mut consumer = hole("consumer");
+        let mut scope = selection("scope", "body");
+        let query = json!({"entityType":"BODY", "historyType":"CREATION",
+        "queryType":"SWEPT_BODY", "operationId":[format!(
+            "{}.opExtrude",
+            match case {
+                "latest" => "first-hole",
+                "unrelated" => "profile",
+                _ => "producer",
+            }
+        )]});
+        let encoded =
+            serde_json::to_string(&format!("%{}", super::tests::compact(&query))).unwrap();
+        scope["queries"][0]["queryString"] = json!(format!("query=qCompressed(1.0,{encoded},id);"));
+        consumer["parameters"].as_array_mut().unwrap().push(scope);
+        let mut states = vec![
+            (1, json!([])),
+            (2, json!([body()])),
+            (3, json!([changed.clone()])),
+            (4, json!([changed])),
+        ];
+        if case == "reused" {
+            states[2].1 = json!([]);
+        }
+        if case == "ambiguous-creation" {
+            // The latest revision is unique even though the creator cannot be
+            // separated from another body feature in the earlier snapshot gap.
+            states[3].1[0]["faces"][0]["surface"]["origin"]["z"] = json!(0.0005);
+        }
+        if matches!(case, "ambiguous" | "ambiguous-creation") {
+            states.remove(1);
+        }
+        let result = decode(&bundle(
+            vec![
+                sketch("profile"),
+                extrude("producer", "profile"),
+                hole("first-hole"),
+                hole("modifier"),
+                consumer,
+            ],
+            &states,
+        ));
+        let output = wire(&result);
+        if matches!(case, "creator" | "latest") {
+            assert_eq!(
+                kind(&output, 4),
+                "hole",
+                "{case}: {:?}",
+                result.report().losses()
+            );
+            assert_eq!(
+                output["model"]["features"][4]["dependencies"],
+                json!([
+                    super::id("feature", "profile"),
+                    super::id("feature", "first-hole")
+                ])
+            );
+        } else {
+            assert_eq!(kind(&output, 4), "native", "{case}");
+            let reason = if case == "ambiguous" {
+                "topology producer is ambiguous"
+            } else {
+                "explicit producer contradicts stored topology"
+            };
+            assert!(
+                result
+                    .report()
+                    .losses()
+                    .iter()
+                    .any(|l| l.detail.contains(reason)),
+                "{case}: {:?}",
+                result.report().losses()
+            );
+        }
+        validate(result);
+    }
+}

@@ -5,9 +5,31 @@ Folder and selection summaries use the highest per-file memory estimate and sum 
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
 the full path on hover. At wide window sizes the path and estimate share a wrapping row
 to keep the default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
+Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
+components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
+Select target 0.44 explicitly when the existing default is older.
+Keep the generated `derived-<sha256>.sc` companion designs beside the main result;
+edit a companion and use SolidCraft's Update Links to rebuild the host. If conversion
+finds an edited companion, choose another output folder; that companion is kept even
+when overwriting is enabled. Parallel conversions safely share identical companions.
+Earlier targets
+report `design/reference.frozen` and keep frozen derived bodies. Missing references,
+part subsets, configurations or transformed inserts name the reason under
+`onshape/history.not-supported`; fetch a new bundle for missing references.
+
+Derived Boolean conversion requires an explicit stored `keepTools` boolean. Missing or
+contradictory choices retain `onshape/history.not-supported`; later records still convert.
+Captured studio responses are checked against their own manifest microversion, independently
+of the root studio. Fetch a new bundle when the reported reference evidence is missing.
+
+See [Onshape bundles](onshape.md) for the supported reference forms.
+
 Onshape history dependencies follow consumed operands in their stored order. Deterministic
 body, face and edge selections need a unique earlier producer proved by rollback
 transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+A created-by query may name the proved creator of an entity that later features
+modified; its dependency still follows the latest modification. Missing creation
+proof, unrelated producers and IDs reused after disappearance remain refused.
 Every present scope query list is validated, while an empty list keeps implicit scope.
 Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
 A record the reader cannot convert becomes a named loss and the remaining records continue.
@@ -516,6 +538,14 @@ effect through input preparation and geometry-only fallbacks; JSON displays its 
 Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
 and keep the original geometry. The existing history status and reason fields report refusals.
 
+Chamfers with unequal distances or a distance and an angle other than 45 degrees keep
+editable history when the source's final body proves which face takes the distance.
+Straight edges need a retained planar chamfer face; closed circles need a plane and a
+coaxial cylinder in the replay and both resulting circles in the source. Each body's
+chamfer is replayed in both face orders when needed and kept only where its cut matches.
+Missing evidence keeps the original geometry with a specific history reason. Existing
+history statuses, counts and report fields are unchanged.
+
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
@@ -588,7 +618,7 @@ change replay order: the neutral ordinal controls it.
 |---|---|---|---|
 | `inspect` | `input`, and optionally `project`, `search` | `dutchman.inspect/1` | nothing |
 | `contents` | `input`, and optionally `project`, `search` | `dutchman.contents/1` | nothing |
-| `convert` | `input`, `output` (optional for `dry_run`), and optionally `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `stand_up`, `no_stand_up`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
+| `convert` | `input`, `output` (optional for `dry_run`), and optionally `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `stand_up`, `no_stand_up`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file and required linked-design companions |
 | `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `stand_up`, `no_stand_up`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
 | `formats` | none | `dutchman.formats/1` | nothing |
 | `read_report` | `input` (saved report or its design) | `dutchman.convert/1` plus `loss_groups`, with private local names and paths | nothing |
@@ -1131,6 +1161,11 @@ existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
 
+The desktop report panel stays visible below output controls in wide windows. Discord
+comes first, with a small **GitHub issue** backup link (a public issue under the user's
+GitHub name). **Anonymous report**, under **More**, opens review before direct cloud upload.
+Partial history, geometry-only and degraded results use a warning colour. Report fields
+and CLI/MCP behavior are unchanged.
 Onshape up-to-next extents use exact intersections with stored input faces to prove
 coverage and first termination over closed profile boundaries. Face/cap attachments
 need stored complete frames. Thin extrudes need stored thickness, side and direction

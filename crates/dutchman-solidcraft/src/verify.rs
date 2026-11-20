@@ -419,6 +419,8 @@ pub const WINDOW_OLDEST: [u64; 3] = [0, 18, 2];
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
 pub enum VersionGate {
+    /// Linked Insert Design with cached bodies and a source file.
+    LinkedDesign,
     /// Thin walls verified against the current SolidCraft document format.
     ThinExtrude,
     /// Sweep paths selected from proven input edges.
@@ -457,6 +459,7 @@ pub enum VersionGate {
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::LinkedDesign => SolidCraftVersion::V0_44_0,
             Self::ThinExtrude => SolidCraftVersion::V0_44_0,
             Self::TopologicalEdges => SolidCraftVersion::V0_44_0,
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
@@ -1732,13 +1735,24 @@ pub(crate) struct ReplayedCircle {
 }
 
 /// One face of a body SolidCraft replayed, as `model.faces` gives it. `normal` is the
-/// outward unit normal of a planar face, `None` for another surface.
+/// outward unit normal of a planar face, `None` for another surface; `cylinder` is set for a
+/// circular cylinder.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ReplayedFace {
     pub name: String,
     pub area: f64,
     pub normal: Option<[f64; 3]>,
+    pub cylinder: Option<ReplayedCylinder>,
     pub point: [f64; 3],
+}
+
+/// The circular cylinder a replayed face lies on: a point on its axis, its unit axis and its
+/// radius.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ReplayedCylinder {
+    pub origin: [f64; 3],
+    pub axis: [f64; 3],
+    pub radius: f64,
 }
 
 /// What SolidCraft rebuilt at one point of a replayed timeline: the bodies with their edges,
@@ -2003,7 +2017,7 @@ fn replayed_edge(row: &Value) -> Result<ReplayedEdge, String> {
 }
 
 fn replayed_face(row: &Value) -> Result<ReplayedFace, String> {
-    let point = |key: &str| -> Option<[f64; 3]> {
+    let triple = |row: &Value, key: &str| -> Option<[f64; 3]> {
         let values = row.get(key)?.as_array()?;
         if values.len() != 3 {
             return None;
@@ -2014,6 +2028,17 @@ fn replayed_face(row: &Value) -> Result<ReplayedFace, String> {
         }
         Some(out)
     };
+    let cylinder = |row: &Value| -> Option<ReplayedCylinder> {
+        let cylinder = row.get("cylinder")?;
+        Some(ReplayedCylinder {
+            origin: triple(cylinder, "origin")?,
+            axis: triple(cylinder, "axis")?,
+            radius: cylinder
+                .get("radius")
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite() && *v > 0.0)?,
+        })
+    };
     (|| {
         Some(ReplayedFace {
             name: row.get("name")?.as_str()?.to_owned(),
@@ -2021,8 +2046,9 @@ fn replayed_face(row: &Value) -> Result<ReplayedFace, String> {
                 .get("area")
                 .and_then(Value::as_f64)
                 .filter(|v| v.is_finite() && *v >= 0.0)?,
-            normal: point("plane_normal"),
-            point: point("point")?,
+            normal: triple(row, "plane_normal"),
+            cylinder: cylinder(row),
+            point: triple(row, "point")?,
         })
     })()
     .ok_or_else(|| format!("{CLI_NAME} result has a face without its name, area or point"))
@@ -3674,7 +3700,9 @@ mod version_tests {
             );
         }
         assert_eq!(target.extension(), SolidCraftVersion::V0_30_0.extension());
-        // Thin extrudes, slanted face extents and scoped bodies need 0.44, so earlier targets keep less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3691,7 +3719,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Thin extrudes, slanted face extents and scoped bodies need 0.44, so earlier targets keep less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3708,7 +3738,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Thin extrudes, slanted face extents and scoped bodies need 0.44, so earlier targets keep less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3725,7 +3757,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Thin extrudes, slanted face extents and scoped bodies need 0.44, so earlier targets keep less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3772,11 +3806,13 @@ mod version_tests {
         let after: SolidCraftVersion = "0.25.1".parse().unwrap();
         assert_eq!(before.minor(), after.minor());
         assert!(target_loses_history(before));
-        assert!(VersionGate::MirrorChain.supported(after));
-        // Both lose the 0.44 gates; the patch release still adds its own gate.
-        assert!(target_loses_history(after));
         assert!(!VersionGate::SketchProfileCoil.supported(before));
         assert!(VersionGate::SketchProfileCoil.supported(after));
+        assert!(!VersionGate::MirrorChain.supported(before));
+        assert!(VersionGate::MirrorChain.supported(after));
+        // The patch-sensitive capabilities work, while current representations
+        // still require a newer target and keep the history-loss notice.
+        assert!(target_loses_history(after));
         assert!(!VersionGate::ThinExtrude.supported(after));
         assert!(VersionGate::ThinExtrude.supported(SolidCraftVersion::V0_44_0));
         assert!(!target_loses_history(SolidCraftVersion::V0_44_0));

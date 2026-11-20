@@ -28,18 +28,20 @@
 //!   for a tangent SolidCraft does not report.
 //!
 //! A chamfer with unequal setbacks also needs the face its distance runs along. The source
-//! does not say which; [`cuts`] takes the order that puts the chamfer's face on a planar face of
-//! the source's final body, between that face's boundary edges, on straight edges only.
-//! SolidCraft takes the face facing up most first unless the chamfer is flipped, so the history
-//! then replays each body's chamfer and keeps whichever way puts its edges there, on that body
-//! and along its input edges ([`cut_as`]).
+//! does not say which; [`cuts`] takes the order that puts the chamfer where the source's final
+//! body has it: for a straight edge, its face on a planar face of that body, between that
+//! face's boundary edges; for a full circle between a plane square to its axis and a coaxial
+//! cylinder, its two edges on circles of that body. SolidCraft takes the face facing up most
+//! first unless the chamfer is flipped, so the history then replays each body's chamfer and
+//! keeps whichever way puts its edges there, on that body and along its input edges
+//! ([`cut_as`]).
 
 use dutchman_core::{Report, Severity};
 use serde_json::{json, Map, Value};
 
 use super::sketch::{cross, dot, number, unit, v3, Mapped, V3};
 use super::{describe, name, Context};
-use crate::verify::{ReplayedBodies, ReplayedEdge};
+use crate::verify::{ReplayedBodies, ReplayedEdge, ReplayedFace};
 
 const LIMIT: usize = 256;
 /// How far apart, in millimetres, two positions may be and still be the same.
@@ -69,6 +71,7 @@ const PLANES: usize = 100_000;
 /// Most boundary edge uses of those faces looked through.
 const LINES: usize = 1_000_000;
 const SIDES: &str = "the two faces of its input edge cannot be told apart on SolidCraft's replay before it, so which face takes the distance cannot be proven yet";
+const RING_SIDES: &str = "the faces of its circular input edge are not proven to be a plane square to its axis and a coaxial cylinder on SolidCraft's replay before it, so where the chamfer runs cannot be proven yet";
 const UNSHOWN: &str = "the source's final body has no chamfer face where either face order puts it, so which face takes the distance cannot be proven yet";
 const BOTH: &str = "the source's final body has a chamfer face both ways round, so which face takes the distance cannot be proven yet";
 
@@ -104,6 +107,13 @@ impl Pending {
         self.edges.iter().any(|edge| near(edge.ends.0, edge.ends.1))
             || (self.path && self.edges.iter().any(|edge| !edge.straight))
     }
+
+    /// Whether proving it needs SolidCraft's faces of the bodies before it: a chamfer that
+    /// depends on which faces meet at a full circle.
+    pub(super) fn needs_faces(&self) -> bool {
+        (self.angle_chamfer || self.unequal.is_some())
+            && self.edges.iter().any(|input| input.circle.is_some())
+    }
 }
 
 /// A chamfer's setbacks when they differ: `distance` along the face it is measured on, and the
@@ -112,7 +122,18 @@ impl Pending {
 pub(crate) struct Unequal {
     distance: f64,
     second: Second,
+    /// The source's final planar faces, for chamfers on straight edges.
     faces: Vec<SourceFace>,
+    /// The source's final circular edges, for chamfers on full circles.
+    circles: Vec<CutCircle>,
+}
+
+/// Circle geometry used to locate an unequal chamfer's resulting edges.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct CutCircle {
+    centre: V3,
+    axis: V3,
+    radius: f64,
 }
 
 /// A planar face of the source's final body.
@@ -134,12 +155,15 @@ enum Second {
 
 /// Where an unequal chamfer meets the two faces of one edge of `body`: lines along the edge
 /// through these points, on the face that takes the distance first, over the edge's `span`.
+/// Around a full circle, they are instead circles about its axis through these points.
 #[derive(Clone, Debug)]
 pub(crate) struct Cut {
     body: String,
     along: V3,
     points: [V3; 2],
     span: Segment,
+    /// The input circle and its unit outward direction at the points.
+    around: Option<(CutCircle, V3)>,
 }
 
 /// One selected input edge, from its feature input topology.
@@ -147,9 +171,10 @@ pub(crate) struct Cut {
 pub(super) struct Input {
     /// The point at the middle of its carrier's parameter interval.
     point: V3,
+    /// Its start and end, the same point on a closed edge.
     ends: Segment,
     tangent: V3,
-    /// Its length: the chord of a line, or the arc's `radius × angle`.
+    /// Its length: the chord of a line, the arc's, or the circumference.
     length: f64,
     straight: bool,
     /// Authoritative closed source circle and its owning replay body.
@@ -288,7 +313,7 @@ fn group(
             }
         }
     }
-    let mut unequal = None;
+    let mut setbacks = None;
     if kind != "fillet" {
         let mut second_setback = None;
         let spec = group
@@ -325,11 +350,7 @@ fn group(
         };
         out.insert("distance".to_owned(), json!(length(distance)?));
         if let Some(second) = second_setback {
-            unequal = Some(Unequal {
-                distance: number(distance).ok_or(DIMENSION)?,
-                second,
-                faces: source_faces(ctx)?,
-            });
+            setbacks = Some((number(distance).ok_or(DIMENSION)?, second));
         }
     }
     // A source that resolves tangent propagation itself lists every edge it blends. SolidCraft
@@ -348,7 +369,7 @@ fn group(
         out.insert("tangent_chain".to_owned(), json!(false));
     }
     let selection = group.get("edges").ok_or("its input edges are not given")?;
-    let angle_chamfer = unequal.is_none()
+    let angle_chamfer = setbacks.is_none()
         && group.pointer("/spec/kind").and_then(Value::as_str) == Some("distance_angle");
     let (inputs, points) = match selection.get("kind").and_then(Value::as_str) {
         Some("historical") => historical(feature, selection, ctx, angle_chamfer)?,
@@ -364,9 +385,29 @@ fn group(
         }
         _ => return Err("blends require edges from their own feature input topology; edges of the final body are not supported yet".to_owned()),
     };
-    if unequal.is_some() && inputs.iter().any(|input| !input.straight) {
-        return Err("unequal chamfers on curved input edges are not supported yet".to_owned());
-    }
+    let unequal = match setbacks {
+        Some(_) if inputs.iter().any(|input| !input.straight && input.circle.is_none()) => return Err(
+            "unequal chamfers on curved input edges other than full circles are not supported yet"
+                .to_owned(),
+        ),
+        Some((distance, second)) => {
+            Some(Unequal {
+                distance,
+                second,
+                faces: if inputs.iter().any(|input| input.straight) {
+                    source_faces(ctx)?
+                } else {
+                    Vec::new()
+                },
+                circles: if inputs.iter().any(|input| input.circle.is_some()) {
+                    source_circles(ctx)?
+                } else {
+                    Vec::new()
+                },
+            })
+        }
+        None => None,
+    };
     out.insert("edges".to_owned(), json!(points));
     let id = ctx.id();
     out.insert("id".to_owned(), json!(id));
@@ -520,7 +561,8 @@ pub(super) fn historical(
                 circle: None,
             }
         };
-        if angle_chamfer && !input.straight {
+        // A full circle's faces are proven square on SolidCraft's replay ([`prove`]).
+        if angle_chamfer && !input.straight && input.circle.is_none() {
             return Err("distance-and-angle chamfers on non-perpendicular input faces are not supported yet".to_owned());
         }
         inputs.push(input);
@@ -734,9 +776,12 @@ pub(crate) struct Selection {
 }
 
 /// Match open edges against the rebuilt history and closed circles within their source body.
-/// Applying a blend's parameters independently to disjoint bodies is equivalent: an unequal
-/// chamfer's face order is settled per edge ([`cuts`]).
-pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Selection>, String> {
+/// Unequal chamfer face order is settled separately by `cuts`.
+pub(crate) fn prove(
+    pending: &Pending,
+    bodies: &ReplayedBodies,
+    faces: &[Vec<ReplayedFace>],
+) -> Result<Vec<Selection>, String> {
     let mut chosen: Vec<(usize, usize)> = Vec::new();
     let mut picks = Vec::new();
     for input in &pending.edges {
@@ -751,6 +796,26 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
                 }
                 if chosen.contains(&(b, e)) {
                     return Err("its input edge selection repeats a rebuilt edge".to_owned());
+                }
+                if pending.angle_chamfer || pending.unequal.is_some() {
+                    let edge = bodies
+                        .get(b)
+                        .and_then(|(_, edges)| edges.get(e))
+                        .ok_or(INPUT)?;
+                    if circle_sides(
+                        CutCircle::from(circle),
+                        input.point,
+                        edge,
+                        faces.get(b).map_or(&[], Vec::as_slice),
+                    )
+                    .is_none()
+                    {
+                        return Err(if pending.unequal.is_some() {
+                            RING_SIDES.to_owned()
+                        } else {
+                            "distance-and-angle chamfers on non-perpendicular input faces are not supported yet".to_owned()
+                        });
+                    }
                 }
                 chosen.push((b, e));
                 picks.push(point);
@@ -857,6 +922,410 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
     Ok(selections)
 }
 
+/// Which face of each input edge an unequal chamfer takes its distance on. Of the two faces on
+/// either side of the edge, as SolidCraft rebuilt them before the chamfer, exactly one order must
+/// put the chamfer where the source's final body has it: its face on a planar face of that body,
+/// between boundary edges along both of its lines; or, around a full circle, both its edges on
+/// circles of that body. `faces` are each body's faces, in the order of `bodies`.
+pub(crate) fn cuts(
+    unequal: &Unequal,
+    inputs: &[Input],
+    bodies: &ReplayedBodies,
+    faces: &[Vec<ReplayedFace>],
+) -> Result<Vec<Cut>, String> {
+    let through = |input: &Input, edge: &ReplayedEdge| match &input.circle {
+        Some((circle, _)) => circle.interval(edge).is_some(),
+        None => straight(edge) && on_segment(input.point, (edge.start, edge.end)),
+    };
+    inputs
+        .iter()
+        .map(|input| {
+            let (index, body, edge, edges) = bodies
+                .iter()
+                .enumerate()
+                .find_map(|(index, (body, edges))| {
+                    if input
+                        .circle
+                        .as_ref()
+                        .is_some_and(|(_, owner)| owner != body)
+                    {
+                        return None;
+                    }
+                    let edge = edges.iter().find(|edge| through(input, edge))?;
+                    Some((index, body, edge, edges.as_slice()))
+                })
+                .ok_or(INPUT)?;
+            let [a, b] = match &input.circle {
+                Some((circle, _)) => {
+                    let circle = CutCircle::from(circle);
+                    let faces = faces.get(index).map_or(&[][..], Vec::as_slice);
+                    circle_sides(circle, input.point, edge, faces).ok_or(RING_SIDES)?
+                }
+                _ => sides(edge, edges).ok_or(SIDES)?,
+            };
+            let mut orders: Vec<Cut> = [(a, b), (b, a)]
+                .into_iter()
+                .filter_map(|(first, second)| unequal.cut(input, body, first, second))
+                .filter(|cut| cut.shown(unequal))
+                .collect();
+            if orders.len() > 1 {
+                return Err(BOTH.to_owned());
+            }
+            orders.pop().ok_or_else(|| UNSHOWN.to_owned())
+        })
+        .collect()
+}
+
+/// Whether SolidCraft's `body` after an unequal chamfer has edges along each of its `cuts` on
+/// that body: straight ones over the stretch of their input edges, or closed ones all around
+/// their circles.
+pub(crate) fn cut_as(cuts: &[Cut], body: &str, bodies: &ReplayedBodies) -> bool {
+    let edges = || {
+        bodies
+            .iter()
+            .filter(|(name, _)| name == body)
+            .flat_map(|(_, edges)| edges)
+    };
+    cuts.iter().filter(|cut| cut.body == body).all(|cut| {
+        cut.points.iter().all(|&point| match cut.around {
+            None => edges().any(|edge| straight(edge) && cut.runs((edge.start, edge.end), point)),
+            Some((circle, outward)) => circle
+                .ring(point, outward)
+                .is_some_and(|ring| ring.carrier(outward).prove(bodies, body).is_ok()),
+        })
+    })
+}
+
+/// The directions, square to a full `circle` at `point` on it, in which the two faces of its
+/// rebuilt `edge` run away from it: a plane square to its axis, outward or inward, and a coaxial
+/// cylinder of its radius, along its axis either way. SolidCraft names the faces in the edge's
+/// name; `faces` are those of its body.
+fn circle_sides(
+    circle: CutCircle,
+    point: V3,
+    edge: &ReplayedEdge,
+    faces: &[ReplayedFace],
+) -> Option<[V3; 2]> {
+    let mut names = edge.name.split('|');
+    let (Some(a), Some(b), None) = (names.next(), names.next(), names.next()) else {
+        return None;
+    };
+    let face = |name: &str| -> Option<&ReplayedFace> {
+        let mut found = faces.iter().filter(|face| face.name == name);
+        let face = found.next()?;
+        found.next().is_none().then_some(face)
+    };
+    let (a, b) = (face(a)?, face(b)?);
+    let (plane, cylinder) = if a.normal.is_some() { (a, b) } else { (b, a) };
+    let normal = plane.normal.and_then(unit)?;
+    let barrel = cylinder.cylinder?;
+    let off_axis = |at: V3| {
+        let off = sub(at, circle.centre);
+        distance(off, scale(circle.axis, dot(off, circle.axis)))
+    };
+    let square = parallel(normal, circle.axis)
+        && dot(sub(plane.point, circle.centre), circle.axis).abs() <= PLANE
+        && parallel(barrel.axis, circle.axis)
+        && off_axis(barrel.origin) <= PLANE
+        && (barrel.radius - circle.radius).abs() <= PLANE;
+    if !square {
+        return None;
+    }
+    // Where each face lies: the plane's point off the circle, the cylinder's off its plane.
+    let across = off_axis(plane.point) - circle.radius;
+    let along = dot(sub(cylinder.point, circle.centre), circle.axis);
+    if across.abs() <= PLANE || along.abs() <= PLANE {
+        return None;
+    }
+    let outward = circle.outward(point)?;
+    Some([
+        scale(outward, across.signum()),
+        scale(circle.axis, along.signum()),
+    ])
+}
+
+/// The directions, square to a straight `edge`, in which its two faces run away from it: those
+/// of the other edges at each of its ends. Both ends must give the same two.
+fn sides(edge: &ReplayedEdge, edges: &[ReplayedEdge]) -> Option<[V3; 2]> {
+    let along = unit(sub(edge.end, edge.start))?;
+    let at = |vertex: V3| -> Option<[V3; 2]> {
+        let mut directions: Vec<V3> = Vec::new();
+        for other in edges {
+            if same((other.start, other.end), (edge.start, edge.end))
+                || !(near(vertex, other.start) || near(vertex, other.end))
+            {
+                continue;
+            }
+            let away = sub(other.mid, vertex);
+            let across = unit(sub(away, scale(along, dot(away, along))))?;
+            if !directions
+                .iter()
+                .any(|seen| dot(*seen, across) >= 1.0 - ANGLE)
+            {
+                directions.push(across);
+            }
+        }
+        match directions.as_slice() {
+            [a, b] if dot(*a, *b) > ANGLE - 1.0 => Some([*a, *b]),
+            _ => None,
+        }
+    };
+    let [a, b] = at(edge.start)?;
+    let [c, d] = at(edge.end)?;
+    let agree = |x: V3, y: V3| dot(x, y) >= 1.0 - ANGLE;
+    ((agree(a, c) && agree(b, d)) || (agree(a, d) && agree(b, c))).then_some([a, b])
+}
+
+impl Unequal {
+    /// Where the chamfer meets the faces running `first` and `second` from the `input` edge of
+    /// `body`, with its distance on the first; `None` when they never meet.
+    fn cut(&self, input: &Input, body: &str, first: V3, second: V3) -> Option<Cut> {
+        let (point, along) = (input.point, input.tangent);
+        let on_first = add(point, scale(first, self.distance));
+        let on_second = match self.second {
+            Second::Distance(distance) => add(point, scale(second, distance)),
+            Second::Angle(angle) => {
+                // From the first face toward the edge, turned by the angle toward the second.
+                let toward = unit(sub(second, scale(first, dot(second, first))))?;
+                let run = add(scale(first, -angle.cos()), scale(toward, angle.sin()));
+                let reach = -self.distance * dot(cross(first, second), along)
+                    / dot(cross(run, second), along);
+                let at = add(on_first, scale(run, reach));
+                if !(reach.is_finite() && reach > 0.0 && dot(sub(at, point), second) > 0.0) {
+                    return None;
+                }
+                at
+            }
+        };
+        let around = input.circle.as_ref().and_then(|(circle, _)| {
+            let circle = CutCircle::from(circle);
+            Some((circle, circle.outward(point)?))
+        });
+        Some(Cut {
+            body: body.to_owned(),
+            along,
+            points: [on_first, on_second],
+            span: input.ends,
+            around,
+        })
+    }
+}
+
+impl From<&Circle> for CutCircle {
+    fn from(circle: &Circle) -> Self {
+        Self {
+            centre: circle.center,
+            axis: circle.normal,
+            radius: circle.radius,
+        }
+    }
+}
+
+impl CutCircle {
+    /// The circle through the start of a closed edge and the `point` halfway along it, with
+    /// `tangent` there: those two lie opposite on it, and the tangent is square to the diameter
+    /// between them. `None` for any other closed curve this proves nothing about.
+    #[cfg(test)]
+    fn closed(start: V3, point: V3, tangent: V3) -> Option<CutCircle> {
+        let diameter = sub(point, start);
+        let radius = dot(diameter, diameter).sqrt() / 2.0;
+        if !(radius.is_finite() && radius > TOLERANCE)
+            || dot(unit(diameter)?, tangent).abs() > ANGLE
+        {
+            return None;
+        }
+        Some(CutCircle {
+            centre: add(start, scale(diameter, 0.5)),
+            axis: unit(cross(diameter, tangent))?,
+            radius,
+        })
+    }
+
+    /// Use the same measured carrier and complete path proof as the selected input circle.
+    fn carrier(&self, outward: V3) -> Circle {
+        Circle {
+            center: self.centre,
+            normal: self.axis,
+            radius: self.radius,
+            x: outward,
+            y: cross(self.axis, outward),
+        }
+    }
+
+    /// The unit direction from the axis out to `point`, in the circle's plane.
+    fn outward(&self, point: V3) -> Option<V3> {
+        let off = sub(point, self.centre);
+        unit(sub(off, scale(self.axis, dot(off, self.axis))))
+    }
+
+    /// The coaxial circle through `point`, which must lie out from the axis along `outward`.
+    fn ring(&self, point: V3, outward: V3) -> Option<CutCircle> {
+        let off = sub(point, self.centre);
+        let height = dot(off, self.axis);
+        let radius = dot(off, outward);
+        (radius > TOLERANCE).then(|| CutCircle {
+            centre: add(self.centre, scale(self.axis, height)),
+            axis: self.axis,
+            radius,
+        })
+    }
+
+    /// Whether `other` is the same circle within `tolerance`.
+    fn same(&self, other: &CutCircle, tolerance: f64) -> bool {
+        distance(self.centre, other.centre) <= tolerance
+            && parallel(self.axis, other.axis)
+            && (self.radius - other.radius).abs() <= tolerance
+    }
+}
+
+impl Cut {
+    /// Whether the source's final body shows this cut: on one of its planar faces, or around
+    /// a circle, both its edges on circles of that body.
+    fn shown(&self, unequal: &Unequal) -> bool {
+        match self.around {
+            None => unequal.faces.iter().any(|face| self.on_face(face)),
+            Some((circle, outward)) => self.points.iter().all(|&point| {
+                circle.ring(point, outward).is_some_and(|ring| {
+                    unequal
+                        .circles
+                        .iter()
+                        .any(|source| ring.same(source, PLANE))
+                })
+            }),
+        }
+    }
+
+    /// Whether `face` holds this cut: both its lines on the face's plane, each along a boundary
+    /// edge of the face.
+    fn on_face(&self, face: &SourceFace) -> bool {
+        dot(face.normal, self.along).abs() <= ANGLE
+            && self.points.iter().all(|&point| {
+                (dot(face.normal, point) - face.offset).abs() <= PLANE
+                    && face.lines.iter().any(|&line| self.runs(line, point))
+            })
+    }
+
+    /// Whether `segment` lies on the cut's line through `point` and overlaps its input edge.
+    fn runs(&self, (a, b): Segment, point: V3) -> bool {
+        let across = |x: V3| {
+            let off = sub(x, point);
+            let off = sub(off, scale(self.along, dot(off, self.along)));
+            dot(off, off).sqrt()
+        };
+        let at = |x: V3| dot(sub(x, point), self.along);
+        let (low, high) = (at(a).min(at(b)), at(a).max(at(b)));
+        let (from, to) = (
+            at(self.span.0).min(at(self.span.1)),
+            at(self.span.0).max(at(self.span.1)),
+        );
+        parallel(sub(b, a), self.along)
+            && across(a) <= PLANE
+            && across(b) <= PLANE
+            && high.min(to) - low.max(from) > PLANE
+    }
+}
+
+#[cfg(test)]
+impl Cut {
+    pub(crate) fn testing(body: &str, along: V3, points: [V3; 2], span: Segment) -> Self {
+        Cut {
+            body: body.to_owned(),
+            along,
+            points,
+            span,
+            around: None,
+        }
+    }
+}
+
+/// The source's final planar faces with their straight boundary edges.
+fn source_faces(ctx: &Context) -> Result<Vec<SourceFace>, String> {
+    let faces = ctx.arena("faces");
+    if faces.len() > PLANES {
+        return Err(format!(
+            "the source's final body has more than {PLANES} faces to find an unequal chamfer on"
+        ));
+    }
+    let mut found = Vec::new();
+    let mut total = 0usize;
+    for face in faces {
+        let Some((normal, offset)) = face_plane(ctx, face) else {
+            continue;
+        };
+        let mut lines = Vec::new();
+        for id in super::cap::face_loops(face) {
+            let coedges = ctx
+                .row("loops", id)
+                .and_then(|lp| lp.pointer("/boundary/coedges"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten();
+            for coedge in coedges {
+                let points = coedge
+                    .as_str()
+                    .and_then(|id| ctx.row("coedges", id))
+                    .and_then(|coedge| ctx.row("edges", coedge.get("edge")?.as_str()?))
+                    .and_then(|edge| super::cap::edge_points(ctx, edge));
+                if let Some([a, b]) = points.as_deref() {
+                    lines.push((*a, *b));
+                }
+                total = total.saturating_add(1);
+                if total > LINES {
+                    return Err(format!(
+                        "the source's final body has more than {LINES} face edges to find an unequal chamfer on"
+                    ));
+                }
+            }
+        }
+        found.push(SourceFace {
+            normal,
+            offset,
+            lines,
+        });
+    }
+    Ok(found)
+}
+
+/// The circles the source's final edges run along.
+fn source_circles(ctx: &Context) -> Result<Vec<CutCircle>, String> {
+    let edges = ctx.arena("edges");
+    if edges.len() > LINES {
+        return Err(format!(
+            "the source's final body has more than {LINES} edges to find an unequal chamfer on"
+        ));
+    }
+    Ok(edges
+        .iter()
+        .filter_map(|edge| {
+            let curve = ctx.row("curves", edge.pointer("/carrier/curve")?.as_str()?)?;
+            let geometry = curve.pointer("/geometry/value")?;
+            if geometry.get("kind").and_then(Value::as_str) != Some("circle") {
+                return None;
+            }
+            Some(CutCircle {
+                centre: v3(geometry.get("center"))?,
+                axis: v3(geometry.get("axis")).and_then(unit)?,
+                radius: number(geometry.get("radius")).filter(|r| *r > 0.0)?,
+            })
+        })
+        .collect())
+}
+
+/// A planar face's unit normal and its plane's offset along it.
+fn face_plane(ctx: &Context, face: &Value) -> Option<(V3, f64)> {
+    let surface = ctx.row("surfaces", face.get("surface")?.as_str()?)?;
+    let geometry = surface.pointer("/geometry/value")?;
+    if geometry.get("kind").and_then(Value::as_str) != Some("plane") {
+        return None;
+    }
+    let normal = v3(geometry.get("normal")).and_then(unit)?;
+    Some((normal, dot(normal, v3(geometry.get("origin"))?)))
+}
+
+/// How far `point` is from the nearest rebuilt edge: the segment of a straight one; for a closed
+/// one, at least how far it is from the sphere its start and midpoint span; for another curved
+/// one the nearest of its ends and midpoint, which SolidCraft reports and the curve passes
+/// through.
 fn measured_arc_length(edge: &ReplayedEdge) -> Option<f64> {
     let measured = edge.circle.as_ref().filter(|circle| !circle.whole)?;
     let normal = unit(measured.axis)?;
@@ -1156,7 +1625,11 @@ pub(crate) fn candidates(
     bodies: &ReplayedBodies,
     cap: usize,
 ) -> Option<Vec<Vec<Selection>>> {
-    if pending.face.is_some() || pending.edges.is_empty() || pending.edges.len() > cap {
+    if pending.face.is_some()
+        || pending.unequal.is_some()
+        || pending.edges.is_empty()
+        || pending.edges.len() > cap
+    {
         return None;
     }
     let mut per_input: Vec<Vec<(usize, usize, V3)>> = Vec::new();
@@ -1257,222 +1730,6 @@ fn closest(point: V3, edge: &ReplayedEdge) -> (f64, V3) {
     }
 }
 
-/// Which face of each input edge an unequal chamfer takes its distance on. Of the two faces on
-/// either side of the edge, as SolidCraft rebuilt them before the chamfer, exactly one order must
-/// put the chamfer's face on a planar face of the source's final body, between boundary edges
-/// along both of its lines.
-pub(crate) fn cuts(
-    unequal: &Unequal,
-    inputs: &[Input],
-    bodies: &ReplayedBodies,
-) -> Result<Vec<Cut>, String> {
-    let through = |input: &Input, edge: &ReplayedEdge| {
-        straight(edge) && on_segment(input.point, (edge.start, edge.end))
-    };
-    inputs
-        .iter()
-        .map(|input| {
-            let (body, edge, edges) = bodies
-                .iter()
-                .find_map(|(body, edges)| {
-                    let edge = edges.iter().find(|edge| through(input, edge))?;
-                    Some((body, edge, edges.as_slice()))
-                })
-                .ok_or(INPUT)?;
-            let [a, b] = sides(edge, edges).ok_or(SIDES)?;
-            let mut orders: Vec<Cut> = [(a, b), (b, a)]
-                .into_iter()
-                .filter_map(|(first, second)| unequal.cut(input, body, first, second))
-                .filter(|cut| unequal.faces.iter().any(|face| cut.on_face(face)))
-                .collect();
-            if orders.len() > 1 {
-                return Err(BOTH.to_owned());
-            }
-            orders.pop().ok_or_else(|| UNSHOWN.to_owned())
-        })
-        .collect()
-}
-
-/// Whether SolidCraft's `body` after an unequal chamfer has straight edges along each of its
-/// `cuts` on that body, over the stretch of their input edges.
-pub(crate) fn cut_as(cuts: &[Cut], body: &str, bodies: &ReplayedBodies) -> bool {
-    let edges = || {
-        bodies
-            .iter()
-            .filter(|(name, _)| name == body)
-            .flat_map(|(_, edges)| edges)
-    };
-    cuts.iter().filter(|cut| cut.body == body).all(|cut| {
-        cut.points.iter().all(|&point| {
-            edges().any(|edge| straight(edge) && cut.runs((edge.start, edge.end), point))
-        })
-    })
-}
-
-/// The directions, square to a straight `edge`, in which its two faces run away from it: those
-/// of the other edges at each of its ends. Both ends must give the same two.
-fn sides(edge: &ReplayedEdge, edges: &[ReplayedEdge]) -> Option<[V3; 2]> {
-    let along = unit(sub(edge.end, edge.start))?;
-    let at = |vertex: V3| -> Option<[V3; 2]> {
-        let mut directions: Vec<V3> = Vec::new();
-        for other in edges {
-            if same((other.start, other.end), (edge.start, edge.end))
-                || !(near(vertex, other.start) || near(vertex, other.end))
-            {
-                continue;
-            }
-            let away = sub(other.mid, vertex);
-            let across = unit(sub(away, scale(along, dot(away, along))))?;
-            if !directions
-                .iter()
-                .any(|seen| dot(*seen, across) >= 1.0 - ANGLE)
-            {
-                directions.push(across);
-            }
-        }
-        match directions.as_slice() {
-            [a, b] if dot(*a, *b) > ANGLE - 1.0 => Some([*a, *b]),
-            _ => None,
-        }
-    };
-    let [a, b] = at(edge.start)?;
-    let [c, d] = at(edge.end)?;
-    let agree = |x: V3, y: V3| dot(x, y) >= 1.0 - ANGLE;
-    ((agree(a, c) && agree(b, d)) || (agree(a, d) && agree(b, c))).then_some([a, b])
-}
-
-impl Unequal {
-    /// Where the chamfer meets the faces running `first` and `second` from the `input` edge of
-    /// `body`, with its distance on the first; `None` when they never meet.
-    fn cut(&self, input: &Input, body: &str, first: V3, second: V3) -> Option<Cut> {
-        let (point, along) = (input.point, input.tangent);
-        let on_first = add(point, scale(first, self.distance));
-        let on_second = match self.second {
-            Second::Distance(distance) => add(point, scale(second, distance)),
-            Second::Angle(angle) => {
-                // From the first face toward the edge, turned by the angle toward the second.
-                let toward = unit(sub(second, scale(first, dot(second, first))))?;
-                let run = add(scale(first, -angle.cos()), scale(toward, angle.sin()));
-                let reach = -self.distance * dot(cross(first, second), along)
-                    / dot(cross(run, second), along);
-                let at = add(on_first, scale(run, reach));
-                if !(reach.is_finite() && reach > 0.0 && dot(sub(at, point), second) > 0.0) {
-                    return None;
-                }
-                at
-            }
-        };
-        Some(Cut {
-            body: body.to_owned(),
-            along,
-            points: [on_first, on_second],
-            span: input.ends,
-        })
-    }
-}
-
-impl Cut {
-    /// Whether `face` holds this cut: both its lines on the face's plane, each along a boundary
-    /// edge of the face.
-    fn on_face(&self, face: &SourceFace) -> bool {
-        dot(face.normal, self.along).abs() <= ANGLE
-            && self.points.iter().all(|&point| {
-                (dot(face.normal, point) - face.offset).abs() <= PLANE
-                    && face.lines.iter().any(|&line| self.runs(line, point))
-            })
-    }
-
-    /// Whether `segment` lies on the cut's line through `point` and overlaps its input edge.
-    fn runs(&self, (a, b): Segment, point: V3) -> bool {
-        let across = |x: V3| {
-            let off = sub(x, point);
-            let off = sub(off, scale(self.along, dot(off, self.along)));
-            dot(off, off).sqrt()
-        };
-        let at = |x: V3| dot(sub(x, point), self.along);
-        let (low, high) = (at(a).min(at(b)), at(a).max(at(b)));
-        let (from, to) = (
-            at(self.span.0).min(at(self.span.1)),
-            at(self.span.0).max(at(self.span.1)),
-        );
-        parallel(sub(b, a), self.along)
-            && across(a) <= PLANE
-            && across(b) <= PLANE
-            && high.min(to) - low.max(from) > PLANE
-    }
-}
-
-#[cfg(test)]
-impl Cut {
-    pub(crate) fn testing(body: &str, along: V3, points: [V3; 2], span: Segment) -> Self {
-        Cut {
-            body: body.to_owned(),
-            along,
-            points,
-            span,
-        }
-    }
-}
-
-/// The source's final planar faces with their straight boundary edges.
-fn source_faces(ctx: &Context) -> Result<Vec<SourceFace>, String> {
-    let faces = ctx.arena("faces");
-    if faces.len() > PLANES {
-        return Err(format!(
-            "the source's final body has more than {PLANES} faces to find an unequal chamfer on"
-        ));
-    }
-    let mut found = Vec::new();
-    let mut total = 0usize;
-    for face in faces {
-        let Some((normal, offset)) = face_plane(ctx, face) else {
-            continue;
-        };
-        let mut lines = Vec::new();
-        for id in super::cap::face_loops(face) {
-            let coedges = ctx
-                .row("loops", id)
-                .and_then(|lp| lp.pointer("/boundary/coedges"))
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten();
-            for coedge in coedges {
-                let points = coedge
-                    .as_str()
-                    .and_then(|id| ctx.row("coedges", id))
-                    .and_then(|coedge| ctx.row("edges", coedge.get("edge")?.as_str()?))
-                    .and_then(|edge| super::cap::edge_points(ctx, edge));
-                if let Some([a, b]) = points.as_deref() {
-                    lines.push((*a, *b));
-                }
-                total = total.saturating_add(1);
-                if total > LINES {
-                    return Err(format!(
-                        "the source's final body has more than {LINES} face edges to find an unequal chamfer on"
-                    ));
-                }
-            }
-        }
-        found.push(SourceFace {
-            normal,
-            offset,
-            lines,
-        });
-    }
-    Ok(found)
-}
-
-/// A planar face's unit normal and its plane's offset along it.
-fn face_plane(ctx: &Context, face: &Value) -> Option<(V3, f64)> {
-    let surface = ctx.row("surfaces", face.get("surface")?.as_str()?)?;
-    let geometry = surface.pointer("/geometry/value")?;
-    if geometry.get("kind").and_then(Value::as_str) != Some("plane") {
-        return None;
-    }
-    let normal = v3(geometry.get("normal")).and_then(unit)?;
-    Some((normal, dot(normal, v3(geometry.get("origin"))?)))
-}
-
 /// How far `point` is from the nearest rebuilt edge: the segment of a straight one; for a curved
 /// one the nearest of its ends and midpoint, which SolidCraft reports and the curve passes through.
 fn nearest(point: V3, bodies: &ReplayedBodies) -> Option<f64> {
@@ -1485,6 +1742,9 @@ fn nearest(point: V3, bodies: &ReplayedBodies) -> Option<f64> {
                 let length2 = dot(direction, direction).max(f64::MIN_POSITIVE);
                 let t = (dot(sub(point, edge.start), direction) / length2).clamp(0.0, 1.0);
                 distance(point, add(edge.start, scale(direction, t)))
+            } else if closed(edge) {
+                let centre = scale(add(edge.start, edge.mid), 0.5);
+                (distance(point, centre) - distance(edge.start, centre)).abs()
             } else {
                 [edge.start, edge.mid, edge.end]
                     .into_iter()
@@ -1563,6 +1823,11 @@ fn arc_length(point: V3, ends: Segment, tangent: V3) -> Option<f64> {
 fn straight(edge: &ReplayedEdge) -> bool {
     let chord = distance(edge.start, edge.end);
     chord > TOLERANCE && same_length(edge.length, chord)
+}
+
+/// Whether SolidCraft's edge is closed: it ends where it starts, with a length.
+fn closed(edge: &ReplayedEdge) -> bool {
+    near(edge.start, edge.end) && edge.length > TOLERANCE
 }
 
 /// Whether `edge`'s reported length fits `input`. A straight edge's is exact. SolidCraft
@@ -1734,7 +1999,7 @@ mod tests {
         for count in [1, 2, 3, 8] {
             let edges = circle_pieces(count);
             let selected =
-                super::prove(&pending, &vec![("Rim".to_owned(), edges.clone())]).unwrap();
+                super::prove(&pending, &vec![("Rim".to_owned(), edges.clone())], &[]).unwrap();
             assert_eq!(selected.len(), 1);
             assert_eq!(selected[0].body, "Rim");
             assert_eq!(
@@ -1750,7 +2015,7 @@ mod tests {
                     ..e
                 })
                 .collect();
-            assert!(super::prove(&pending, &vec![("Rim".to_owned(), reversed)]).is_ok());
+            assert!(super::prove(&pending, &vec![("Rim".to_owned(), reversed)], &[]).is_ok());
             // model.edges reports mesh lengths, below the analytic circular length. A
             // polygon through the start, midpoint and end supplies the lower bound.
             let meshed: Vec<_> = circle_pieces(count)
@@ -1761,7 +2026,7 @@ mod tests {
                     e
                 })
                 .collect();
-            assert!(super::prove(&pending, &vec![("Rim".to_owned(), meshed)]).is_ok());
+            assert!(super::prove(&pending, &vec![("Rim".to_owned(), meshed)], &[]).is_ok());
             let pieces: Vec<_> = circle_pieces(count)
                 .into_iter()
                 .map(|mut e| {
@@ -1771,7 +2036,7 @@ mod tests {
                     e
                 })
                 .collect();
-            assert!(super::prove(&pending, &vec![("Rim".to_owned(), pieces)]).is_ok());
+            assert!(super::prove(&pending, &vec![("Rim".to_owned(), pieces)], &[]).is_ok());
         }
     }
 
@@ -1780,7 +2045,7 @@ mod tests {
         let pending = proof(vec![circle_input()]);
         let edges = circle_pieces(3);
         let refuses =
-            |edges| assert!(super::prove(&pending, &vec![("Rim".to_owned(), edges)]).is_err());
+            |edges| assert!(super::prove(&pending, &vec![("Rim".to_owned(), edges)], &[]).is_err());
         refuses(edges[..2].to_vec());
         // Equal total turn cannot hide a duplicated piece and a missing piece.
         refuses(vec![edges[0].clone(), edges[0].clone(), edges[2].clone()]);
@@ -1810,11 +2075,12 @@ mod tests {
             &vec![
                 ("Rim".to_owned(), edges.clone()),
                 ("Rim".to_owned(), edges.clone())
-            ]
+            ],
+            &[]
         )
         .is_err());
         let duplicate = proof(vec![circle_input(), circle_input()]);
-        assert!(super::prove(&duplicate, &vec![("Rim".to_owned(), edges)]).is_err());
+        assert!(super::prove(&duplicate, &vec![("Rim".to_owned(), edges)], &[]).is_err());
     }
 
     #[test]
@@ -1824,7 +2090,7 @@ mod tests {
             ("Other".to_owned(), edges.clone()),
             ("Rim".to_owned(), edges.clone()),
         ];
-        let selected = super::prove(&proof(vec![circle_input()]), &bodies).unwrap();
+        let selected = super::prove(&proof(vec![circle_input()]), &bodies, &[]).unwrap();
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].body, "Rim");
         assert_eq!(
@@ -1834,7 +2100,8 @@ mod tests {
         // A circle on another body cannot stand in for the selected body's missing rim.
         assert!(super::prove(
             &proof(vec![circle_input()]),
-            &vec![("Other".to_owned(), edges)]
+            &vec![("Other".to_owned(), edges)],
+            &[]
         )
         .is_err());
     }
@@ -1945,7 +2212,7 @@ mod tests {
         ];
         // These replay samples still allow the other body's genuine circle. They cannot
         // turn the refused elliptical source into a circular source selection.
-        let selected = super::prove(&proof(vec![circle_input()]), &bodies).unwrap();
+        let selected = super::prove(&proof(vec![circle_input()]), &bodies, &[]).unwrap();
         assert_eq!(selected[0].body, "Rim");
     }
 
@@ -1956,7 +2223,8 @@ mod tests {
         edge.circle = circle_pieces(1)[0].circle.clone();
         assert!(super::prove(
             &proof(vec![input.clone()]),
-            &vec![("Rim".to_owned(), vec![edge.clone()])]
+            &vec![("Rim".to_owned(), vec![edge.clone()])],
+            &[]
         )
         .is_ok());
         // A tilt that passes the direction tolerance still moves this circle far beyond
@@ -1964,12 +2232,18 @@ mod tests {
         edge.circle.as_mut().unwrap().axis = [0.0, 1e-4, (1.0_f64 - 1e-8).sqrt()];
         assert!(super::prove(
             &proof(vec![input.clone()]),
-            &vec![("Rim".to_owned(), vec![edge.clone()])]
+            &vec![("Rim".to_owned(), vec![edge.clone()])],
+            &[]
         )
         .is_err());
         // A circle in XZ has precisely the same seam, midpoint and circumference here.
         edge.circle.as_mut().unwrap().axis = [0.0, 1.0, 0.0];
-        assert!(super::prove(&proof(vec![input]), &vec![("Rim".to_owned(), vec![edge])]).is_err());
+        assert!(super::prove(
+            &proof(vec![input]),
+            &vec![("Rim".to_owned(), vec![edge])],
+            &[]
+        )
+        .is_err());
     }
 
     #[test]
@@ -1981,12 +2255,13 @@ mod tests {
                 ("Rim".to_owned(), known.clone()),
                 ("Unmeasured".to_owned(), vec![unknown.clone()]),
             ];
-            assert!(super::prove(&proof(vec![circle_input()]), &bodies).is_ok());
+            assert!(super::prove(&proof(vec![circle_input()]), &bodies, &[]).is_ok());
             let mut same_body = known.clone();
             same_body.push(unknown);
             assert!(super::prove(
                 &proof(vec![circle_input()]),
-                &vec![("Rim".to_owned(), same_body)]
+                &vec![("Rim".to_owned(), same_body)],
+                &[]
             )
             .is_err());
         }
@@ -2017,7 +2292,7 @@ mod tests {
                 edge
             })
             .collect();
-        assert!(super::prove(&proof(vec![input]), &vec![("Rim".to_owned(), edges)]).is_ok());
+        assert!(super::prove(&proof(vec![input]), &vec![("Rim".to_owned(), edges)], &[]).is_ok());
     }
 
     #[test]
@@ -2027,7 +2302,7 @@ mod tests {
         let mut edges = circle_pieces(super::LIMIT);
         edges.push(rebuilt(&line));
         let pending = proof(vec![circle, line]);
-        let reason = super::prove(&pending, &vec![("Rim".to_owned(), edges)]).unwrap_err();
+        let reason = super::prove(&pending, &vec![("Rim".to_owned(), edges)], &[]).unwrap_err();
         assert!(reason.contains("exceeds the blend limit"), "{reason}");
     }
 
@@ -2044,7 +2319,7 @@ mod tests {
         ];
         let pending = proof(vec![c.clone(), a.clone(), b.clone()]);
         assert_eq!(
-            super::prove(&pending, &bodies).unwrap(),
+            super::prove(&pending, &bodies, &[]).unwrap(),
             vec![
                 super::Selection {
                     body: "B".to_owned(),
@@ -2074,28 +2349,28 @@ mod tests {
                 2 => bad[1].1[0].start[0] += 1.0,
                 _ => bad.push(("Ambiguous".to_owned(), vec![rebuilt(&b)])),
             }
-            assert!(super::prove(&pending, &bad).is_err());
+            assert!(super::prove(&pending, &bad, &[]).is_err());
         }
         let mut repeated = pending.clone();
         repeated.edges.push(a);
-        assert!(super::prove(&repeated, &bodies)
+        assert!(super::prove(&repeated, &bodies, &[])
             .unwrap_err()
             .contains("repeats"));
         let mut tangent = pending.clone();
         tangent.edges[1].tangent = [1.0, 0.0, 0.0];
-        assert!(super::prove(&tangent, &bodies).is_err());
+        assert!(super::prove(&tangent, &bodies, &[]).is_err());
         let mut shortened = bodies.clone();
         shortened[1].1[0].start[2] = 1.0;
         shortened[1].1[0].end[2] = 9.0;
         shortened[1].1[0].length = 8.0;
-        assert!(super::prove(&pending, &shortened).is_err());
+        assert!(super::prove(&pending, &shortened, &[]).is_err());
         let mut trimmed = pending.clone();
         trimmed.trimmed = true;
-        assert_eq!(super::prove(&trimmed, &shortened).unwrap().len(), 2);
+        assert_eq!(super::prove(&trimmed, &shortened, &[]).unwrap().len(), 2);
         let mut angle = pending;
         angle.angle_chamfer = true;
         // Bare edges have no perpendicular incident faces to prove at either end.
-        assert!(super::prove(&angle, &bodies)
+        assert!(super::prove(&angle, &bodies, &[])
             .unwrap_err()
             .contains("non-perpendicular"));
     }
@@ -2140,7 +2415,8 @@ mod tests {
     fn a_refused_midpoint_says_which_proof_failed() {
         let (a, b) = (straight_input(0.0), straight_input(20.0));
         let pending = proof(vec![a.clone()]);
-        let reason = |bodies: &super::ReplayedBodies| super::prove(&pending, bodies).unwrap_err();
+        let reason =
+            |bodies: &super::ReplayedBodies| super::prove(&pending, bodies, &[]).unwrap_err();
         // No rebuilt edge nearby: the body rebuilt before the blend differs from the source.
         let far = reason(&vec![("B".to_owned(), vec![rebuilt(&b)])]);
         assert!(far.contains("no rebuilt edge passes through it"), "{far}");
@@ -2166,13 +2442,14 @@ mod tests {
         // A curved input edge through the same ends and midpoint, longer than the input arc.
         let mut curved = proof(vec![super::Input {
             straight: false,
+            circle: None,
             length: 12.0,
             ..a.clone()
         }]);
         let mut arc = rebuilt(&a);
         arc.length = 13.0;
         assert!(
-            super::prove(&curved, &vec![("A".to_owned(), vec![arc.clone()])])
+            super::prove(&curved, &vec![("A".to_owned(), vec![arc.clone()])], &[])
                 .unwrap_err()
                 .contains("another length")
         );
@@ -2180,20 +2457,20 @@ mod tests {
         // the chord.
         arc.length = 11.0;
         let arcs = vec![("A".to_owned(), vec![arc.clone()])];
-        assert!(super::prove(&curved, &arcs).is_ok());
+        assert!(super::prove(&curved, &arcs, &[]).is_ok());
         // A curved rebuilt edge through a straight input edge's midpoint.
         let bent = reason(&arcs);
         assert!(bent.contains("not the same kind"), "{bent}");
         curved.edges[0].length = 11.0;
-        assert!(super::prove(&curved, &arcs).is_ok());
+        assert!(super::prove(&curved, &arcs, &[]).is_ok());
         let mut skew = pending.clone();
         skew.edges[0].tangent = [1.0, 0.0, 0.0];
         assert!(
-            super::prove(&skew, &vec![("A".to_owned(), vec![rebuilt(&a)])])
+            super::prove(&skew, &vec![("A".to_owned(), vec![rebuilt(&a)])], &[])
                 .unwrap_err()
                 .contains("along its tangent")
         );
-        assert!(super::prove(&pending, &vec![])
+        assert!(super::prove(&pending, &vec![], &[])
             .unwrap_err()
             .contains("no edges"));
     }
@@ -2229,10 +2506,12 @@ mod tests {
         };
         let pending = proof(vec![input]);
         for fits in [polyline, length] {
-            assert!(super::prove(&pending, &vec![("A".to_owned(), vec![edge(fits)])]).is_ok());
+            assert!(super::prove(&pending, &vec![("A".to_owned(), vec![edge(fits)])], &[]).is_ok());
         }
         for wrong in [length * 1.01, 3.0 * 2f64.sqrt()] {
-            assert!(super::prove(&pending, &vec![("A".to_owned(), vec![edge(wrong)])]).is_err());
+            assert!(
+                super::prove(&pending, &vec![("A".to_owned(), vec![edge(wrong)])], &[]).is_err()
+            );
         }
     }
 
@@ -2267,7 +2546,7 @@ mod tests {
         )];
         let pending = proof(vec![arc.clone(), line.clone()]);
         assert_eq!(
-            super::prove(&pending, &bodies).unwrap(),
+            super::prove(&pending, &bodies, &[]).unwrap(),
             vec![super::Selection {
                 body: "Rounded body".to_owned(),
                 points: vec![arc.point, line.point],
@@ -2276,12 +2555,12 @@ mod tests {
         // Every expanded chain member still needs proof, even when the initial pick fits.
         let mut missing = bodies.clone();
         let _ = missing[0].1.pop();
-        assert!(super::prove(&pending, &missing)
+        assert!(super::prove(&pending, &missing, &[])
             .unwrap_err()
             .contains("no rebuilt edge"));
         let mut duplicate = bodies.clone();
         duplicate.push(("Other body".to_owned(), vec![rebuilt(&arc)]));
-        assert!(super::prove(&pending, &duplicate)
+        assert!(super::prove(&pending, &duplicate, &[])
             .unwrap_err()
             .contains("more than one"));
     }
@@ -2544,6 +2823,7 @@ mod tests {
             distance: 1.0,
             second,
             faces,
+            circles: Vec::new(),
         }
     }
 
@@ -2565,7 +2845,12 @@ mod tests {
         let tan30 = std::f64::consts::FRAC_PI_6.tan();
         let input = top_front(0.0);
         let cuts = |unequal: &super::Unequal| {
-            super::cuts(unequal, std::slice::from_ref(&input), &vec![cube("A", 0.0)])
+            super::cuts(
+                unequal,
+                std::slice::from_ref(&input),
+                &vec![cube("A", 0.0)],
+                &[],
+            )
         };
         let two = super::Second::Distance(3.0);
         let found = cuts(&unequal(two, vec![top_first(0.0)])).unwrap();
@@ -2603,6 +2888,7 @@ mod tests {
             &unequal(two, vec![top_first(0.0)]),
             std::slice::from_ref(&input),
             &vec![open],
+            &[],
         );
         assert!(error.unwrap_err().contains("cannot be told apart"));
     }
@@ -2617,7 +2903,7 @@ mod tests {
         let before = vec![cube("A", 0.0), cube("B", 20.0)];
         // B's chamfer face lies on the plane A's would have the other way round.
         let faces = vec![top_first(0.0), front_first(20.0)];
-        let cuts = super::cuts(&unequal(two, faces), &inputs, &before).unwrap();
+        let cuts = super::cuts(&unequal(two, faces), &inputs, &before, &[]).unwrap();
         let [a, b] = cuts.as_slice() else {
             panic!("two cuts: {cuts:?}");
         };
@@ -2646,5 +2932,311 @@ mod tests {
             beyond.1.push(line([12.0, y, z], [14.0, y, z]));
         }
         assert!(!super::cut_as(&cuts, "A", &vec![beyond]));
+    }
+
+    const TAU: f64 = std::f64::consts::TAU;
+
+    /// The top edge of a hole of radius 2.5 about (5, 5) down through the cube, starting at
+    /// (7.5, 5, 10), with its midpoint opposite.
+    fn hole_top() -> super::Input {
+        let (start, point, tangent) = ([7.5, 5.0, 10.0], [2.5, 5.0, 10.0], [0.0, -1.0, 0.0]);
+        let circle = super::CutCircle::closed(start, point, tangent).unwrap();
+        super::Input {
+            point,
+            ends: (start, start),
+            tangent,
+            length: TAU * 2.5,
+            straight: false,
+            circle: Some((
+                super::Circle {
+                    center: circle.centre,
+                    normal: circle.axis,
+                    radius: circle.radius,
+                    x: [1.0, 0.0, 0.0],
+                    y: [0.0, 1.0, 0.0],
+                },
+                "A".to_owned(),
+            )),
+        }
+    }
+
+    /// A closed rebuilt edge around the circle about (5, 5, `z`) square to Z of `radius`,
+    /// starting at `seam` radians from +X, between the faces `name`.
+    fn ring(z: f64, radius: f64, seam: f64, name: &str) -> crate::verify::ReplayedEdge {
+        let at = |angle: f64| [5.0 + radius * angle.cos(), 5.0 + radius * angle.sin(), z];
+        crate::verify::ReplayedEdge {
+            start: at(seam),
+            end: at(seam),
+            mid: at(seam + std::f64::consts::PI),
+            length: TAU * radius,
+            name: name.to_owned(),
+            index: None,
+            circle: Some(crate::verify::ReplayedCircle {
+                center: [5.0, 5.0, z],
+                axis: [0.0, 0.0, 1.0],
+                radius,
+                length: TAU * radius,
+                whole: true,
+            }),
+        }
+    }
+
+    /// The cube with the hole, its top edge seamed elsewhere than the source's.
+    fn holed(name: &str) -> (String, Vec<crate::verify::ReplayedEdge>) {
+        let mut body = cube(name, 0.0);
+        body.1.push(ring(10.0, 2.5, 1.0, "wall|top"));
+        body.1.push(ring(0.0, 2.5, 1.0, "wall|bottom"));
+        body
+    }
+
+    /// SolidCraft's faces of the hole's top edge: the top outside the hole, the wall below it.
+    fn hole_faces() -> Vec<crate::verify::ReplayedFace> {
+        let face = |name: &str, normal, cylinder, point| crate::verify::ReplayedFace {
+            name: name.to_owned(),
+            area: 1.0,
+            normal,
+            cylinder,
+            point,
+        };
+        vec![
+            face("top", Some([0.0, 0.0, 1.0]), None, [5.0, 1.0, 10.0]),
+            face(
+                "wall",
+                None,
+                Some(crate::verify::ReplayedCylinder {
+                    origin: [5.0, 5.0, 0.0],
+                    axis: [0.0, 0.0, 1.0],
+                    radius: 2.5,
+                }),
+                [2.5, 5.0, 4.0],
+            ),
+            face("bottom", Some([0.0, 0.0, -1.0]), None, [5.0, 1.0, 0.0]),
+        ]
+    }
+
+    fn circle(z: f64, radius: f64) -> super::CutCircle {
+        super::CutCircle {
+            centre: [5.0, 5.0, z],
+            axis: [0.0, 0.0, 1.0],
+            radius,
+        }
+    }
+
+    #[test]
+    fn a_closed_edge_is_a_full_circle_only_with_its_midpoint_opposite_and_tangent_across() {
+        let input = hole_top();
+        let circle = super::CutCircle::from(&input.circle.unwrap().0);
+        assert!(super::near(circle.centre, [5.0, 5.0, 10.0]));
+        assert!((circle.radius - 2.5).abs() < 1e-12);
+        assert!(super::parallel(circle.axis, [0.0, 0.0, 1.0]));
+        // A tangent along the diameter: not a circle through these points.
+        let along = super::CutCircle::closed([7.5, 5.0, 10.0], [2.5, 5.0, 10.0], [1.0, 0.0, 0.0]);
+        assert!(along.is_none());
+        let model = json!({"feature_input_topologies": [{"id": "st", "input_of": "f", "edges": ["e"],
+            "edge_geometry": [{"edge": "e", "start": {"x": 7.5, "y": 5.0, "z": 10.0}, "end": {"x": 7.5, "y": 5.0, "z": 10.0},
+                "interior": {"x": 2.5, "y": 5.0, "z": 10.0}, "tangent": {"x": 1.0, "y": 0.0, "z": 0.0}, "faces": []}],
+            "bodies": [], "faces": [], "vertices": []}]});
+        let group = json!({"edges": {"kind": "historical", "value": {"state": "st", "edges": ["e"], "native": "n"}},
+            "radius": {"kind": "constant", "radius": 1.0}});
+        let feature = json!({"id": "f", "name": "Fillet", "definition": {"kind": "operation", "value": {"kind": "fillet", "value": {"groups": [group]}}}});
+        let mut ctx = Context::testing(&model);
+        ctx.target_version = crate::SolidCraftVersion::V0_44_1;
+        let error = super::map(
+            &feature,
+            super::super::operation(&feature),
+            &mut ctx,
+            &mut dutchman_core::Report::default(),
+        )
+        .unwrap_err();
+        assert!(error.contains("other than proven circles"), "{error}");
+    }
+
+    #[test]
+    fn a_full_circle_is_found_by_its_centre_and_radius_wherever_its_seam_lies() {
+        let pending = proof(vec![hole_top()]);
+        let found = super::prove(&pending, &vec![holed("A")], &[]).unwrap();
+        assert_eq!(found[0].body, "A");
+        // The measured circular piece's midpoint is independent of the source seam.
+        let quarter = 1.0 + std::f64::consts::PI;
+        let [pick] = found[0].points.as_slice() else {
+            panic!("{found:?}");
+        };
+        assert!(
+            super::near(
+                *pick,
+                [5.0 + 2.5 * quarter.cos(), 5.0 + 2.5 * quarter.sin(), 10.0]
+            ),
+            "{pick:?}"
+        );
+        // The measured circular carrier stays distinct from a straight seam edge,
+        // even when the source midpoint coincides with the rebuilt seam vertex.
+        let mut seamed_there = cube("A", 0.0);
+        seamed_there
+            .1
+            .push(ring(10.0, 2.5, std::f64::consts::PI, "wall|top"));
+        seamed_there.1.push(line([2.5, 5.0, 0.0], [2.5, 5.0, 10.0]));
+        let found = super::prove(&pending, &vec![seamed_there], &[]).unwrap();
+        assert!(
+            super::near(found[0].points[0], [7.5, 5.0, 10.0]),
+            "{found:?}"
+        );
+        let reason = |edge: crate::verify::ReplayedEdge| {
+            let mut body = cube("A", 0.0);
+            body.1.push(edge);
+            super::prove(&pending, &vec![body], &[]).unwrap_err()
+        };
+        // Another radius, or another plane through the same centre.
+        let wider = reason(ring(10.0, 3.0, 1.0, ""));
+        assert!(wider.contains("closed input edge"), "{wider}");
+        let mut tilted = ring(10.0, 2.5, 0.0, "");
+        tilted.start = [5.0, 5.0, 12.5];
+        tilted.end = tilted.start;
+        tilted.mid = [5.0, 5.0, 7.5];
+        assert!(reason(tilted).contains("closed input edge"));
+        // SolidCraft's length of a closed edge falls short of the circumference (15.6826 for
+        // this circle in 0.44.1), so it is not compared.
+        let mut sampled = cube("A", 0.0);
+        let mut seamed = ring(10.0, 2.5, 1.0, "");
+        seamed.length = 15.682587880594888;
+        sampled.1.push(seamed);
+        assert!(super::prove(&pending, &vec![sampled], &[]).is_ok());
+        // A curved edge through its midpoint that is not closed is not the circle.
+        let mut open = ring(10.0, 2.5, 0.0, "");
+        open.end = [5.0, 7.5, 10.0];
+        open.mid = [2.5, 5.0, 10.0];
+        assert!(reason(open).contains("closed input edge"));
+    }
+
+    #[test]
+    fn a_45_degree_chamfer_on_a_full_circle_needs_a_plane_and_a_coaxial_cylinder() {
+        let mut pending = proof(vec![hole_top()]);
+        pending.angle_chamfer = true;
+        let bodies = vec![holed("A")];
+        let error = super::prove(&pending, &bodies, &[]).unwrap_err();
+        assert!(error.contains("non-perpendicular"), "{error}");
+        assert!(super::prove(&pending, &bodies, &[hole_faces()]).is_ok());
+        // A cone in place of the cylinder, or a cylinder of another radius, is not square.
+        let mut cone = hole_faces();
+        cone[1].cylinder = None;
+        assert!(super::prove(&pending, &bodies, &[cone]).is_err());
+        let mut wider = hole_faces();
+        if let Some(cylinder) = wider[1].cylinder.as_mut() {
+            cylinder.radius = 3.0;
+        }
+        assert!(super::prove(&pending, &bodies, &[wider]).is_err());
+    }
+
+    #[test]
+    fn unequal_chamfers_on_a_full_circle_take_the_order_the_source_circles_show() {
+        let input = hole_top();
+        let with = |second, circles| super::Unequal {
+            distance: 1.0,
+            second,
+            faces: Vec::new(),
+            circles,
+        };
+        let cuts = |unequal: &super::Unequal, faces: &[Vec<crate::verify::ReplayedFace>]| {
+            super::cuts(
+                unequal,
+                std::slice::from_ref(&input),
+                &vec![holed("A")],
+                faces,
+            )
+        };
+        let faces = [hole_faces()];
+        let two = super::Second::Distance(2.0);
+        // 1 mm out across the top, 2 mm down the wall.
+        let top_first = vec![circle(10.0, 3.5), circle(8.0, 2.5)];
+        let found = cuts(&with(two, top_first.clone()), &faces).unwrap();
+        assert!(
+            super::near(found[0].points[0], [1.5, 5.0, 10.0]),
+            "{found:?}"
+        );
+        assert!(
+            super::near(found[0].points[1], [2.5, 5.0, 8.0]),
+            "{found:?}"
+        );
+        // 1 mm down the wall, 2 mm out across the top.
+        let wall_first = vec![circle(10.0, 4.5), circle(9.0, 2.5)];
+        let found = cuts(&with(two, wall_first.clone()), &faces).unwrap();
+        assert!(
+            super::near(found[0].points[0], [2.5, 5.0, 9.0]),
+            "{found:?}"
+        );
+        // 1 mm down the wall at 30 degrees from it: tan 30° out across the top.
+        let tan30 = std::f64::consts::FRAC_PI_6.tan();
+        let angle = super::Second::Angle(std::f64::consts::FRAC_PI_6);
+        let tilted = vec![circle(10.0, 2.5 + tan30), circle(9.0, 2.5)];
+        let found = cuts(&with(angle, tilted), &faces).unwrap();
+        assert!(super::near(found[0].points[1], [2.5 - tan30, 5.0, 10.0]));
+        // SolidCraft's cut is proven by its own circles, seamed anywhere.
+        let found = cuts(&with(two, top_first.clone()), &faces).unwrap();
+        let mut after = holed("A");
+        after.1.push(ring(10.0, 3.5, 2.0, ""));
+        after.1.push(ring(8.0, 2.5, 3.0, ""));
+        assert!(super::cut_as(&found, "A", &vec![after]));
+        assert!(!super::cut_as(&found, "A", &vec![holed("A")]));
+        let error = |circles, faces: &[Vec<_>]| cuts(&with(two, circles), faces).unwrap_err();
+        assert!(error(vec![], &faces).contains("no chamfer face"));
+        let both = [top_first.clone(), wall_first].concat();
+        assert!(error(both, &faces).contains("both ways round"));
+        assert!(error(top_first, &[]).contains("coaxial cylinder"));
+    }
+
+    /// The split-circle proof and the unequal chamfer's face order compose on the
+    /// source owner even when a coincident rim exists on another body.
+    #[test]
+    fn unequal_chamfers_keep_measured_split_circle_paths_on_their_own_body() {
+        let pieces = |z, radius, count| {
+            (0..count)
+                .map(|i| {
+                    let turn = TAU / count as f64;
+                    let start = 0.37 + i as f64 * turn;
+                    let at =
+                        |angle: f64| [5.0 + radius * angle.cos(), 5.0 + radius * angle.sin(), z];
+                    let mut edge = ring(z, radius, start, "wall|top");
+                    edge.mid = at(start + turn / 2.0);
+                    edge.end = at(start + turn);
+                    edge.length = radius * turn;
+                    edge
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut pending = proof(vec![hole_top()]);
+        let unequal = super::Unequal {
+            distance: 1.0,
+            second: super::Second::Distance(2.0),
+            faces: Vec::new(),
+            circles: vec![circle(10.0, 3.5), circle(8.0, 2.5)],
+        };
+        pending.unequal = Some(unequal.clone());
+        let before = vec![
+            ("Other".to_owned(), pieces(10.0, 2.5, 2)),
+            ("A".to_owned(), pieces(10.0, 2.5, 3)),
+        ];
+        let faces = [hole_faces(), hole_faces()];
+        let selected = super::prove(&pending, &before, &faces).unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].body, "A");
+        assert_eq!(selected[0].points.len(), 3);
+        let mut wrong_faces = before.clone();
+        wrong_faces[1].1[1].name = "wall|absent".to_owned();
+        assert!(super::prove(&pending, &wrong_faces, &faces)
+            .unwrap_err()
+            .contains("coaxial cylinder"));
+        let cuts = super::cuts(&unequal, &pending.edges, &before, &faces).unwrap();
+        assert_eq!(cuts[0].body, "A");
+        let mut edges = pieces(10.0, 3.5, 2);
+        edges.extend(pieces(8.0, 2.5, 3));
+        let after = vec![("A".to_owned(), edges.clone())];
+        assert!(super::cut_as(&cuts, "A", &after));
+        // A duplicated piece must not pass the complete path proof.
+        edges.push(edges[0].clone());
+        assert!(!super::cut_as(&cuts, "A", &vec![("A".to_owned(), edges)]));
+        assert!(!super::cut_as(
+            &cuts,
+            "A",
+            &vec![("Other".to_owned(), after[0].1.clone())]
+        ));
     }
 }

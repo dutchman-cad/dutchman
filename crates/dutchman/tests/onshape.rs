@@ -1746,6 +1746,132 @@ fn a_sketch_only_part_studio_fetches_without_step_and_keeps_every_sketch_kind() 
     }
 }
 
+/// All identities and REST responses here are invented; no account or socket is used.
+#[test]
+fn derived_fetch_captures_a_pinned_other_document_studio_and_reuses_its_cache() {
+    const OTHER: &str = "777777777777777777777777";
+    const OTHER_VERSION: &str = "888888888888888888888888";
+    const OTHER_ELEMENT: &str = "999999999999999999999999";
+    const OTHER_MID: &str = "aaaaaaaaaaaaaaaaaaaaaaaa";
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = prepare(PS, "PARTSTUDIO");
+    mock.replies.extend([
+        response(200,json!({"sourceMicroversion":MID,"features":[{"featureId":"derived","featureType":"importDerived","parameters":[{"parameterId":"partStudio","value":{"documentId":OTHER,"versionId":OTHER_VERSION,"elementId":OTHER_ELEMENT}}]}]})),
+        response(200,json!({"microversion":OTHER_MID})),
+        response(200,json!({"name":"Reference studio"})),
+        response(200,json!([{"id":OTHER_ELEMENT,"elementType":"PARTSTUDIO","name":"Reference"}])),
+        response(200,json!({"sourceMicroversion":OTHER_MID,"features":[{"featureId":"solid","featureType":"extrude","parameters":[{"parameterId":"operationType","value":"NEW"}]},{"featureId":"finish","featureType":"fillet","parameters":[]}]})),
+        response(200,json!({"microversionId":OTHER_MID,"bodies":[]})),
+        response(200,json!({"microversionId":OTHER_MID,"bodies":[{"id":"tool","type":"SOLID","properties":{"name":"Tool"}}]})),
+        response(200,json!({"microversionId":OTHER_MID,"bodies":[{"id":"tool","type":"SOLID","properties":{"name":"Tool"}}]})),
+        response(404,json!({})),response(404,json!({})),
+        response(200,json!({"requestState":"DONE","resultExternalDataIds":["source-step"]})),
+        Response{status:200,headers:BTreeMap::new(),body:b"ISO-10303-21; source synthetic geometry".to_vec()},
+        response(200, sketch_information(OTHER_MID)),
+        response(200,json!({"microversionId":MID,"bodies":[]})),
+        response(200,json!({"microversionId":MID,"bodies":[{"id":"inserted","type":"SOLID","properties":{"name":"Tool"}}]})),
+        response(404,json!({})),response(404,json!({})),
+        response(200,json!({"requestState":"DONE","resultExternalDataIds":["host-step"]})),
+        Response{status:200,headers:BTreeMap::new(),body:b"ISO-10303-21; host synthetic geometry".to_vec()},
+        response(200, sketch_information(MID)),
+    ]);
+    let fetched = run(&mut mock, &dir, PS, 50).unwrap();
+    assert!(mock.replies.is_empty(), "{:?}", mock.sent);
+    let sketch_requests: Vec<_> = mock
+        .sent
+        .iter()
+        .filter(|(_, path, _)| path.ends_with("/sketches"))
+        .collect();
+    assert_eq!(
+        sketch_requests,
+        [
+            &(
+                "GET".into(),
+                format!(
+                    "/api/v17/partstudios/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/sketches"
+                ),
+                String::new(),
+            ),
+            &(
+                "GET".into(),
+                format!("/api/v17/partstudios/d/{DID}/v/{VID}/e/{PS}/sketches"),
+                String::new(),
+            ),
+        ]
+    );
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(
+        std::fs::read(&fetched.output).unwrap(),
+    ))
+    .unwrap();
+    let prefix = format!("references/{OTHER}/{OTHER_VERSION}/{OTHER_ELEMENT}/");
+    let manifest = zip_value(&mut archive, &format!("{prefix}manifest.json"));
+    assert_eq!(manifest["document"]["id"], OTHER);
+    assert_eq!(manifest["document"]["wvid"], OTHER_VERSION);
+    assert_eq!(manifest["document"]["microversion"], OTHER_MID);
+    assert_eq!(manifest["root_element"], OTHER_ELEMENT);
+    assert_eq!(
+        zip_value(
+            &mut archive,
+            &format!("{prefix}partstudios/{OTHER_ELEMENT}/bodydetails/index.json")
+        ),
+        json!([0, 1, 2])
+    );
+    assert!(archive
+        .by_name(&format!("{prefix}partstudios/{OTHER_ELEMENT}/export.step"))
+        .is_ok());
+    let root = zip_value(&mut archive, "manifest.json");
+    assert_eq!(root["root_element"], PS);
+    assert_eq!(
+        root["file_sources"][format!("{prefix}partstudios/{OTHER_ELEMENT}/features.json")]
+            ["microversion"],
+        OTHER_MID
+    );
+    assert!(mock
+        .sent
+        .iter()
+        .filter(|(_, path, _)| path.contains(OTHER))
+        .all(|(_, path, _)| !path.contains("/w/") && !path.contains(&format!("/v/{VID}/"))));
+    let mut cached = Mock::default();
+    let second = run(&mut cached, &dir, PS, 50).unwrap();
+    assert_eq!(second.calls, 0);
+    assert!(cached.sent.is_empty());
+}
+
+#[test]
+fn derived_fetch_rejects_cycles_without_exporting_or_replacing_a_bundle() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("test.onshape-bundle");
+    std::fs::write(&output, b"existing bundle").unwrap();
+    let mut mock = prepare(PS, "PARTSTUDIO");
+    mock.replies.push_back(response(200,json!({"sourceMicroversion":MID,"features":[{"featureId":"cycle","featureType":"derived","parameters":[{"parameterId":"partStudio","value":{"documentId":DID,"versionId":VID,"elementId":PS}}]}]})));
+    assert!(matches!(
+        run(&mut mock, &dir, PS, 50).err().unwrap().kind,
+        ErrorKind::Unsupported
+    ));
+    assert_eq!(std::fs::read(output).unwrap(), b"existing bundle");
+    assert!(mock.sent.iter().all(|(method, _, _)| method == "GET"));
+}
+
+#[test]
+fn frontend_writer_publishes_derived_design_companions() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/onshape-derived.onshape-bundle");
+    let output = dir.path().join("linked.sc");
+    let writer = dutchman::OutputWriter::SolidCraft(
+        dutchman_solidcraft::SolidCraftWriter::new()
+            .verification(dutchman_solidcraft::Verification::Off)
+            .target_version(Some("0.44.1".parse().unwrap())),
+    );
+    dutchman_core::convert(&input, &output, &writer).unwrap();
+    assert!(output.is_file());
+    assert!(std::fs::read_dir(dir.path()).unwrap().any(|file| file
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with("derived-")));
+}
+
 #[test]
 fn sketch_information_is_captured_verbatim_with_manifest_and_source_record() {
     for workspace in [false, true] {

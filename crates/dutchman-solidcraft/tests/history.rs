@@ -12459,6 +12459,11 @@ fn multibody_blends_keep_unsupported_dimensions_refused() {
             json!({"kind": "unresolved"}),
             "other than constant-radius",
         ),
+        (
+            "chamfer",
+            json!({"kind": "two_distances", "first": 1.0, "second": 2.0}),
+            "replay",
+        ),
     ] {
         let (_, report) = convert(
             &multibody_blend(kind, dimension),
@@ -12516,8 +12521,24 @@ struct FakeCli {
 
 #[cfg(unix)]
 fn fake_cli(bodies: &[(&str, Vec<Value>)], delay: u32) -> FakeCli {
+    fake_cli_with_faces(bodies, &[], delay)
+}
+
+/// [`fake_cli`], answering a replay that asks for faces with `faces`, one list per body.
+#[cfg(unix)]
+fn fake_cli_with_faces(bodies: &[(&str, Vec<Value>)], faces: &[Vec<Value>], delay: u32) -> FakeCli {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
+    let mut with_faces = vec![json!({"features": 3, "marker": 2})];
+    for ((name, edges), faces) in bodies.iter().zip(faces) {
+        with_faces.push(json!({"body": name, "edges": edges}));
+        with_faces.push(json!({"faces": faces}));
+    }
+    std::fs::write(
+        dir.path().join("faces.json"),
+        Value::from(with_faces).to_string(),
+    )
+    .unwrap();
     let inspect = json!([{"features": 3, "marker": 2}, {
         "bodies": bodies.iter().map(|(name, _)| json!({"name": name})).collect::<Vec<_>>(),
         "timeline": [],
@@ -12534,6 +12555,21 @@ fn fake_cli(bodies: &[(&str, Vec<Value>)], delay: u32) -> FakeCli {
         Value::from(edges).to_string(),
     )
     .unwrap();
+    let mut measured = vec![json!({"features": 3, "marker": 2})];
+    for (_, edges) in bodies {
+        for edge in edges.iter().filter(|edge| edge.get("index").is_some()) {
+            measured.push(
+                edge.get("measurement")
+                    .cloned()
+                    .unwrap_or(json!({"items": []})),
+            );
+        }
+    }
+    std::fs::write(
+        dir.path().join("measure.json"),
+        Value::from(measured).to_string(),
+    )
+    .unwrap();
     let path = dir.path().join("solidcraft-cli");
     let folder = dir.path().display();
     std::fs::write(
@@ -12542,7 +12578,9 @@ fn fake_cli(bodies: &[(&str, Vec<Value>)], delay: u32) -> FakeCli {
             "#!/bin/sh\nfor last; do out=\"$last\"; done\n\
              case \"$1\" in --version) echo 'solidcraft-cli 0.19.0'; exit 0;; esac\n\
              sleep {delay}\n\
-             if grep -q model.edges \"$2\"; then cat '{folder}/edges.json' > \"$out\"; \
+             if grep -q inspect.measure \"$2\"; then cat '{folder}/measure.json' > \"$out\"; \
+             elif grep -q model.faces \"$2\"; then cat '{folder}/faces.json' > \"$out\"; \
+             elif grep -q model.edges \"$2\"; then cat '{folder}/edges.json' > \"$out\"; \
              else cat '{folder}/bodies.json' > \"$out\"; fi\n"
         ),
     )
@@ -12814,6 +12852,21 @@ fn blends_refuse_unsupported_dimensions() {
             &SolidCraftWriter::new().verification(Verification::Off),
         );
         assert!(history_line(&report).contains(reason), "{report:?}");
+    }
+}
+
+/// Unequal dimensions now reach the edge and face proof, but still need a replay.
+#[test]
+fn blends_refuse_unsupported_dimensions_and_unordered_reference_faces() {
+    for spec in [
+        json!({"kind": "two_distances", "first": 1.0, "second": 2.0}),
+        json!({"kind": "distance_angle", "distance": 1.0, "angle": 0.6}),
+    ] {
+        let (_, report) = convert(
+            &input_blend("chamfer", spec, false),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).contains("replay"), "{report:?}");
     }
 }
 
@@ -13265,6 +13318,249 @@ fn solidcraft_flips_an_unequal_chamfer_per_body() {
             let found = body["center_of_mass"][axis].as_f64().unwrap();
             assert!((found - wanted).abs() < 1e-6, "{name}: {body}");
         }
+    }
+}
+
+/// The radius of [`blended_hole`]'s hole.
+const BORE: f64 = 2.5;
+
+/// [`holed_cube`] with a hole of radius 2.5 mm about (5, 5), and a `kind` blend of `dimension`
+/// on the hole's top edge, selected by its own input geometry: a closed edge from (5, 7.5, 10)
+/// all around, its midpoint opposite. `circles` (Z, radius) are circles about the hole's axis
+/// the source's final body has, edges of their own beside the example cube's B-rep: where an
+/// unequal chamfer cut it.
+fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
+    let base = holed_cube(2.0 * BORE, |_| {});
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut group = json!({"edges": {"kind": "historical", "value": {
+        "state": "f3d:model:feature-input-topology#1", "edges": ["synthetic:rim:edge#hole-top"],
+        "native": "synthetic input edge"}}});
+    group[if kind == "fillet" { "radius" } else { "spec" }] = dimension;
+    let mut definition = json!({"groups": [group]});
+    if kind == "chamfer" {
+        definition["flip_direction"] = json!(false);
+    }
+    wire["model"]["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#5", "ordinal": 4, "name": "Edge treatment", "suppressed": false, "dependencies": ["f3d:model:feature#4"], "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": {"kind": kind, "value": definition}}, "source_properties": {}, "source_content": []}));
+    let xyz = |x: f64, y: f64, z: f64| json!({"x": x, "y": y, "z": z});
+    // Keep the source seam distinct from the measured replay seam.
+    let start = xyz(5.0, 5.0 + BORE, 10.0);
+    let sample = json!({"edge": "synthetic:rim:edge#hole-top", "interior": xyz(5.0, 5.0 - BORE, 10.0),
+        "tangent": xyz(1.0, 0.0, 0.0), "start": start, "end": start,
+        "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"]});
+    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#5", "edges": ["synthetic:rim:edge#hole-top"], "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"], "edge_geometry": [sample], "bodies": [], "vertices": []}]);
+    // Exact input carrier belongs to an earlier hidden result, independently of final edges.
+    let source = "synthetic:rim:body#0";
+    for feature in wire["model"]["features"].as_array_mut().unwrap() {
+        for output in feature["outputs"].as_array_mut().unwrap() {
+            if *output == json!("synthetic:cube:body#0") {
+                *output = json!(source);
+            }
+        }
+    }
+    let g = &mut wire["geometry"];
+    // The stored circle's owner must name the body returned by the replay.
+    g["bodies"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id": source, "name": "unit cube", "kind": "wire", "visible": false}));
+    g["regions"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:region#0", "body": source, "shells": ["synthetic:rim:shell#0"]}));
+    g["shells"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:shell#0", "region": "synthetic:rim:region#0", "members": [{"kind": "wire_edge", "id": "synthetic:rim:edge#hole-top"}]}));
+    g["edges"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:edge#hole-top", "carrier": {"curve": "synthetic:rim:curve#0", "param_range": [0.0, std::f64::consts::TAU]}, "ends": {"start": "synthetic:rim:vertex#0", "end": "synthetic:rim:vertex#0"}}));
+    g["vertices"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id": "synthetic:rim:vertex#0", "point": "synthetic:rim:point#0"}));
+    g["points"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id": "synthetic:rim:point#0", "position": start}));
+    g["curves"].as_array_mut().unwrap().push(json!({"id": "synthetic:rim:curve#0", "geometry": {"kind": "solved", "value": {
+        "kind": "circle", "center": xyz(5.0, 5.0, 10.0), "axis": xyz(0.0, 0.0, 1.0), "ref_direction": xyz(0.0, 1.0, 0.0), "radius": BORE
+    }}}));
+    for (i, &(z, radius)) in circles.iter().enumerate() {
+        let id = |arena: &str| format!("synthetic:cut:{arena}#{i}");
+        g["points"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": id("point"), "position": xyz(5.0 + radius, 5.0, z)}));
+        g["vertices"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": id("vertex"), "point": id("point")}));
+        g["curves"].as_array_mut().unwrap().push(json!({"id": id("curve"), "geometry": {"kind": "solved", "value": {"kind": "circle",
+            "center": xyz(5.0, 5.0, z), "axis": xyz(0.0, 0.0, 1.0), "ref_direction": xyz(1.0, 0.0, 0.0), "radius": radius}}}));
+        g["edges"].as_array_mut().unwrap().push(json!({"id": id("edge"), "carrier": {"curve": id("curve"), "param_range": [0.0, std::f64::consts::TAU]},
+            "ends": {"start": id("vertex"), "end": id("vertex")}}));
+    }
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+/// Chamfers on [`blended_hole`]'s top edge, each with the setbacks it cuts across the top face
+/// and down the hole's wall.
+fn hole_chamfers() -> Vec<(Value, (f64, f64))> {
+    let tan30 = std::f64::consts::FRAC_PI_6.tan();
+    let angle =
+        json!({"kind": "distance_angle", "distance": 1.0, "angle": std::f64::consts::FRAC_PI_6});
+    let distances = json!({"kind": "two_distances", "first": 1.0, "second": 2.0});
+    vec![
+        (json!({"kind": "distance", "distance": 1.0}), (1.0, 1.0)),
+        (
+            json!({"kind": "distance_angle", "distance": 1.0, "angle": std::f64::consts::FRAC_PI_4}),
+            (1.0, 1.0),
+        ),
+        (distances.clone(), (1.0, 2.0)),
+        (distances, (2.0, 1.0)),
+        (angle.clone(), (tan30, 1.0)),
+        (angle, (1.0, tan30)),
+    ]
+}
+
+/// Blends on the top edge of a hole, a full circle: SolidCraft finds the edge wherever it seams
+/// it, cuts each unequal chamfer the way round the source's circles show, and takes off the ring
+/// the source has. The ring taken off turns a cross-section about the hole's axis: its volume
+/// is `2π ∫ ρ dA` and its centroid's depth below the top `∫ w ρ dA / ∫ ρ dA`, with `ρ` the
+/// distance from the axis and `w` the depth.
+#[test]
+fn solidcraft_blends_the_full_circle_around_a_hole() {
+    use std::f64::consts::PI;
+    let Some(cli) = closed_blend_cli() else {
+        return;
+    };
+    let holed = 1000.0 - PI * BORE * BORE * 10.0;
+    // `removed` mm³ taken off, its centroid `depth` below the top face.
+    let check = |model: &Model, removed: f64, depth: f64, label: &str| {
+        let (bytes, report) = written_with(
+            model,
+            &replaying(&cli).target_version(Some("0.44.1".parse().unwrap())),
+        );
+        assert!(
+            history_line(&report).starts_with("5 of 5 features rebuilt"),
+            "{label}: {}",
+            history_line(&report)
+        );
+        let measured = evaluated(&cli, &bytes);
+        let [body] = measured["bodies"].as_array().unwrap().as_slice() else {
+            panic!("{label}: one body: {measured}");
+        };
+        let volume = holed - removed;
+        let found = body["volume_mm3"].as_f64().unwrap();
+        assert!((found - volume).abs() < 1e-6 * volume, "{label}: {body}");
+        let z = (5.0 * holed - (10.0 - depth) * removed) / volume;
+        for (axis, wanted) in [(0, 5.0), (1, 5.0), (2, z)] {
+            let found = body["center_of_mass"][axis].as_f64().unwrap();
+            assert!((found - wanted).abs() < 1e-6, "{label}: {body}");
+        }
+    };
+    for (spec, (across, down)) in hole_chamfers() {
+        let circles = [(10.0, BORE + across), (10.0 - down, BORE)];
+        let model = blended_hole("chamfer", spec.clone(), &circles);
+        // A right triangle with legs `across` and `down`: ∫ ρ dA = A (r + a / 3) and
+        // ∫ w ρ dA = r a b² / 6 + a² b² / 24.
+        let area = across * down / 2.0;
+        let removed = 2.0 * PI * area * (BORE + across / 3.0);
+        let depth = down * (4.0 * BORE + across) / (4.0 * (3.0 * BORE + across));
+        check(
+            &model,
+            removed,
+            depth,
+            &format!("{spec} ({across}, {down})"),
+        );
+    }
+    // A 1 mm fillet takes off the corner outside a quarter circle: area 1 - π/4, centroid
+    // (10 - 3π) / (12 - 3π) mm from the corner along both faces, and ∫ u w dA = 19/24 - π/4
+    // with `u` out from the wall.
+    let area = 1.0 - PI / 4.0;
+    let corner = (10.0 - 3.0 * PI) / (12.0 - 3.0 * PI);
+    let depth = (BORE * area * corner + 19.0 / 24.0 - PI / 4.0) / (area * (BORE + corner));
+    let model = blended_hole("fillet", json!({"kind": "constant", "radius": 1.0}), &[]);
+    check(&model, 2.0 * PI * area * (BORE + corner), depth, "fillet");
+}
+
+/// What SolidCraft reports before [`blended_hole`]'s blend: the cube's edges and the hole's two
+/// circles, seamed elsewhere than the source's, with their reported midpoints at the test's
+/// expected blend picks and the length SolidCraft 0.44.1 reports (short of the circumference),
+/// and the faces of the top one; the hole's wall is a
+/// cylinder only `with_cylinder`.
+#[cfg(unix)]
+fn holed_replay(with_cylinder: bool) -> (Vec<Value>, Vec<Value>) {
+    let mut edges = prism_edges(&SQUARE, 0.0, 10.0);
+    for (z, cap) in [(10.0, "top"), (0.0, "bottom")] {
+        edges.push(
+            json!({"start": [5.0 + BORE, 5.0, z], "end": [5.0 + BORE, 5.0, z],
+            "mid": [5.0 - BORE, 5.0, z], "length": 15.682587880594888,
+            "name": format!("wall|{cap}"), "index": edges.len(),
+            "measurement": {"items": [{"type": "edge", "round": "circle", "radius": BORE,
+                "center": [5.0, 5.0, z], "axis": [0.0, 0.0, 1.0],
+                "length_mm": std::f64::consts::TAU * BORE, "circumference": std::f64::consts::TAU * BORE}]}}),
+        );
+    }
+    let cylinder = with_cylinder
+        .then(|| json!({"origin": [5.0, 5.0, 0.0], "axis": [0.0, 0.0, 1.0], "radius": BORE}));
+    let faces = vec![
+        json!({"name": "top", "area": 80.4, "plane_normal": [0.0, 0.0, 1.0], "point": [5.0, 1.0, 10.0]}),
+        json!({"name": "wall", "area": 157.0, "plane_normal": null, "cylinder": cylinder, "point": [5.0 - BORE, 5.0, 4.0]}),
+        json!({"name": "bottom", "area": 80.4, "plane_normal": [0.0, 0.0, -1.0], "point": [5.0, 1.0, 0.0]}),
+    ];
+    (edges, faces)
+}
+
+/// Equal blends on a full circle need only the circle; a 45-degree chamfer also its faces, a
+/// plane and a coaxial cylinder; an unequal one also the source's circles where it cut and
+/// SolidCraft's own cut there. Without one, the blend is refused, saying which is missing.
+#[cfg(unix)]
+#[test]
+fn blends_on_a_full_circle_need_the_circle_its_faces_and_the_source_cut() {
+    let (edges, faces) = holed_replay(true);
+    let cli = fake_cli_with_faces(&[("unit cube", edges.clone())], &[faces], 0);
+    let (_, no_cylinder) = holed_replay(false);
+    let plain = fake_cli_with_faces(&[("unit cube", edges)], &[no_cylinder], 0);
+    let line = |model: &Model, cli: &FakeCli| {
+        history_line(
+            &convert(
+                model,
+                &replaying(&cli.path).target_version(Some("0.44.1".parse().unwrap())),
+            )
+            .1,
+        )
+    };
+    for (kind, dimension) in blend_cases() {
+        let model = blended_hole(kind, dimension.clone(), &[]);
+        let (document, report) = convert(
+            &model,
+            &replaying(&cli.path).target_version(Some("0.44.1".parse().unwrap())),
+        );
+        assert!(
+            !history_line(&report).starts_with("flattened"),
+            "{dimension}: {report:?}"
+        );
+        let blend = &document["features"][4];
+        assert_eq!(blend["type"], kind, "{report:?}");
+        assert_eq!(blend["body"], "unit cube");
+        assert_eq!(blend["edges"], json!([[5.0 - BORE, 5.0, 10.0]]));
+        if dimension["kind"] == "distance_angle" {
+            let refused = line(&model, &plain);
+            assert!(refused.contains("non-perpendicular"), "{refused}");
+        }
+    }
+    for (spec, (across, down)) in hole_chamfers().into_iter().skip(2) {
+        let unshown = line(&blended_hole("chamfer", spec.clone(), &[]), &cli);
+        assert!(
+            unshown.contains("which face takes the distance"),
+            "{spec}: {unshown}"
+        );
+        let shown = blended_hole(
+            "chamfer",
+            spec.clone(),
+            &[(10.0, BORE + across), (10.0 - down, BORE)],
+        );
+        // The replay after it answers with the uncut hole.
+        let uncut = line(&shown, &cli);
+        assert!(uncut.contains("either way round"), "{spec}: {uncut}");
+        let unproven = line(&shown, &plain);
+        assert!(unproven.contains("coaxial cylinder"), "{spec}: {unproven}");
     }
 }
 

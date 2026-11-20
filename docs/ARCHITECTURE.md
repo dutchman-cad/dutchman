@@ -390,13 +390,16 @@ angular intervals must cover exactly one turn without gaps or overlaps on exactl
 An overlapping candidate without carrier metadata on the selected body also blocks the proof.
 Picks use the proven pieces' midpoints, independently of the source seam. Other closed
 curves retain a named refusal; older targets keep the original geometry. Equal two-distance chamfers also map; distance-and-angle chamfers map at
-45 degrees on perpendicular faces. Unequal distances and other angles map on straight edges
-when the source's final body still has the chamfer's face: the face order that puts it there,
-between that face's own boundary edges along the input edge, is taken. A selection on several
+45 degrees on perpendicular faces: at a full circle, a plane square to its axis and a coaxial
+cylinder of its radius, as SolidCraft's replay reports them. Unequal distances and other angles
+map on straight edges when the source's final body still has the chamfer's face: the face order
+that puts it there, between that face's own boundary edges along the input edge, is taken. On a
+full circle between such a plane and cylinder, the order is taken that puts both of the
+chamfer's edges on circles of the source's final body. A selection on several
 bodies becomes one chamfer per body, and each is flipped on its own when SolidCraft's first
 face (the one facing up most) would put the cut elsewhere on that body. A chamfer face the final body lost, an edge whose faces SolidCraft
-cannot tell apart, and SolidCraft cutting it elsewhere either way round are refused, saying
-which. Variable fillets lack a proven
+cannot tell apart (or, at a full circle, are not such a plane and cylinder), and SolidCraft
+cutting it elsewhere either way round are refused, saying which. Variable fillets lack a proven
 chain direction. Final-body edge selections never stand in for input geometry.
 
 For targets 0.44 and newer, a sweep path can name connected topological edges from its
@@ -639,6 +642,28 @@ Extrudes of explicitly resolved spatial loops use a planar copy in the
 source profile frame, admitted through the existing source body comparison
 callback. No native selection strings are interpreted. Older targets use the
 previous spatial mapper output and profile refusals.
+
+## Linked design outputs
+
+The `Writer::companion_files` seam returns portable companion names and bytes from
+an encoded design. `convert` validates names and existing content before publishing
+companions beside the main output, reusing identical files and refusing to overwrite a
+different design. Each new companion is fully staged in its destination directory, then
+published without replacing an existing file. Concurrent publishers reuse identical
+completed files. Writers without linked outputs keep the single-file default.
+The SolidCraft adapter retains companion containers under `companions/` and writes
+its native Import/component/occurrence/links representation; the core knows no
+SolidCraft container fields.
+
+The Onshape reader keeps a captured Derived source as neutral CADIR and STEP in a
+feature's `source_properties.design_reference`, with body identity/name bindings.
+CADIR source properties are strings: this value contains versioned
+`dutchman.design-reference/1` JSON; `historical_bodies` contains a JSON body list.
+Earlier local creators use `source_properties.historical_bodies` for names of bodies
+that a later Boolean may consume. Their local identities belong to CADIR
+`feature_result_topologies`; Boolean operands use generated body selections tied to
+those producers. Intermediate bodies never enter final geometry or the host's
+verification reference. Writers consume neutral references without reading REST data.
 
 `dutchman-plugin` is the WebAssembly component front end, built for `wasm32-unknown-unknown`
 against SolidCraft's `craft:plugin` importer interface (no WASI). Its single ABI adapter
