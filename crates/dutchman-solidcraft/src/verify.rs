@@ -1735,13 +1735,24 @@ pub(crate) struct ReplayedCircle {
 }
 
 /// One face of a body SolidCraft replayed, as `model.faces` gives it. `normal` is the
-/// outward unit normal of a planar face, `None` for another surface.
+/// outward unit normal of a planar face, `None` for another surface; `cylinder` is set for a
+/// circular cylinder.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ReplayedFace {
     pub name: String,
     pub area: f64,
     pub normal: Option<[f64; 3]>,
+    pub cylinder: Option<ReplayedCylinder>,
     pub point: [f64; 3],
+}
+
+/// The circular cylinder a replayed face lies on: a point on its axis, its unit axis and its
+/// radius.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ReplayedCylinder {
+    pub origin: [f64; 3],
+    pub axis: [f64; 3],
+    pub radius: f64,
 }
 
 /// What SolidCraft rebuilt at one point of a replayed timeline: the bodies with their edges,
@@ -2006,7 +2017,7 @@ fn replayed_edge(row: &Value) -> Result<ReplayedEdge, String> {
 }
 
 fn replayed_face(row: &Value) -> Result<ReplayedFace, String> {
-    let point = |key: &str| -> Option<[f64; 3]> {
+    let triple = |row: &Value, key: &str| -> Option<[f64; 3]> {
         let values = row.get(key)?.as_array()?;
         if values.len() != 3 {
             return None;
@@ -2017,6 +2028,17 @@ fn replayed_face(row: &Value) -> Result<ReplayedFace, String> {
         }
         Some(out)
     };
+    let cylinder = |row: &Value| -> Option<ReplayedCylinder> {
+        let cylinder = row.get("cylinder")?;
+        Some(ReplayedCylinder {
+            origin: triple(cylinder, "origin")?,
+            axis: triple(cylinder, "axis")?,
+            radius: cylinder
+                .get("radius")
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite() && *v > 0.0)?,
+        })
+    };
     (|| {
         Some(ReplayedFace {
             name: row.get("name")?.as_str()?.to_owned(),
@@ -2024,8 +2046,9 @@ fn replayed_face(row: &Value) -> Result<ReplayedFace, String> {
                 .get("area")
                 .and_then(Value::as_f64)
                 .filter(|v| v.is_finite() && *v >= 0.0)?,
-            normal: point("plane_normal"),
-            point: point("point")?,
+            normal: triple(row, "plane_normal"),
+            cylinder: cylinder(row),
+            point: triple(row, "point")?,
         })
     })()
     .ok_or_else(|| format!("{CLI_NAME} result has a face without its name, area or point"))

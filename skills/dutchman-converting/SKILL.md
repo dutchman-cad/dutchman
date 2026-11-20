@@ -675,6 +675,14 @@ effect through input preparation and geometry-only fallbacks; JSON displays its 
 Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
 and keep the original geometry. The existing history status and reason fields report refusals.
 
+Chamfers with unequal distances or a distance and an angle other than 45 degrees keep
+editable history when the source's final body proves which face takes the distance.
+Straight edges need a retained planar chamfer face; closed circles need a plane and a
+coaxial cylinder in the replay and both resulting circles in the source. Each body's
+chamfer is replayed in both face orders when needed and kept only where its cut matches.
+Missing evidence keeps the original geometry with a specific history reason. Existing
+history statuses, counts and report fields are unchanged.
+
 Constant-radius fillets and equal-setback chamfers map when the feature's own input edge
 geometry proves which edge each one acts on in SolidCraft's replay before the blend.
 Picks on several bodies become one independent blend per body with numbered source names;

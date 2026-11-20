@@ -1877,7 +1877,10 @@ pub(crate) fn prove_blends(
     let mut replayed = if steps.is_empty() {
         Ok(Vec::new())
     } else {
-        let faces = history.blends.iter().any(|pending| pending.face.is_some());
+        let faces = history
+            .blends
+            .iter()
+            .any(|pending| pending.face.is_some() || pending.needs_faces());
         replay(history, &steps, faces)
     };
     let blends = std::mem::take(&mut history.blends);
@@ -1900,35 +1903,44 @@ pub(crate) fn prove_blends(
                 step = step.saturating_add(1);
                 match at {
                     Some(Ok(before)) => match &pending.face {
-                        None => blend::prove(pending, &before.bodies).and_then(|selections| {
-                            if pending.path {
-                                let [selection] = selections.as_slice() else {
-                                    return Err("its input edge path crosses several rebuilt bodies, which is not supported yet".to_owned());
-                                };
-                                let fields = history.features
-                                    .get_mut(pending.feature.saturating_add(inserted))
-                                    .and_then(Value::as_object_mut)
-                                    .ok_or("the mapped sweep is missing")?;
-                                fields.insert("path_body".to_owned(), json!(selection.body));
-                                fields.insert("path_edges".to_owned(), json!(selection.points));
-                                return Ok(Proven::Path);
-                            }
-                            let cuts = pending
-                                .unequal
-                                .as_ref()
-                                .map(|unequal| blend::cuts(unequal, &pending.edges, &before.bodies))
-                                .transpose()?;
-                            let added = selections.len().saturating_sub(1);
-                            let at = pending.feature.saturating_add(inserted);
-                            split_blend(history, at, pending.outcome, selections)?;
-                            let flipped = match cuts {
-                                Some(cuts) => {
-                                    orient_unequal(history, at, added, &cuts, &mut replay)?
+                        None => blend::prove(pending, &before.bodies, &before.faces).and_then(
+                            |selections| {
+                                if pending.path {
+                                    let [selection] = selections.as_slice() else {
+                                        return Err("its input edge path crosses several rebuilt bodies, which is not supported yet".to_owned());
+                                    };
+                                    let fields = history.features
+                                        .get_mut(pending.feature.saturating_add(inserted))
+                                        .and_then(Value::as_object_mut)
+                                        .ok_or("the mapped sweep is missing")?;
+                                    fields.insert("path_body".to_owned(), json!(selection.body));
+                                    fields.insert("path_edges".to_owned(), json!(selection.points));
+                                    return Ok(Proven::Path);
                                 }
-                                None => false,
-                            };
-                            Ok(Proven::Bodies { added, flipped })
-                        }),
+                                let cuts = pending
+                                    .unequal
+                                    .as_ref()
+                                    .map(|unequal| {
+                                        blend::cuts(
+                                            unequal,
+                                            &pending.edges,
+                                            &before.bodies,
+                                            &before.faces,
+                                        )
+                                    })
+                                    .transpose()?;
+                                let added = selections.len().saturating_sub(1);
+                                let at = pending.feature.saturating_add(inserted);
+                                split_blend(history, at, pending.outcome, selections)?;
+                                let flipped = match cuts {
+                                    Some(cuts) => {
+                                        orient_unequal(history, at, added, &cuts, &mut replay)?
+                                    }
+                                    None => false,
+                                };
+                                Ok(Proven::Bodies { added, flipped })
+                            },
+                        ),
                         Some(face) => face_profile::prove(face, before).and_then(|mirrored| {
                             if let Some(direction) = face.entry_direction(mirrored)? {
                                 Ok(Proven::Hole(direction))
@@ -1991,12 +2003,12 @@ pub(crate) fn prove_blends(
         };
         match proven {
             Ok(proven @ (Proven::Bodies { .. } | Proven::Path)) => {
-                let (added, redo) = match proven {
+                let (added, changed) = match proven {
                     Proven::Bodies { added, flipped } => (added, flipped),
                     _ => (0, true),
                 };
                 inserted = inserted.saturating_add(added);
-                if (added > 0 || redo) && index.saturating_add(1) < blends.len() {
+                if (added > 0 || changed) && index.saturating_add(1) < blends.len() {
                     // Later blends must see all per-body operations, including earlier
                     // radius groups, as written. Their original last IDs remain rollback markers.
                     let remaining: Vec<u64> = after
@@ -2008,7 +2020,7 @@ pub(crate) fn prove_blends(
                     let faces = blends
                         .iter()
                         .skip(index.saturating_add(1))
-                        .any(|pending| pending.face.is_some());
+                        .any(|p| p.face.is_some() || p.needs_faces());
                     replayed = replay(history, &remaining, faces);
                     step = 0;
                 }
@@ -2040,7 +2052,7 @@ pub(crate) fn prove_blends(
                         let faces = blends
                             .iter()
                             .skip(index.saturating_add(1))
-                            .any(|pending| pending.face.is_some());
+                            .any(|pending| pending.face.is_some() || pending.needs_faces());
                         replayed = replay(history, &remaining, faces);
                         step = 0;
                     }
@@ -2064,7 +2076,7 @@ pub(crate) fn prove_blends(
                         let faces = blends
                             .iter()
                             .skip(index.saturating_add(1))
-                            .any(|p| p.face.is_some());
+                            .any(|p| p.face.is_some() || p.needs_faces());
                         replayed = replay(history, &remaining, faces);
                         step = 0;
                     }

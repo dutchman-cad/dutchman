@@ -601,6 +601,14 @@ effect through input preparation and geometry-only fallbacks; JSON displays its 
 Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
 and keep the original geometry. The existing history status and reason fields report refusals.
 
+Chamfers with unequal distances or a distance and an angle other than 45 degrees keep
+editable history when the source's final body proves which face takes the distance.
+Straight edges need a retained planar chamfer face; closed circles need a plane and a
+coaxial cylinder in the replay and both resulting circles in the source. Each body's
+chamfer is replayed in both face orders when needed and kept only where its cut matches.
+Missing evidence keeps the original geometry with a specific history reason. Existing
+history statuses, counts and report fields are unchanged.
+
 For SolidCraft 0.44 and newer, extrude joins, cuts and intersections can keep a
 selected body scope at the final body-building feature when the reader names
 modified bodies and replay matches the final source geometry. The Info note `history/body-scope-confirmed`
