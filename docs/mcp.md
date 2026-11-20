@@ -94,6 +94,10 @@ use a version link. Legacy v1 bundles without consistency metadata remain readab
 Default-plane frames and explicit sketch-region boundaries can be resolved from
 compressed REST query records; deterministic IDs alone are insufficient. The same
 history counts and source-geometry checks apply.
+Custom FeatureScript features report `onshape/history.not-supported`, naming the feature
+and the missing complete per-feature body geometry needed to prove a frozen step.
+Bundle v1 retains only the final STEP shape, so later body-building features remain
+blocked. Use that retained shape; fetching v1 again does not provide frozen steps.
 
 Local CLI and desktop progress can name the current timeline feature, such as
 “Feature 29 of 37 · Extrude 1”, and explain when measurement takes longer.
@@ -1132,11 +1136,21 @@ containment and closed-form line/conic intersections, never area or finite sampl
 ## Fetch an Onshape snapshot
 
 `onshape_fetch` accepts `document_url` (required), `out` (optional file path),
-`version` (optional immutable Onshape version ID), and `max_calls` (optional HTTP
-attempt budget, default 50). It advertises input and output JSON schemas and returns
+`version` (optional immutable Onshape version ID), `bearer_token_file` (optional private
+local OAuth token file path), and `max_calls` (optional HTTP attempt budget, default 50). It advertises input and output JSON schemas and returns
 `dutchman.onshape-fetch/1` in text and structured content, with `isError` on failure.
-Keys come only from the server's local environment or private config file; never
-include them in tool arguments. This tool uses Onshape's network API and your own
+API keys remain the default and come from the server's local environment or saved
+connection. Alternatively, use `bearer_token_file` or the server process environment's
+`DUTCHMAN_ONSHAPE_BEARER_TOKEN`; the file takes precedence. The token file contains only
+the token and must be private (mode 600 on Unix), regular, UTF-8, and at most 16 KiB.
+Unix checks ownership and permissions on the same open handle used to read the token,
+refusing symlinks and special files. On Windows, token files are refused because privacy
+cannot be checked yet; omit `bearer_token_file` and use the server environment variable.
+Never include credential values in tool arguments or chat. Remove API-key environment
+variables and saved keys (`dutchman onshape logout`) before using a token; mixed
+credentials return `onshape/auth` with zero calls. HTTP 401/403 explains that the token
+expired or lacks access: obtain a fresh token with read access, replace it, and retry.
+Tokens and remote error bodies stay out of both text and structured reports. This tool uses Onshape's network API and your own
 allowance and writes a private bundle/cache. Nothing is sent to Dutchman.
 
 Part Studios include features, stored sketch placements, input topology, optional

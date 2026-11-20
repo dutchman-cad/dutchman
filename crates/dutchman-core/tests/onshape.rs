@@ -5,7 +5,7 @@
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
-use dutchman_core::{read_bytes, Format, Model, Report};
+use dutchman_core::{read_bytes, Format, Model, Report, Severity};
 use serde_json::{json, Value};
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -136,6 +136,91 @@ fn synthetic_bundles_retain_the_expected_cadir_rows_and_final_step() {
         } else {
             assert!(losses.is_empty(), "{name}: {losses:?}");
         }
+    }
+}
+
+#[test]
+fn custom_features_name_the_missing_frozen_shape_even_with_rollback_details() {
+    let source = fixture("plate-fillet");
+    let (original, _) = read(&source).unwrap();
+    for ordinal in [1, 2] {
+        let bytes = changed(&source, |path, value| {
+            if path.ends_with("features.json") {
+                // A custom studio can use the same feature type as a built-in.
+                value["features"][ordinal]["namespace"] = json!("synthetic");
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        let wire = timeline(&model);
+        let feature = &wire["model"]["features"][ordinal];
+        assert_eq!(feature["definition"]["value"]["kind"], "native");
+        assert_eq!(feature["outputs"], json!([]));
+        let name = feature["name"].as_str().unwrap();
+        let unsupported: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|l| l.code.as_deref() == Some("onshape/history.not-supported"))
+            .collect();
+        // The custom feature has exactly one loss. A later feature that consumed its result can
+        // add its own (its producer is unproved); nothing earlier may.
+        let later: Vec<&str> = wire["model"]["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .skip(ordinal + 1)
+            .filter_map(|f| f["name"].as_str())
+            .collect();
+        let losses: Vec<_> = unsupported.iter().filter(|l| l.subject == name).collect();
+        assert_eq!(losses.len(), 1, "{unsupported:?}");
+        for other in unsupported.iter().filter(|l| l.subject != name) {
+            assert!(later.contains(&other.subject.as_str()), "{other:?}");
+        }
+        let loss = losses[0];
+        assert_eq!(loss.subject, name);
+        assert_eq!(loss.severity, Severity::Degraded);
+        let reason = format!(
+            "custom FeatureScript feature {name} is not supported yet: bundle format 1 \
+             lacks complete per-feature body geometry to prove a frozen step"
+        );
+        assert_eq!(
+            loss.detail,
+            format!("{reason}; kept the final STEP geometry")
+        );
+        assert!(feature["definition"]["value"]["value"]["kind"]
+            .as_str()
+            .unwrap()
+            .contains(&reason));
+        assert_eq!(model.source_step, original.source_step);
+        assert_eq!(model.ir.geometry, original.ir.geometry);
+    }
+}
+
+#[test]
+fn custom_feature_stop_uses_its_id_when_the_name_is_absent() {
+    let bytes = changed(&fixture("unsupported"), |path, value| {
+        if path.ends_with("features.json") {
+            value["features"][2].as_object_mut().unwrap().remove("name");
+        }
+    });
+    let (_, report) = read(&bytes).unwrap();
+    assert!(report.losses().iter().any(|l| l.subject == "Custom feature"
+        && l.detail
+            .contains("custom FeatureScript feature Custom feature")));
+}
+
+#[test]
+fn suppressed_custom_features_do_not_report_a_frozen_shape_gap() {
+    for key in ["suppressed", "parentSuppressed"] {
+        let bytes = changed(&fixture("unsupported"), |path, value| {
+            if path.ends_with("features.json") {
+                value["features"][2][key] = json!(true);
+            }
+        });
+        let (_, report) = read(&bytes).unwrap();
+        assert!(!report.losses().iter().any(|l| l
+            .code
+            .as_deref()
+            .is_some_and(|code| code.starts_with("onshape/"))));
     }
 }
 

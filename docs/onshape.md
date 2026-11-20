@@ -84,7 +84,23 @@ plane behavior remain supported.
 | Chamfer | Equal offsets, two offsets, distance and angle in CADIR, with explicit input edges and resolvable tangent chains | The writer maps equal setbacks (including two equal offsets and a 45° distance-and-angle chamfer on perpendicular input faces). Asymmetric chamfers report missing input reference-face ordering; neither face nor direction is guessed. Tangent propagation has the same completeness requirement as fillets, and the chamfer likewise blends exactly the listed edges on SolidCraft 0.40 or newer. Replay proof still applies. |
 | Hole | Explicit sketch point `locations`; simple, counterbore and countersink entries; through, or blind with a unique explicit drill-point angle and an explicit depth reference for an angled bottom, or an explicit flat 180° bottom; tapped holes from the hole table's thread standard, drilled at the tap-drill diameter | A standard must state its hand and modeled/cosmetic facts. A supported tapped hole keeps its ISO metric thread label, with its thread length in a blind hole (SolidCraft 0.40 and newer); otherwise the thread length is reported, and other thread standards keep the bore only. Reversed drilling, other hole tables and standard types, mate connectors and other ends are not supported yet. |
 | Assigned variables | SolidCraft parameters retaining units, with the same names and expressions (`#len / 2` becomes `len / 2`) | Earlier variables, literal units, parentheses and `+`, `-`, `*`, `/` with compatible units; measured variables, reassignment, forward references and FeatureScript functions are not supported yet. A refused replacement blocks each later consumer of that name; earlier parameters remain historical records. Sketch dimensions, blind and symmetric extrude depths and one-direction revolve angles that use variables stay driven by them, so editing the parameter in SolidCraft rebuilds the part. Other values that use variables (fillet and chamfer sizes, hole sizes) are written as their evaluated values with an `onshape/history.variable-evaluated` loss naming each one. Suppressed features, including parent-suppressed features, do not produce these losses. |
-| Other features, custom FeatureScript | Named `onshape/history.not-supported` loss | The shared partial-history path keeps the final STEP shape visible and retains the editable prefix where possible. |
+| Custom FeatureScript | Named `onshape/history.not-supported` loss explaining the missing per-feature body geometry | Bundle v1 cannot prove a frozen step; history stops here, with the final STEP shape visible and the editable prefix retained where possible. |
+| Other features | Named `onshape/history.not-supported` loss | The shared partial-history path keeps the final STEP shape visible and retains the editable prefix where possible. |
+
+Custom features from a Feature Studio are identified by their non-empty `namespace`,
+even when their feature type has the same name as a built-in feature. An active custom
+feature stops history with the reason: `custom FeatureScript feature <name> is not
+supported yet: bundle format 1 lacks complete per-feature body geometry to prove a frozen
+step`. Suppressed custom features are left out without this loss. Later body-building
+features remain blocked, including features whose face or edge selections resolve.
+
+The bundle's rollback bodydetails describe selection geometry, not complete body shapes.
+There are no per-feature tessellations or STEP exports; `export.step` is the final state
+only. Even a custom feature last in the history, or one that appears to change no bodies,
+cannot be proved from these records. Fetching the same bundle format again cannot supply
+the missing shapes. Use the retained final STEP shape; frozen custom steps would require
+a capture of the complete body state at each custom feature, bound to its rollback index
+and pinned microversion, and the shared source-body comparison before history continues.
 
 Assigned variables remain design parameters even if no sketch can be mapped and
 conversion falls back to the STEP body. Sketch dimensions and blind extrude depths
@@ -296,8 +312,54 @@ precedence over saved keys; setting only one is an error. The lookup order is en
 variables, then the credential store, then the private file.
 
 Do not paste keys into chat, URLs, command arguments, shell history, logs, or issue
-reports. Dutchman signs each request with Onshape's HMAC-SHA256 API-key scheme, and never
-prints, logs, caches or bundles the keys.
+reports. Dutchman signs API-key requests with Onshape's HMAC-SHA256 scheme and never
+prints, logs, caches, or bundles credentials.
+
+### OAuth bearer tokens
+
+API keys remain the default. To fetch with an OAuth token instead, supply a local file:
+
+```sh
+dutchman onshape fetch <document-url> --bearer-token-file /private/path/token --json
+```
+
+The file contains only the token, optionally followed by a newline. Keep it readable only
+by you (`chmod 600 /private/path/token` on Unix); it must be a regular UTF-8 file of at most
+16 KiB. Alternatively, provide `DUTCHMAN_ONSHAPE_BEARER_TOKEN` through your environment or
+secret manager. Never put the token value in command arguments, URLs, chat, or logs. There
+is no command option accepting a token value. A token file takes precedence over the token
+environment variable.
+
+On Unix, Dutchman opens the token file once without following a final symbolic link or
+waiting for a FIFO writer. It checks that the opened handle is a regular file owned by
+the current user, mode 600, and within the size limit, then reads at most 16 KiB through
+that handle. Replacing the pathname cannot substitute unchecked contents. Parent
+directories may resolve through symbolic links; these checks apply to the final opened
+file regardless of directory changes. On Windows, token-file authentication is not
+supported yet because file privacy cannot be checked. Clear the file selection (or omit
+`--bearer-token-file` / `bearer_token_file`) and use `DUTCHMAN_ONSHAPE_BEARER_TOKEN`.
+
+Dutchman sends `Authorization: Bearer <token>` directly to Onshape. A token cannot be mixed
+with API keys: remove both `ONSHAPE_ACCESS_KEY` and `ONSHAPE_SECRET_KEY`, and run
+`dutchman onshape logout` to forget saved keys before using a token. Mixing them returns
+`onshape/auth` before any request. To return to API-key authentication, remove the token
+file option and token environment variable. Login, status, and logout still manage API keys;
+bearer tokens are never saved there.
+
+MCP's `onshape_fetch` accepts `bearer_token_file` (a local path) and reads the same token
+environment variable from the server process. In the desktop app, choose **Connect Onshape**
+then **Use bearer token file**, or launch the app with the token environment variable set.
+The selected file applies to desktop fetches and is read again for each fetch; **Clear token
+file** removes the selection. It is not saved across app restarts.
+Switching from API-key editing to a bearer token clears abandoned key inputs and
+restores the document-link controls.
+
+HTTP 401 and 403 return `onshape/auth`: the token expired or lacks document access. Obtain
+a fresh token with read access, replace the file or environment variable, and retry. Token
+values are hidden in diagnostics and reports, including `--json` and MCP. Responses that
+echo a token are refused before their content is saved; response headers and error bodies
+are never included in reports or bundles. Bearer caches are separated from API-key caches
+using a hash, and redirects never forward credentials.
 
 ### What is retained
 

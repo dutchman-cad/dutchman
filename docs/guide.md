@@ -80,6 +80,10 @@ Bundles marked `consistent: false` are refused; fetch again or use a version lin
 Older v1 bundles without consistency metadata still convert. Default-plane sketches
 and explicit sketch-region extrudes also accept the API's compressed query records;
 ambiguous boundaries retain a specific history loss and the final STEP geometry.
+Custom FeatureScript features name why history stops: bundle format 1 lacks complete
+per-feature body geometry to prove a frozen step. Use the retained final STEP shape;
+fetching another v1 bundle does not add the missing shapes. Later body-building features
+remain blocked.
 
 ## Public share links
 
@@ -881,6 +885,17 @@ losses for meshes it could not decode.
 uses the keys saved by `dutchman onshape login` (or Connect Onshape in the app), or `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` for scripts, and prints the HTTP
 attempt count. `--version VERSION_ID` selects an immutable version; `--json` prints
 `dutchman.onshape-fetch/1`. This fetcher saves API responses without converting CAD.
+To use OAuth instead, pass `--bearer-token-file PATH` (a private UTF-8 file, mode 600 on
+Unix), or set `DUTCHMAN_ONSHAPE_BEARER_TOKEN` in the process environment. The file wins
+if both token sources are set. Remove API-key environment variables and saved keys
+(`dutchman onshape logout`) first: mixed authentication is refused before any request.
+Never pass the token value in command arguments. The desktop's **Use bearer token file**
+option and MCP's `bearer_token_file` use the same authentication. HTTP 401/403 means the
+token expired or lacks access; obtain a fresh token with read access, replace it, and retry.
+Token files are opened once on Unix, with symlinks and special files refused and ownership
+and permissions checked on that handle. On Windows, file privacy cannot be checked yet:
+clear the token file selection and use `DUTCHMAN_ONSHAPE_BEARER_TOKEN` instead.
+Credentials stay out of logs and reports, including `--json`.
 Part Studios include features, stored sketch placements, needed input topology,
 variables/configuration, and final STEP; assemblies include their same-document
 Part Studios. Version links use version paths throughout. Workspace links pin supported reads to a microversion,
