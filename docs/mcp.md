@@ -1,7 +1,10 @@
 # The MCP server
 
-The desktop Designs list shows each file’s memory and time estimate as a wrapping sentence
-below its folder path. Estimate values in commands, tools and JSON reports are unchanged.
+The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
+Folder and selection summaries use the highest per-file memory estimate and sum the displayed
+time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
+the full path on hover. At wide window sizes the path and estimate share a wrapping row
+to keep the default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
 
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.

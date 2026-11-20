@@ -129,7 +129,11 @@ history** unchecked and Standard as the base.
 
 Queued files show **part.f3d needs about N GB of memory and about M min to convert.**
 when an estimate is available. The folder has its own wrapping line with the full path
-on hover. Each file in a queued folder has its own wrapping estimate sentence too. Estimates below 0.1 GB show **under 0.1 GB**,
+on hover. A folder or several files show one complete summary sentence: memory is the
+highest per-file estimate, and total time sums the displayed per-file estimates. Hover over
+the summary to read each file’s full estimate sentence. Files without estimates are excluded
+from the summary. At wide window sizes, the folder and estimate share a wrapping row
+to keep the default window’s controls in view. Estimates below 0.1 GB show **under 0.1 GB**,
 and times below 60 seconds show **under a minute**, just as in the CLI. **M GB of memory free** appears
 once when the machine's free memory can be read. On a Mac this counts memory the system can give back
 (not in use by apps, system or compression), not only the few pages it keeps empty. These are estimates, not limits or promises; an unavailable estimate

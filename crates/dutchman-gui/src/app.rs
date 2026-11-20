@@ -1169,6 +1169,101 @@ impl App {
             )
     }
 
+    /// One complete estimate for the selection, with individual sentences on hover.
+    fn selection_estimate(&self) -> Option<(String, String, bool)> {
+        let estimates: Vec<_> = self
+            .estimates
+            .iter()
+            .filter_map(|(path, estimate)| {
+                estimate
+                    .as_ref()
+                    .filter(|_| {
+                        self.inputs
+                            .iter()
+                            .any(|input| path == input || path.starts_with(input))
+                    })
+                    .map(|estimate| (path, *estimate))
+            })
+            .collect();
+        let (_, first) = estimates.first()?;
+        let mut total = *first;
+        total.seconds = 0;
+        let mut minutes = 0_u64;
+        let mut under = false;
+        let mut sentences = Vec::new();
+        for (path, estimate) in &estimates {
+            total.peak_bytes = total.peak_bytes.max(estimate.peak_bytes);
+            total.seconds = total.seconds.saturating_add(estimate.seconds);
+            if estimate.time_band.is_none() {
+                total.time_band = None;
+            }
+            let parts = self
+                .sizes
+                .iter()
+                .find(|(input, _)| input == *path)
+                .and_then(|(_, sizes)| *sizes)
+                .and_then(|sizes| self.desktop_parts(sizes));
+            let stages = parts.map_or([Some(*estimate), None, None], |parts| match parts.split {
+                Some(split) => [Some(split.read), Some(split.convert), parts.check],
+                None => [Some(parts.conversion), None, parts.check],
+            });
+            for stage in stages.into_iter().flatten() {
+                minutes = minutes.saturating_add(stage.seconds.div_ceil(60).max(1));
+                under |= stage.seconds < 60;
+            }
+            let details =
+                self.file_estimate_text(path, *estimate)
+                    .replacen(", ", " of memory and ", 1);
+            sentences.push(format!("{} needs {details} to convert.", file_name(path)));
+        }
+        let single_file = self.inputs.len() == 1
+            && self
+                .inputs
+                .first()
+                .is_some_and(|input| dutchman_core::Format::from_path(input).is_some());
+        let text = if single_file {
+            sentences.first()?.clone()
+        } else {
+            let rounded = estimate_text(Estimate {
+                seconds: minutes.saturating_mul(60),
+                ..total
+            });
+            let (memory, time) = rounded.split_once(", ")?;
+            let time = if under {
+                if minutes == 1 {
+                    "under a minute".to_owned()
+                } else {
+                    format!("under {minutes} min")
+                }
+            } else {
+                time.to_owned()
+            };
+            let count = estimates.len();
+            let subject = if count == 1 {
+                "1 design needs".to_owned()
+            } else {
+                format!("{count} designs need")
+            };
+            let subject = if estimates.len() < self.estimates.len() {
+                format!("For {count} designs with available estimates, conversion needs")
+            } else {
+                subject
+            };
+            format!("{subject} {memory} of memory at peak and {time} in total to convert.")
+        };
+        let mut hover = "Memory is the highest per-file estimate; total time is the sum of the per-file estimates. Files without estimates are excluded.".to_owned();
+        for sentence in sentences {
+            hover.push('\n');
+            hover.push_str(&sentence);
+        }
+        let large = large_estimate(&total, self.available);
+        if large {
+            hover.push('\n');
+            hover.push_str(LARGE_ESTIMATE);
+        }
+        Some((text, hover, large))
+    }
+
     fn picked(&mut self, pick: Pick, paths: Vec<PathBuf>, ctx: &egui::Context) {
         let Some(first) = paths.first().cloned() else {
             return;
@@ -1901,6 +1996,7 @@ impl App {
             } else {
                 let mut remove = None;
                 let running = self.running();
+                let estimate = self.selection_estimate();
                 // A long list scrolls inside the card when the columns stand side by side.
                 let height = if is_wide(ui) {
                     INPUT_LIST_HEIGHT
@@ -1926,43 +2022,38 @@ impl App {
                                             } else {
                                                 input.as_path()
                                             };
-                                        ui.add(egui::Label::new(display(folder)).wrap())
-                                            .on_hover_text(display(input));
+                                        let show_estimate = |ui: &mut egui::Ui| {
+                                            if let Some((text, hover, large)) =
+                                                estimate.as_ref().filter(|_| index == 0)
+                                            {
+                                                let colour =
+                                                    if *large { p.lantern_text } else { p.tide };
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        RichText::new(text).small().color(colour),
+                                                    )
+                                                    .wrap(),
+                                                )
+                                                .on_hover_text(hover);
+                                            }
+                                        };
+                                        // Sharing a wrapping row keeps the default window's
+                                        // controls in view without shortening either label.
+                                        let compact = is_wide(ui);
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.add(egui::Label::new(display(folder)).wrap())
+                                                .on_hover_text(display(folder));
+                                            if compact {
+                                                show_estimate(ui);
+                                            }
+                                        });
                                         if dutchman_core::Format::from_path(input).is_some()
-                                            && !self.estimates.iter().any(|(path, estimate)| {
-                                                path == input && estimate.is_some()
-                                            })
+                                            && (self.inputs.len() > 1 || estimate.is_none())
                                         {
                                             ui.add(egui::Label::new(file_name(input)).wrap());
                                         }
-                                        for (path, estimate) in &self.estimates {
-                                            if path == input || path.starts_with(input) {
-                                                if let Some(estimate) = estimate {
-                                                    let text =
-                                                        self.file_estimate_text(path, *estimate);
-                                                    let details =
-                                                        text.replacen(", ", " of memory and ", 1);
-                                                    let text = format!(
-                                                        "{} needs {details} to convert.",
-                                                        file_name(path)
-                                                    );
-                                                    let large =
-                                                        large_estimate(estimate, self.available);
-                                                    let colour =
-                                                        if large { p.lantern_text } else { p.tide };
-                                                    let label = ui.add(
-                                                        egui::Label::new(
-                                                            RichText::new(text)
-                                                                .small()
-                                                                .color(colour),
-                                                        )
-                                                        .wrap(),
-                                                    );
-                                                    if large {
-                                                        label.on_hover_text(LARGE_ESTIMATE);
-                                                    }
-                                                }
-                                            }
+                                        if !compact {
+                                            show_estimate(ui);
                                         }
                                         if let Some(format) =
                                             dutchman_core::Format::from_path(input)
@@ -4155,54 +4246,121 @@ mod tests {
     fn designs_header_keeps_the_full_estimate_and_path() {
         use egui_kittest::kittest::Queryable;
         let folder = PathBuf::from("/synthetic/designs/a-long-folder-for-mechanical-projects/another-long-folder-for-working-copies/current-designs");
-        for size in [crate::FIT_SIZE, [900.0, 800.0]] {
-            let mut h = egui_kittest::Harness::builder()
-                .with_size(egui::vec2(size[0], size[1]))
-                .build_eframe(|cc| {
-                    let mut app = App::new(cc);
-                    app.inputs = vec![folder.clone()];
-                    app.size_inputs = Some(app.inputs.clone());
-                    app.estimate_key = Some(app.current_estimate_key());
-                    app.estimates = vec![(
-                        folder.join("generated_unit_cube.f3d"),
-                        Some(Estimate {
-                            peak_bytes: 1,
-                            seconds: 1,
-                            seconds_exact: 1.0,
-                            band: 0.3,
-                            memory_band: 0.3,
-                            time_band: None,
-                        }),
-                    )];
-                    app
-                });
-            h.run_steps(8);
-            let sentence = "generated_unit_cube.f3d needs under 0.1 GB of memory and under a minute to convert.";
-            let estimate = h.get_by_label(sentence).rect();
-            let path = h.get_by_label(&display(&folder)).rect();
-            assert!(estimate.top() >= path.bottom());
-            assert!(estimate.right() < h.get_by_label("Remove").rect().left());
-            let mut found = 0;
-            for shape in &h.output().shapes {
-                if let egui::Shape::Text(text) = &shape.shape {
-                    if text.galley.text() == sentence || text.galley.text() == display(&folder) {
-                        assert!(!text.galley.elided);
-                        assert!(!text.galley.text().ends_with('…'));
-                        found += 1;
+        for (count, sentence) in [
+            (1, "1 design needs under 0.1 GB of memory at peak and under a minute in total to convert."),
+            (3, "3 designs need under 0.1 GB of memory at peak and under 3 min in total to convert."),
+        ] {
+            for size in [crate::FIT_SIZE, [900.0, 800.0]] {
+                let mut h = egui_kittest::Harness::builder()
+                    .with_size(egui::vec2(size[0], size[1]))
+                    .build_eframe(|cc| {
+                        let mut app = App::new(cc);
+                        app.inputs = vec![folder.clone()];
+                        app.size_inputs = Some(app.inputs.clone());
+                        app.estimate_key = Some(app.current_estimate_key());
+                        app.estimates = (0..count).map(|index| (
+                            folder.join(format!("synthetic-{index}.f3d")),
+                            Some(Estimate {
+                                peak_bytes: 1,
+                                seconds: 1,
+                                seconds_exact: 1.0,
+                                band: 0.3,
+                                memory_band: 0.3,
+                                time_band: None,
+                            }),
+                        )).collect();
+                        app
+                    });
+                h.run_steps(8);
+                let estimate = h.get_by_label(sentence).rect();
+                let path = h.get_by_label(&display(&folder)).rect();
+                assert!(estimate.top() >= path.top());
+                if size[0] < crate::WIDE_BREAKPOINT {
+                    assert!(estimate.top() >= path.bottom());
+                }
+                assert!(estimate.right() < h.get_by_label("Remove").rect().left());
+                let mut found = 0;
+                let mut estimate_hover = None;
+                for shape in &h.output().shapes {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        if text.galley.text() == sentence || text.galley.text() == display(&folder) {
+                            assert!(!text.galley.elided);
+                            assert!(!text.galley.text().ends_with('…'));
+                            found += 1;
+                            if text.galley.text() == sentence {
+                                let last_row = text.galley.rows.last().unwrap();
+                                estimate_hover = Some(text.pos + last_row.rect_without_leading_space().center().to_vec2());
+                            }
+                        }
                     }
                 }
+                assert_eq!(found, 2);
+                h.ctx
+                    .style_mut(|style| style.interaction.tooltip_delay = 0.0);
+                h.get_by_label(&display(&folder)).hover();
+                h.run_steps(8);
+                assert_eq!(
+                    h.query_all_by_label(&display(&folder)).count(),
+                    2,
+                    "full path tooltip"
+                );
+                h.remove_cursor();
+                h.run_steps(8);
+                // A wrapped label's bounding-box center can be blank space;
+                // hover the actual text on its last row.
+                h.hover_at(estimate_hover.unwrap());
+                h.run_steps(8);
+                let mut tooltip = "Memory is the highest per-file estimate; total time is the sum of the per-file estimates. Files without estimates are excluded.".to_owned();
+                for index in 0..count {
+                    tooltip.push_str(&format!("\nsynthetic-{index}.f3d needs under 0.1 GB of memory and under a minute to convert."));
+                }
+                h.get_by_label(&tooltip);
             }
-            assert_eq!(found, 2);
-            h.ctx
-                .style_mut(|style| style.interaction.tooltip_delay = 0.0);
-            h.get_by_label(&display(&folder)).hover();
-            h.run_steps(8);
-            assert_eq!(
-                h.query_all_by_label(&display(&folder)).count(),
-                2,
-                "full path tooltip"
-            );
         }
+    }
+
+    #[test]
+    fn several_files_use_peak_memory_and_sum_displayed_times() {
+        let mut h = egui_kittest::Harness::builder().build_eframe(|cc| {
+            let mut app = App::new(cc);
+            let first = PathBuf::from("first.f3d");
+            let second = PathBuf::from("second.f3d");
+            app.inputs = vec![first.clone(), second.clone()];
+            let estimate = Estimate {
+                peak_bytes: 400_000_000,
+                seconds: 61,
+                seconds_exact: 61.0,
+                band: 0.3,
+                memory_band: 0.3,
+                time_band: Some(0.3),
+            };
+            app.estimates = vec![
+                (first, Some(estimate)),
+                (
+                    second,
+                    Some(Estimate {
+                        peak_bytes: 200_000_000,
+                        seconds: 1,
+                        seconds_exact: 1.0,
+                        ..estimate
+                    }),
+                ),
+            ];
+            app.size_inputs = Some(app.inputs.clone());
+            app.estimate_key = Some(app.current_estimate_key());
+            app
+        });
+        h.run_steps(8);
+        let (text, hover, _) = h.state().selection_estimate().unwrap();
+        assert_eq!(
+            text,
+            "2 designs need about 0.4 GB of memory at peak and under 3 min in total to convert."
+        );
+        assert!(
+            hover.contains("first.f3d needs about 0.4 GB of memory and about 2 min to convert.")
+        );
+        assert!(hover
+            .contains("second.f3d needs about 0.2 GB of memory and under a minute to convert."));
     }
 
     #[test]

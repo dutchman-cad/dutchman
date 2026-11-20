@@ -1,3 +1,5 @@
 ### Desktop app
 
-- Designs shows the folder on its own line and wraps each file’s memory and time estimate so the full meaning stays visible. Hover over the folder to see the full path.
+- Designs wraps folder paths and shows complete conversion estimates. Folders and multiple
+  files share one summary using peak per-file memory and total time; hover for each file’s
+  estimate and the full folder path.

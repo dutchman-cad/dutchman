@@ -128,8 +128,11 @@ confirm them. An output ID alone is not proof. Without proof, selecting the
 tool stops editable history with "it selects a body that an earlier feature
 has not named". Older targets keep the previous mapping.
 
-The desktop Designs list puts the folder on its own line and wraps each file’s estimate
-sentence. Command, tool and JSON estimate values are unchanged.
+The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
+Folder and selection summaries use the highest per-file memory estimate and sum the displayed
+time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
+the full path on hover. At wide window sizes the path and estimate share a wrapping row
+to keep the default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
 
 ## Conversion choices and memory
 
