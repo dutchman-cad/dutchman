@@ -1,0 +1,123 @@
+# Release gate on public models: each RailCore model converts on its own runner with the newest
+# SolidCraft, then the written design is compared with the source body by body, and opened in
+# SolidCraft to check that no feature fails. Run it on a release candidate's commit.
+name: Gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["gate-run/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    container: debian:bookworm
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config python3
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-ci-tools-bookworm
+          save-if: false
+      # Bookworm matches the Docker runtime; host Ubuntu binaries may need a newer glibc.
+      - name: Build Dutchman
+        run: >
+          cargo build --release --locked -p dutchman --bin dutchman
+          --config profile.release.lto=false --config profile.release.codegen-units=16
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dutchman-gate-bin
+          path: target/release/dutchman
+          if-no-files-found: error
+          retention-days: 3
+
+  model:
+    name: gate (${{ matrix.name }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each source is fetched from a commit of its repository and checked against its SHA-256.
+          - name: 300zl
+            file: RailCore II 300ZL - Nov 2019.f3z
+            url: https://raw.githubusercontent.com/railcore/parts/81ef3be6c712e56782142dbce4b736994c4a1477/DXF/f3z/RailCore%20II%20300ZL%20-%20Nov%202019.f3z
+            sha256: eb4afd93e0a5bba9159090909532a91862385f8fcf17ee74c4b687fa45b434fe
+          - name: 300zlt
+            file: RailCore II 300ZLT.f3z
+            url: https://raw.githubusercontent.com/railcore/parts/81ef3be6c712e56782142dbce4b736994c4a1477/DXF/f3z/RailCore%20II%20300ZLT.f3z
+            sha256: df3cdd8672b5a292d05e73566d69fa3ed94aae29c5b232f4529623442278985b
+          - name: zlv1
+            file: RailCoreII-ZL v1.f3z
+            url: https://raw.githubusercontent.com/railcore/parts/81ef3be6c712e56782142dbce4b736994c4a1477/DXF/f3z/RailCoreII-ZL%20v1.f3z
+            sha256: ec1f3c30d0ff91b9bfa62edd67cc61f2ce8a77a6b3c81a94e3f9bcf690e05161
+          - name: mini
+            file: RCM_f360_archive.f3z
+            url: https://raw.githubusercontent.com/railcore/railcore-mini/7126633b332f44c494e80ee9b0425f59cfda134c/parts/F360/RCM_f360_archive.f3z
+            sha256: 5919f77d17541560aea9ea6768909850ebe8e8ee2d9a2b337c463daebf4fb582
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dutchman-gate-bin
+          path: bin
+      - name: Fetch the model
+        run: |
+          chmod +x bin/dutchman
+          mkdir -p in out
+          curl -fsSL --retry 3 -o "in/${{ matrix.file }}" "${{ matrix.url }}"
+          echo "${{ matrix.sha256 }}  in/${{ matrix.file }}" | sha256sum -c -
+      - name: Fetch SolidCraft
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOLIDCRAFT_CACHE: solidcraft-cache
+        run: |
+          # The newest minor named by NEWEST_SOLIDCRAFT, as the round-trip check uses.
+          minor=$(sed -n 's/^pub const NEWEST_SOLIDCRAFT: \[u64; 2\] = \[0, \([0-9]*\)\];$/0.\1/p' crates/dutchman-solidcraft/src/verify.rs)
+          version=$(scripts/solidcraft-window.sh --fetch "$minor" "")
+          echo "SOLIDCRAFT_CLI=$PWD/solidcraft-${version}-linux-x86_64/bin/solidcraft-cli" >> "$GITHUB_ENV"
+      - name: Convert
+        run: |
+          bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}.sc --json --quiet --yes > out/${{ matrix.name }}.json 2> out/convert.log || { tail -n 40 out/convert.log; exit 1; }
+          bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}-source.sc --import-only --json --quiet --yes > out/${{ matrix.name }}-source.json 2> out/source.log || { tail -n 40 out/source.log; exit 1; }
+      - name: Compare the written design with the source, body by body
+        env:
+          BODY_COMPARE_NO_SCOPE: "1"
+        run: |
+          python3 scripts/written-design-compare.py out/${{ matrix.name }}.sc out/${{ matrix.name }}-source.sc \
+            --cli "$SOLIDCRAFT_CLI" --out out/${{ matrix.name }}-compare.json > out/compare.log 2>&1 || true
+          python3 - out/${{ matrix.name }}-compare.json <<'EOF'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          wrong = len(d.get("failures", []))
+          print(f"bodies within 0.1 mm: {d.get('ok')}/{d.get('total')}; failures: {wrong}; failed features: {d.get('timeline_failures')}")
+          for f in d.get("failures", [])[:20]:
+              print(" ", json.dumps(f)[:300])
+          sys.exit(1 if wrong or d.get("timeline_failures") else 0)
+          EOF
+      - name: Open the written design and check that no feature fails
+        if: always()
+        run: |
+          echo '{"commands":[{"command":"timeline.roll_to","params":{"position":"end"}}]}' > out/roll.json
+          "$SOLIDCRAFT_CLI" run out/roll.json --in out/${{ matrix.name }}.sc --results --json-out out/${{ matrix.name }}-open.json > out/open.log 2>&1
+          status=$?
+          grep -E "timeline feature\(s\) failed|^  " out/open.log | head -n 20 || true
+          exit $status
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gate-${{ matrix.name }}
+          path: |
+            out/*.json
+            out/*.log
+          retention-days: 14
