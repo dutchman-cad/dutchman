@@ -43,11 +43,8 @@ jobs:
           ref: ${{ inputs.ref || 'main' }}
           path: source
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: source
-          shared-key: linux-ci-tools-bookworm
-          save-if: false
+      # No shared build cache here: this job builds whichever ref was dispatched, and that code
+      # must never run beside a cache the default branch's jobs use.
       - name: Freeze the manifest and record the build
         id: prepare
         env:
