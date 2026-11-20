@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use dutchman_core::{Report, Severity};
 use serde_json::{json, Value};
 
-use super::sketch::{dot, number, unit, v3, Mapped, Shape, V3};
+use super::sketch::{cross, dot, number, synthesized, unit, v3, Mapped, Shape, V3};
 use super::{describe, name, Context};
 
 /// Maps a hole feature whose operation is `definition`.
@@ -476,6 +476,9 @@ fn placement(
 ) -> Result<(V3, V3, Option<Value>), String> {
     if let Some(placements) = definition.get("placements").and_then(Value::as_array) {
         let [placement] = placements.as_slice() else {
+            if definition.get("profile").is_none_or(Value::is_null) {
+                return spatial_placements(feature, definition, ctx, placements);
+            }
             return sketch_placements(definition, ctx, placements);
         };
         return match placement.get("kind").and_then(Value::as_str) {
@@ -546,6 +549,75 @@ fn placement(
     }
     let (position, direction, points, _) = sketch_locations(definition, ctx, None)?;
     Ok((position, direction, points))
+}
+
+/// Parallel, coplanar directed entries already give complete hole locations. A
+/// helper sketch keeps them editable using SolidCraft's existing multi-point hole.
+/// Each placement passes the same entry-face checks as a single spatial hole.
+fn spatial_placements(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+    placements: &[Value],
+) -> Result<(V3, V3, Option<Value>), String> {
+    if placements.is_empty() || placements.len() > 4096 {
+        return Err(
+            "its spatial hole placements are empty or exceed the location limit".to_owned(),
+        );
+    }
+    if !crate::VersionGate::SpatialHoleLocations.supported(ctx.target_version) {
+        return Err(
+            "multiple spatial hole locations need SolidCraft 0.44 patch 1 or newer".to_owned(),
+        );
+    }
+    let mut entries = Vec::new();
+    let mut single = definition.clone();
+    for item in placements {
+        if item.get("kind").and_then(Value::as_str) != Some("directed") {
+            return Err("multiple spatial hole placements are not mapped yet".to_owned());
+        }
+        *single
+            .get_mut("placements")
+            .ok_or("its placements are missing")? = json!([item]);
+        let (position, direction, _) = placement(feature, &single, ctx)?;
+        entries.push((position, direction));
+    }
+    let &(origin, direction) = entries.first().ok_or("its placements are missing")?;
+    // Match an entry sketch's outward-facing normal; drilling runs against it.
+    let normal = direction.map(|c| -c);
+    let helper = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        .into_iter()
+        .min_by(|a, b| dot(*a, normal).abs().total_cmp(&dot(*b, normal).abs()))
+        .ok_or("its direction is zero")?;
+    let x = unit(cross(helper, normal)).ok_or("its direction is zero")?;
+    let y = unit(cross(normal, x)).ok_or("its direction is zero")?;
+    let mut entities = Vec::new();
+    for (index, &(position, along)) in entries.iter().enumerate() {
+        if dot(direction, along) < 1.0 - 1e-9 {
+            return Err("holes drilled in different directions are not mapped yet".to_owned());
+        }
+        let delta = sub(position, origin);
+        if dot(delta, direction).abs() > ON {
+            return Err(
+                "spatial hole locations on different entry planes are not mapped yet".to_owned(),
+            );
+        }
+        let u = dot(delta, x);
+        let v = dot(delta, y);
+        if !u.is_finite() || !v.is_finite() {
+            return Err("its spatial hole locations cannot be resolved".to_owned());
+        }
+        entities.push(
+            json!({"id": format!("location{index}"), "construction": false,
+            "geometry": {"kind": "point", "position": {"u": u, "v": v}}}),
+        );
+    }
+    let id = ctx.id();
+    let (sketch, mapped) = synthesized(id, "Hole locations", (origin, x, y), &entities)?;
+    let ids: Vec<_> = mapped.points.iter().skip(1).map(|(id, _)| id).collect();
+    let points = json!({"sketch": id, "ids": ids});
+    ctx.extra.push(sketch);
+    Ok((origin, direction, Some(points)))
 }
 
 /// Several directed placements, drilled at the sketch locations they stand on: every

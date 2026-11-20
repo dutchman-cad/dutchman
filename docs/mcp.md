@@ -1,5 +1,12 @@
 # The MCP server
 
+The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
+Folder and selection summaries use the highest per-file memory estimate and sum the displayed
+time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
+the full path on hover. The path and estimate share one paragraph that wraps as needed,
+keeping the complete sentence visible at every window width. The compact header keeps the
+default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
+
 Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
 components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
 Select target 0.44 explicitly when the existing default is older.
@@ -55,6 +62,12 @@ with reason "changes no geometry in the source"; later features can keep editabl
 If a reader supplies only CADIR v11 design history, the final geometry is kept and
 the report says its ordered selections and evaluation states are not mapped yet.
 See [the port audit](cadir-v11.md) for the pinned reader contract.
+
+One stored sketch loop does not prove a native profile selection when other solid
+curves remain, including curves needed by a later trimmed cut. Dutchman requires
+source-confirmed inference in that case; otherwise it preserves the final shape
+and reference sketches instead of rebuilding extra regions. A later fillet may
+therefore be reported behind the earlier unresolved profile.
 
 A trimmed profile region, including a revolve's, is selected by a point inside its boundary. When a
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
@@ -337,6 +350,14 @@ and retained editable history stays unverified. This applies to `convert` and ea
 `convert_all` result, as in the CLI, desktop and web. `verify: false` always keeps checking
 off; `no_memory_check: true` forces requested checks. Automatic part work uses at most two
 workers and budgets each detailed part's temporary peak and the retained preparation queue.
+
+Conversion results share the CLI's additive `verification_checks` array. It records final
+history comparisons per part and body, including measurement evidence and replayed named
+parameter values and quantity kinds compared with the source. Geometric, closure and
+parameter checks say `pass`, `fail` or `not_checked` with reasons. Face, edge and shell counts use informational `info` or `differs` statuses and
+never reject a history. Omitted or renamed parameters are `not_checked`.
+Missing evidence is never a pass; closure alone does not prove manifoldness.
+See [source comparison evidence](json.md#source-comparison-evidence) for the field contract.
 
 Use `convert` with `dry_run: true` for a quick estimate without decoding or writing;
 `output` is optional:
@@ -1158,7 +1179,9 @@ windows pin **Report a problem…** (or **Report this design…** with a result 
 **Convert**; it scrolls to the full numbered cards in the page. Discord comes first, with
 a small **GitHub issue** backup link (a public issue under the user's GitHub name).
 **Anonymous report**, under **More**, opens review before direct cloud upload.
-Partial history, geometry-only and degraded results use a warning colour. Report fields
+Partial history says **Partly converted**; geometry-only or flattened results say
+**Converted, no history**, in amber. Full history keeps **Converted** in green unless
+degraded content needs review. Report fields
 and CLI/MCP behavior are unchanged.
 Onshape up-to-next extents use exact intersections with stored input faces to prove
 coverage and first termination over closed profile boundaries. Face/cap attachments
@@ -1266,6 +1289,20 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](json.md).
+
+Parallel directed hole placements on one entry plane can supply complete locations
+without a source sketch. For SolidCraft 0.44.1 or newer, Dutchman writes an editable
+location sketch and a multi-point hole. The hole's form and termination must also
+be supported. Each placement still passes the single-hole entry-face checks. Different drilling directions, different entry planes, and
+multiple unsigned axes remain not supported yet; the original geometry is retained.
+Older targets report `multiple spatial hole locations need SolidCraft 0.44 patch 1 or newer`.
+Select SolidCraft 0.44.1 explicitly as the target.
+
+Generated blend-edge identities are opaque CADIR references. An identity without
+resolved sketch-entity geometry reports `its generated edge identity has no resolved
+source geometry, which is not supported yet`. A numeric feature-local path alone
+does not prove which rebuilt edge to select. The editable prefix and original final
+geometry are retained; a generated reference with missing or blank fields is still refused.
 
 The CLI also provides `dutchman preflight <file> --json` for budgeted reading and
 history planning without writing a design. The default target gets a forecast;

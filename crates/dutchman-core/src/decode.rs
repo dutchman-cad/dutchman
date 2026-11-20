@@ -423,6 +423,11 @@ fn decode_unguarded(
     {
         return Err(error);
     }
+    if let Some(error) =
+        undecoded_mesh_only_error(format, &ir, &decode_report.losses).filter(|_| !drawings)
+    {
+        return Err(error);
+    }
     // An assembly's geometry is in its parts' files, read afterwards.
     if !drawings
         && !decode_report.geometry_transferred()
@@ -550,6 +555,34 @@ fn mesh_only_error(
     } else {
         Error::Decode(message)
     })
+}
+
+/// cadmpeg's loss for a Fusion part whose stored mesh bodies, its only bodies, did not decode.
+const MESH_ONLY_UNTRANSFERRED: (&str, &str) = ("f3d", "design.mesh-only-untransferred");
+
+/// Name a Fusion design whose only bodies are meshes that cadmpeg could not read. The loss
+/// carries no structured count, so the message names none.
+fn undecoded_mesh_only_error(
+    format: Format,
+    ir: &cadmpeg_ir::CadIr,
+    losses: &[cadmpeg_ir::report::loss::LossNote],
+) -> Option<Error> {
+    if !matches!(format, Format::FusionArchive | Format::FusionMultiDocument)
+        || !ir.geometry.bodies.is_empty()
+        || !ir.model.occurrences.is_empty()
+    {
+        return None;
+    }
+    let (namespace, code) = MESH_ONLY_UNTRANSFERRED;
+    losses
+        .iter()
+        .any(|note| note.code.namespace() == namespace && note.code.local_code() == code)
+        .then(|| {
+            Error::Decode(
+                "it holds only mesh bodies, which Dutchman doesn't convert yet, and none of them could be read. Convert the meshes to solids in Fusion, then save a new copy"
+                    .to_owned(),
+            )
+        })
 }
 
 /// Visit independent F3Z members through cadmpeg's bounded session API. Models are released
@@ -1279,6 +1312,46 @@ mod tests {
         }
         model.ir.model.features.clear();
         assert!(mesh_only_error(Format::FusionArchive, &model.ir, false).is_none());
+    }
+
+    fn mesh_only_untransferred(namespace: &str, code: &str) -> cadmpeg_ir::report::loss::LossNote {
+        use cadmpeg_ir::report::loss::{LossNote, LossTaxonomy, NamespacedLossKind};
+        LossNote::new(
+            NamespacedLossKind::new_owned(
+                namespace.to_owned(),
+                code.to_owned(),
+                LossTaxonomy::GeometryNotTransferred,
+            )
+            .unwrap(),
+            "mesh-only design: the Design asset stores no BREP entry, and 1 of its mesh geometry container(s) transferred no mesh body",
+        )
+    }
+
+    #[test]
+    fn undecoded_mesh_only_design_is_named_from_cadmpeg_loss() {
+        let mut model = cube();
+        let losses = vec![mesh_only_untransferred(
+            "f3d",
+            "design.mesh-only-untransferred",
+        )];
+        // A design with B-rep bodies keeps its conversion.
+        assert!(undecoded_mesh_only_error(Format::FusionArchive, &model.ir, &losses).is_none());
+        model.ir.geometry.bodies.clear();
+        let error = undecoded_mesh_only_error(Format::FusionArchive, &model.ir, &losses).unwrap();
+        assert_eq!(error.stage(), Stage::Decode);
+        assert_eq!(error.upstream(), Some("cadmpeg"));
+        assert_eq!(error.to_string(), "cannot read this design: it holds only mesh bodies, which Dutchman doesn't convert yet, and none of them could be read. Convert the meshes to solids in Fusion, then save a new copy");
+        assert!(
+            undecoded_mesh_only_error(Format::FusionMultiDocument, &model.ir, &losses).is_some()
+        );
+        assert!(undecoded_mesh_only_error(Format::InventorPart, &model.ir, &losses).is_none());
+        for (namespace, code) in [
+            ("f3d", "mesh.container-undecoded"),
+            ("inventor", "design.mesh-only-untransferred"),
+        ] {
+            let other = vec![mesh_only_untransferred(namespace, code)];
+            assert!(undecoded_mesh_only_error(Format::FusionArchive, &model.ir, &other).is_none());
+        }
     }
 
     #[test]

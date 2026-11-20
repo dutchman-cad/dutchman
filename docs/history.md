@@ -63,8 +63,7 @@ allow the larger of 0.01 mm and 0.02% of the larger box diagonal, for the centre
 each minimum/maximum coordinate. The size term is four times the measuring mesh chord
 allowance, with margin above the measured 0.0022 mm difference on a 38 mm curved body.
 Volume and area keep their measuring mesh tolerances ([every number](#verification-tolerances)). Bodies are paired by nearest box
-centre, with volume breaking ties. When SolidCraft gives no box for a pair, only area and
-volume are compared. The result is in the
+centre, with volume breaking ties. When the evaluator gives no box for a pair, the position and box checks are unavailable. The result is in the
 `history:` line of the report and in `verification.status` in `--json`:
 
 | Status | Meaning |
@@ -91,8 +90,17 @@ cancel):
 | Volume | The larger of 1e-4 (0.01%) of the larger volume and the mesh allowance: each body's area times the mesh chord, `max(5e-5 of the box diagonal, 1e-4 mm)`, summed for both bodies. With no area or box from SolidCraft, only 1e-4. |
 | Area | 1e-3 (0.1%) of the larger area, when SolidCraft gives both. |
 | Position (box centre) and box corners | The larger of 0.01 mm and 2e-4 (0.02%, four mesh chords) of the larger box diagonal; the centre distance and each minimum and maximum coordinate. Skipped when SolidCraft gives no box. |
-| Face count | Not compared: SolidCraft merges faces that share a surface. |
-| Centre of mass | Not compared. The centre compared is the centre of the body's box. |
+| Kernel face, edge and shell counts | Informational only: `info` when equal, `differs` when unequal. Equivalent split or merged faces may differ; counts never reject a final history. Earlier inference retains its geometry comparison policy. |
+| Centre of mass | Final history comparisons use the position allowance above on actual centroids, when both are available. A box centre is never substituted. |
+| Closed shell | Final history comparisons require source and replay closure to agree; a source sheet may be open. |
+| Named parameters | Replayed numeric values must match source values within 5e-12 times max(1, absolute source value), allowing measured reply serialization roundoff. Omitted or renamed parameters are not checked. |
+| Manifoldness | Not checked: the evaluator exposes no explicit manifold result. |
+
+Final comparisons record each check as `pass`, `fail` or `not_checked` in
+`verification_checks`, including numbers or a reason. Kernel counts instead use informational
+`info` or `differs` statuses when available. A missing check never strengthens
+verification. Entries describe the attempted history even if it is rejected and original
+geometry is retained. See [source comparison evidence](json.md#source-comparison-evidence).
 
 **Bodies the source stores at a point in a partial history** (a retained prefix against the
 source's own body at that step): the source's body count must not exceed the replay's, and each

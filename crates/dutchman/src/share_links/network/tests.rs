@@ -208,7 +208,8 @@ fn stalled_dns_is_bounded_and_late_resolution_cannot_connect() {
 #[test]
 fn connect_receives_only_the_budget_left_after_dns() {
     let began = Instant::now();
-    let end = began + Duration::from_millis(300);
+    // DNS takes 180 ms of a 1 s budget, so a slow CI runner still reaches the connector.
+    let end = began + Duration::from_millis(1000);
     let (record, recorded) = mpsc::channel();
     let result = fetch_using(
         &Url::parse("https://drive.google.com/uc?id=synthetic").unwrap(),
@@ -227,8 +228,8 @@ fn connect_receives_only_the_budget_left_after_dns() {
     assert_eq!(result.unwrap_err(), NETWORK);
     let (deadline, budget) = recorded.recv_timeout(Duration::from_secs(1)).unwrap();
     assert_eq!(deadline, end);
-    assert!(budget.unwrap() <= Duration::from_millis(120));
-    assert!(began.elapsed() < Duration::from_millis(700));
+    assert!(budget.unwrap() <= Duration::from_millis(820));
+    assert!(began.elapsed() < Duration::from_millis(1500));
 }
 
 #[test]

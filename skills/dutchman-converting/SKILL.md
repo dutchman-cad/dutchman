@@ -186,6 +186,12 @@ are placed hidden`, counts the latter across repeated and nested placements. Bot
 the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
 past the 4096-path limit.
 
+One stored sketch loop does not prove a native profile selection when other solid
+curves remain, including curves needed by a later trimmed cut. Dutchman requires
+source-confirmed inference in that case; otherwise it preserves the final shape
+and reference sketches instead of rebuilding extra regions. A later fillet may
+therefore be reported behind the earlier unresolved profile.
+
 A trimmed profile region, including a revolve's, is selected by a point inside its boundary. When a
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
@@ -219,6 +225,13 @@ their names only after that check passes; intermediate body centres cannot
 confirm them. An output ID alone is not proof. Without proof, selecting the
 tool stops editable history with "it selects a body that an earlier feature
 has not named". Older targets keep the previous mapping.
+
+The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
+Folder and selection summaries use the highest per-file memory estimate and sum the displayed
+time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
+the full path on hover. The path and estimate share one paragraph that wraps as needed,
+keeping the complete sentence visible at every window width. The compact header keeps the
+default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
 
 ## Conversion choices and memory
 
@@ -532,7 +545,8 @@ Never remove or change the quarantine attribute.
   unavailable). Position and box checks allow the larger of 0.01 mm and 0.02% of
   the larger box diagonal for the centre distance and each minimum/maximum coordinate;
   area and volume retain their measuring mesh tolerances. `verification_tolerances` in the
-  report states every number the check used; face count and centre of mass are not compared.
+  report states every number the check used; final history checks also compare available
+  kernel counts and centre of mass against the source.
   `unverified`: written
   without that check (the reason says why, usually no `solidcraft-cli` was found); mention
   that the history has not been checked. `partial`: an editable prefix and resolved
@@ -541,6 +555,7 @@ Never remove or change the quarantine attribute.
   keeps the imported shape and any
   mapped sketches with resolved planes, hidden for reference with no features built on them.
   An Info `sketches` line counts sketches kept and, when applicable, left out.
+
 - Mirrored assembly placements use shared mirrored component geometry, including nested
   reflections. Normal copies keep their original history; mirrored definitions use imported
   geometry only and report history left out. Explain Info `placements` notes as preserved
@@ -567,6 +582,16 @@ Never remove or change the quarantine attribute.
   open shells still matter. Sheets remain exempt from volume and closed-shell checks.
 - If something is off, say exactly what ("SolidCraft could not mesh 3 faces"), and don't
   claim the conversion is fine.
+
+When conversion reports `verification_checks`, explain the individual source comparisons:
+volume, surface area, bounds, counts, closure, centroid and evaluated named parameters,
+including their quantity kinds.
+A `fail` includes the compared evidence; `not_checked` names the missing evidence and must
+never be called a pass. Face, edge and shell counts are informational: `info` when equal,
+`differs` when unequal. These count differences never reject a history. Omitted or renamed
+parameters are `not_checked`.
+Do not claim manifoldness from closure: its check remains unavailable. Entries can describe
+a rejected final history even when the delivered design retains the original geometry.
 
 ## 5. Explain the loss report
 
@@ -978,7 +1003,10 @@ windows. In narrow windows, **Report a problem…** (or **Report this design…*
 selected) stays above **Convert** and scrolls to the full numbered cards in the page.
 Discord comes first; **GitHub issue** is a small backup link. **Anonymous report**
 is under **More**, alongside AI help and diagnosis. **Report this file…** selects the file
-in the same panel. Partial history, geometry-only and degraded results use a warning colour.
+in the same panel.
+Partial history says **Partly converted**; geometry-only or flattened results say
+**Converted, no history**, in amber. Full history keeps **Converted** in green unless
+degraded content needs review.
 Failure narrowing is for failed files.
 
 For report sending, call `report_preview` first and show the user the choices, part
@@ -1226,3 +1254,18 @@ by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.
+
+
+Parallel directed hole placements on one entry plane can supply complete locations
+without a source sketch. For SolidCraft 0.44.1 or newer, Dutchman writes an editable
+location sketch and a multi-point hole. The hole's form and termination must also
+be supported. Each placement still passes the single-hole entry-face checks. Different drilling directions, different entry planes, and
+multiple unsigned axes remain not supported yet; the original geometry is retained.
+Older targets report `multiple spatial hole locations need SolidCraft 0.44 patch 1 or newer`.
+Choose that patch explicitly with `--solidcraft-version 0.44.1`.
+
+Generated blend-edge identities are opaque CADIR references. An identity without
+resolved sketch-entity geometry reports `its generated edge identity has no resolved
+source geometry, which is not supported yet`. A numeric feature-local path alone
+does not prove which rebuilt edge to select. The editable prefix and original final
+geometry are retained; a generated reference with missing or blank fields is still refused.

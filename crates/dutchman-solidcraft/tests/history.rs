@@ -16123,8 +16123,28 @@ fn a_host_evaluator_proves_a_blend_and_verifies_the_fixture() {
     assert_eq!(report.outcome().unwrap().check, Check::Verified);
     assert_eq!(
         *host.calls.lock().unwrap(),
-        ["bodies", "edges", "original", "history"]
+        [
+            "bodies",
+            "edges",
+            "original",
+            "history",
+            "verification-parameters"
+        ]
     );
+}
+
+#[test]
+fn a_host_evaluator_skips_parameter_verification_for_history_without_parameters() {
+    let host = std::sync::Arc::new(RecordedEvaluator::default());
+    let writer = SolidCraftWriter::new().evaluator(host.clone());
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["parameters"] = json!([]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(&model, &writer);
+    assert_eq!(report.outcome().unwrap().mode, Mode::History);
+    assert_eq!(report.outcome().unwrap().check, Check::Verified);
+    assert_eq!(*host.calls.lock().unwrap(), ["original", "history"]);
 }
 
 #[test]
@@ -16143,7 +16163,13 @@ fn a_host_evaluator_carries_prefix_measurements_and_final_geometry_warnings() {
     assert!(matches!(report.outcome().unwrap().check, Check::Partial(_)));
     assert_eq!(
         *host.calls.lock().unwrap(),
-        ["original", "history", "prefix", "import"]
+        [
+            "original",
+            "history",
+            "verification-parameters",
+            "prefix",
+            "import"
+        ]
     );
     assert!(report
         .losses()
@@ -18218,4 +18244,404 @@ fn clockwise_rounded_plate_replays_with_source_face_count_area_and_volume() {
             );
         }
     }
+}
+
+/// Synthetic complete spatial entries with no location sketch in the source.
+fn spatial_hole_array(change: impl FnOnce(&mut Value)) -> Model {
+    holed_cube(2.0, |hole| {
+        directed_hole(hole);
+        hole["placements"] = json!([
+            {"kind": "directed", "position": {"x": 3.0, "y": 3.0, "z": 10.0},
+                "direction": {"x": 0.0, "y": 0.0, "z": -2.0}},
+            {"kind": "directed", "position": {"x": 7.0, "y": 7.0, "z": 10.0},
+                "direction": {"x": 0.0, "y": 0.0, "z": -1.0}}
+        ]);
+        change(hole);
+    })
+}
+
+fn spatial_hole_writer() -> SolidCraftWriter {
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.44.1".parse().unwrap()))
+}
+
+#[test]
+fn complete_spatial_hole_arrays_get_an_editable_location_sketch() {
+    let (document, report) = convert(&spatial_hole_array(|_| {}), &spatial_hole_writer());
+    assert!(
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let features = document["features"].as_array().unwrap();
+    let hole = features.iter().find(|f| f["type"] == "hole").unwrap();
+    assert_eq!(hole["direction"], json!([0.0, 0.0, -1.0]));
+    assert_eq!(hole["position"], json!([3.0, 3.0, 10.0]));
+    let sketch = features
+        .iter()
+        .find(|f| f["id"] == hole["points"]["sketch"])
+        .unwrap();
+    let origin: Vec<f64> =
+        serde_json::from_value(sketch["plane"]["plane"]["origin"].clone()).unwrap();
+    let x: Vec<f64> = serde_json::from_value(sketch["plane"]["plane"]["x_dir"].clone()).unwrap();
+    let y: Vec<f64> = serde_json::from_value(sketch["plane"]["plane"]["y_dir"].clone()).unwrap();
+    let ids = hole["points"]["ids"].as_array().unwrap();
+    assert_eq!(ids.len(), 2);
+    for (id, expected) in ids.iter().zip([[3.0, 3.0, 10.0], [7.0, 7.0, 10.0]]) {
+        let point = sketch["sketch"]["points"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == *id)
+            .unwrap();
+        let uv: Vec<f64> = serde_json::from_value(point["pos"].clone()).unwrap();
+        for (axis, expected) in expected.into_iter().enumerate() {
+            assert!((origin[axis] + uv[0] * x[axis] + uv[1] * y[axis] - expected).abs() < 1e-9);
+        }
+    }
+}
+
+#[test]
+fn spatial_hole_arrays_refuse_unproven_entries_and_unsupported_placements() {
+    let cases: Vec<(Model, &str)> = vec![
+        (
+            spatial_hole_array(|h| h["placements"][1]["direction"]["z"] = json!(1.0)),
+            "different directions",
+        ),
+        (
+            spatial_hole_array(|h| h["placements"][1]["position"]["z"] = json!(9.0)),
+            "different entry planes",
+        ),
+        (
+            spatial_hole_array(|h| {
+                h["face"] = json!({"kind": "faces", "value": ["synthetic:cube:face#top"]});
+                h["placements"][1]["position"]["x"] = json!(20.0);
+            }),
+            "does not drill into its entry face",
+        ),
+        (
+            spatial_hole_array(
+                |h| h["placements"][1] = json!({"kind": "axis", "origin": {"x": 7.0, "y": 7.0, "z": 10.0}, "axis": {"x": 0.0, "y": 0.0, "z": -1.0}}),
+            ),
+            "multiple spatial hole placements",
+        ),
+        (
+            spatial_hole_array(|h| h["placements"] = json!([])),
+            "empty or exceed",
+        ),
+        (
+            spatial_hole_array(|h| {
+                h["profile"] = json!({"kind": "sketch", "value": HOLES});
+                h["profile_filter"] = json!("circles");
+            }),
+            "its placements are not its sketch locations",
+        ),
+    ];
+    for (model, reason) in cases {
+        let (document, report) = convert(&model, &spatial_hole_writer());
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+        assert!(!document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "hole"));
+    }
+    let older = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.18.2".parse().unwrap()));
+    let (_, report) = convert(&spatial_hole_array(|_| {}), &older);
+    assert!(
+        history_line(&report)
+            .contains("multiple spatial hole locations need SolidCraft 0.44 patch 1"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn solidcraft_drills_complete_spatial_hole_arrays_without_a_source_sketch() {
+    let Some(cli) = closed_blend_cli() else {
+        return;
+    };
+    let (document, report) = convert(&spatial_hole_array(|_| {}), &spatial_hole_writer());
+    assert!(
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "hole"));
+    let pi = std::f64::consts::PI;
+    let side = spatial_hole_array(|hole| {
+        for (placement, coordinate) in hole["placements"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .zip([3.0, 7.0])
+        {
+            placement["position"] = json!({"x": 10.0, "y": coordinate, "z": coordinate});
+            placement["direction"] = json!({"x": -1.0, "y": 0.0, "z": 0.0});
+        }
+    });
+    let blind = spatial_hole_array(|hole| {
+        hole["extent"] = json!({"kind": "blind", "length": 4.0});
+        hole["bottom"] = json!({"kind": "flat"});
+        hole["face"] = json!({"kind": "faces", "value": ["synthetic:cube:face#top"]});
+    });
+    for (model, expected) in [
+        (spatial_hole_array(|_| {}), 1000.0 - 20.0 * pi),
+        (side, 1000.0 - 20.0 * pi),
+        (blind, 1000.0 - 8.0 * pi),
+    ] {
+        let mut bytes = Vec::new();
+        spatial_hole_writer()
+            .write(&model, &mut bytes, &mut Report::default())
+            .unwrap();
+        let actual = volumes(&cli, &bytes);
+        assert_eq!(actual.len(), 1);
+        assert!((actual[0] - expected).abs() < 1e-6, "{actual:?}");
+    }
+}
+
+#[test]
+fn opaque_generated_edge_identities_are_supported_cadir_but_need_source_geometry() {
+    for kind in ["fillet", "chamfer"] {
+        let dimension = if kind == "fillet" {
+            json!({"kind": "constant", "radius": 1.0})
+        } else {
+            json!({"kind": "distance", "distance": 1.0})
+        };
+        let model = input_blend(kind, dimension, false);
+        for identity in ["3,8,12", "opaque generated edge", "n:sketch-entity:side"] {
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"] = json!({"kind": "generated", "value": {
+                "edges": [{"feature": "f3d:model:feature#2", "local_id": identity}], "native": "synthetic selection"}});
+            let model = Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ..model.clone()
+            };
+            let (_, report) = convert(&model, &spatial_hole_writer());
+            let reason = "generated edge identity has no resolved source geometry, which is not supported yet";
+            assert!(
+                history_line(&report).contains(reason),
+                "{}",
+                history_line(&report)
+            );
+        }
+    }
+}
+
+/// Invented annular blank with a curved side notch and a separate round cut
+/// contour in the revolve sketch, then an axial cut and a historical fillet pick.
+/// Only the rectangle is in the source profile table; both cut contours stay solid.
+fn unresolved_revolve_before_trimmed_cuts(explicit_all: bool) -> Model {
+    use std::f64::consts::{FRAC_PI_2, PI, TAU};
+    let mut model = ring_history(json!({"kind":"one_sided",
+        "termination":{"kind":"angle", "angle":TAU}}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["parameters"] = json!([]);
+    m["sketch_entities"] = json!([
+        line(1, [7.0, 0.0], [19.0, 0.0]),
+        line(2, [19.0, 0.0], [19.0, -26.0]),
+        line(3, [19.0, -26.0], [7.0, -26.0]),
+        line(4, [7.0, -26.0], [7.0, 0.0]),
+        line(5, [19.0, -10.0], [14.0, -10.0]),
+        entity(
+            6,
+            json!({"kind":"arc", "center":{"u":14.0,"v":-13.0},
+            "radius":3.0, "start_angle":FRAC_PI_2, "end_angle":FRAC_PI_2 + PI})
+        ),
+        line(7, [14.0, -16.0], [19.0, -16.0]),
+        circle(8, [27.0, -13.0], 2.0),
+    ]);
+    m["features"][1]["outputs"] = json!(["synthetic:cube:body#0"]);
+    m["features"][1]["definition"]["value"]["value"]["construction"]["value"]["profile"] =
+        if explicit_all {
+            whole_sketch()
+        } else {
+            json!({"kind":"sketch_selection", "value":{"sketch":SKETCH,
+                "selections":["synthetic:native:selection#0"]}})
+        };
+    let boundary = |key: u32, range: [f64; 2], reversed| {
+        json!({
+        "entity":format!("f3d:model:sketch-entity#{key}"),
+        "parameter_range":range, "reversed":reversed})
+    };
+    let profile = json!({"kind":"sketch_regions", "value":{"sketch":SKETCH,
+        "regions":[{"kind":"trimmed", "outer_boundary":[
+            boundary(5, [0.0, 1.0], false),
+            boundary(6, [FRAC_PI_2, FRAC_PI_2 + PI], false),
+            boundary(7, [0.0, 1.0], false),
+            boundary(2, [10.0 / 26.0, 16.0 / 26.0], true)], "hole_boundaries":[]},
+            {"kind":"trimmed", "outer_boundary":[boundary(8, [0.0, TAU], false)],
+                "hole_boundaries":[]}]}});
+    let cut = |id: &str, ordinal, profile: Value, direction: &str, extent: Value| {
+        json!({
+        "id":id, "ordinal":ordinal, "name":format!("Cut {ordinal}"), "suppressed":false,
+        "dependencies":[], "outputs":["synthetic:cube:body#0"],
+        "source_properties":{}, "source_content":[],
+        "definition":{"kind":"operation", "value":{"kind":"extrude", "value":{
+            "profile":{"kind":"planar", "value":profile}, "direction":{"kind":direction},
+            "start":{"kind":"profile_plane"}, "extent":extent, "op":"cut"}}}})
+    };
+    m["features"].as_array_mut().unwrap().push(cut(
+        "synthetic:shared:feature#cut",
+        2,
+        profile,
+        "profile_normal",
+        json!({"kind":"symmetric", "side":{"termination":{"kind":"through_all"}}}),
+    ));
+    let second = "synthetic:axial:sketch#0";
+    let mut sketch = m["sketches"][0].clone();
+    sketch["id"] = json!(second);
+    sketch["placement"]["frame"] = json!({"origin":{"x":0,"y":0,"z":26},
+        "normal":{"x":0,"y":0,"z":1}, "u_axis":{"x":1,"y":0,"z":0}});
+    sketch["profiles"] = json!([(21..=24)
+        .map(|key| json!({
+        "entity":format!("f3d:model:sketch-entity#{key}"),"reversed":false}))
+        .collect::<Vec<_>>()]);
+    m["sketches"].as_array_mut().unwrap().push(sketch);
+    for mut line in [
+        line(21, [10.0, 8.0], [23.0, 8.0]),
+        line(22, [23.0, 8.0], [23.0, 11.0]),
+        line(23, [23.0, 11.0], [10.0, 11.0]),
+        line(24, [10.0, 11.0], [10.0, 8.0]),
+    ] {
+        line["sketch"] = json!(second);
+        m["sketch_entities"].as_array_mut().unwrap().push(line);
+    }
+    let mut sketch_feature = m["features"][0].clone();
+    sketch_feature["id"] = json!("synthetic:axial:feature#sketch");
+    sketch_feature["ordinal"] = json!(3);
+    sketch_feature["definition"]["value"]["value"]["sketch"]["sketch"] = json!(second);
+    m["features"].as_array_mut().unwrap().push(sketch_feature);
+    m["features"].as_array_mut().unwrap().push(cut(
+        "synthetic:axial:feature#cut",
+        4,
+        json!({"kind":"sketch","value":second}),
+        "reversed_profile_normal",
+        json!({"kind":"one_sided",
+            "side":{"termination":{"kind":"through_all"}}}),
+    ));
+    m["features"].as_array_mut().unwrap().push(json!({
+        "id":"synthetic:shared:feature#fillet", "ordinal":5, "name":"Corner round",
+        "suppressed":false, "dependencies":[], "outputs":["synthetic:cube:body#0"],
+        "source_properties":{}, "source_content":[], "definition":{"kind":"operation",
+        "value":{"kind":"fillet","value":{"groups":[{"radius":{"kind":"constant","radius":0.4},
+            "edges":{"kind":"historical","value":{"state":"synthetic:shared:input#0",
+            "edges":["synthetic:shared:edge#0"],"native":"synthetic corner"}}}]}}}}));
+    m["feature_input_topologies"] = json!([{"id":"synthetic:shared:input#0",
+        "input_of":"synthetic:shared:feature#fillet", "bodies":[],"faces":[],"vertices":[],
+        "edges":["synthetic:shared:edge#0"], "edge_geometry":[{"edge":"synthetic:shared:edge#0",
+            "start":{"x":10,"y":8,"z":0},"end":{"x":10,"y":8,"z":26},
+            "interior":{"x":10,"y":8,"z":13},"tangent":{"x":0,"y":0,"z":1},"faces":[]}]}]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn unresolved_revolve_does_not_take_extra_regions_needed_by_later_cuts_and_a_fillet() {
+    let (document, report) = convert(
+        &unresolved_revolve_before_trimmed_cuts(false),
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .replay(Verification::Off),
+    );
+    assert_eq!(
+        report.outcome().unwrap().features[1].status,
+        dutchman_core::FeatureStatus::Blocked,
+        "{report:?}"
+    );
+    assert_reference_sketches(&document, 2);
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["type"] != "revolve" && f["type"] != "fillet"));
+}
+
+#[test]
+fn unresolved_revolve_synthetic_control_has_more_regions_than_its_stored_loop() {
+    use dutchman_solidcraft::{CliEvaluator, SolidCraftEvaluator};
+    let Some(cli) = solidcraft() else { return };
+    // The control is written for the newest design format; older releases can't evaluate it.
+    if dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()))
+        < dutchman_solidcraft::SolidCraftVersion::V0_44_0
+    {
+        eprintln!("skipped: the control needs SolidCraft 0.44 or newer");
+        return;
+    }
+    // An explicit all-regions control reproduces the old native-pick assumption.
+    // The later cuts keep the notch curves solid in the shared sketch.
+    let (bytes, report) = written_with(
+        &unresolved_revolve_before_trimmed_cuts(true),
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .replay(Verification::Off),
+    );
+    let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    let document: Value =
+        serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+    let revolve = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "revolve")
+        .unwrap_or_else(|| panic!("{report:?}"));
+    let result = CliEvaluator::new(cli)
+        .run(
+            &bytes,
+            &[
+                json!({"command":"timeline.roll_to","params":{"feature":revolve["id"]}}),
+                json!({"command":"document.inspect","params":{}}),
+            ],
+            std::time::Duration::from_secs(120),
+            "synthetic shared sketch",
+        )
+        .unwrap();
+    assert_eq!(
+        result[1]["bodies"].as_array().unwrap().len(),
+        2,
+        "{result:?}"
+    );
+}
+
+#[test]
+fn unresolved_revolve_keeps_construction_and_reference_helpers() {
+    let mut model = ring_history(json!({"kind":"one_sided",
+        "termination":{"kind":"angle","angle":std::f64::consts::TAU}}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["features"][1]["definition"]["value"]["value"]["construction"]["value"]["profile"] = json!({"kind":"sketch_selection", "value":{"sketch":SKETCH,
+            "selections":["synthetic:native:selection#0"]}});
+    let mut helper = circle(5, [7.5, -5.0], 1.0);
+    helper["construction"] = json!(true);
+    m["sketch_entities"].as_array_mut().unwrap().extend([
+        helper,
+        entity(
+            6,
+            json!({"kind":"reference_line", "origin":{"u":0,"v":0},
+            "direction":{"u":0,"v":1}}),
+        ),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(
+        report.outcome().unwrap().features[1].status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{report:?}"
+    );
+    assert_eq!(document["features"][1]["profiles"]["type"], "all");
 }

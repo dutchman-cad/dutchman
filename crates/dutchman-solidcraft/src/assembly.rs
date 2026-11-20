@@ -709,7 +709,7 @@ fn prepare_history(
             None
         } else {
             let written = writer.history_design(part, history, step, Live::History, false)?;
-            Some(writer.check(part, history, step, &written, progress)?)
+            Some(writer.check(part, history, step, &written, progress, &mut part_report)?)
         }
     } else {
         None

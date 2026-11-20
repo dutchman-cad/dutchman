@@ -28,6 +28,11 @@ pub(crate) const POSITION_DIAGONAL_RELATIVE: f64 = 4.0 * MESH_CHORD_RELATIVE;
 /// The relative difference in body area at which a replay no longer matches the original.
 pub(crate) const AREA_RELATIVE: f64 = 1e-3;
 
+/// Named parameter replies rounded 10/3 mm to 3.33333333333 (1e-12 relative)
+/// and 1 rad to 57.2957795131 degrees (3.1e-13 relative). Five times the
+/// larger observed error permits serialization roundoff, scaled by max(1, |source|).
+pub(crate) const PARAMETER_RELATIVE: f64 = 5e-12;
+
 /// A body the source stores with its own exact box: the least its centre may differ from a
 /// replayed body's, in millimetres, and the share of the replayed box diagonal.
 pub(crate) const STORED_EXACT: (f64, f64) = (0.5, 0.01);
@@ -102,6 +107,14 @@ pub fn report() -> Value {
             "face_count": "not compared: SolidCraft merges faces that share a surface",
             "centre": "the centre of each body's box, not its centre of mass",
         },
+        "source_comparison": {
+            "parameter_relative": PARAMETER_RELATIVE,
+            "parameter_scale_floor": 1.0,
+            "centroid_min_mm": POSITION_MIN_MM,
+            "centroid_diagonal_relative": POSITION_DIAGONAL_RELATIVE,
+            "counts": "informational: evaluated kernel face, edge and shell counts may differ for equivalent geometry",
+            "manifold": "not checked: no explicit evaluator result",
+        },
         "stored_bodies": {
             "exact_box_min_mm": STORED_EXACT.0,
             "exact_box_diagonal_relative": STORED_EXACT.1,
@@ -168,6 +181,14 @@ mod tests {
         assert_eq!(report["version"], 1);
         assert_eq!(report["replay"]["volume_relative"], crate::VOLUME_TOLERANCE);
         assert_eq!(report["replay"]["area_relative"], 1e-3);
+        assert_eq!(
+            report["source_comparison"]["parameter_relative"],
+            PARAMETER_RELATIVE
+        );
+        assert_eq!(
+            report["source_comparison"]["centroid_min_mm"],
+            POSITION_MIN_MM
+        );
         assert_eq!(report["replay"]["position_min_mm"], 0.01);
         assert_eq!(report["replay"]["position_diagonal_relative"], 2e-4);
         assert_eq!(report["stored_bodies"]["exact_box_min_mm"], 0.5);

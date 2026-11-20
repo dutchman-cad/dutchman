@@ -442,6 +442,12 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
             }
         }
     }
+    if !report.verification_checks().is_empty() {
+        out.insert(
+            "verification_checks".to_owned(),
+            json!(report.verification_checks()),
+        );
+    }
     if let Some(tolerances) = report.verification_tolerances() {
         out.insert("verification_tolerances".to_owned(), tolerances.clone());
     }
@@ -1885,6 +1891,23 @@ mod tests {
         assert_eq!(out["history"]["needing"], 2);
         assert_eq!(out["history"]["features"][3]["status"], "left_out");
         assert_eq!(out["losses"], json!([]));
+    }
+
+    #[test]
+    fn verification_checks_are_additive_and_preserve_all_outcomes() {
+        let mut report = Report::default();
+        let plain = Value::Object(success(CONVERT, json!({}), &report));
+        assert!(plain.get("verification_checks").is_none());
+        let checks = json!({"part":"Cube", "geometry":{"bodies":[{"source_index":0,"written_index":0,
+            "checks":{"volume":{"status":"fail","source":1000,"written":8000,"difference":7000,"tolerance":1},
+                "centroid":{"status":"pass","source":[5,5,5],"written":[5,5,5],"difference":0,"tolerance":0.01},
+                "manifold":{"status":"not_checked","reason":"No evaluator result"},
+                "faces":{"status":"differs","source":6,"written":7},
+                "edges":{"status":"info","source":12,"written":12}}}]}});
+        report.record_verification_checks(checks.clone());
+        let out = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(out["schema"], plain["schema"]);
+        assert_eq!(out["verification_checks"], json!([checks]));
     }
 
     #[test]

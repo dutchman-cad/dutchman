@@ -1,5 +1,12 @@
 # Getting started
 
+The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
+Folder and selection summaries use the highest per-file memory estimate and sum the displayed
+time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
+the full path on hover. The path and estimate share one paragraph that wraps as needed,
+keeping the complete sentence visible at every window width. The compact header keeps the
+default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
+
 Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
 components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
 Select target 0.44 explicitly when the existing default is older.
@@ -459,6 +466,15 @@ minimum/maximum coordinate; volume and area retain their measuring mesh toleranc
 A face-count difference alone does not establish a defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
 `solidcraft-cli mcp --in cube.sc` and call its `measure` tool.
 
+Conversion JSON includes `verification_checks` when a final history comparison is attempted.
+It records each body's measurements, counts, closure and centre of mass against source
+geometry, plus source parameter values and quantity kinds after replay. Geometric, closure
+and parameter checks say `pass`, `fail` or `not_checked` with evidence or a reason. A failed check can cause conversion to retain the
+original geometry. Face, edge and shell counts are informational: `info` when equal and
+`differs` when unequal. Split or merged equivalent faces never reject a history on counts
+alone. Omitted or renamed parameters are `not_checked`. Manifoldness remains explicitly unchecked because
+there is no evaluator result proving it. See [JSON reports](json.md#source-comparison-evidence).
+
 Which SolidCraft a design is written for, and how Dutchman finds the installed one, is in
 [SolidCraft versions](command-line.md#solidcraft-versions).
 
@@ -564,6 +580,12 @@ without looking for or launching an installed SolidCraft CLI.
 ### Feature history and the SolidCraft check
 
 [Feature history and the SolidCraft check](history.md)
+
+One stored sketch loop does not prove a native profile selection when other solid
+curves remain, including curves needed by a later trimmed cut. Dutchman requires
+source-confirmed inference in that case; otherwise it preserves the final shape
+and reference sketches instead of rebuilding extra regions. A later fillet may
+therefore be reported behind the earlier unresolved profile.
 
 Contour flanges map when cadmpeg supplies an open sketch chain of lines and arcs, a blind
 sweep along the sketch normal, and material on one side. Their thickness, bend radius and
@@ -795,8 +817,12 @@ In wide windows, **Is there a problem? Is something missing?** stays pinned belo
 output controls, even with **Advanced** and output choices expanded. Input and output
 controls scroll above it; long report reviews scroll below the question. Narrow windows
 keep one scrolling page. **Report this file…** selects that file in the panel, and the
-top-bar **Report a problem** opens the same panel. Partial history, geometry-only and
-degraded results use a warning colour; full history without degraded losses stays green.
+top-bar **Report a problem** opens the same panel.
+Partial history says **Partly converted**; geometry-only or flattened results say
+**Converted, no history**, in amber. Full history keeps **Converted** in green unless
+degraded content needs review.
+With one result and compact output controls, the panel sits directly below **Output folder**;
+several results or expanded choices keep it pinned and visible.
 After a conversion, **Output folder** folds into a summary. Click its folder path or
 **Change…** to reopen all output settings. **Clear** removes the designs and results and
 restores the expanded settings.
@@ -1026,3 +1052,18 @@ by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.
+
+
+Parallel directed hole placements on one entry plane can supply complete locations
+without a source sketch. For SolidCraft 0.44.1 or newer, Dutchman writes an editable
+location sketch and a multi-point hole. The hole's form and termination must also
+be supported. Each placement still passes the single-hole entry-face checks. Different drilling directions, different entry planes, and
+multiple unsigned axes remain not supported yet; the original geometry is retained.
+Older targets report `multiple spatial hole locations need SolidCraft 0.44 patch 1 or newer`.
+Choose that patch explicitly with `--solidcraft-version 0.44.1`.
+
+Generated blend-edge identities are opaque CADIR references. An identity without
+resolved sketch-entity geometry reports `its generated edge identity has no resolved
+source geometry, which is not supported yet`. A numeric feature-local path alone
+does not prove which rebuilt edge to select. The editable prefix and original final
+geometry are retained; a generated reference with missing or blank fields is still refused.

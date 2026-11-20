@@ -89,3 +89,10 @@ from cadmpeg's synthetic unit cube with authored CADIR history: a cylinder with 
 rim, a block with a chamfered through-hole rim, and a connected pair of straight top edges.
 Source seams are varied independently of SolidCraft's rebuilt seams. No native CAD files
 are added for these tests.
+
+## Verification evidence fixtures
+
+The verification evidence unit tests build all inputs in Rust: a synthetic 10 mm cube's
+measurements and a generated box command script. Scale, face removal, shell opening and
+parameter mutations are made in memory. The source parameter model uses the public example
+cube already used by Dutchman's tests. No external design files are added.

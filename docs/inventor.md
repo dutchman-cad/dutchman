@@ -171,3 +171,11 @@ files. `crates/dutchman-core/tests/fixtures/synthetic_cube.ipt` is generated fro
 synthetic sources (its README has the recipe). History behaviour is tested on CADIR built in
 the tests in the shape the Inventor codec emits, until cadmpeg publishes generated Inventor
 goldens with a design segment (sketch and extrude).
+
+
+Parallel directed hole placements on one entry plane can supply complete locations
+without a source sketch. For SolidCraft 0.44.1 or newer, Dutchman writes an editable
+location sketch and a multi-point hole. The hole's form and termination must also
+be supported. Each placement still passes the single-hole entry-face checks. Different drilling directions, different entry planes, and
+multiple unsigned axes remain not supported yet; the original geometry is retained.
+Older targets report `multiple spatial hole locations need SolidCraft 0.44 patch 1 or newer`.

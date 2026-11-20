@@ -293,8 +293,15 @@ impl FileView {
         let (status_word, severity_rank) = match status {
             Status::Failed => ("Failed", 0),
             Status::Incomplete => ("Incomplete", 0),
-            Status::Flattened | Status::ConvertedWithLosses => ("Converted", 1),
-            Status::Converted => ("Converted", 2),
+            Status::Flattened => ("Converted, no history", 1),
+            Status::Converted | Status::ConvertedWithLosses => {
+                let word = match report.and_then(|r| r.get("mode")).and_then(Value::as_str) {
+                    Some("partial_history") => "Partly converted",
+                    Some("history") => "Converted",
+                    _ => "Converted, no history",
+                };
+                (word, if status == Status::Converted { 2 } else { 1 })
+            }
             Status::Waiting => ("Waiting", 3),
             Status::Converting => ("Converting", 3),
             Status::NotStarted => ("Not started", 3),
@@ -934,6 +941,32 @@ mod tests {
     }
 
     use serde_json::json;
+
+    #[test]
+    fn partial_history_names_the_partial_success() {
+        let view = FileView::from_report(&json!({"ok": true, "mode": "partial_history"}));
+        assert_eq!(view.status_word, "Partly converted");
+    }
+
+    #[test]
+    fn geometry_only_names_the_missing_history() {
+        for report in [
+            json!({"ok": true, "mode": "import"}),
+            json!({"ok": true}),
+            json!({"ok": true, "mode": "history", "verification": {"status": "flattened"}}),
+        ] {
+            assert_eq!(
+                FileView::from_report(&report).status_word,
+                "Converted, no history"
+            );
+        }
+    }
+
+    #[test]
+    fn full_history_keeps_the_success_label() {
+        let view = FileView::from_report(&json!({"ok": true, "mode": "history"}));
+        assert_eq!(view.status_word, "Converted");
+    }
 
     #[test]
     fn statuses_and_outcomes_preserve_desktop_words() {

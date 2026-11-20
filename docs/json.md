@@ -1,5 +1,12 @@
 # Machine-readable reports
 
+The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
+Folder and selection summaries use the highest per-file memory estimate and sum the displayed
+time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
+the full path on hover. The path and estimate share one paragraph that wraps as needed,
+keeping the complete sentence visible at every window width. The compact header keeps the
+default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
+
 Onshape history dependencies follow consumed operands in their stored order. Deterministic
 body, face and edge selections need a unique earlier producer proved by rollback
 transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
@@ -454,6 +461,13 @@ has not named". Older targets keep the previous mapping.
 Successful consumed-tool replay confirmation adds an Info note: "The source
 body check confirmed the consumed tool bodies". Report fields are unchanged.
 
+An unresolved profile with one stored loop and other solid sketch curves does not
+map directly to all regions. Without source-confirmed inference the feature is
+`blocked`; its reason may say `its unresolved profile region cannot be proven from
+the sketch's one stored loop yet: other solid curves remain` or report the failed
+source body check. Later features stay behind that blocker, with the final shape
+and reference sketches retained. Report fields are unchanged.
+
 When neither candidate is confirmed, every region of the carrier sketch the selection can name is
 measured in SolidCraft ([fusion.md](fusion.md)). A unique match is kept with the `Degraded` loss
 `history/profile-region-measured`, which names the feature in `subject` and says how many candidate
@@ -685,6 +699,12 @@ The mesh-body refusal keeps `error.stage: "decode"` when no geometry was transfe
 or `"project"` when mesh geometry was read but no B-rep bodies can be converted.
 `error.upstream` stays `"cadmpeg"`; no report fields or error kinds are added.
 
+When cadmpeg reports `f3d/design.mesh-only-untransferred` for a Fusion design with no decoded
+B-rep bodies or placed components (its only bodies are meshes, and none of them could be
+read), Dutchman says "it holds only mesh bodies, which Dutchman doesn't convert yet, and none
+of them could be read" with the same advice, at `error.stage: "decode"`. That loss carries no
+mesh count, so the message names none.
+
 `error.message` is for people; do not parse its wording. Unreadable-container errors retain
 cadmpeg's cause and add recovery advice and a link to the
 **A file didn't convert** issue form. The CLI and MCP return the same message, stage, and upstream.
@@ -793,6 +813,60 @@ Dutchman all the same: Dutchman's maintainers take it upstream.
 A cadmpeg loss is at `decode` when its code says the bytes could not be read (`…-undecoded`,
 `…-unparsed`, `…-untyped`, framing, a missing or unreadable stream, `…not-transferred`), else
 at `project`.
+
+### Source comparison evidence
+
+`verification_checks` is an additive array in conversion reports. Each entry names `part`
+and `comparison` (`final_history_against_source_geometry`). Entries describe the attempted
+final history, including a rejected replay when conversion retained original geometry instead.
+They are preserved when part reports are merged. An absent array means this comparison was
+not attempted; it must never be interpreted as a pass.
+
+`geometry.body_count` records source and written counts. `geometry.bodies` pairs bodies by
+box position, then volume, retaining zero-based `source_index` and `written_index`.
+Indices refer to the evaluated source and replay body lists, rather than native topology ids.
+Each body's `checks` contains `volume`, `surface_area`, `bounding_box`, `centroid`, `faces`,
+`edges`, `shells`, `closed_shell` and `manifold`. Geometric, closure and parameter checks
+use `status`: `pass`, `fail` or `not_checked`. Kernel face, edge and shell counts are
+informational: `info` when equal, `differs` when unequal, or `not_checked` when unavailable.
+Count differences never reject a history. Available counts retain `source` and `written`
+integers. Failures retain compared evidence. Continuous measurements also
+record absolute `difference` and inclusive `tolerance`.
+Unavailable checks carry `reason`.
+An unmatched source body has `written_index: null`, `status: not_checked`, a reason and
+unavailable per-body checks; body count still fails. If evaluation cannot complete,
+`geometry.checks` lists unavailable checks with reasons. An entry with no evaluator also
+has `status: not_checked` and `reason`, with an empty `parameters` array.
+
+Volume, area and box checks use the existing measured replay tolerances above.
+The box difference is the larger of the distance between box centres and the largest
+absolute difference of a minimum or maximum coordinate, preserving both existing criteria. Centroid
+compares the actual centre of mass in source coordinates with the existing position allowance;
+a box centre is never substituted. Kernel face, edge and shell counts are informational.
+The existing descriptive `replay.face_count` and `replay.centre` tolerance fields describe
+the base geometry comparator retained for inference; `source_comparison` describes these
+additional final history checks.
+These counts describe the evaluated representation: splitting or merging equivalent faces
+can change them without changing the shape. Closure must match the source, allowing sheets
+that are open in both. Manifoldness is `not_checked` because the evaluator exposes no explicit
+manifold result; closure and counts do not establish it.
+
+`parameters` lists source parameter ids, mapped `name`, canonical `unit` (`mm`, `deg`,
+empty for scalars, or null), declared replay `written_unit` (or null), and a `check`.
+Both numeric values use the canonical `unit`, even when the declared replay unit differs.
+Replay parameter lists above 100,000 rows are not checked and carry a limit reason.
+Quantity kinds must match: lengths, angles and scalars cannot substitute for one another;
+an unavailable or unrecognised replay unit is `not_checked`. Values come directly
+from the source model and the replay's evaluated named parameters, in millimetres, degrees,
+or scalar units. Serialization roundoff allows 5e-12 times the larger of one and the source magnitude.
+`verification_tolerances.source_comparison` records `parameter_relative` (5e-12),
+`parameter_scale_floor` (1), `centroid_min_mm` (0.01),
+`centroid_diagonal_relative` (2e-4), and explanatory `counts` and `manifold` fields. Evaluation errors and mismatched available
+values fail; omitted or renamed parameters, absent source numeric values and unavailable
+replay values are `not_checked`. A parameter renamed by mapping is not checked, even when
+its mapped name is present; a missing mapped name is also `not_checked`. Source expressions and written expressions are not used as proof of equality.
+A failed check prevents an otherwise matching final history from being reported as verified.
+Unavailable checks never strengthen the existing overall verification status.
 
 ## `dutchman.convert-all/1`
 
@@ -1656,7 +1730,9 @@ windows pin **Report a problem…** (or **Report this design…** with a result 
 **Convert**; it scrolls to the full numbered cards in the page. Discord comes first, with
 a small **GitHub issue** backup link (a public issue under the user's GitHub name).
 **Anonymous report**, under **More**, opens review before direct cloud upload.
-Partial history, geometry-only and degraded results use a warning colour. Report fields
+Partial history says **Partly converted**; geometry-only or flattened results say
+**Converted, no history**, in amber. Full history keeps **Converted** in green unless
+degraded content needs review. Report fields
 and CLI/MCP behavior are unchanged.
 ## Onshape fetch (`dutchman.onshape-fetch/1`)
 
@@ -1873,3 +1949,9 @@ The CLI options `--stand-up` and `--no-stand-up` (MCP `stand_up` and
 `no_stand_up`) control the saved design orientation. Reports retain the existing
 schemas and source coordinates; these options add no report fields. See
 [the command reference](command-line.md) for the rotation and default.
+
+Spatial hole arrays with complete parallel, coplanar directed entries can map as one
+source feature with a helper location sketch for SolidCraft 0.44.1 or newer. The helper
+does not increase source feature counts. Unsupported generated edge identities use
+`its generated edge identity has no resolved source geometry, which is not supported yet`
+as the existing history blocker reason. The report schema and field names are unchanged.

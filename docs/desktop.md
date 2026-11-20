@@ -152,8 +152,13 @@ Fast already leaves all three out; choose Standard or Full to enable them. These
 are remembered between launches. Older `import_only` settings restore with **Feature
 history** unchecked and Standard as the base.
 
-Queued files show **about N GB, about M min** when an estimate is available. Files in queued
-folders are listed with their estimates too. Estimates below 0.1 GB show **under 0.1 GB**,
+Queued files show **part.f3d needs about N GB of memory and about M min to convert.**
+when an estimate is available. The folder has its own wrapping line with the full path
+on hover. A folder or several files show one complete summary sentence: memory is the
+highest per-file estimate, and total time sums the displayed per-file estimates. Hover over
+the summary to read each file’s full estimate sentence. Files without estimates are excluded
+from the summary. At wide window sizes, the folder and estimate share a wrapping row
+to keep the default window’s controls in view. Estimates below 0.1 GB show **under 0.1 GB**,
 and times below 60 seconds show **under a minute**, just as in the CLI. **M GB of memory free** appears
 once when the machine's free memory can be read. On a Mac this counts memory the system can give back
 (not in use by apps, system or compression), not only the few pages it keeps empty. These are estimates, not limits or promises; an unavailable estimate
@@ -260,11 +265,13 @@ The window's title and top row show its version beside **Dutchman Convert**, for
 with `dutchman --version`).
 
 **Is there a problem? Is something missing?** is always in the window: at the bottom left,
-under **Output folder**, in a wide window. In a narrow window, a compact bar above **Convert**
-keeps the question and **Report a problem…** visible. With a result selected, the button says
-**Report this design…**. Click it to scroll to the full panel and its three numbered cards at
-the end of the page; you can also scroll there yourself. The route is there before a run,
-while files convert, and after, whatever the cards say: Dutchman never
+under **Output folder**, in a wide window. With one result and compact output controls, it
+sits directly below **Output folder**; it stays visible with several results or expanded choices.
+In a narrow window, a compact bar above **Convert** keeps the question and **Report a problem…**
+visible. With a result selected, the button says **Report this design…**. Click it to scroll to
+the full panel and its three numbered cards at the end of the page; you can also scroll there
+yourself. The route is there before a run, while files convert, and after, whatever the cards
+say: Dutchman never
 decides for you that a result has no problem. **Report a problem**, at the top right beside
 the **System / Day / Night** theme switch, brings the same panel into view.
 
@@ -349,10 +356,11 @@ summaries use the signature `converted-with-problem` and contain no design geome
 they never reuse an earlier failure's bundle. The review shows the exact metadata,
 including sharing choices, and nothing is sent until **Send** is clicked.
 
-A result with partial history shows its status word in the warning colour, not the success
-colour. Errors that name a web address show it as a link. **Diagnose this file** narrows
-reproducible conversion failures, not visual problems in a converted result; its window opens
-below the top row. **Add matching STEP** can check a converted file locally against an export.
+Partial history says **Partly converted**; geometry-only or flattened results say
+**Converted, no history**, in amber. Full history keeps **Converted** in green unless
+degraded content needs review. Errors that name a web address show it as a link.
+**Diagnose this file** narrows reproducible conversion failures, not visual problems in a
+converted result; its window opens below the top row. **Add matching STEP** can check a converted file locally against an export.
 
 The panel takes the invite, the limits, and the message from a small policy built into the app.
 Once a day at most, where update checks run, the app reads a newer copy from
