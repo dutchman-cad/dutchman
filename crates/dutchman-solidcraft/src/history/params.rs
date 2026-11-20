@@ -147,11 +147,22 @@ pub(crate) fn map(
         }
         written.insert(parameter.id.as_str().to_owned(), name.clone());
         out.push(json!({"name": name, "expr": expr,
-            "unit": units.get(name).map_or("", String::as_str),
+            "unit": display_unit(parameter).unwrap_or_else(|| units.get(name).map_or("", String::as_str)),
             "model": parameter.owner.is_some() && !cells.contains_key(parameter.id.as_str()),
         }));
     }
     (out, written)
+}
+
+/// A neutral parameter may retain a preferred display unit independently of its
+/// canonical evaluated value. Admit only units of the same dimension.
+fn display_unit(parameter: &DesignParameter) -> Option<&str> {
+    let unit = parameter.properties.get("display_unit")?.as_str();
+    match (&parameter.value, unit) {
+        (Some(ParameterValue::Length(_)), "mm" | "cm" | "m" | "in" | "ft")
+        | (Some(ParameterValue::Angle(_)), "deg" | "rad") => Some(unit),
+        _ => None,
+    }
 }
 
 /// Axis dimensions in SolidCraft measure magnitudes. Keep a signed source parameter

@@ -22,6 +22,7 @@ The desktop app's **Formats** list shows the same.
 | Rhino | `.3dm` | Reads geometry | L2 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | ACIS | `.sat`, `.sab`, `.smt`, `.smb` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
+| Onshape bundle | `.onshape-bundle` | Reads geometry | – | One offline Part Studio; geometry and editable history where features map |
 | IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
 | Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
 
@@ -43,6 +44,14 @@ Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro
   refused before decoding, in single files and folders alike: "Dutchman doesn't convert
   IGES yet: open it in SolidCraft directly (File > Import)."
 - A recognised format whose geometry has no solids or surfaces SolidCraft can import says so.
+
+## Onshape bundles
+
+`.onshape-bundle` converts one offline Part Studio, with editable sketches, extrudes,
+revolves, constant fillets, equal chamfers and simple holes where their selections
+resolve. ZIP magic and the format 1 manifest are checked. Unsupported history uses
+the shared STEP fallback, with a named loss. See [Onshape reader](onshape.md) for
+the mapping and bundle requirements.
 
 ## When a file doesn't convert
 

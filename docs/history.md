@@ -209,7 +209,9 @@ history before their edges are proven. Without `solidcraft-cli`, or when the rep
 of time, blends are refused, saying why. SolidCraft reports each edge's ends, midpoint and
 length but no tangent. For an open line or circular arc, its midpoint must
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
-either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
+either order) and length; a straight one must lie along the input tangent. SolidCraft measures
+a curved edge along the polyline it draws, so a rebuilt arc's length must lie between its chord
+and the input arc's length. Arcs SolidCraft
 splits into pieces and other non-circular curves are refused. Closed input circles map for
 explicit targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
 stored circle with exact centre, axis, radius and full-turn parameter range; historical
@@ -278,8 +280,11 @@ Those edges must belong to one hidden result of an earlier dependency, and still
 same replay proof. A resolved selection without that proven earlier result is refused.
 
 Hole history includes chamfered entries and tapped holes: the hole keeps its bore and an ISO
-metric thread label such as `M6x1`. A thread's hand, tolerance class, and length don't carry
-across; the report lists them as Degraded. Taper, exit treatments, modeled threads, and entry
+metric thread label such as `M6x1`. For SolidCraft 0.40 and newer a left-hand thread keeps
+its hand, and a blind hole without an entry recess keeps its thread length; SolidCraft 0.43
+and newer also keep an ISO tolerance class such as `6H`. What doesn't carry across (a thread
+length in a through or recessed hole, or any of these on an older target) is listed in the
+report as Degraded. Taper, exit treatments, modeled threads, and entry
 recesses combined with drill points are not supported yet, and the report names the option.
 A counterbore, countersink, or chamfered entry with a drill point keeps both for SolidCraft
 0.22.1 and newer. For an older target the reason is "SolidCraft holes take a drill point only

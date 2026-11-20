@@ -20,6 +20,10 @@ default = ["freecad"]
 freecad = ["dutchman/freecad"]
 
 [dependencies]
+arboard = { version = "3.7", default-features = false }
+percent-encoding = "2.3"
+url = "2.5"
+winit = "0.30"
 dutchman.workspace = true
 dutchman-core = { workspace = true, features = ["formats"] }
 dutchman-solidcraft.workspace = true

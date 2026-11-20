@@ -20,9 +20,12 @@
 //! - An open edge's midpoint must lie on exactly one rebuilt edge across every body: within the segment
 //!   of a straight one (a length equal to its chord proves it straight), or at the midpoint of
 //!   a curved one. Anything else, including two rebuilt edges through it, is refused.
-//! - That edge must have the input edge's ends, in either order, and its length: the chord of
-//!   a line, `radius × angle` of an arc. A straight rebuilt edge then lies along the input
-//!   tangent; a curved one is not checked for a tangent SolidCraft does not report.
+//! - That edge must have the input edge's ends, in either order, and its length. A line's is
+//!   its chord. SolidCraft measures a curved edge along its display polyline, whose points lie
+//!   on the curve, so an arc's rebuilt length must lie above the chord and at most the arc's
+//!   `radius × angle`; with the ends and the midpoint matched, that circle is the input's.
+//!   A straight rebuilt edge then lies along the input tangent; a curved one is not checked
+//!   for a tangent SolidCraft does not report.
 //!
 //! A chamfer with unequal setbacks also needs the face its distance runs along. The source
 //! does not say which; [`cuts`] takes the order that puts the chamfer's face on a planar face of
@@ -146,7 +149,7 @@ pub(super) struct Input {
     point: V3,
     ends: Segment,
     tangent: V3,
-    /// Its length: the chord of a line, or the arc's.
+    /// Its length: the chord of a line, or the arc's `radius × angle`.
     length: f64,
     straight: bool,
     /// Authoritative closed source circle and its owning replay body.
@@ -328,6 +331,21 @@ fn group(
                 faces: source_faces(ctx)?,
             });
         }
+    }
+    // A source that resolves tangent propagation itself lists every edge it blends. SolidCraft
+    // would otherwise blend each listed edge's tangent chain with it.
+    if feature
+        .pointer("/source_properties/tangent_propagation")
+        .and_then(Value::as_str)
+        .is_some()
+    {
+        if !crate::VersionGate::BlendListedEdges.supported(ctx.target_version) {
+            return Err(format!(
+                "blending only its listed edges needs SolidCraft 0.40 or newer (target {})",
+                ctx.target_version.minor()
+            ));
+        }
+        out.insert("tangent_chain".to_owned(), json!(false));
     }
     let selection = group.get("edges").ok_or("its input edges are not given")?;
     let angle_chamfer = unequal.is_none()
@@ -784,14 +802,17 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
             if !same(input.ends, (edge.start, edge.end)) {
                 return Err(INPUT_ENDS.to_owned());
             }
-            let rebuilt_length = if pending.path && !input.straight {
-                measured_arc_length(edge).ok_or(
+            // A curved sweep path needs its exact measured arc; other edges use the rebuilt
+            // length check, which allows a curve's displayed polyline.
+            let fits = if pending.path && !input.straight {
+                let measured = measured_arc_length(edge).ok_or(
                     "its curved input path edge has no proven rebuilt circular arc measurement yet",
-                )?
+                )?;
+                same_length(measured, input.length)
             } else {
-                edge.length
+                rebuilt_length(edge, input)
             };
-            if !same_length(rebuilt_length, input.length) {
+            if !fits {
                 return Err(INPUT_LENGTH.to_owned());
             }
         }
@@ -1544,6 +1565,21 @@ fn straight(edge: &ReplayedEdge) -> bool {
     chord > TOLERANCE && same_length(edge.length, chord)
 }
 
+/// Whether `edge`'s reported length fits `input`. A straight edge's is exact. SolidCraft
+/// reports a curved edge's length along the polyline it displays, whose points lie on the
+/// curve: never shorter than the chord between its ends, never longer than the curve. Two
+/// polylines of one arc differ only in how finely they follow it.
+fn rebuilt_length(edge: &ReplayedEdge, input: &Input) -> bool {
+    if input.straight {
+        return same_length(edge.length, input.length);
+    }
+    let chord = distance(edge.start, edge.end);
+    edge.length.is_finite()
+        && edge.length > chord
+        && !same_length(edge.length, chord)
+        && (edge.length <= input.length || same_length(edge.length, input.length))
+}
+
 fn same_length(a: f64, b: f64) -> bool {
     (a - b).abs() <= TOLERANCE * a.abs().max(b.abs()).max(1.0)
 }
@@ -2127,18 +2163,24 @@ mod tests {
         longer.length = 12.0;
         let shape = reason(&vec![("A".to_owned(), vec![longer.clone()])]);
         assert!(shape.contains("has other ends"), "{shape}");
-        // A curved input edge through the same ends and midpoint, with another length.
+        // A curved input edge through the same ends and midpoint, longer than the input arc.
         let mut curved = proof(vec![super::Input {
             straight: false,
             length: 12.0,
             ..a.clone()
         }]);
         let mut arc = rebuilt(&a);
+        arc.length = 13.0;
+        assert!(
+            super::prove(&curved, &vec![("A".to_owned(), vec![arc.clone()])])
+                .unwrap_err()
+                .contains("another length")
+        );
+        // SolidCraft's polyline length of the same arc is shorter than the arc, longer than
+        // the chord.
         arc.length = 11.0;
         let arcs = vec![("A".to_owned(), vec![arc.clone()])];
-        assert!(super::prove(&curved, &arcs)
-            .unwrap_err()
-            .contains("another length"));
+        assert!(super::prove(&curved, &arcs).is_ok());
         // A curved rebuilt edge through a straight input edge's midpoint.
         let bent = reason(&arcs);
         assert!(bent.contains("not the same kind"), "{bent}");
@@ -2154,6 +2196,94 @@ mod tests {
         assert!(super::prove(&pending, &vec![])
             .unwrap_err()
             .contains("no edges"));
+    }
+
+    #[test]
+    fn a_rebuilt_arc_is_proven_from_its_display_polyline_length() {
+        // A quarter circle of radius 3 mm; SolidCraft measures it along four chords.
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        let (point, ends, tangent) = (
+            [3.0 * h, 3.0 * h, 0.0],
+            ([3.0, 0.0, 0.0], [0.0, 3.0, 0.0]),
+            [-h, h, 0.0],
+        );
+        let length = super::arc_length(point, ends, tangent).unwrap();
+        assert!((length - 1.5 * std::f64::consts::PI).abs() < 1e-9);
+        let input = super::Input {
+            point,
+            ends,
+            tangent,
+            length,
+            straight: false,
+            circle: None,
+        };
+        let polyline = 24.0 * (std::f64::consts::PI / 16.0).sin();
+        let edge = |length: f64| crate::verify::ReplayedEdge {
+            start: ends.0,
+            end: ends.1,
+            mid: point,
+            length,
+            name: String::new(),
+            index: None,
+            circle: None,
+        };
+        let pending = proof(vec![input]);
+        for fits in [polyline, length] {
+            assert!(super::prove(&pending, &vec![("A".to_owned(), vec![edge(fits)])]).is_ok());
+        }
+        for wrong in [length * 1.01, 3.0 * 2f64.sqrt()] {
+            assert!(super::prove(&pending, &vec![("A".to_owned(), vec![edge(wrong)])]).is_err());
+        }
+    }
+
+    #[test]
+    fn tangent_chain_keeps_straight_and_curved_picks_with_polyline_lengths() {
+        // A tangent chain can contain both a line and an arc left by an earlier round.
+        // SolidCraft reports the arc length as display chords, not its analytic length.
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        let arc = super::Input {
+            point: [6.0 * h, 6.0 * h, 0.0],
+            ends: ([6.0, 0.0, 0.0], [0.0, 6.0, 0.0]),
+            tangent: [-h, h, 0.0],
+            length: 3.0 * std::f64::consts::PI,
+            straight: false,
+            circle: None,
+        };
+        let line = super::Input {
+            point: [6.0, -4.0, 0.0],
+            ends: ([6.0, -8.0, 0.0], arc.ends.0),
+            tangent: [0.0, 1.0, 0.0],
+            length: 8.0,
+            straight: true,
+            circle: None,
+        };
+        let mut replayed_arc = rebuilt(&arc);
+        replayed_arc.length = 48.0 * (std::f64::consts::PI / 16.0).sin();
+        // Reversing a replayed edge must not reverse or replace the source selection.
+        std::mem::swap(&mut replayed_arc.start, &mut replayed_arc.end);
+        let bodies = vec![(
+            "Rounded body".to_owned(),
+            vec![rebuilt(&line), replayed_arc],
+        )];
+        let pending = proof(vec![arc.clone(), line.clone()]);
+        assert_eq!(
+            super::prove(&pending, &bodies).unwrap(),
+            vec![super::Selection {
+                body: "Rounded body".to_owned(),
+                points: vec![arc.point, line.point],
+            }]
+        );
+        // Every expanded chain member still needs proof, even when the initial pick fits.
+        let mut missing = bodies.clone();
+        let _ = missing[0].1.pop();
+        assert!(super::prove(&pending, &missing)
+            .unwrap_err()
+            .contains("no rebuilt edge"));
+        let mut duplicate = bodies.clone();
+        duplicate.push(("Other body".to_owned(), vec![rebuilt(&arc)]));
+        assert!(super::prove(&pending, &duplicate)
+            .unwrap_err()
+            .contains("more than one"));
     }
 
     #[test]

@@ -103,6 +103,7 @@ fn an_mcp_client_converts_through_dutchman() {
             "read_report",
             "doctor",
             "compare_step",
+            "onshape_fetch",
             "convert",
             "inspect",
             "contents",
