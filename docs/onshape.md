@@ -265,8 +265,8 @@ My account > Developer > API keys > Create new API key. Name it `dutchman` (any 
 **Application can read your profile information** (the connection test reads your profile)
 and **Application can read your documents**. Leave write, delete, purchase and share unticked.
 Paste the access key and the secret key (the secret is masked), and choose
-**Test connection**, then **Save**. Save closes the dialog and focuses
-**or paste an Onshape link** in the main window. Paste your Part Studio link and choose
+**Test connection**, then **Save**. Save switches the dialog to
+**Paste your Onshape Part Studio link** and focuses its link field. Paste your link and choose
 **Open** to fetch and convert it. If the clipboard already contains an Onshape link,
 Dutchman fills it in for you; otherwise the field is empty with a faint URL hint.
 An output folder already selected for local files is reused; otherwise Dutchman asks
