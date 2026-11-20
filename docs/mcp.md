@@ -617,9 +617,13 @@ filled face, and outward drilling use the existing blocked feature reason; the o
 geometry remains available.
 This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
 original geometry with a named reason.
-Entry recesses with drill points report "SolidCraft holes take a drill point only on a
-plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
-points, but Dutchman retains this limit for compatibility with older releases.
+Entry recesses with drill points map on targets that support their tip angle. Older
+targets report "SolidCraft holes take a drill point only on a plain drilled hole"
+and retain the original geometry.
+
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
 
 Offset datum planes need no building feature when their support resolves or all their
 consumers carry independent resolved sketch placements. Otherwise the history reason

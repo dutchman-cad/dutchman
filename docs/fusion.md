@@ -151,6 +151,14 @@ User-hidden bodies that still belong to a component are kept, with an Info note.
 occurrences remain hidden; the current writer shows a part with both shown and hidden bodies
 whole, so its hidden members can appear visible in SolidCraft.
 
+Holes ending at a proven earlier planar extrusion or box cap retain their drill point,
+including countersunk entries. Fusion measures Extents To to the cylindrical shoulder;
+the conical point extends beyond the selected face. Dutchman resolves that distance
+along the drilling direction and keeps the countersink at the entry. Unresolved,
+offset, tilted, or unproven terminating faces retain a specific history blocker.
+Later features rebuild when the hole maps. A refused hole still stops body-building
+history; independently resolved reference sketches remain available.
+
 Holes on planar historical entry faces can keep their editable history when the boundary
 includes circular arcs or whole circles, including a rounded corner or an earlier through
 hole. The source's own input-edge ends, midpoints, and tangents establish the circular

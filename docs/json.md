@@ -662,6 +662,10 @@ and newer; for an older target they report
 `SolidCraft holes take a drill point only on a plain drilled hole`: SolidCraft 0.21.0 ignores
 `tip_angle` on entry recesses. This uses the existing blocked feature and reason fields.
 
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
+
 Sheet-metal edge flanges with proven input-edge picks and supported dimensions report
 `mapped`. Attached rectangular plates and their paired bends can also report `mapped` on an
 unchanged simple polygonal base, using the actual straight profile edge. A base that is not

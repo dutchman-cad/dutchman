@@ -295,12 +295,18 @@ metric thread label such as `M6x1`. For SolidCraft 0.40 and newer a left-hand th
 its hand, and a blind hole without an entry recess keeps its thread length; SolidCraft 0.43
 and newer also keep an ISO tolerance class such as `6H`. What doesn't carry across (a thread
 length in a through or recessed hole, or any of these on an older target) is listed in the
-report as Degraded. Taper, exit treatments, modeled threads, and entry
-recesses combined with drill points are not supported yet, and the report names the option.
+report as Degraded. Taper, exit treatments, and modeled threads are not supported yet,
+and the report names the option.
 A counterbore, countersink, or chamfered entry with a drill point keeps both for SolidCraft
 0.22.1 and newer. For an older target the reason is "SolidCraft holes take a drill point only
 on a plain drilled hole": SolidCraft 0.21.0 ignores `tip_angle` on counterbores and
 countersinks. Conversion keeps the original geometry.
+
+Holes ending at a proven earlier planar extrusion or box cap retain their drill point
+and supported entry recess. Fusion Extents To measures to the cylindrical shoulder,
+with the point extending beyond the face. Dutchman resolves the distance along the
+drilling direction after proving the target cap. A tip-measured CADIR bottom subtracts
+the conical height. Unresolved or unproven targets remain specific history blockers.
 
 A hole placed on a face of the model as it stood before the hole maps when that face is a plane
 the source's own extrusion just before the hole proves (its cap), or a whole cylinder drilled
