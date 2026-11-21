@@ -104,14 +104,15 @@ pub(crate) fn map(
 
     // Newer SolidCraft applies entry-recess tip angles. These source forms have
     // flat bottoms; 180 degrees makes that explicit on those releases.
-    if !(through_all && pointed)
-        && crate::VersionGate::EntryRecessTip.supported(ctx.target_version)
+    if crate::VersionGate::EntryRecessTip.supported(ctx.target_version)
         && matches!(
             hole.get("type").and_then(Value::as_str),
             Some("counterbore" | "countersink")
         )
     {
-        if let Some(fields) = hole.as_object_mut() {
+        // A through-all hole's omitted drill point has no bottom to make explicit.
+        let has_bottom = !(through_all && pointed);
+        if let Some(fields) = hole.as_object_mut().filter(|_| has_bottom) {
             fields.insert("tip_angle".to_owned(), json!("180"));
         }
     }
