@@ -10,6 +10,8 @@
 //! Its `solid.move` command accepts `translate` but selects whole bodies, so neither face
 //! translations nor rotations can use it. Both are refused.
 
+use std::collections::BTreeSet;
+
 use serde_json::{json, Map, Value};
 
 use super::sketch::number;
@@ -62,11 +64,15 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         {
             return Err("its offset face input topology holds several bodies without face ownership; this is not supported yet".to_owned());
         }
-        let mut live = ctx
+        // Import and historical source IDs can name the same live written body.
+        // Keep those aliases for identity resolution, but count each body once.
+        let live: BTreeSet<_> = ctx
             .named_bodies
             .iter()
             .map(|(_, name)| name)
-            .chain(ctx.generated_bodies.iter().map(|(_, name)| name));
+            .chain(ctx.generated_bodies.iter().map(|(_, name)| name))
+            .collect();
+        let mut live = live.into_iter();
         match (live.next(), live.next()) {
             (Some(name), None) => Some(name.clone()),
             _ => return Err("its offset face target is not a unique earlier named body; selecting among several input bodies is not supported yet".to_owned()),

@@ -735,7 +735,8 @@ consumers carry independent resolved sketch placements. Otherwise the history re
 names the unresolved plane reference; resolved skipped planes count as `not_needed`.
 
 Offset faces targeting SolidCraft 0.45 or newer bind their historical face points to the
-unique earlier named body in the part's history. Circular boundaries use points clear of
+unique earlier named body in the part's history. Multiple source names for that same body
+count as one body. Circular boundaries use points clear of
 both outer trims and holes. An offset-face body blocker means ownership is not proven;
 selecting among several input bodies is not supported yet. The original geometry is kept.
 Older targets keep the previous point-only representation.

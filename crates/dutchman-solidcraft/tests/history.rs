@@ -15973,6 +15973,88 @@ fn offset_face_body_binding_preserves_older_targets() {
 }
 
 #[test]
+fn offset_faces_count_live_bodies_instead_of_source_aliases() {
+    for second_body in [false, true] {
+        let mut model = face_move(json!({"kind": "offset", "distance": 2.0}));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let body = wire["geometry"]["bodies"][0]["id"].clone();
+        let mut extra = wire["model"]["features"][1].clone();
+        wire["model"]["features"][1]["definition"] = json!({"kind": "operation", "value": {
+            "kind": "base_feature", "value": {"bodies": {"kind": "resolved", "value": {
+                "bodies": [body], "native": "synthetic:base#1"
+            }}}
+        }});
+        // The historical base import binds both the final source ID and its
+        // historical ID to the same written body name through the real mapper.
+        let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+        wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
+        wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#2");
+        if second_body {
+            // A new-body extrude adds a genuinely distinct live body through
+            // generated_bodies, alongside the imported body's two aliases.
+            extra["id"] = json!("f3d:model:feature#4");
+            extra["ordinal"] = json!(2);
+            extra["name"] = json!("Second block");
+            extra["outputs"] = json!([]);
+            wire["model"]["features"][2]["ordinal"] = json!(3);
+            wire["model"]["features"]
+                .as_array_mut()
+                .unwrap()
+                .insert(2, extra);
+            wire["model"]["feature_result_topologies"] = json!([{
+                "id": "test:face:feature-result#4", "output_of": "f3d:model:feature#4",
+                "members": [{"kind": "body", "id": "test:face:generated-body#second"}]
+            }]);
+        }
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        for target in ["0.18.2", "0.44.1", "0.45.0"] {
+            let (doc, report) = convert(
+                &model,
+                &SolidCraftWriter::new()
+                    .target_version(Some(target.parse().unwrap()))
+                    .verification(Verification::Off),
+            );
+            let features = doc["features"].as_array().unwrap();
+            let offset = features.iter().find(|f| f["type"] == "offset_face");
+            if second_body && target == "0.45.0" {
+                let base = features.iter().find(|f| f["type"] == "import").unwrap();
+                let extra = features.iter().find(|f| f["type"] == "extrude").unwrap();
+                assert!(extra["body_names"][0].is_string());
+                assert_ne!(extra["body_names"][0], base["body_names"][0]);
+                assert!(offset.is_none());
+                assert!(history_line(&report).contains(
+                    "its offset face target is not a unique earlier named body; selecting among several input bodies is not supported yet"
+                ), "{}", history_line(&report));
+            } else {
+                let offset = offset.unwrap_or_else(|| panic!("{}", history_line(&report)));
+                if target == "0.45.0" {
+                    let base = features.iter().find(|f| f["type"] == "import").unwrap();
+                    assert_eq!(offset["body"], base["body_names"][0]);
+                    assert!(offset["body"].is_string());
+                    if let Some(cli) = solidcraft() {
+                        let writer = SolidCraftWriter::new()
+                            .target_version(Some(target.parse().unwrap()))
+                            .replay(Verification::With(cli.clone()))
+                            .verification(Verification::Off);
+                        let (bytes, report) = written_with(&model, &writer);
+                        assert!(
+                            history_line(&report).contains("features rebuilt"),
+                            "{}",
+                            history_line(&report)
+                        );
+                        let actual = volumes(&cli, &bytes);
+                        assert_eq!(actual.len(), 1);
+                        assert!((actual[0] - 1200.0).abs() < 1e-3, "{actual:?}");
+                    }
+                } else {
+                    assert!(offset.get("body").is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn offset_faces_refuse_input_topology_without_unique_body_ownership() {
     let mut model = face_move(json!({"kind": "offset", "distance": 2.0}));
     let mut wire = serde_json::to_value(&model.ir).unwrap();
