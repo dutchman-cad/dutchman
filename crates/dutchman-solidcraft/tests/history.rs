@@ -12682,6 +12682,78 @@ fn solidcraft_replays_closed_circle_fillets_and_hole_chamfers_across_seams() {
     }
 }
 
+/// A closed boss edge and a hole rim use the same carrier proof, with opposite
+/// material sides. Check the actual removed ring independently of edge seam placement.
+#[test]
+fn solidcraft_chamfers_closed_boss_and_hole_edges() {
+    let Some(cli) = closed_blend_cli() else {
+        return;
+    };
+    let writer = replaying(&cli).target_version(Some("0.45.0".parse().unwrap()));
+    let setback: f64 = 0.5;
+    for hole in [false, true] {
+        for seam in [0.0, 0.71, 2.5] {
+            let base = closed_circle_blend_from(hole, seam, true);
+            let mut wire = serde_json::to_value(&base.ir).unwrap();
+            let operation = &mut wire["model"]["features"]
+                .as_array_mut()
+                .unwrap()
+                .last_mut()
+                .unwrap()["definition"]["value"];
+            operation["kind"] = json!("chamfer");
+            let group = &mut operation["value"]["groups"][0];
+            group.as_object_mut().unwrap().remove("radius");
+            group["spec"] = json!({"kind": "distance", "distance": setback});
+            operation["value"]["flip_direction"] = json!(false);
+            let model = Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ..base
+            };
+            let (bytes, report) = written_with(&model, &writer);
+            let expected_features = if hole { 5 } else { 3 };
+            assert!(
+                history_line(&report).starts_with(&format!(
+                    "{expected_features} of {expected_features} features rebuilt"
+                )),
+                "{}",
+                history_line(&report)
+            );
+            let measured = evaluated(&cli, &bytes);
+            let [body] = measured["bodies"].as_array().unwrap().as_slice() else {
+                panic!("expected one chamfered body: {measured}");
+            };
+            let pi = std::f64::consts::PI;
+            let radius = if hole { 2.0 } else { 5.0 };
+            let original = if hole {
+                1000.0 - pi * radius * radius * 10.0
+            } else {
+                pi * radius * radius * 10.0
+            };
+            // Pappus: triangle area s²/2, centroid radius r ± s/3.
+            let sign = if hole { 1.0 } else { -1.0 };
+            let removed = pi * setback * setback * (radius + sign * setback / 3.0);
+            let expected = original - removed;
+            assert!(
+                (body["volume_mm3"].as_f64().unwrap() - expected).abs() < 1e-6 * expected,
+                "hole={hole}, seam={seam}: {body}"
+            );
+            let depth =
+                setback * (4.0 * radius + sign * setback) / (4.0 * (3.0 * radius + sign * setback));
+            let z = (5.0 * original - (10.0 - depth) * removed) / expected;
+            for (axis, wanted) in [
+                (0, if hole { 5.0 } else { 0.0 }),
+                (1, if hole { 5.0 } else { 0.0 }),
+                (2, z),
+            ] {
+                assert!(
+                    (body["center_of_mass"][axis].as_f64().unwrap() - wanted).abs() < 1e-6,
+                    "hole={hole}, seam={seam}: {body}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn solidcraft_replays_closed_circle_work_with_a_connected_straight_edge_chain() {
     let Some(cli) = closed_blend_cli() else {

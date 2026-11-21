@@ -31,6 +31,12 @@ Dutchman is listed in the Plugins menu, where its dialog shows the options befor
 file. To update, install the newer zip over the old one; to remove it, use **Remove** on its card
 in **Preferences > Plugins**. Designs you made with it stay as they are.
 
+The package includes a small Dutchman ship icon in SolidCraft's vector icon format,
+referenced by the conversion entry's option schema. Its solid and wireframe sails
+keep the mark readable at small sizes; SolidCraft's palette supplies its theme and
+accent colours. SolidCraft documents schema icons for command buttons, menus and
+dialog headers; it does not document a ribbon button or icon display for importers.
+
 SolidCraft checks the converted history against the original geometry. A history that matches
 is the visible model; one it cannot check stays hidden beside the original geometry, marked as
 not checked.

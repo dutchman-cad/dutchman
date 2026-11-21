@@ -25,6 +25,7 @@
         ],
         "input_schema": {
           "type": "object",
+          "x-solidcraft-icon": "icons/dutchman.svg",
           "additionalProperties": false,
           "properties": {
             "editable_history": {
