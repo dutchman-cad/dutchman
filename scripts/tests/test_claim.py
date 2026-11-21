@@ -5,7 +5,7 @@ import importlib.util
 import io
 import json
 import os
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError
@@ -277,6 +277,136 @@ class PolicyTests(unittest.TestCase):
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.api = FakeGitHub()
+
+    def manual_assignment(self, sender='writer', assignee=None, when=START):
+        assignee = assignee or user()
+        self.api.issues[1]['assignees'] = [assignee]
+        self.api.event(1, 'assigned', when, assignee=assignee, actor=user(sender))
+        return {'action': 'assigned', 'issue': {'number': 1},
+                'sender': user(sender), 'assignee': assignee}
+
+    def test_writer_assignment_labels_replies_and_uses_assignment_time(self):
+        for permission in ['write', 'maintain', 'admin']:
+            with self.subTest(permission=permission):
+                self.api = FakeGitHub()
+                self.api.permissions['writer'] = permission
+                payload = self.manual_assignment()
+                self.api.now = at(hours=6)
+                claim.reconcile_assignment(self.api, payload)
+                self.assertEqual(self.api.issues[1]['labels'], [{'name': 'claimed'}])
+                self.assertEqual(self.api.resolve_owners(self.api.issues[1]), ('contributor', START))
+                self.assertIn('Claimed by @contributor; a maintainer assigned it.', self.api.bodies())
+                self.assertIn(claim.RULE, self.api.bodies())
+                before = self.api.bodies()
+                claim.reconcile_assignment(self.api, payload)
+                self.assertEqual(self.api.bodies(), before)
+                self.api.sweep(hours=12)
+                self.assertIn('within 12 hours', self.api.bodies())
+                self.api.sweep(hours=24)
+                self.assertFalse(self.api.issues[1]['labels'])
+                self.assertIn('The claim lapsed', self.api.bodies())
+
+    def test_issue_assignment_main_routes_without_commands_or_sweep(self):
+        for action_name in ['assigned', 'unassigned']:
+            payload = {'action': action_name, 'issue': {'number': 1}}
+            with self.subTest(action=action_name), \
+                    patch.dict(os.environ, {'GITHUB_REPOSITORY': 'group/project',
+                                           'GITHUB_TOKEN': 'unused', 'GITHUB_EVENT_NAME': 'issues',
+                                           'GITHUB_EVENT_PATH': 'event.json'}), \
+                    patch('builtins.open', mock_open(read_data=json.dumps(payload))), \
+                    patch.object(claim, 'GitHub', return_value=self.api), \
+                    patch.object(claim, 'reconcile_assignment') as assignment, \
+                    patch.object(claim, 'reconcile_commands') as commands, \
+                    patch.object(claim, 'sweep_issue') as sweep:
+                claim.main()
+                assignment.assert_called_once_with(self.api, payload)
+                commands.assert_not_called()
+                sweep.assert_not_called()
+
+    def test_nonwriter_assignment_does_nothing(self):
+        claim.reconcile_assignment(self.api, self.manual_assignment())
+        self.assertFalse(self.api.issues[1]['labels'])
+        self.assertFalse(self.api.bodies())
+
+    def test_bot_assignment_and_bot_assignee_do_nothing(self):
+        for sender, assignee in [('github-actions[bot]', user()), ('writer', user('helper', 'Bot'))]:
+            with self.subTest(sender=sender):
+                self.api.permissions['writer'] = 'write'
+                claim.reconcile_assignment(self.api, self.manual_assignment(sender, assignee))
+                self.assertFalse(self.api.issues[1]['labels'])
+                self.assertFalse(self.api.bodies())
+
+    def test_own_assign_event_after_claim_has_no_extra_reply(self):
+        self.api.claim(1, 'contributor', now=START)
+        before = list(self.api.calls)
+        claim.reconcile_assignment(self.api, {'action': 'assigned', 'issue': {'number': 1},
+                                   'sender': user('github-actions[bot]', 'Bot'), 'assignee': user()})
+        self.assertEqual(self.api.calls, before)
+
+    def test_maintainer_assignment_matches_command_claim_and_never_lapses(self):
+        self.api.permissions['writer'] = 'write'
+        payload = self.manual_assignment(assignee=user('writer'))
+        claim.reconcile_assignment(self.api, payload)
+        self.assertTrue(self.api.issues[1]['labels'])
+        self.api.sweep(days=100)
+        self.assertTrue(self.api.issues[1]['labels'])
+
+    def test_owner_assignment_matches_command_claim(self):
+        claim.reconcile_assignment(self.api, self.manual_assignment('group', user('group')))
+        self.assertTrue(self.api.issues[1]['labels'])
+        self.api.sweep(days=100)
+        self.assertTrue(self.api.issues[1]['labels'])
+
+    def test_unassignment_removes_claim_quietly_unless_bot_or_assignees_remain(self):
+        for sender, remaining, removed in [('writer', [], True), ('github-actions[bot]', [], False),
+                                           ('writer', [user('other')], False)]:
+            with self.subTest(sender=sender, remaining=remaining):
+                self.api = FakeGitHub()
+                self.api.issue(1, 'contributor')
+                self.api.issues[1]['assignees'] = remaining
+                self.api.event(1, 'unassigned', at(hours=1), assignee=user())
+                claim.reconcile_assignment(self.api, {'action': 'unassigned', 'issue': {'number': 1},
+                                           'sender': user(sender), 'assignee': user()})
+                self.assertEqual(bool(self.api.issues[1]['labels']), not removed)
+                self.assertFalse(self.api.bodies())
+
+    def test_old_unassignment_cannot_remove_a_new_claim_label(self):
+        self.api.issue(1, 'contributor')
+        self.api.issues[1]['assignees'] = []
+        self.api.event(1, 'unassigned', at(hours=1), assignee=user())
+        self.api.remove_label(1)
+        self.api.now = at(hours=2)
+        self.api.call('POST', 'issues/1/labels', {'labels': ['claimed']})
+        claim.reconcile_assignment(self.api, {'action': 'unassigned', 'issue': {'number': 1},
+                                   'sender': user('writer'), 'assignee': user()})
+        self.assertTrue(self.api.issues[1]['labels'])
+
+    def test_manual_reply_failure_removes_label_but_keeps_assignment(self):
+        self.api.permissions['writer'] = 'write'
+        self.api.fail_reply = True
+        with self.assertRaises(HTTPError):
+            claim.reconcile_assignment(self.api, self.manual_assignment())
+        self.assertFalse(self.api.issues[1]['labels'])
+        self.assertEqual(self.api.issues[1]['assignees'], [user()])
+
+    def test_closed_or_stale_assignment_does_not_claim(self):
+        self.api.permissions['writer'] = 'write'
+        payload = self.manual_assignment()
+        self.api.issues[1]['state'] = 'closed'
+        claim.reconcile_assignment(self.api, payload)
+        self.assertFalse(self.api.issues[1]['labels'])
+        self.api.issues[1]['state'] = 'open'
+        self.api.issues[1]['assignees'] = []
+        claim.reconcile_assignment(self.api, payload)
+        self.assertFalse(self.api.issues[1]['labels'])
+
+    def test_manual_claim_relabel_starts_new_interval(self):
+        self.api.permissions['writer'] = 'write'
+        claim.reconcile_assignment(self.api, self.manual_assignment())
+        self.api.remove_label(1)
+        self.api.now = at(2)
+        self.api.call('POST', 'issues/1/labels', {'labels': ['claimed']})
+        self.assertEqual(self.api.resolve_owners(self.api.issues[1])[1], at(2))
 
     def test_free_claim_assigns_labels_reacts_replies(self):
         self.api.claim(1, 'contributor', comment_id=2, now=START)

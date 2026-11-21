@@ -2,7 +2,8 @@
 
 Comment `/claim` on an open issue before starting. The command must start the comment
 (after leading whitespace); commands in the middle, blockquotes, fenced code or indented
-code are ignored. Comment `/unclaim` to give it up. Bot comments, locked issues, closed
+code are ignored. A maintainer can also assign an issue to you; that counts as claiming it.
+Comment `/unclaim` to give it up. Bot comments, locked issues, closed
 issues and pull requests are ignored as command targets.
 
 Open a linked pull request within **24 hours**, even a rough draft. The bot mentions you
@@ -56,7 +57,13 @@ starts unclaimed, without replaying commands from before closure.
 
 ## How claim dates and activity are tracked
 
-The latest `claimed` label event supplies the claim date. Removing and reapplying the
+For `/claim` and linked PRs, the latest `claimed` label event supplies the claim date.
+For a manual assignment by someone with write, maintain or admin permission, the bot adds
+`claimed` and uses the matching `assigned` event’s `created_at` from the issue events API
+(`/issues/{number}/events`), recorded in its claim reply. Bot assignments and bot assignees
+do not start claims. Owner and maintainer assignments are labelled consistently with `/claim`
+and never lapse. Removing the claimant’s assignment with nobody else assigned quietly
+removes `claimed`; the bot’s own removals do not produce another reply. Removing and reapplying the
 label starts a new claim. Claims without a known date are left for maintainers to resolve.
 Existing manual assignments are respected. Concurrent assignments are repaired using
 assignment event order, keeping the earliest claimant and explaining the resolution.
@@ -92,7 +99,7 @@ environment variables, never shell interpolation. The implementation uses Python
 standard library and GitHub's REST API; user text cannot choose a command or API host.
 
 Top-level permissions are empty. Jobs grant contents read, issues write and pull requests
-read for current-state reconciliation. Comment and issue-close/reopen handling retain
+read for current-state reconciliation. Comment and issue assignment/close/reopen handling retain
 per-issue concurrency; PR handling retains per-PR concurrency, with a separate hourly
 sweep group. There is no repository-wide group that could discard unrelated commands.
 Fresh reads, assignment conflict repair and idempotent receipts handle overlapping jobs.

@@ -16,6 +16,7 @@ RULE = ('Open a pull request within 24 hours, even a rough draft; after that, th
         'on a maintainer or a dependency. /unclaim releases it.')
 WRITE_PERMISSIONS = {'write', 'maintain', 'admin'}
 CLAIM = '<!-- dutchman-claim-state:'
+ASSIGNMENT = '<!-- dutchman-claim-assignment:'
 
 
 def prose(text):
@@ -246,6 +247,16 @@ class GitHub:
         if losers:
             self.call('DELETE', f'issues/{number}/assignees', {'assignees': losers})
             self.comment(number, f'Kept the earliest claim by @{claimant}; removed the concurrent assignment(s).')
+        # Manual claims use the assignment clock, tied to this label interval so
+        # removing and reapplying the label still starts a fresh claim.
+        records = [c for c in comments if own_comment(c) and ASSIGNMENT in c['body']]
+        if records and date is not None:
+            latest = max(records, key=lambda c: (stamp(c['created_at']), c['id']))
+            record = json.loads(latest['body'].split(ASSIGNMENT, 1)[1].split(' -->', 1)[0])
+            if (record['claimant'].lower() == claimant.lower()
+                    and stamp(record['label_at']) == date
+                    and assigned.get(claimant.lower()) == stamp(record['at'])):
+                date = stamp(record['at'])
         return claimant, date
 
     def conflict(self, number, claimant, date, source=None):
@@ -578,6 +589,70 @@ def reconcile_pr(api, number, now=None):
                 raise
 
 
+def reconcile_assignment(api, payload):
+    """Track human writer assignments without replaying commands or bot actions."""
+    sender = payload.get('sender')
+    assignee = payload.get('assignee')
+    if not human(sender) or not human(assignee):
+        return
+    number = payload['issue']['number']
+    issue = api.call('GET', f'issues/{number}')
+    if issue['state'] != 'open' or issue.get('locked') or 'pull_request' in issue:
+        return
+    labeled = any(label['name'] == 'claimed' for label in issue.get('labels', []))
+    login = assignee['login']
+    action = payload['action']
+    if action == 'assigned':
+        if (labeled or not any(a['login'].lower() == login.lower()
+                              for a in issue.get('assignees', []))
+                or not api.can_write(sender['login'])):
+            return
+        events = api.pages(f'issues/{number}/events')
+        changes = [e for e in events if e.get('event') in {'assigned', 'unassigned'}
+                   and e.get('assignee', {}).get('login', '').lower() == login.lower()]
+        if not changes or changes[-1]['event'] != 'assigned':
+            return
+        assignment = changes[-1]
+        if assignment.get('actor', {}).get('login', '').lower() != sender['login'].lower():
+            return
+        claimant, _ = api.resolve_owners(issue)
+        if not claimant or claimant.lower() != login.lower():
+            return
+        api.ensure_label()
+        api.call('POST', f'issues/{number}/labels', {'labels': ['claimed']})
+        try:
+            label_at = claim_date(api.pages(f'issues/{number}/events'))
+            if label_at is None:
+                raise ValueError(f'Could not read the claim date for issue #{number}; retry the assignment.')
+            record = json.dumps({'claimant': login, 'at': assignment['created_at'],
+                                 'label_at': label_at.isoformat()})
+            api.comment(number, f'Claimed by @{login}; a maintainer assigned it. {RULE}\n\n'
+                        f'{ASSIGNMENT} {record} -->')
+        except (HTTPError, OSError, ValueError, KeyError):
+            api.remove_label(number)
+            raise
+    elif action == 'unassigned' and labeled and not issue.get('assignees'):
+        # Reconstruct ownership immediately before the removal. A queued removal
+        # must not clear the label of a newer assignment or virtual claim.
+        events = api.pages(f'issues/{number}/events')
+        active = {}
+        removed_claimant = False
+        for index, event in enumerate(events):
+            target = event.get('assignee', {}).get('login', '').lower()
+            if event.get('event') == 'assigned':
+                active[target] = stamp(event['created_at'])
+            elif event.get('event') == 'unassigned':
+                if target == login.lower():
+                    owner = api.repository.split('/')[0].lower()
+                    claimant = (owner if owner in active else
+                                min(active, key=active.get, default=None))
+                    removed_claimant = (claimant == target
+                                         and claim_date(events[:index + 1]) == claim_date(events))
+                active.pop(target, None)
+        if not active and removed_claimant:
+            api.remove_label(number)
+
+
 def main():
     api = GitHub(os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_TOKEN'])
     event = os.environ['GITHUB_EVENT_NAME']
@@ -585,6 +660,9 @@ def main():
         with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as stream:
             payload = json.load(stream)
         number = payload['issue']['number']
+        if event == 'issues' and payload['action'] in {'assigned', 'unassigned'}:
+            reconcile_assignment(api, payload)
+            return
         reconcile_commands(api, number)
         sweep_issue(api, number, datetime.now(timezone.utc))
     elif event == 'pull_request_target':
