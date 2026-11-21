@@ -480,14 +480,30 @@ minimum/maximum coordinate; volume and area retain their measuring mesh toleranc
 A face-count difference alone does not establish a defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
 `solidcraft-cli mcp --in cube.sc` and call its `measure` tool.
 
+For a source consisting of one solid body with disconnected lumps, verification can
+compare the imported pieces together against one replayed body. Every source region
+must remain present; their summed volume and area and combined bounds must agree.
+Single-lump and multiple-source-body comparisons retain their existing checks. See
+[How a history is checked](history.md#how-a-history-is-checked).
+
 Conversion JSON includes `verification_checks` when a final history comparison is attempted.
 It records each body's measurements, counts, closure and centre of mass against source
 geometry, plus source parameter values and quantity kinds after replay. Geometric, closure
 and parameter checks say `pass`, `fail` or `not_checked` with evidence or a reason. A failed check can cause conversion to retain the
-original geometry. Face, edge and shell counts are informational: `info` when equal and
-`differs` when unequal. Split or merged equivalent faces never reject a history on counts
-alone. Omitted or renamed parameters are `not_checked`. Manifoldness remains explicitly unchecked because
+original geometry. Raw kernel face, edge and shell counts are informational: `info` when equal and
+`differs` when unequal. These raw count differences alone never reject a history. Omitted or renamed parameters are `not_checked`. Manifoldness remains explicitly unchecked because
 there is no evaluator result proving it. See [JSON reports](json.md#source-comparison-evidence).
+
+Final SolidCraft history verification also requires matching available merged face
+counts per body (`merged_faces` in `verification_checks`). Merged edge counts
+(`merged_edges`) are informational: mirror and full-turn revolve operations can split
+edges differently across SolidCraft releases while preserving the faces and shape.
+Face counts merge adjacent pieces of one surface and periodic seams. Bodies with
+free-form or mesh surfaces skip merged totals, since equivalent pieces can have different
+surface records. Available analytic surface-kind counts (`analytic_faces`) must still
+match for planes, cylinders, cones and spheres; mesh bodies skip that check too. A mismatch
+retains the imported final shape, even when volume and area pass. Raw kernel counts remain
+informational.
 
 Which SolidCraft a design is written for, and how Dutchman finds the installed one, is in
 [SolidCraft versions](command-line.md#solidcraft-versions).

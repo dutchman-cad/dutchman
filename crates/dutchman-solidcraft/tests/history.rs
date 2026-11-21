@@ -2605,7 +2605,7 @@ fn freecad_f13a_keeps_its_helix_and_replays_at_the_recipe_volume() {
         &model,
         &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
     );
-    assert_eq!(report.outcome().unwrap().mode, Mode::History);
+    assert_eq!(report.outcome().unwrap().mode, Mode::History, "{report:?}");
     assert_eq!(report.outcome().unwrap().check, Check::Verified);
     let volume = volumes(&cli, &bytes);
     assert_eq!(volume.len(), 1);
@@ -20052,6 +20052,134 @@ fn feature_profiles_do_not_treat_reference_axes_as_profile_geometry() {
         report.losses().iter().any(|loss| loss
             .detail
             .contains("its sketch feature has no resolved non-construction profile curves")),
+        "{report:?}"
+    );
+}
+
+/// Two synthetic 10 mm boxes, separated by 20 mm, owned by one CADIR body.
+fn multi_region_boxes() -> Model {
+    fn move_origins(value: &mut Value) {
+        match value {
+            Value::Object(object) => {
+                for (name, child) in object {
+                    if matches!(name.as_str(), "position" | "origin") {
+                        if let Some(x) = child.get("x").and_then(Value::as_f64) {
+                            child["x"] = json!(x + 30.0);
+                        }
+                    } else {
+                        move_origins(child);
+                    }
+                }
+            }
+            Value::Array(array) => array.iter_mut().for_each(move_origins),
+            _ => {}
+        }
+    }
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut second: Value = serde_json::from_str(
+        &wire["geometry"]
+            .to_string()
+            .replace("synthetic:cube:", "synthetic:second:"),
+    )
+    .unwrap();
+    move_origins(&mut second);
+    second["regions"][0]["body"] = wire["geometry"]["bodies"][0]["id"].clone();
+    for (name, values) in second.as_object().unwrap() {
+        if name != "bodies" {
+            wire["geometry"][name]
+                .as_array_mut()
+                .unwrap()
+                .extend(values.as_array().unwrap().iter().cloned());
+        }
+    }
+    let m = &mut wire["model"];
+    let mut sketch: Value = serde_json::from_str(
+        &m["sketches"][0]
+            .to_string()
+            .replace("f3d:model:sketch", "synthetic:second:sketch"),
+    )
+    .unwrap();
+    sketch["placement"]["frame"]["origin"]["x"] = json!(30.0);
+    m["sketches"].as_array_mut().unwrap().push(sketch);
+    let entities: Value = serde_json::from_str(
+        &m["sketch_entities"]
+            .to_string()
+            .replace("f3d:model:sketch", "synthetic:second:sketch"),
+    )
+    .unwrap();
+    m["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend(entities.as_array().unwrap().iter().cloned());
+    let mut sketch_feature = m["features"][0].clone();
+    sketch_feature["id"] = json!("synthetic:second:feature#1");
+    sketch_feature["ordinal"] = json!(2);
+    sketch_feature["definition"]["value"]["value"]["sketch"]["sketch"] =
+        json!("synthetic:second:sketch#1");
+    m["features"].as_array_mut().unwrap().push(sketch_feature);
+    let mut extrude: Value = serde_json::from_str(
+        &m["features"][1]
+            .to_string()
+            .replace("f3d:model:sketch", "synthetic:second:sketch"),
+    )
+    .unwrap();
+    extrude["id"] = json!("synthetic:second:feature#2");
+    extrude["ordinal"] = json!(3);
+    extrude["dependencies"] = json!(["f3d:model:feature#2", "synthetic:second:feature#1"]);
+    extrude["definition"]["value"]["value"]["op"] = json!("join");
+    m["features"].as_array_mut().unwrap().push(extrude);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn multi_region_history_and_import_verify_in_solidcraft() {
+    let Some(cli) = solidcraft() else { return };
+    let model = multi_region_boxes();
+    let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
+    let (bytes, report) = written_with(&model, &writer);
+    assert!(
+        matches!(report.outcome().unwrap().check, Check::Verified),
+        "{report:?}"
+    );
+    let replayed = volumes(&cli, &bytes);
+    assert_eq!(replayed.len(), 1, "{replayed:?}");
+    assert!((replayed[0] - 2000.0).abs() < 1e-6);
+    let (bytes, report) = written_with(&model, &writer.import_only(true));
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "geometry" && loss.severity == Severity::Degraded),
+        "{report:?}"
+    );
+    let imported = volumes(&cli, &bytes);
+    assert_eq!(imported.len(), 2, "{imported:?}");
+    assert!((imported.iter().sum::<f64>() - 2000.0).abs() < 1e-6);
+}
+
+#[test]
+fn multi_region_history_rejects_a_shortened_lump_in_solidcraft() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = multi_region_boxes();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][3]["definition"]["value"]["value"]["extent"]["side"]["termination"]
+        ["length"] = json!(5.0);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = written_with(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::With(cli)),
+    );
+    assert!(
+        !matches!(report.outcome().unwrap().check, Check::Verified),
+        "{report:?}"
+    );
+    let line = history_line(&report);
+    assert!(
+        line.contains("replay differs") && line.contains("volume"),
         "{report:?}"
     );
 }

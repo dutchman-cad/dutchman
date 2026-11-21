@@ -112,7 +112,7 @@ pub fn report() -> Value {
             "parameter_scale_floor": 1.0,
             "centroid_min_mm": POSITION_MIN_MM,
             "centroid_diagonal_relative": POSITION_DIAGONAL_RELATIVE,
-            "counts": "informational: evaluated kernel face, edge and shell counts may differ for equivalent geometry",
+            "counts": "raw kernel counts are informational; available merged analytic face and edge counts must match; free-form or mesh totals are not compared; analytic surface-kind counts must match when available",
             "manifold": "not checked: no explicit evaluator result",
         },
         "stored_bodies": {

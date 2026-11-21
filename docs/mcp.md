@@ -358,13 +358,30 @@ and retained editable history stays unverified. This applies to `convert` and ea
 off; `no_memory_check: true` forces requested checks. Automatic part work uses at most two
 workers and budgets each detailed part's temporary peak and the retained preparation queue.
 
+For a source consisting of one solid body with disconnected lumps, verification can
+compare the imported pieces together against one replayed body. Every source region
+must remain present; their summed volume and area and combined bounds must agree.
+Single-lump and multiple-source-body comparisons retain their existing checks. See
+[How a history is checked](history.md#how-a-history-is-checked).
+
 Conversion results share the CLI's additive `verification_checks` array. It records final
 history comparisons per part and body, including measurement evidence and replayed named
 parameter values and quantity kinds compared with the source. Geometric, closure and
-parameter checks say `pass`, `fail` or `not_checked` with reasons. Face, edge and shell counts use informational `info` or `differs` statuses and
-never reject a history. Omitted or renamed parameters are `not_checked`.
+parameter checks say `pass`, `fail` or `not_checked` with reasons. Raw kernel face, edge and shell counts use informational `info` or `differs`
+statuses and never reject a history by themselves. Omitted or renamed parameters are `not_checked`.
 Missing evidence is never a pass; closure alone does not prove manifoldness.
 See [source comparison evidence](json.md#source-comparison-evidence) for the field contract.
+
+Final SolidCraft history verification also requires matching available merged face
+counts per body (`merged_faces` in `verification_checks`). Merged edge counts
+(`merged_edges`) are informational: mirror and full-turn revolve operations can split
+edges differently across SolidCraft releases while preserving the faces and shape.
+Face counts merge adjacent pieces of one surface and periodic seams. Bodies with
+free-form or mesh surfaces skip merged totals, since equivalent pieces can have different
+surface records. Available analytic surface-kind counts (`analytic_faces`) must still
+match for planes, cylinders, cones and spheres; mesh bodies skip that check too. A mismatch
+retains the imported final shape, even when volume and area pass. Raw kernel counts remain
+informational.
 
 Use `convert` with `dry_run: true` for a quick estimate without decoding or writing;
 `output` is optional:

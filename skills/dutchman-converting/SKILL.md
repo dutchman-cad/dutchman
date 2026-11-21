@@ -615,15 +615,32 @@ Never remove or change the quarantine attribute.
 - If something is off, say exactly what ("SolidCraft could not mesh 3 faces"), and don't
   claim the conversion is fine.
 
+For a source consisting of one solid body with disconnected lumps, verification can
+compare the imported pieces together against one replayed body. Every source region
+must remain present; their summed volume and area and combined bounds must agree.
+Single-lump and multiple-source-body comparisons retain their existing checks. See
+[How a history is checked](../../docs/history.md#how-a-history-is-checked).
+
 When conversion reports `verification_checks`, explain the individual source comparisons:
 volume, surface area, bounds, counts, closure, centroid and evaluated named parameters,
 including their quantity kinds.
 A `fail` includes the compared evidence; `not_checked` names the missing evidence and must
-never be called a pass. Face, edge and shell counts are informational: `info` when equal,
-`differs` when unequal. These count differences never reject a history. Omitted or renamed
+never be called a pass. Raw kernel face, edge and shell counts are informational: `info` when equal,
+`differs` when unequal. These raw count differences never reject a history. Omitted or renamed
 parameters are `not_checked`.
 Do not claim manifoldness from closure: its check remains unavailable. Entries can describe
 a rejected final history even when the delivered design retains the original geometry.
+
+Final SolidCraft history verification also requires matching available merged face
+counts per body (`merged_faces` in `verification_checks`). Merged edge counts
+(`merged_edges`) are informational: mirror and full-turn revolve operations can split
+edges differently across SolidCraft releases while preserving the faces and shape.
+Face counts merge adjacent pieces of one surface and periodic seams. Bodies with
+free-form or mesh surfaces skip merged totals, since equivalent pieces can have different
+surface records. Available analytic surface-kind counts (`analytic_faces`) must still
+match for planes, cylinders, cones and spheres; mesh bodies skip that check too. A mismatch
+retains the imported final shape, even when volume and area pass. Raw kernel counts remain
+informational.
 
 ## 5. Explain the loss report
 

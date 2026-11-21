@@ -556,8 +556,19 @@ area retain their measuring mesh tolerances. Bodies are paired by nearest box ce
 with volume breaking ties. A position mismatch gives a reason such as `a body sits 6.000 mm
 from the original's position`; a box mismatch gives `a body's box differs from the
 original's by 2.500 mm`. When SolidCraft gives no box for a pair, only area and volume are
-compared. A face-count difference (SolidCraft can merge faces on one surface) produces
-no geometry loss, nor does an open-shell warning when the compared measurements agree.
+compared, together with available merged face and analytic surface-kind counts. Raw
+kernel counts and merged edge-count differences do not reject a history. Merged face
+or analytic surface-kind differences do. An open-shell warning alone does not reject matching measurements.
+
+When the source is one solid body with several disconnected regions, STEP imports
+those regions as separate solids. If history retains them in one body, verification
+requires every source region to import with positive volume, area and complete bounds,
+then compares their summed volume and area and combined bounding box with the replayed
+body. Available centroids are combined by volume; closure requires every region to
+be closed. Missing regions still fail. If replay also splits the regions, the usual
+per-piece checks apply. Single-region bodies and designs with multiple source bodies
+keep their existing one-to-one comparisons.
+
 Geometry-only output has no independent source measurements; evaluation errors, unmeshable faces, solids
 without volume, solids opened as open shells, and bodies inside out still produce `Degraded` losses with subject `geometry` and stage `solidcraft`.
 Sheets remain exempt from volume and closed-shell checks. The GUI, CLI, web app, and MCP
@@ -866,12 +877,32 @@ not attempted; it must never be interpreted as a pass.
 
 `geometry.body_count` records source and written counts. `geometry.bodies` pairs bodies by
 box position, then volume, retaining zero-based `source_index` and `written_index`.
-Indices refer to the evaluated source and replay body lists, rather than native topology ids.
+Indices refer to the comparison's source and replay body lists, rather than native topology ids.
+For a single source body whose disconnected regions import separately but replay together,
+the source comparison list contains one combined body at index zero. Its volume and area
+are sums, its box encloses all regions, its centroid is volume-weighted when available,
+and its closure is true only when all regions report closed. Kernel counts are summed.
+All imported regions must be present before combining; single-region and multiple-source-body
+comparisons keep their existing pairing.
 Each body's `checks` contains `volume`, `surface_area`, `bounding_box`, `centroid`, `faces`,
-`edges`, `shells`, `closed_shell` and `manifold`. Geometric, closure and parameter checks
-use `status`: `pass`, `fail` or `not_checked`. Kernel face, edge and shell counts are
+`edges`, `shells`, `merged_faces`, `merged_edges`, `analytic_faces`, `closed_shell` and `manifold`. Geometric,
+merged face, closure and parameter checks use `status`: `pass`, `fail` or `not_checked`. Kernel face, edge and shell counts are
 informational: `info` when equal, `differs` when unequal, or `not_checked` when unavailable.
-Count differences never reject a history. Available counts retain `source` and `written`
+Raw count differences never reject a history. `merged_faces` compares SolidCraft's
+top-level evaluated `faces` counts, with `pass`, `fail` or `not_checked` when either
+count is unavailable. These counts merge adjacent pieces of one surface and periodic
+seams. Available face counts must match per paired analytic body. `merged_edges`
+records top-level `edges` counts as informational: `info` when equal, `differs` when
+unequal, or `not_checked` when unavailable. Mirror and full-turn revolve operations
+can split edge chains differently across SolidCraft releases without changing the shape. If either body has `other`
+or `mesh` surface kinds, merged totals are `not_checked`: separate free-form surface
+records can split equivalent geometry differently. `analytic_faces` compares the merged
+`face_types` counts for `plane`, `cylinder`, `cone` and `sphere`, recording source and
+written count objects and `pass`, `fail` or `not_checked`. Absent kinds in an available
+map count as zero; absent maps or a mesh body are `not_checked`. Thus a body with
+free-form faces still cannot lose cylindrical hole faces silently. A mismatch rejects
+the final replay and retains the imported final shape, even when volume and area pass.
+Available counts retain `source` and `written`
 integers. Failures retain compared evidence. Continuous measurements also
 record absolute `difference` and inclusive `tolerance`.
 Unavailable checks carry `reason`.
@@ -884,12 +915,15 @@ Volume, area and box checks use the existing measured replay tolerances above.
 The box difference is the larger of the distance between box centres and the largest
 absolute difference of a minimum or maximum coordinate, preserving both existing criteria. Centroid
 compares the actual centre of mass in source coordinates with the existing position allowance;
-a box centre is never substituted. Kernel face, edge and shell counts are informational.
+a box centre is never substituted. Raw kernel face, edge and shell counts are informational;
+merged face counts are required to match for analytic bodies when available;
+analytic surface-kind counts are compared for bodies with free-form faces too.
 The existing descriptive `replay.face_count` and `replay.centre` tolerance fields describe
 the base geometry comparator retained for inference; `source_comparison` describes these
 additional final history checks.
-These counts describe the evaluated representation: splitting or merging equivalent faces
-can change them without changing the shape. Closure must match the source, allowing sheets
+Raw counts describe the evaluated representation: splitting or merging equivalent faces
+can change them without changing the shape. Merged face counts avoid periodic seam differences; merged edges remain informational;
+matching counts alone still do not establish surface equivalence. Closure must match the source, allowing sheets
 that are open in both. Manifoldness is `not_checked` because the evaluator exposes no explicit
 manifold result; closure and counts do not establish it.
 

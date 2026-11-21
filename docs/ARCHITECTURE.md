@@ -460,6 +460,15 @@ else `PATH` or beside the program), when it times out (`--verify-timeout`, defau
 and repeated full-turn endpoints, an attempted replay that cannot finish instead keeps the
 original geometry and reports why. `--import-only` always writes the import design.
 
+When the source is one solid body with several disconnected regions, STEP imports
+those regions as separate solids. If history retains them in one body, verification
+requires every source region to import with positive volume, area and complete bounds,
+then compares their summed volume and area and combined bounding box with the replayed
+body. Available centroids are combined by volume; closure requires every region to
+be closed. Missing regions still fail. If replay also splits the regions, the usual
+per-piece checks apply. Single-region bodies and designs with multiple source bodies
+keep their existing one-to-one comparisons.
+
 Geometry written as an import is opened in the same CLI. A refusal, timeline errors, faces
 it cannot mesh, bodies inside out, or solids without volume produce a `Degraded` `geometry`
 loss, as does a solid it opens as an open shell (sheets aside). Face counts are not compared:

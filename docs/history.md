@@ -14,8 +14,12 @@ history, with no flattened-history warning.
 - When every feature in a design's history maps onto SolidCraft, the SolidCraft design keeps
   that history, editable, with the original geometry kept beside it. If `solidcraft-cli` is
   installed, Dutchman replays the history in it and compares each body's position, box, area,
-  and volume with the original before keeping it. A face-count difference (SolidCraft merges faces that share a
-  surface) or an open-shell warning alone does not fail that comparison. What maps, most of it from Fusion:
+  and volume with the original before keeping it. Available merged face counts
+  must also match on analytic bodies, so small missing holes cannot hide inside mesh tolerances.
+  Bodies with free-form faces compare analytic surface-kind counts instead of total topology. Raw kernel counts may differ at periodic seams; SolidCraft
+  merges adjacent pieces on the same surface before this check. Merged edge counts remain
+  informational because mirror and full-turn revolve operations can split edges differently.
+  An open-shell warning alone does not fail that comparison. What maps, most of it from Fusion:
   - sketches: lines, arcs, circles, conics, splines, and many constraints and dimensions;
     3D sketches of lines, arcs, circles, splines and points;
   - extrudes and revolves, with their end forms;
@@ -78,6 +82,14 @@ centre, with volume breaking ties. When the evaluator gives no box for a pair, t
 | `flattened` | No body-building prefix could be retained. The design keeps the imported geometry and mapped sketches with resolved planes, hidden for reference. |
 | `not_applicable` | There was no history to write, or `--import-only`. |
 
+When the source is one solid body with several disconnected regions, STEP imports
+those regions as separate solids. If history retains them in one body, verification
+requires every source region to import with positive volume, area and complete bounds,
+then compares their summed volume and area and combined bounding box with the replayed
+body. Available centroids are combined by volume; closure requires every region to
+be closed. Missing regions still fail. If replay also splits the regions, the usual
+per-piece checks apply. Single-region bodies and designs with multiple source bodies
+keep their existing one-to-one comparisons.
 
 ### Verification tolerances
 
@@ -90,11 +102,14 @@ cancel):
 
 | Compared | Allowed difference |
 |---|---|
-| Bodies | The same count. Bodies are paired by nearest box centre, volume breaking ties. |
+| Bodies | The same comparison count after the single-body disconnected-region normalization described above. Otherwise, bodies are paired by nearest box centre, volume breaking ties. |
 | Volume | The larger of 1e-4 (0.01%) of the larger volume and the mesh allowance: each body's area times the mesh chord, `max(5e-5 of the box diagonal, 1e-4 mm)`, summed for both bodies. With no area or box from SolidCraft, only 1e-4. |
 | Area | 1e-3 (0.1%) of the larger area, when SolidCraft gives both. |
 | Position (box centre) and box corners | The larger of 0.01 mm and 2e-4 (0.02%, four mesh chords) of the larger box diagonal; the centre distance and each minimum and maximum coordinate. Skipped when SolidCraft gives no box. |
 | Kernel face, edge and shell counts | Informational only: `info` when equal, `differs` when unequal. Equivalent split or merged faces may differ; counts never reject a final history. Earlier inference retains its geometry comparison policy. |
+| Merged face counts | Final history comparisons require equal available top-level counts per paired body. SolidCraft merges adjacent pieces of one surface and periodic seams. A mismatch retains the imported final shape and reports the differing count. Free-form and mesh surface totals are not comparable and are not checked. Missing counts are not checked. |
+| Merged edge counts | Informational only: `info` when equal, `differs` when unequal. Edge splitting after mirrors and full-turn revolves can differ across SolidCraft releases without changing the faces or shape. |
+| Analytic surface-kind counts | Available merged counts of planes, cylinders, cones and spheres must match, including in bodies with free-form faces. Mesh bodies are not checked. |
 | Centre of mass | Final history comparisons use the position allowance above on actual centroids, when both are available. A box centre is never substituted. |
 | Closed shell | Final history comparisons require source and replay closure to agree; a source sheet may be open. |
 | Named parameters | Replayed numeric values must match source values within 5e-12 times max(1, absolute source value), allowing measured reply serialization roundoff. Omitted or renamed parameters are not checked. |
@@ -113,7 +128,9 @@ replayed box diagonal when the stored box is the solid's own, or 1 mm and 2% whe
 over sampled points. More replayed bodies than the source lists is not a difference.
 
 **Geometry written as an import:** a solid body with a volume below 1e-6 mm³ counts as having
-none. There is no original to compare with, so only SolidCraft's own warnings apply.
+none. For a single solid body with multiple regions, every imported region must have
+volume. There is no independent source measurement to compare with; SolidCraft's warnings
+also apply.
 
 **Proofs against the source before a feature maps** (a failed proof leaves the feature out or
 refuses the choice rather than failing the replay):
