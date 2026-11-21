@@ -11649,6 +11649,101 @@ fn cube_body() -> Value {
     json!({"kind": "bodies", "value": ["synthetic:cube:body#0"]})
 }
 
+/// Deliberately attach a modeled-thread row to the synthetic cube. The row is a
+/// blocker, not permission to infer a cylinder or alter any of the stored geometry.
+fn unresolved_modeled_thread() -> Model {
+    modifying(json!({"kind": "cosmetic_thread", "value": {
+        "face": cube_faces(&["right"]), "standard": "ISO Metric profile",
+        "designation": "M8x1.25", "diameter": 8.0, "pitch": 1.25,
+        "modeled": true, "extent": {"kind": "blind", "length": 5.0}
+    }}))
+}
+
+#[test]
+fn modeled_thread_retains_final_geometry_and_reports_the_missing_recipe() {
+    let (document, report) = convert(
+        &unresolved_modeled_thread(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|feature| { feature["type"] == "import" && feature["suppressed"] == false }));
+    assert!(!document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|feature| feature["type"] == "thread"));
+    let loss = report
+        .losses()
+        .iter()
+        .find(|loss| loss.code.as_deref() == Some("history/modeled-thread-retained"))
+        .unwrap();
+    assert_eq!(loss.severity, Severity::Degraded);
+    assert!(loss.detail.contains("M8x1.25"));
+    let outcome = report.outcome().unwrap();
+    let thread = outcome
+        .features
+        .iter()
+        .find(|f| f.kind == "cosmetic_thread")
+        .unwrap();
+    assert_eq!(thread.status, dutchman_core::FeatureStatus::Blocked);
+    assert!(thread
+        .reason
+        .as_deref()
+        .unwrap()
+        .contains("exact groove profile"));
+}
+
+#[test]
+fn modeled_thread_fallback_replays_without_changing_the_source_volume() {
+    let Some(cli) = solidcraft() else { return };
+    let model = unresolved_modeled_thread();
+    let (bytes, _) = written(&model);
+    let mut original = Vec::new();
+    SolidCraftWriter::new()
+        .import_only(true)
+        .verification(Verification::Off)
+        .write(&model, &mut original, &mut Report::default())
+        .unwrap();
+    // Evaluation lists the hidden editable prefix too. Only the visible imported
+    // shape is the final model; the prefix intentionally remains a separate body.
+    evaluated(&cli, &bytes);
+    let dir = tempfile::tempdir().unwrap();
+    let design = dir.path().join("thread.sc");
+    let script = dir.path().join("inspect.json");
+    let output = dir.path().join("bodies.json");
+    std::fs::write(&design, bytes).unwrap();
+    std::fs::write(
+        &script,
+        json!([{ "command": "document.inspect", "params": {"measure": true} }]).to_string(),
+    )
+    .unwrap();
+    assert!(std::process::Command::new(&cli)
+        .arg("run")
+        .arg(&script)
+        .arg("--in")
+        .arg(&design)
+        .arg("--results")
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap()
+        .success());
+    let inspected: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+    let actual: Vec<_> = inspected[0]["bodies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|body| body["visible"] == true)
+        .map(|body| body["volume_mm3"].as_f64().unwrap())
+        .collect();
+    assert_eq!(actual, volumes(&cli, &original));
+    assert_eq!(actual.len(), 1);
+    assert!((actual[0] - 1000.0).abs() / 1000.0 < dutchman_solidcraft::VOLUME_TOLERANCE);
+}
+
 fn body_mirror_definition() -> Value {
     json!({"kind": "pattern", "value": {"seeds": [{"kind": "bodies", "value": cube_body()}], "pattern": {"kind": "mirror", "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
             "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}}})

@@ -426,6 +426,13 @@ numeric values. Metric labels tolerate decimal rounding and unit-conversion nois
 Matching UNC/UNF values still report that SolidCraft's separate cosmetic Thread feature
 is not supported yet; tapped-hole support does not imply separate Thread support.
 
+Separate modeled Thread features keep their helical shape in the imported final geometry
+and stop editable history. When reached in the timeline, a Degraded `history/modeled-thread-retained` loss
+preserves the designation when available and explains that CADIR does not resolve hand, tolerance class or the exact
+groove profile. SolidCraft 0.45's modeled option does not recover those missing facts.
+The designation remains in the report; no cosmetic face selection is guessed on the
+threaded final body. See [thread history](../../docs/history.md).
+
 Planar hole-entry faces can have rounded corners or existing circular holes. Their own
 source boundary and SolidCraft replay must prove the face before drilling; placements must
 stay inside the filled face and drill inward. A blocked boundary or replay reason means the

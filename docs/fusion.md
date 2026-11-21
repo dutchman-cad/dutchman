@@ -654,8 +654,14 @@ and verification use the imported body as usual.
 Fusion thread construction records carry a designation, nominal-size text, profile/type,
 physical pitch, and, in extended records, class and hand controls. The pinned codec projects
 the designation, numeric nominal size, profile as `standard`, and pitch into CADIR; it does
-not expose nominal-size text precision or class on the neutral cosmetic-thread operation.
+not expose nominal-size text precision, class, hand, an internal/external control, or the
+exact groove profile on the neutral cosmetic-thread operation.
 Dutchman uses only that neutral operation. The table designation supplies the nominal size;
 secondary numeric values are compared at their serialized decimal precision. Unsupported
 class or hand suffixes in a designation are still reported. See [cosmetic threads](history.md)
 for rounding, inch units, and target limits.
+
+Modeled thread history remains blocked even on SolidCraft 0.45: the available nominal
+thread data cannot prove an exact helical reconstruction. The final modeled geometry is
+retained, with the source designation in a Degraded `history/modeled-thread-retained`
+loss. See [modeled threads](history.md) for the profile and face-selection limits.

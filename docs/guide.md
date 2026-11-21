@@ -624,6 +624,13 @@ floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are c
 separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
 [cosmetic threads](history.md) for details.
 
+Separate modeled Thread features keep their helical shape in the imported final geometry
+and stop editable history. When reached in the timeline, a Degraded `history/modeled-thread-retained` loss
+preserves the designation when available and explains that CADIR does not resolve hand, tolerance class or the exact
+groove profile. SolidCraft 0.45's modeled option does not recover those missing facts.
+The designation remains in the report; no cosmetic face selection is guessed on the
+threaded final body. See [thread history](history.md).
+
 One stored sketch loop does not prove a native profile selection when other solid
 curves remain, including curves needed by a later trimmed cut. Dutchman requires
 source-confirmed inference in that case; otherwise it preserves the final shape
