@@ -15,6 +15,8 @@ mod sketch_instance;
 mod slicing;
 mod solidworks;
 
+pub(crate) use poses::flattened_completeness;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -122,7 +124,8 @@ impl Assembly {
     pub fn completeness(&self) -> Completeness {
         let mut groups: BTreeMap<(Option<String>, String, Stage), u64> = BTreeMap::new();
         let mut placed_empty = 0;
-        let placed = self.count(1, &mut groups, &mut placed_empty, 0);
+        let mut unplaced = BTreeMap::new();
+        let placed = self.count(1, &mut groups, &mut placed_empty, &mut unplaced, false, 0);
         let mut left_out: Vec<LeftOutGroup> = groups
             .into_iter()
             .map(|((file, reason, stage), count)| LeftOutGroup {
@@ -136,6 +139,7 @@ impl Assembly {
         Completeness {
             placed,
             placed_empty,
+            unplaced,
             left_out,
         }
     }
@@ -147,6 +151,8 @@ impl Assembly {
         times: u64,
         groups: &mut BTreeMap<(Option<String>, String, Stage), u64>,
         placed_empty: &mut u64,
+        unplaced: &mut BTreeMap<String, u64>,
+        parent_unproven: bool,
         depth: usize,
     ) -> u64 {
         for left in &self.left_out {
@@ -156,7 +162,7 @@ impl Assembly {
             *count = count.saturating_add(times);
         }
         let mut placed = 0u64;
-        let mut uses: BTreeMap<usize, u64> = BTreeMap::new();
+        let mut uses: BTreeMap<(usize, bool), u64> = BTreeMap::new();
         for (index, placement) in self.placements.iter().enumerate() {
             if let Err(kind) = crate::placement::rigid(&placement.transform) {
                 let file = self
@@ -168,7 +174,16 @@ impl Assembly {
                 *count = count.saturating_add(times);
                 continue;
             }
-            if self
+            let unproven = parent_unproven || placement.unproven;
+            if unproven {
+                let name = placement
+                    .name
+                    .clone()
+                    .or_else(|| self.parts.get(placement.part).map(|p| p.name.clone()))
+                    .unwrap_or_else(|| "unnamed part".to_owned());
+                let count = unplaced.entry(name).or_default();
+                *count = count.saturating_add(times);
+            } else if self
                 .parts
                 .get(placement.part)
                 .is_some_and(|part| part.assembly.is_none() && part.ir.geometry.bodies.is_empty())
@@ -177,17 +192,19 @@ impl Assembly {
             } else {
                 placed = placed.saturating_add(times);
             }
-            *uses.entry(placement.part).or_default() += 1;
+            *uses.entry((placement.part, unproven)).or_default() += 1;
         }
         if depth >= MAX_DEPTH {
             return placed;
         }
-        for (part, used) in uses {
+        for ((part, unproven), used) in uses {
             if let Some(sub) = self.parts.get(part).and_then(|part| part.assembly.as_ref()) {
                 placed = placed.saturating_add(sub.count(
                     times.saturating_mul(used),
                     groups,
                     placed_empty,
+                    unplaced,
+                    unproven,
                     depth + 1,
                 ));
             }
@@ -294,6 +311,8 @@ fn turn(angle: f64) -> Placement3x4 {
 /// One part placed in an assembly.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Placement {
+    /// The archive did not provide a readable position for this occurrence.
+    pub unproven: bool,
     /// The occurrence's name in the source, when it has one.
     pub name: Option<String>,
     /// Which of [`Assembly::parts`] it places.
@@ -444,6 +463,11 @@ pub(crate) fn resolve(
 ) -> Result<Assembly, Error> {
     let wire = serde_json::to_value(&model.ir.model)
         .map_err(|err| Error::Decode(format!("cannot read the assembly: {err}")))?;
+    let native = serde_json::to_value(&model.ir.native)
+        .map_err(|err| Error::Decode(format!("cannot read the assembly positions: {err}")))?;
+    let document = serde_json::json!({"model": wire, "native": native});
+    let unproven = poses::unproven(&document, report);
+    let wire = document.get("model").unwrap_or(&Value::Null);
     let mut occurrences: Vec<&Value> = wire
         .get("occurrences")
         .and_then(Value::as_array)
@@ -577,6 +601,10 @@ pub(crate) fn resolve(
         };
         match transform(occurrence) {
             Ok(transform) => placements.push(Placement {
+                unproven: occurrence
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| unproven.contains(id)),
                 hidden: false,
                 name,
                 part,
@@ -738,6 +766,7 @@ fn local_components_with_threads(
     let source = slicing::Packed::read(&packed)?;
     let mut document = source.document()?;
     let displayed = poses::select(model, &mut document, positions, report)?;
+    let unproven = poses::unproven(&document, report);
     let wire = document.get("model").unwrap_or(&Value::Null);
     let arena = |name: &str| {
         wire.get(name)
@@ -829,6 +858,7 @@ fn local_components_with_threads(
         layouts.classify(occurrence, &children, external, 0);
     }
     let mut tree = Tree {
+        unproven,
         prepared,
         external,
         external_built: BTreeMap::new(),
@@ -885,6 +915,7 @@ fn local_components_with_threads(
         definitions.push(None);
         identities.push(None);
         placements.push(Placement {
+            unproven: false,
             hidden: parts.last().is_some_and(all_hidden),
             name: None,
             part: parts.len() - 1,
@@ -926,6 +957,52 @@ fn local_components_with_threads(
         identities,
         definitions,
     };
+    // Owned bodies are excluded from the loose-body part. If their definition has
+    // no occurrence, no slice writes them; account for that gap explicitly.
+    fn written_bodies(assembly: &Assembly, kept: &mut BTreeSet<String>, depth: usize) {
+        if depth > MAX_DEPTH {
+            return;
+        }
+        for part in &assembly.parts {
+            if let Some(sub) = &part.assembly {
+                written_bodies(sub, kept, depth + 1);
+            } else {
+                kept.extend(
+                    part.ir
+                        .geometry
+                        .bodies
+                        .iter()
+                        .map(|body| body.id.to_string()),
+                );
+            }
+        }
+    }
+    let mut kept_bodies = BTreeSet::new();
+    written_bodies(&assembly, &mut kept_bodies, 0);
+    let missing = model
+        .ir
+        .geometry
+        .bodies
+        .iter()
+        .filter(|body| !kept_bodies.contains(body.id.as_str()))
+        .count();
+    if missing != 0 {
+        let reason = "A decoded body belongs to a component with no written occurrence";
+        assembly.left_out.extend((0..missing).map(|_| LeftOut {
+            name: None,
+            file: None,
+            reason: reason.to_owned(),
+            stage: Stage::Map,
+        }));
+        report.push_coded(
+            Severity::Dropped,
+            "component bodies",
+            "dutchman/assembly.bodies-without-occurrences",
+            format!(
+                "{missing} decoded bodies have no written component occurrence and are left out"
+            ),
+        );
+    }
     fn bindings(assembly: &Assembly, kept: &mut BTreeSet<String>) {
         for part in &assembly.parts {
             kept.extend(
@@ -2542,6 +2619,7 @@ fn prepare_slices<'a>(
 
 /// A design's occurrence tree, turned into parts and sub-assemblies one definition at a time.
 struct Tree<'a> {
+    unproven: BTreeSet<String>,
     prepared: BTreeMap<Slice<'a>, Model>,
     external: &'a ExternalParts,
     external_built: BTreeMap<usize, usize>,
@@ -2649,6 +2727,7 @@ impl<'a> Tree<'a> {
                     .as_ref()
                     .is_ok_and(|part| self.parts.get(*part).is_some_and(all_hidden));
             placements.push(Placement {
+                unproven: self.unproven.contains(id),
                 hidden,
                 name: occurrence
                     .get("name")
@@ -2819,6 +2898,7 @@ impl<'a> Tree<'a> {
                 self.part_identities
                     .push(Some(format!("bodies of {definition}")));
                 placements.push(Placement {
+                    unproven: false,
                     hidden,
                     name: None,
                     part: self.parts.len() - 1,
@@ -3917,6 +3997,178 @@ mod tests {
         Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
+        }
+    }
+
+    #[test]
+    fn unproven_positions_account_for_bodies_without_occurrences() {
+        let model = with_components(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut orphan = wire["geometry"]["bodies"][0].clone();
+        orphan["id"] = json!("synthetic:test:body#unplaced");
+        wire["geometry"]["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(orphan);
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "synthetic:test:component#unplaced", "kind": "part",
+                "bodies": ["synthetic:test:body#unplaced"], "sketches": [], "bom_properties": {}
+            }));
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let mut report = Report::default();
+        let (assembly, _) = local_components_with_threads(
+            &model,
+            &BTreeMap::new(),
+            1,
+            crate::PartPositions::FirstPlaced,
+            &mut report,
+        )
+        .unwrap()
+        .unwrap();
+        let counts = assembly.completeness();
+        assert_eq!(counts.placed, 2);
+        assert_eq!(counts.left_out_count(), 1);
+        assert_eq!(counts.left_out[0].stage, Stage::Map);
+        assert!(report.losses().iter().any(
+            |loss| loss.code.as_deref() == Some("dutchman/assembly.bodies-without-occurrences")
+        ));
+    }
+
+    #[test]
+    fn unproven_positions_include_dependent_children_and_preserve_proven_copies() {
+        let project = Project::new(&[
+            (
+                "top.iam",
+                vec![
+                    occurrence(0, "sub.iam", root(), 0.0),
+                    occurrence(1, "sub.iam", root(), 30.0),
+                ],
+            ),
+            (
+                "sub.iam",
+                vec![
+                    occurrence(0, "cube.ipt", root(), 0.0),
+                    occurrence(1, "cube.ipt", root(), 15.0),
+                ],
+            ),
+        ]);
+        let mut top = project.read("top.iam", &mut Report::default()).unwrap();
+        let assembly = top.assembly.as_mut().unwrap();
+        assembly.placements[0].unproven = true;
+        let counts = assembly.completeness();
+        assert_eq!(counts.placed, 3);
+        assert_eq!(counts.unplaced_count(), 3);
+        assert_eq!(counts.placements(), 6);
+        assert!(counts
+            .unplaced_message()
+            .unwrap()
+            .starts_with("3 parts couldn't be placed"));
+    }
+
+    #[test]
+    fn unproven_positions_include_local_stored_frame_fallbacks_but_not_decoded_identity() {
+        for mode in [
+            crate::PartPositions::Smart,
+            crate::PartPositions::FirstPlaced,
+        ] {
+            let model = with_components(true);
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["occurrences"][0]["id"] =
+                json!("f3d:model:component#fallback/stored-frame-occurrence");
+            wire["model"]["occurrences"][0]["name"] = json!("Unplaced block");
+            wire["model"]["occurrences"][1]["native_ref"] =
+                json!("f3d:Design/BulkStream.dat:design-component-occurrence#11");
+            wire["model"]["occurrences"][1]["transform"] = json!(IDENTITY);
+            wire["native"]["f3d"]["design_component_occurrences"] = json!([
+                {"id":"f3d:Design/BulkStream.dat:design-component-occurrence#11", "transform": IDENTITY}
+            ]);
+            let model = Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ..model
+            };
+            let mut report = Report::default();
+            let (assembly, _) =
+                local_components_with_threads(&model, &BTreeMap::new(), 1, mode, &mut report)
+                    .unwrap()
+                    .unwrap();
+            // First-placed is a selection rule, not evidence that the archive pose decoded.
+            assert_eq!(report.part_positions().unwrap().1.first_placed, 2);
+            assert!(report
+                .placement_assumptions()
+                .iter()
+                .any(|(part, reason)| part == "Unplaced block"
+                    && *reason == crate::PlacementAssumption::Identity));
+            assert!(assembly.placements.iter().all(|p| p.transform == IDENTITY));
+            let counts = assembly.completeness();
+            assert_eq!(counts.placed, 1);
+            assert_eq!(counts.unplaced.get("Unplaced block"), Some(&1));
+            assert_eq!(counts.placements(), 2);
+            assert_eq!(
+                counts.unplaced_message().unwrap(),
+                "1 part couldn't be placed (its position in the archive couldn't be read)."
+            );
+        }
+    }
+
+    #[test]
+    fn unproven_positions_are_not_counted_as_placed() {
+        for undecoded in [false, true] {
+            let model = with_components(true);
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["occurrences"][0]["native_ref"] = json!("f3d:xref:reference#1");
+            wire["model"]["occurrences"][0]["name"] = json!("Panel");
+            wire["native"]["f3d"]["xref_references"] = json!([
+                {"id":"f3d:xref:reference#1", "ordinal":0, "from":"assembly.f3d", "relative_path":"panel.f3d", "neutron_role":"panel-role", "neutron_data":"", "transform":null}
+            ]);
+            // Even a fallback matrix must not conceal a decoder refusal.
+            if undecoded {
+                wire["native"]["f3d"]["xref_references"][0]["transform"] = json!([
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0]
+                ]);
+            }
+            let model = Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ..model
+            };
+            let mut report = Report::default();
+            if undecoded {
+                report.push_coded(
+                    Severity::Degraded,
+                    "xref",
+                    "f3d/xref.placement-undecoded",
+                    "external occurrence panel.f3d has typed placement carrier 7 for roles []",
+                );
+            }
+            let (mut assembly, _) = local_components_with_threads(
+                &model,
+                &BTreeMap::new(),
+                1,
+                crate::PartPositions::Smart,
+                &mut report,
+            )
+            .unwrap()
+            .unwrap();
+            let counts = assembly.completeness();
+            assert_eq!(counts.placed, 1);
+            assert_eq!(counts.unplaced.get("Panel"), Some(&1));
+            assert_eq!(counts.placements(), 2);
+            assert!(!counts.is_complete());
+            assert_eq!(
+                counts.unplaced_message().unwrap(),
+                "1 part couldn't be placed (its position in the archive couldn't be read)."
+            );
+            // A proven identity remains placed, including when it shares the same definition.
+            assembly.placements[0].unproven = false;
+            assert_eq!(assembly.completeness().placed, 2);
         }
     }
 

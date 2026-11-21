@@ -380,6 +380,8 @@ Call `inspect` with `input`. It writes nothing. Read:
 
 - `conversion.possible` and `conversion.reason`: whether conversion can succeed and why it
   cannot. `ok: true` means inspection succeeded, even when conversion is impossible.
+  Unreadable occurrence positions can instead return `ok: false` with partial
+  verification and completeness counts after a successful read.
 - `geometry.bodies`, `geometry.faces`: what was read.
 - `mode`: `history` (editable feature history) or `import` (solid geometry only).
 - `verification.reason`: why there is no history, when there is none.
@@ -1023,7 +1025,14 @@ what to share. No diagnostic tool sends anything. Use `doctor` for folder checks
 ## Folder doctor and matching STEP
 
 Assembly completeness separates `placed` (geometry or child holders) from
-`placed_empty` (leaf parts with no bodies), with both included in `placements`.
+`placed_empty` (leaf parts with no bodies) and `unplaced` (part names mapped to counts
+whose archive positions could not be read). All are included in `placements`;
+`unplaced` is excluded from `placed`. Unreadable local and xref positions, including assumed
+identity positions and their dependent children, mark the result incomplete and
+`verification.status` partial and JSON `ok: false`, even when output was written.
+This includes single designs whose local components stay flattened because their
+occurrence poses could not be read. Decoded bodies absent from all written component
+occurrences are counted in `completeness.left_out` with their cause.
 The summary and desktop and web cards show empty placements separately and mark the
 assembly incomplete. Empty leaves add Degraded losses naming their anonymous part
 numbers; child holders do not. Solid regions reduced to open sheets add a counted

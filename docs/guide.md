@@ -986,6 +986,17 @@ move together. It keeps first placements when a check fails or cannot be establi
 Last-shown accepts available current poses without those checks. First-placed ignores later
 moves and restores the old placement choice. Joints work from the selected placements.
 
+Parts whose archive positions could not be read appear under `completeness.unplaced`
+in the JSON report and do not count as placed. The CLI, app and plugin say
+“N parts couldn't be placed (their position in the archive couldn't be read).”
+The result is incomplete, with `verification.status` set to `partial`. Output is
+still written; JSON `ok` is `false` and the CLI returns exit status 1
+when parts are unplaced. This also covers single designs whose local components
+remain flattened because their occurrence positions could not be read. A replay
+against the same flattened source cannot prove their positions. Geometry and
+fallback transforms are unchanged. Decoded bodies without a written component
+occurrence are counted in `completeness.left_out` with their cause.
+
 Use CLI `--part-positions smart|last-shown|first-placed`, MCP `part_positions`, or desktop
 **Advanced → Part positions** (remembered). `--stored-placements` remains a first-placed
 alias. Smart and last-shown prefer decoder-bound displayed poses when available, without

@@ -246,7 +246,9 @@ impl FileView {
                 .map(PathBuf::from)
         };
         let input = path("/input/path").unwrap_or_default();
-        let progress = if report.get("ok").and_then(Value::as_bool) == Some(true) {
+        let progress = if report.get("ok").and_then(Value::as_bool) == Some(true)
+            || (json::unplaced_message(report).is_some() && report.get("error").is_none())
+        {
             Progress::Converted
         } else {
             Progress::Failed
@@ -497,6 +499,9 @@ impl RunView {
 
 /// Whether an assembly converted with placements left out or placed empty.
 pub fn incomplete(report: &Value) -> bool {
+    if json::unplaced_message(report).is_some() {
+        return true;
+    }
     report
         .pointer("/completeness/placed_empty")
         .and_then(Value::as_u64)
@@ -560,6 +565,9 @@ pub fn missing_summary(missing: &[String]) -> String {
 /// What was written, in a sentence.
 pub fn outcome(report: &Value) -> String {
     let mut text = outcome_without_memory_note(report);
+    if let Some(message) = json::unplaced_message(report) {
+        text.push_str(&format!(" {message}"));
+    }
     if report.get("retried_after_low_memory") == Some(&Value::Bool(true))
         && report.get("ok") == Some(&Value::Bool(true))
     {

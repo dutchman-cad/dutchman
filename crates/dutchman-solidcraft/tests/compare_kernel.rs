@@ -56,6 +56,7 @@ fn public_synthetic_controls_and_planted_assembly_placement() {
     .unwrap();
     let pair = |x| {
         let at = |x| dutchman_core::Placement {
+            unproven: false,
             name: None,
             part: 0,
             hidden: false,

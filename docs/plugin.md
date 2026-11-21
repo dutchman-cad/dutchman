@@ -274,7 +274,7 @@ part and feature names; archive member paths are replaced with plain description
 | `help` | "Is there a problem? Is something missing?", followed by the Discord invite, DM Dutchy, and GitHub issue links, in that order |
 | `shape_check` | Nullable `{result, reason}` with plain descriptions such as "Not checked" or "No editable history to check" |
 | `features` | Nullable list of `{name, feature, result, reason}` in source order; results are `Converted`, `Not needed`, `Left out`, or `Not supported yet` |
-| `assembly` | Nullable `{placed_parts, empty_parts, missing_parts}`; missing rows contain `{part, reason, placements}` |
+| `assembly` | Nullable `{placed_parts, empty_parts, unplaced_parts, placement_summary, missing_parts}`; `unplaced_parts` rows contain `{part, placements}` for unreadable archive positions and dependent children. These do not count in `placed_parts` or `empty_parts`. `placement_summary` is the plain unreadable-position sentence (or `null`); the headline is `Incomplete`. Missing rows contain `{part, reason, placements}` |
 | `parts` | List of `{name, shape_check, converted_features, source_features}` |
 | `losses` | List of `{level, part_or_feature, reason}`; `level` is `Info`, `Degraded`, or `Dropped` |
 | `truncation` | Present only when shortened: `omitted_items` count and `details_losses_omitted` boolean |

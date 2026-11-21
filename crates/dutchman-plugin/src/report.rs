@@ -114,6 +114,12 @@ fn status(report: &Report) -> &'static str {
     }
 }
 fn summary(report: &Report) -> String {
+    if let Some(message) = report
+        .completeness()
+        .and_then(dutchman_core::Completeness::unplaced_message)
+    {
+        return format!("Incomplete. {message}");
+    }
     let counts: Vec<_> = [
         (Severity::Info, "Info"),
         (Severity::Degraded, "Degraded"),
@@ -159,7 +165,7 @@ pub(crate) fn readable(report: &Report) -> Value {
             "result": match f.status { FeatureStatus::Mapped => "Converted", FeatureStatus::NotNeeded => "Not needed", FeatureStatus::LeftOut => "Left out", FeatureStatus::Blocked => "Not supported yet" },
             "reason": f.reason.as_deref().map(crate::notice::plain)
         })).collect::<Vec<_>>()),
-        "assembly": report.completeness().map(|c| json!({"placed_parts": c.placed, "empty_parts": c.placed_empty, "missing_parts": c.left_out.iter().map(|p| json!({"part": p.file.as_deref().map(crate::notice::plain), "reason": crate::notice::plain(&p.reason), "placements": p.count})).collect::<Vec<_>>()})),
+        "assembly": report.completeness().map(|c| json!({"placed_parts": c.placed, "empty_parts": c.placed_empty, "unplaced_parts": c.unplaced.iter().map(|(name, count)| json!({"part": crate::notice::plain(name), "placements": count})).collect::<Vec<_>>(), "placement_summary": c.unplaced_message(), "missing_parts": c.left_out.iter().map(|p| json!({"part": p.file.as_deref().map(crate::notice::plain), "reason": crate::notice::plain(&p.reason), "placements": p.count})).collect::<Vec<_>>()})),
         "parts": report.parts().iter().map(|p| json!({"name": crate::notice::plain(&p.name), "shape_check": verification(&p.check), "converted_features": p.mapped, "source_features": p.total})).collect::<Vec<_>>(),
         "losses": report.losses().iter().map(|l| json!({"level": match l.severity { Severity::Info => "Info", Severity::Degraded => "Degraded", Severity::Dropped => "Dropped" }, "part_or_feature": crate::notice::plain(&l.subject), "reason": crate::notice::plain(&l.detail)})).collect::<Vec<_>>()
     })
@@ -178,6 +184,25 @@ fn clip(text: &str, max: usize) -> String {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unproven_positions_make_the_import_report_incomplete() {
+        let mut report = Report::default();
+        report.set_completeness(dutchman_core::Completeness {
+            unplaced: [("Panel".into(), 1)].into(),
+            ..Default::default()
+        });
+        let value = host(&report);
+        assert_eq!(
+            value["summary"],
+            "Incomplete. 1 part couldn't be placed (its position in the archive couldn't be read)."
+        );
+        assert_eq!(value["details"]["result"], "Incomplete");
+        assert_eq!(
+            value["details"]["assembly"]["unplaced_parts"][0]["part"],
+            "Panel"
+        );
+    }
 
     #[test]
     fn late_severe_losses_survive_item_and_byte_compaction() {

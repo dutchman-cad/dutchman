@@ -527,6 +527,8 @@ and is absent from MCP and `--json` output.
 
 For `inspect`, `ok: true` means the file was read. Check `conversion.possible` and
 `conversion.reason` before converting: inspection can succeed even when conversion cannot.
+Unreadable occurrence positions return `ok: false` with partial verification and
+completeness counts even when the file was read successfully.
 
 `contents` lists a file's bodies (kind, name, hidden), its feature timeline (kind, name,
 suppressed) and its parameters (name, value, unit, expression, owning feature), and gives each
@@ -1118,7 +1120,14 @@ See the [paste-in prompt](troubleshooting.md#diagnose-with-an-assistant).
 ### Local folder and STEP checks
 
 Assembly completeness separates `placed` (geometry or child holders) from
-`placed_empty` (leaf parts with no bodies), with both included in `placements`.
+`placed_empty` (leaf parts with no bodies) and `unplaced` (part names mapped to counts
+whose archive positions could not be read). All are included in `placements`;
+`unplaced` is excluded from `placed`. Unreadable local and xref positions, including assumed
+identity positions and their dependent children, mark the result incomplete and
+`verification.status` partial and JSON `ok: false`, even when output was written.
+This includes single designs whose local components stay flattened because their
+occurrence poses could not be read. Decoded bodies absent from all written component
+occurrences are counted in `completeness.left_out` with their cause.
 The summary and desktop and web cards show empty placements separately and mark the
 assembly incomplete. Empty leaves add Degraded losses naming their anonymous part
 numbers; child holders do not. Solid regions reduced to open sheets add a counted

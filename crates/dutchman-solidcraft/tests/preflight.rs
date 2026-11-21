@@ -67,6 +67,7 @@ fn components_without_exportable_geometry_have_no_planned_history() {
             identities: vec![Some("cube".to_owned()), Some("empty".to_owned())],
             placements: (0..2)
                 .map(|part| Placement {
+                    unproven: false,
                     name: None,
                     part,
                     transform: [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.]],

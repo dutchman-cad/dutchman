@@ -12,6 +12,10 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### Known issues
 
+- Some Fusion assemblies, for example ones whose parts are linked inside the archive, now report
+  "N parts couldn't be placed" instead of quietly placing them at the origin; reading those
+  positions is next ([dutchman-cad/dutchman#858](https://github.com/dutchman-cad/dutchman/issues/858),
+  [cadmpeg/cadmpeg#1880](https://github.com/cadmpeg/cadmpeg/issues/1880)).
 - A kept feature can replay from the wrong sketch region and still be counted as kept; the final
   shape is unaffected, because it comes from the source design
   ([dutchman-cad/dutchman#489](https://github.com/dutchman-cad/dutchman/issues/489)).

@@ -423,6 +423,8 @@ fn local_components(
     }
     if let Some(assembly) = &model.assembly {
         report.set_completeness(assembly.completeness());
+    } else if let Some(completeness) = assembly::flattened_completeness(model, report) {
+        report.set_completeness(completeness);
     }
     report.record_missing_links(&missing_linked_components(model));
 }
@@ -845,6 +847,88 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn unproven_positions_in_a_flattened_design_override_verified_replay() {
+        // Synthetic cube geometry and aggregate reader findings: no expanded local
+        // occurrence tree, so replay sees exactly the same stored-frame source.
+        let mut model = read(
+            Format::FusionArchive,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/generated_unit_cube.f3d"),
+            &mut Report::default(),
+        )
+        .unwrap();
+        model.ir.model.occurrences.clear();
+        model.assembly = None;
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let template = wire["geometry"]["bodies"][0].clone();
+        let mut bodies = Vec::new();
+        let mut definitions = Vec::new();
+        for index in 0..3 {
+            let id = if index == 0 {
+                template["id"].as_str().unwrap().to_owned()
+            } else {
+                format!("synthetic:test:body#block-{index}")
+            };
+            let mut body = template.clone();
+            body["id"] = json!(id);
+            bodies.push(body);
+            definitions.push(json!({
+                "id": format!("synthetic:test:component#block-{index}"), "kind": "part",
+                "bodies": [id], "sketches": [], "bom_properties": {}
+            }));
+        }
+        wire["geometry"]["bodies"] = json!(bodies);
+        wire["model"]["product_definitions"] = json!(definitions);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        for codes in [
+            vec!["f3d/assembly.local-occurrence-path-pose-unresolved"],
+            vec!["f3d/assembly.local-occurrence-envelope-native"],
+            vec!["f3d/assembly.stored-frame-occurrence"],
+            vec![
+                "f3d/assembly.local-occurrence-envelope-native",
+                "f3d/assembly.local-occurrence-path-pose-unresolved",
+            ],
+        ] {
+            for outcome_first in [false, true] {
+                let mut report = Report::default();
+                let outcome = Outcome {
+                    mode: Mode::History,
+                    check: Check::Verified,
+                    features: Vec::new(),
+                };
+                if outcome_first {
+                    report.set_outcome(outcome.clone());
+                }
+                for code in &codes {
+                    report.push_coded(
+                        Severity::Degraded,
+                        "local components",
+                        code,
+                        "3 local carriers could not be applied",
+                    );
+                }
+                local_components(&mut model, 1, PartPositions::FirstPlaced, &mut report);
+                if !outcome_first {
+                    report.set_outcome(outcome);
+                }
+                assert!(model.assembly.is_none());
+                assert_eq!(model.ir.geometry.bodies.len(), 3);
+                let counts = report.completeness().unwrap();
+                assert_eq!(counts.placed, 0);
+                assert_eq!(counts.unplaced_count(), 3);
+                assert_eq!(counts.placements(), 3);
+                assert_eq!(
+                    counts.unplaced_message().unwrap(),
+                    "3 parts couldn't be placed (their position in the archive couldn't be read)."
+                );
+                assert!(matches!(report.outcome().unwrap().check, Check::Partial(_)));
+            }
+        }
+        let mut report = Report::default();
+        local_components(&mut model, 1, PartPositions::FirstPlaced, &mut report);
+        assert!(report.completeness().is_none());
+    }
+
+    #[test]
     fn missing_links_are_reported_but_embedded_components_are_complete() {
         let mut model = read(
             Format::FusionArchive,
@@ -885,6 +969,7 @@ mod tests {
             report.set_completeness(Completeness {
                 placed: 1,
                 placed_empty: 0,
+                unplaced: Default::default(),
                 left_out: Vec::new(),
             });
             report.record_missing_links(&names);
