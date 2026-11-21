@@ -616,7 +616,9 @@ are kept and reported as a conflict. Single-file output paths are unchanged.
 
 ### Feature history and the SolidCraft check
 
-Body moves require SolidCraft 0.45 or newer. Dutchman keeps resolved translations
+Body moves require SolidCraft 0.45 or newer. This requirement applies only to designs
+with a body move; it does not trigger a general history-loss notice for older targets.
+Dutchman keeps resolved translations
 and axis-angle rotations, including explicit pivots, when every selected body has
 a proven earlier name. CADIR supplies millimetres and radians; the writer never
 infers a transform from final geometry. Unresolved body selections, unresolved

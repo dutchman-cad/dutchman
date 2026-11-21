@@ -423,7 +423,8 @@ pub const WINDOW_OLDEST: [u64; 3] = [0, 40, 0];
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
 pub enum VersionGate {
-    /// Rigid moves of resolved earlier bodies.
+    /// Rigid moves of resolved earlier bodies. This feature-specific gate does not
+    /// count towards an installed release's general history notice.
     MoveBody,
     /// Linked Insert Design with cached bodies and a source file.
     LinkedDesign,
@@ -499,7 +500,6 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         return true;
     }
     if [
-        VersionGate::MoveBody,
         VersionGate::HistoryBody,
         VersionGate::SplitFaces,
         VersionGate::ScopedBodies,
@@ -3947,7 +3947,7 @@ mod version_tests {
         assert_eq!(target.extension(), previous.extension());
         assert!(!VersionGate::MoveBody.supported(previous));
         assert!(VersionGate::MoveBody.supported(target));
-        assert!(target_loses_history(previous));
+        assert!(!target_loses_history(previous));
         assert!(!target_loses_history(target));
     }
 

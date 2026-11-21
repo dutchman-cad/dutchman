@@ -20231,6 +20231,71 @@ fn body_moves_keep_resolved_transforms_and_selected_bodies() {
 }
 
 #[test]
+fn body_moves_rebuild_from_a_captured_base_with_two_identity_aliases() {
+    let base = based_cube_changed_later(true);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|feature| feature["ordinal"] == 0 || feature["ordinal"] == 9);
+    let mut inputs = Vec::new();
+    for (id, shift) in [(9, 7.0), (10, -7.0)] {
+        let state = format!("synthetic:history-input:state#{id}");
+        let body = format!("synthetic:history-input:body#{id}");
+        let owner = format!("f3d:model:feature#{id}");
+        inputs.push(json!({"id": state, "input_of": owner, "bodies": [body],
+            "faces": [], "edges": [], "vertices": [], "edge_geometry": []}));
+        let mut feature = wire["model"]["features"][1].clone();
+        feature["id"] = json!(owner);
+        feature["ordinal"] = json!(id);
+        feature["name"] = json!(format!("Move {id}"));
+        let mut definition = body_move([shift, 0.0, 0.0], None);
+        definition["value"]["bodies"] = json!({"kind": "historical", "value": {
+            "state": state, "bodies": [body], "native": "synthetic input"
+        }});
+        feature["definition"]["value"] = definition;
+        if id == 9 {
+            wire["model"]["features"][1] = feature;
+        } else {
+            wire["model"]["features"]
+                .as_array_mut()
+                .unwrap()
+                .push(feature);
+        }
+    }
+    wire["model"]["feature_input_topologies"] = json!(inputs);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0));
+    let (document, report) = convert(&model, &writer);
+    assert!(
+        history_line(&report).contains("3 of 3 features rebuilt"),
+        "{report:?}"
+    );
+    let features = document["features"].as_array().unwrap();
+    let imported = features.iter().find(|f| f["type"] == "import").unwrap();
+    for moved in features.iter().filter(|f| f["type"] == "move") {
+        assert_eq!(moved["bodies"], imported["body_names"]);
+    }
+    assert_eq!(features.iter().filter(|f| f["type"] == "move").count(), 2);
+    if let Some(cli) = solidcraft() {
+        if dutchman_solidcraft::VersionGate::MoveBody.supported(
+            dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone())),
+        ) {
+            let (_, report) = convert(&model, &writer.verification(Verification::With(cli)));
+            assert!(
+                history_line(&report).contains("3 of 3 features rebuilt; verified"),
+                "{report:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn body_moves_refuse_copies_unresolved_bodies_and_older_targets() {
     for (change, reason) in [
         (json!({"copies": 1}), "copied body result identities"),
