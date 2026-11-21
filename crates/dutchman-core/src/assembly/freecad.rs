@@ -168,6 +168,7 @@ pub(super) fn resolve(
                     own_part: None,
                     parts: vec![selected],
                     placements: vec![Placement {
+                        unproven: false,
                         hidden: false,
                         name: None,
                         part: 0,

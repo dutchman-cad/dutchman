@@ -464,6 +464,15 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
     if let Some(completeness) = report.completeness() {
         out.insert("completeness".to_owned(), completeness_json(completeness));
     }
+    if let Some(message) = report
+        .completeness()
+        .and_then(Completeness::unplaced_message)
+    {
+        out.insert(
+            "verification".to_owned(),
+            json!({"status": "partial", "reason": message}),
+        );
+    }
     if !report.joints().is_empty() {
         out.insert("joints".to_owned(), json!(report.joints()));
     }
@@ -499,9 +508,28 @@ pub fn completeness_json(completeness: &Completeness) -> Value {
     json!({
         "placed": completeness.placed,
         "placed_empty": completeness.placed_empty,
+        "unplaced": completeness.unplaced,
         "placements": completeness.placements(),
         "left_out": left_out,
     })
+}
+
+/// Plain explanation shared by CLI and app results.
+pub fn unplaced_message(report: &Value) -> Option<String> {
+    let unplaced = report.pointer("/completeness/unplaced")?.as_object()?;
+    let n = unplaced
+        .values()
+        .filter_map(Value::as_u64)
+        .fold(0u64, u64::saturating_add);
+    match n {
+        0 => None,
+        1 => {
+            Some("1 part couldn't be placed (its position in the archive couldn't be read).".into())
+        }
+        n => Some(format!(
+            "{n} parts couldn't be placed (their position in the archive couldn't be read)."
+        )),
+    }
 }
 
 /// What a report's assembly brought across, in words, when it is of an assembly: `41
@@ -540,7 +568,11 @@ pub fn assembly_line(report: &Value) -> Option<String> {
             .collect();
         format!("{total} joint{} ({})", plural(total), each.join(", "))
     };
-    Some(format!("{components}, {joints}"))
+    let mut line = format!("{components}, {joints}");
+    if let Some(message) = unplaced_message(report) {
+        line.push_str(&format!(". {message}"));
+    }
+    Some(line)
 }
 
 fn plural(n: u64) -> &'static str {
@@ -569,18 +601,24 @@ pub fn completeness_lines(report: &Value) -> Vec<String> {
         .flatten()
         .collect();
     let empty = count("placed_empty");
-    if causes.is_empty() && empty == 0 {
+    if causes.is_empty() && empty == 0 && unplaced_message(report).is_none() {
         return vec![format!("assembly: all {placements} placements placed")];
     }
     let mut summary = format!("assembly: {placed} of {placements} placements placed");
     if empty > 0 {
         summary.push_str(&format!("; {empty} placed empty"));
     }
-    let left_out = placements.saturating_sub(placed).saturating_sub(empty);
+    let left_out = causes
+        .iter()
+        .filter_map(|c| c.get("count").and_then(Value::as_u64))
+        .fold(0u64, u64::saturating_add);
     if !causes.is_empty() {
         summary.push_str(&format!("; {left_out} left out:"));
     }
     let mut lines = vec![summary];
+    if let Some(message) = unplaced_message(report) {
+        lines.push(message);
+    }
     for cause in causes.iter().take(CAUSES_SHOWN) {
         let field = |key: &str| cause.get(key).and_then(Value::as_str);
         let times = cause.get("count").and_then(Value::as_u64).unwrap_or(1);
@@ -1656,6 +1694,29 @@ mod tests {
     }
 
     #[test]
+    fn unproven_positions_make_reports_partial_and_summaries_plain() {
+        let mut source = Report::default();
+        source.set_completeness(Completeness {
+            placed: 1,
+            unplaced: [("Panel".into(), 2)].into(),
+            ..Completeness::default()
+        });
+        let report = Value::Object(success(CONVERT, json!({"path":"assembly.f3z"}), &source));
+        let message =
+            "2 parts couldn't be placed (their position in the archive couldn't be read).";
+        assert_eq!(report["verification"]["status"], "partial");
+        assert_eq!(report["completeness"]["placed"], 1);
+        assert_eq!(report["completeness"]["unplaced"]["Panel"], 2);
+        assert_eq!(report["completeness"]["placements"], 3);
+        assert!(completeness_lines(&report).contains(&message.to_owned()));
+        assert!(crate::batch::line(&report).starts_with("incomplete"));
+        assert!(crate::batch::line(&report).contains(message));
+        let view = crate::present::FileView::from_report(&report);
+        assert_eq!(view.status_word, "Incomplete");
+        assert!(view.outcome.contains(message));
+    }
+
+    #[test]
     fn losses_are_grouped_by_the_part_they_belong_to() {
         let report = json!({"losses": [
             {"level": "Info", "subject": "history", "message": "flattened: the design carries no feature history"},
@@ -1701,6 +1762,7 @@ mod tests {
         let completeness = Completeness {
             placed: 18,
             placed_empty: 0,
+            unplaced: Default::default(),
             left_out: vec![dutchman_core::LeftOutGroup {
                 file: Some("pin.ipt".to_owned()),
                 reason: "pin.ipt: not found at its stored path".to_owned(),
@@ -1721,6 +1783,7 @@ mod tests {
         let whole = Completeness {
             placed: 3,
             placed_empty: 0,
+            unplaced: Default::default(),
             left_out: Vec::new(),
         };
         assert_eq!(
@@ -1735,6 +1798,7 @@ mod tests {
         let counts = Completeness {
             placed: 67,
             placed_empty: 13,
+            unplaced: Default::default(),
             left_out: vec![dutchman_core::LeftOutGroup {
                 file: Some("pin.ipt".into()),
                 reason: "not found".into(),

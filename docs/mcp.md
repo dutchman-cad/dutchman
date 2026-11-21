@@ -1077,7 +1077,11 @@ See the [paste-in prompt](troubleshooting.md#diagnose-with-an-assistant).
 ### Local folder and STEP checks
 
 Assembly completeness separates `placed` (geometry or child holders) from
-`placed_empty` (leaf parts with no bodies), with both included in `placements`.
+`placed_empty` (leaf parts with no bodies) and `unplaced` (part names mapped to counts
+whose archive positions could not be read). All are included in `placements`;
+`unplaced` is excluded from `placed`. Unreadable local and xref positions, including assumed
+identity positions and their dependent children, mark the result incomplete and
+`verification.status` partial. `ok` still records whether output was written.
 The summary and desktop and web cards show empty placements separately and mark the
 assembly incomplete. Empty leaves add Degraded losses naming their anonymous part
 numbers; child holders do not. Solid regions reduced to open sheets add a counted

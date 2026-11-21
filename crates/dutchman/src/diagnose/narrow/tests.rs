@@ -374,6 +374,7 @@ fn assembly(names: &[&str]) -> Model {
     let parts: Vec<Model> = names.iter().map(|name| part(name, 8)).collect();
     let placements = (0..parts.len())
         .map(|at| Placement {
+            unproven: false,
             name: None,
             part: at,
             transform: [

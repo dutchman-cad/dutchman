@@ -3,6 +3,69 @@
 
 use super::*;
 
+fn stored_frame_fallback(id: &str) -> bool {
+    id.starts_with("f3d:") && id.ends_with("/stored-frame-occurrence")
+}
+
+/// Retain occurrence-level proof independently of the transform used by the writer.
+/// These are decoded native records and decode losses, never source bytes.
+pub(super) fn unproven(document: &Value, report: &Report) -> BTreeSet<String> {
+    let references: BTreeMap<&str, &Value> = document
+        .pointer("/native/f3d/xref_references")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|r| Some((r.get("id")?.as_str()?, r)))
+        .collect();
+    let failed_paths: BTreeSet<&str> = report
+        .losses()
+        .iter()
+        .filter_map(|loss| match loss.code.as_deref()? {
+            "f3d/xref.placement-undecoded" => loss
+                .detail
+                .split_once("external occurrence ")?
+                .1
+                .split_once(" has typed placement carrier")
+                .map(|(path, _)| path),
+            "f3d/xref.placement-identity-assumed" => loss
+                .detail
+                .split_once(": member ")?
+                .1
+                .split_once(" occurrence placement did not decode")
+                .map(|(path, _)| path),
+            _ => None,
+        })
+        .collect();
+    document
+        .pointer("/model/occurrences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let id = row.get("id")?.as_str()?;
+            // The reader mints this occurrence when a body-owning local definition
+            // has no decoded occurrence. Its neutral identity is a fallback, unlike
+            // an admitted local carrier whose identity flag is a decoded placement.
+            if stored_frame_fallback(id) {
+                return Some(id.to_owned());
+            }
+            let reference = references.get(row.get("native_ref")?.as_str()?)?;
+            let missing = ["transform", "placement_source", "current_pose"]
+                .iter()
+                .all(|key| reference.get(*key).is_none_or(Value::is_null));
+            let failed = reference
+                .get("relative_path")
+                .and_then(Value::as_str)
+                .is_some_and(|path| failed_paths.contains(path));
+            if missing || failed {
+                row.get("id").and_then(Value::as_str).map(str::to_owned)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// The one source-precedence seam: displayed, current, then first placement.
 /// Smart admits the current branch only after joint, bounds, and instance checks.
 pub(super) fn select(
@@ -638,12 +701,13 @@ fn note_assumptions(
             .and_then(Value::as_str)
             .and_then(|native| records.get(native));
         let later = record.is_some_and(|(record, _)| present(record, "current_pose"));
-        let assumption = if record.is_some_and(|(record, external)| {
-            *external
-                && !later
-                && !present(record, "transform")
-                && !present(record, "placement_source")
-        }) {
+        let assumption = if stored_frame_fallback(id)
+            || record.is_some_and(|(record, external)| {
+                *external
+                    && !later
+                    && !present(record, "transform")
+                    && !present(record, "placement_source")
+            }) {
             PlacementAssumption::Identity
         } else if mode == crate::PartPositions::FirstPlaced {
             continue;

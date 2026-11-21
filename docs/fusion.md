@@ -659,3 +659,12 @@ Dutchman uses only that neutral operation. The table designation supplies the no
 secondary numeric values are compared at their serialized decimal precision. Unsupported
 class or hand suffixes in a designation are still reported. See [cosmetic threads](history.md)
 for rounding, inch units, and target limits.
+
+Unreadable local and xref positions, including local stored-frame fallbacks and
+positions assumed to be the identity, count
+as unplaced in `completeness.unplaced`, together with children whose world position
+depends on them. They produce an incomplete result with partial verification.
+The release gate rejects these positions even when the written design matches the
+imported source. Exceptions must name each part and document the reason and tracking
+issue in the gate matrix's `unplaced_allowances` map; unmatched legacy loss
+explanations also need an explicit allowance key. There are no default exceptions.

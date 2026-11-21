@@ -1877,12 +1877,14 @@ mod prepare_tests {
             parts: vec![part, second],
             placements: vec![
                 dutchman_core::Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 0,
                     transform: IDENTITY,
                 },
                 dutchman_core::Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 1,

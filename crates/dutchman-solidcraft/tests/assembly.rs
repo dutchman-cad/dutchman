@@ -45,12 +45,14 @@ fn placed_twice() -> Model {
             parts: vec![part.clone()],
             placements: vec![
                 Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 0,
                     transform: at(0.0),
                 },
                 Placement {
+                    unproven: false,
                     hidden: false,
                     name: Some("Moved".to_owned()),
                     part: 0,
@@ -88,6 +90,25 @@ fn written(model: &Model) -> (Vec<u8>, Report) {
 fn document(bytes: &[u8]) -> Value {
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap()
+}
+
+#[test]
+fn unproven_positions_survive_writing_without_counting_as_placed() {
+    let mut model = placed_twice();
+    let assembly = model.assembly.as_mut().unwrap();
+    assembly.placements[0].unproven = true;
+    assembly.placements[0].name = Some("Panel".into());
+    let (bytes, report) = written(&model);
+    let counts = report.completeness().unwrap();
+    assert_eq!(counts.placed, 1);
+    assert_eq!(counts.unplaced.get("Panel"), Some(&1));
+    assert_eq!(counts.placements(), 2);
+    assert!(matches!(
+        report.outcome().unwrap().check,
+        dutchman_core::Check::Partial(_)
+    ));
+    // The change reports the existing fallback; it does not change written geometry.
+    assert_eq!(document(&bytes)["occurrences"].as_array().unwrap().len(), 2);
 }
 
 #[test]
@@ -329,6 +350,7 @@ fn root_bodies_and_sketches_share_a_folder_only_when_contiguous() {
             placement.part = 1 - own_index;
         }
         assembly.placements.push(Placement {
+            unproven: false,
             hidden: false,
             name: None,
             part: own_index,
@@ -645,18 +667,21 @@ fn nested() -> Model {
             parts: vec![pair, cube.clone()],
             placements: vec![
                 Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 0,
                     transform: at(0.0, 0.0),
                 },
                 Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 0,
                     transform: at(0.0, 50.0),
                 },
                 Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 1,
@@ -2036,6 +2061,7 @@ fn mixed_histories() -> Model {
         .iter()
         .enumerate()
         .map(|(index, _)| Placement {
+            unproven: false,
             hidden: false,
             name: None,
             part: index,
@@ -2737,6 +2763,7 @@ fn composed_written_placements_equal_the_assemblys_world_placements() {
             placements: [(0, turned), (0, moved), (1, turned)]
                 .into_iter()
                 .map(|(part, transform)| Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part,
@@ -2794,6 +2821,7 @@ fn frame_with_cube_at(name: &str, y: f64) -> Model {
             definitions: Vec::new(),
             parts: vec![cube.clone()],
             placements: vec![Placement {
+                unproven: false,
                 hidden: false,
                 name: None,
                 part: 0,
@@ -2839,6 +2867,7 @@ fn layout_variants_and_a_mirrored_instance_write_at_their_world_placements() {
             placements: [(0, turned), (1, moved), (1, reflected)]
                 .into_iter()
                 .map(|(part, transform)| Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part,
@@ -2888,6 +2917,7 @@ fn layout_variants_and_a_mirrored_instance_write_at_their_world_placements() {
 
 fn placement(part: usize, name: &str, x: f64) -> Placement {
     Placement {
+        unproven: false,
         hidden: false,
         name: Some(name.to_owned()),
         part,

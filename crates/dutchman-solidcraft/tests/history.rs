@@ -6259,6 +6259,7 @@ fn assembly_of_histories() -> Model {
         ]
     };
     let placed = |part: usize, x: f64| dutchman_core::Placement {
+        unproven: false,
         hidden: false,
         name: None,
         part,

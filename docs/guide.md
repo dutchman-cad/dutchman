@@ -946,6 +946,13 @@ move together. It keeps first placements when a check fails or cannot be establi
 Last-shown accepts available current poses without those checks. First-placed ignores later
 moves and restores the old placement choice. Joints work from the selected placements.
 
+Parts whose archive positions could not be read appear under `completeness.unplaced`
+in the JSON report and do not count as placed. The CLI, app and plugin say
+“N parts couldn't be placed (their position in the archive couldn't be read).”
+The result is incomplete, with `verification.status` set to `partial`. Output is
+still written and the existing success exit status is retained; `ok` records that
+writing succeeded. Geometry and fallback transforms are unchanged.
+
 Use CLI `--part-positions smart|last-shown|first-placed`, MCP `part_positions`, or desktop
 **Advanced → Part positions** (remembered). `--stored-placements` remains a first-placed
 alias. Smart and last-shown prefer decoder-bound displayed poses when available, without
