@@ -589,6 +589,7 @@ mod tests {
         .unwrap();
         let part = source.clone();
         let origin = dutchman_core::Placement {
+            unproven: false,
             name: None,
             part: 0,
             transform: dutchman_core::placement::IDENTITY,

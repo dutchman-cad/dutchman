@@ -48,6 +48,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Unreadable positions fail the gate. An exception must list exact part names
+          # under unplaced_allowances, each mapped to a reason and tracking issue.
           # Each source is fetched from a commit of its repository and checked against its SHA-256.
           - name: 300zl
             file: RailCore II 300ZL - Nov 2019.f3z
@@ -89,6 +91,13 @@ jobs:
       - name: Convert
         run: |
           bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}.sc --json --quiet --yes > out/${{ matrix.name }}.json 2> out/convert.log || { tail -n 40 out/convert.log; exit 1; }
+      - name: Reject unreadable part positions
+        env:
+          UNPLACED_ALLOWANCES: ${{ toJSON(matrix.unplaced_allowances || fromJSON('{}')) }}
+        run: |
+          python3 scripts/unproven-placements.py out/${{ matrix.name }}.json --allowances "$UNPLACED_ALLOWANCES"
+      - name: Convert the source for comparison
+        run: |
           bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}-source.sc --import-only --json --quiet --yes > out/${{ matrix.name }}-source.json 2> out/source.log || { tail -n 40 out/source.log; exit 1; }
       - name: Compare the written design with the source, body by body
         env:

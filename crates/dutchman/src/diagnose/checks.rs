@@ -97,6 +97,7 @@ mod tests {
         .unwrap();
         let part = model.clone();
         let placement = dutchman_core::Placement {
+            unproven: false,
             name: Some("private".into()),
             part: 0,
             transform: dutchman_core::placement::IDENTITY,

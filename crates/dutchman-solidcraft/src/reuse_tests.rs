@@ -134,6 +134,7 @@ fn assembly() -> Model {
         own_part: None,
         parts: vec![part],
         placements: vec![dutchman_core::Placement {
+            unproven: false,
             hidden: false,
             name: None,
             part: 0,

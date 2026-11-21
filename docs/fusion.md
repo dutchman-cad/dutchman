@@ -665,3 +665,12 @@ Modeled thread history remains blocked even on SolidCraft 0.45: the available no
 thread data cannot prove an exact helical reconstruction. The final modeled geometry is
 retained, with the source designation in a Degraded `history/modeled-thread-retained`
 loss. See [modeled threads](history.md) for the profile and face-selection limits.
+
+Unreadable local and xref positions, including local stored-frame fallbacks and
+positions assumed to be the identity, count
+as unplaced in `completeness.unplaced`, together with children whose world position
+depends on them. They produce an incomplete result with partial verification.
+The release gate rejects these positions even when the written design matches the
+imported source. Exceptions must name each part and document the reason and tracking
+issue in the gate matrix's `unplaced_allowances` map; unmatched legacy loss
+explanations also need an explicit allowance key. There are no default exceptions.

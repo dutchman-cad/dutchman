@@ -164,6 +164,7 @@ fn level<'a>(
                     source_step: None,
                 });
                 inner.placements.push(Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: own,
@@ -185,6 +186,7 @@ fn level<'a>(
             source_step: None,
         });
         assembly.placements.push(Placement {
+            unproven: false,
             hidden: false,
             name: None,
             part: index,

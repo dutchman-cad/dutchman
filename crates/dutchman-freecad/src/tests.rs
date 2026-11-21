@@ -420,6 +420,7 @@ fn a_dimension_named_by_a_parameter_gets_the_parameters_value() {
 fn assembly_occurrences_keep_nested_placements_and_independent_bodies() {
     let part = model("pad");
     let placement = dutchman_core::Placement {
+        unproven: false,
         hidden: false,
         name: Some("Placed part".to_owned()),
         part: 0,
@@ -505,12 +506,14 @@ fn joint_model() -> Model {
             parts: vec![part.clone()],
             placements: vec![
                 dutchman_core::Placement {
+                    unproven: false,
                     hidden: false,
                     name: Some("Base".to_owned()),
                     part: 0,
                     transform: IDENTITY,
                 },
                 dutchman_core::Placement {
+                    unproven: false,
                     hidden: false,
                     name: Some("Arm".to_owned()),
                     part: 0,
@@ -1098,6 +1101,7 @@ fn nested_model() -> Model {
         [0.0, 0.0, -1.0, 0.0],
     ];
     let placement = |name: &str, part: usize, transform| dutchman_core::Placement {
+        unproven: false,
         hidden: false,
         name: Some(name.to_owned()),
         part,

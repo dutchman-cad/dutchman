@@ -474,7 +474,11 @@ pub fn line(result: &Value) -> String {
         } else {
             written.to_owned()
         };
-        format!("converted  {input} -> {output} ({written})")
+        if let Some(message) = report::unplaced_message(result) {
+            format!("incomplete {input} -> {output} ({written}). {message}")
+        } else {
+            format!("converted  {input} -> {output} ({written})")
+        }
     } else {
         let message = result
             .pointer("/error/message")

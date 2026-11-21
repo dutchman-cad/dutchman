@@ -275,6 +275,8 @@ pub struct Completeness {
     pub placed: u64,
     /// Placements of leaf parts with no bodies. These retain their component and joints.
     pub placed_empty: u64,
+    /// Unproven occurrence positions, by part name, including dependent children.
+    pub unplaced: std::collections::BTreeMap<String, u64>,
     /// The placements left out, by the file each places and why, most first.
     pub left_out: Vec<LeftOutGroup>,
 }
@@ -296,9 +298,31 @@ impl Completeness {
     /// Every placement recorded, placed or not.
     pub fn placements(&self) -> u64 {
         self.left_out.iter().fold(
-            self.placed.saturating_add(self.placed_empty),
+            self.placed
+                .saturating_add(self.placed_empty)
+                .saturating_add(self.unplaced_count()),
             |total, group| total.saturating_add(group.count),
         )
+    }
+
+    /// How many positions could not be read.
+    pub fn unplaced_count(&self) -> u64 {
+        self.unplaced
+            .values()
+            .fold(0u64, |n, count| n.saturating_add(*count))
+    }
+
+    /// Plain explanation of unreadable positions, when present.
+    pub fn unplaced_message(&self) -> Option<String> {
+        match self.unplaced_count() {
+            0 => None,
+            1 => Some(
+                "1 part couldn't be placed (its position in the archive couldn't be read).".into(),
+            ),
+            n => Some(format!(
+                "{n} parts couldn't be placed (their position in the archive couldn't be read)."
+            )),
+        }
     }
 
     /// How many placements were left out.
@@ -310,7 +334,7 @@ impl Completeness {
 
     /// Whether every placement has geometry or holds child placements.
     pub fn is_complete(&self) -> bool {
-        self.placed_empty == 0 && self.left_out.is_empty()
+        self.placed_empty == 0 && self.left_out.is_empty() && self.unplaced.is_empty()
     }
 }
 
@@ -774,6 +798,13 @@ impl Report {
         if let (Some((_, why)), Check::Verified) = (&self.missing_links, &outcome.check) {
             outcome.check = Check::Unverified(why.clone());
         }
+        if let Some(message) = self
+            .completeness
+            .as_ref()
+            .and_then(Completeness::unplaced_message)
+        {
+            outcome.check = Check::Partial(message);
+        }
         self.outcome = Some(outcome);
     }
 
@@ -842,6 +873,9 @@ impl Report {
             }
         }
         self.completeness = Some(completeness);
+        if let Some(outcome) = self.outcome.take() {
+            self.set_outcome(outcome);
+        }
     }
 
     /// How much of the assembly was placed, for an assembly.
@@ -879,6 +913,7 @@ mod tests {
         report.set_completeness(Completeness {
             placed: 2,
             placed_empty: 0,
+            unplaced: Default::default(),
             left_out: Vec::new(),
         });
         report.record_missing_links(&["Pin".to_owned()]);

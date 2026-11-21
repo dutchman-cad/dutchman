@@ -885,6 +885,7 @@ mod tests {
             report.set_completeness(Completeness {
                 placed: 1,
                 placed_empty: 0,
+                unplaced: Default::default(),
                 left_out: Vec::new(),
             });
             report.record_missing_links(&names);

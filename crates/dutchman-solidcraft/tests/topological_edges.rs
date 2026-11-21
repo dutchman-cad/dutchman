@@ -647,6 +647,7 @@ fn topological_histories_keep_the_original_position_when_the_source_cannot_be_co
                     definitions: Vec::new(),
                     identities: Vec::new(),
                     placements: vec![dutchman_core::Placement {
+                        unproven: false,
                         hidden: false,
                         name: None,
                         part: 0,
