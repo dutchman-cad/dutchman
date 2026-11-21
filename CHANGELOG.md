@@ -16,6 +16,9 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   "N parts couldn't be placed" instead of quietly placing them at the origin; reading those
   positions is next ([dutchman-cad/dutchman#858](https://github.com/dutchman-cad/dutchman/issues/858),
   [cadmpeg/cadmpeg#1880](https://github.com/cadmpeg/cadmpeg/issues/1880)).
+- A single Fusion `.f3d` whose parts are components can still come in with those parts at their
+  own origins while the result says it converted; the next version reports them as parts that
+  couldn't be placed ([dutchman-cad/dutchman#858](https://github.com/dutchman-cad/dutchman/issues/858)).
 - A kept feature can replay from the wrong sketch region and still be counted as kept; the final
   shape is unaffected, because it comes from the source design
   ([dutchman-cad/dutchman#489](https://github.com/dutchman-cad/dutchman/issues/489)).
