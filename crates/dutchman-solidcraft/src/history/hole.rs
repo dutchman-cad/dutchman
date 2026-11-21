@@ -27,12 +27,22 @@ pub(crate) fn map(
         return Err("a hole with native thread geometry is not mapped yet".to_owned());
     }
     let form = construction.pointer("/value/kind").unwrap_or(&Value::Null);
-    // Newer SolidCraft drills an entry-recess hole to a point as well.
+    let extent = definition.get("extent").unwrap_or(&Value::Null);
+    let through_all = matches!(
+        extent.get("kind").and_then(Value::as_str),
+        None | Some("through_all")
+    );
+    let drilled_recess = form.get("kind").and_then(Value::as_str) == Some("counterbore_drilled");
+    let pointed = drilled_recess
+        || definition.pointer("/bottom/kind").and_then(Value::as_str) == Some("angled");
+    // A through-all hole has no bottom: its drill point cannot affect the shape.
+    // Newer SolidCraft drills a bounded entry-recess hole to a point as well.
     let recess_tip = crate::VersionGate::EntryRecessTip.supported(ctx.target_version);
-    if definition.pointer("/bottom/kind").and_then(Value::as_str) == Some("angled")
+    if !through_all
+        && pointed
         && matches!(
             form.get("kind").and_then(Value::as_str),
-            Some("counterbore" | "countersink" | "chamfer")
+            Some("counterbore" | "counterbore_drilled" | "countersink" | "chamfer")
         )
         && !recess_tip
     {
@@ -45,17 +55,21 @@ pub(crate) fn map(
         form.get("kind").and_then(Value::as_str),
     ) {
         (Some("form"), Some("simple")) => json!({"type": "simple"}),
+        (Some("form"), Some("simple_drilled")) if through_all => json!({"type": "simple"}),
         (Some("form"), Some("simple_drilled")) => {
             let angle = number(form.get("drill_point_angle"))
                 .filter(|a| *a > 0.0 && *a < std::f64::consts::PI)
                 .ok_or("its drill point's angle is not given")?;
             json!({"type": "drilled", "tip_angle": format!("{}", angle.to_degrees())})
         }
-        (Some("form"), Some("counterbore" | "countersink" | "chamfer")) => {
+        (Some("form"), Some("counterbore" | "counterbore_drilled" | "countersink" | "chamfer")) => {
             let entry = number(form.get("diameter"))
                 .filter(|d| *d > diameter)
                 .ok_or("its entry diameter must be greater than its bore diameter")?;
-            if form.get("kind").and_then(Value::as_str) == Some("counterbore") {
+            if matches!(
+                form.get("kind").and_then(Value::as_str),
+                Some("counterbore" | "counterbore_drilled")
+            ) {
                 let depth = number(form.get("depth"))
                     .filter(|d| *d > 0.0)
                     .ok_or("its counterbore depth is not given")?;
@@ -68,11 +82,6 @@ pub(crate) fn map(
                 json!({"type": "countersink", "cs_diameter": format!("{entry} mm"),
                     "cs_angle": format!("{}", angle.to_degrees())})
             }
-        }
-        (Some("form"), Some("counterbore_drilled")) => {
-            return Err(
-                "SolidCraft holes take a drill point only on a plain drilled hole".to_owned(),
-            )
         }
         (Some("form"), Some("counterdrill")) => {
             return Err(
@@ -101,14 +110,15 @@ pub(crate) fn map(
             Some("counterbore" | "countersink")
         )
     {
-        if let Some(fields) = hole.as_object_mut() {
+        // A through-all hole's omitted drill point has no bottom to make explicit.
+        let has_bottom = !(through_all && pointed);
+        if let Some(fields) = hole.as_object_mut().filter(|_| has_bottom) {
             fields.insert("tip_angle".to_owned(), json!("180"));
         }
     }
 
     let mut depth = None;
     let mut to = None;
-    let extent = definition.get("extent").unwrap_or(&Value::Null);
     match extent.get("kind").and_then(Value::as_str) {
         None | Some("through_all") => {}
         Some("blind") => {
@@ -129,7 +139,8 @@ pub(crate) fn map(
             {
                 return Err("its terminating face is not ahead of the hole".to_owned());
             }
-            if hole.get("type").and_then(Value::as_str) == Some("drilled")
+            if drilled_recess
+                || hole.get("type").and_then(Value::as_str) == Some("drilled")
                 || definition.pointer("/bottom/kind").and_then(Value::as_str) == Some("angled")
             {
                 // A shoulder-measured extent leaves the point beyond the face
@@ -208,7 +219,17 @@ fn bottom_depth(
     recess_tip: bool,
 ) -> Result<f64, String> {
     let mut depth = length;
-    let bottom = definition.get("bottom").unwrap_or(&Value::Null);
+    // The drilled form carries a shoulder-referenced point even if no separate
+    // bottom record is supplied by the reader.
+    let form_bottom = if form.get("kind").and_then(Value::as_str) == Some("counterbore_drilled") {
+        json!({"kind": "angled", "included_angle": form.get("drill_point_angle"), "depth_to_tip": false})
+    } else {
+        Value::Null
+    };
+    let bottom = definition
+        .get("bottom")
+        .filter(|bottom| !bottom.is_null())
+        .unwrap_or(&form_bottom);
     match bottom.get("kind").and_then(Value::as_str) {
         None => {}
         Some("flat") => {
@@ -1585,16 +1606,33 @@ mod tests {
     }
 
     #[test]
-    fn other_holes_say_why_they_are_not_mapped() {
+    fn a_drilled_counterbore_keeps_its_form_point_without_a_bottom_record() {
         let counterbore = hole(
             json!({"shape": {"construction": {"kind": "form", "value": {"kind": {"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0,
                 "drill_point_angle": 118_f64.to_radians()}}}, "diameter": 5.0},
             "extent": {"kind": "blind", "length": 6.0}}),
         );
+        let out = mapped(&counterbore).unwrap();
+        assert_eq!(out["hole"]["type"], "counterbore");
+        assert_eq!(out["hole"]["tip_angle"], "118.00000000000001");
+        let model = json!({});
+        let mut ctx = Context::testing(&model);
+        ctx.target_version = "0.22.0".parse().unwrap();
+        ctx.sketches.insert("s".to_owned(), sketch());
         assert_eq!(
-            mapped(&counterbore).unwrap_err(),
+            map(
+                &json!({"name": "Hole"}),
+                &counterbore,
+                &mut ctx,
+                &mut Report::default()
+            )
+            .unwrap_err(),
             "SolidCraft holes take a drill point only on a plain drilled hole"
         );
+    }
+
+    #[test]
+    fn other_holes_say_why_they_are_not_mapped() {
         let to_face = hole(json!({"extent": {"kind": "to_face"}}));
         assert_eq!(mapped(&to_face).unwrap_err(), "its face is not resolved");
     }

@@ -166,6 +166,12 @@ bbox or volume separately from the final imported shape. Cosmetic metric thread 
 require resolved cylindrical face geometry; a historical face ID alone is reported as
 having no resolved input surface geometry.
 
+Offset faces targeting SolidCraft 0.45 or newer bind their historical face points to the
+unique earlier named body in the part's history. Circular boundaries use points clear of
+both outer trims and holes. An offset-face body blocker means ownership is not proven;
+selecting among several input bodies is not supported yet. The original geometry is kept.
+Older targets keep the previous point-only representation.
+
 When a feature blocks SolidCraft history conversion, earlier editable features and
 resolved sketches are kept in a hidden **Editable history (partial)** component. The
 original final shape remains visible as an Import after the kept history. Show the
@@ -403,9 +409,13 @@ simplification. Explain that the converted design keeps its original geometry.
 
 Holes keep chamfered entries and tapped holes (the bore plus an ISO metric thread label; a
 thread's hand, class, and length are listed as losses). Taper, exit treatments, modeled
-threads, and entry recesses with drill points on older targets block history: explain the reported reason.
+threads, and bounded entry recesses with drill points on older targets block history: explain the reported reason.
 "SolidCraft holes take a drill point only on a plain drilled hole" means SolidCraft 0.21.0
-ignores drill points on counterbores and countersinks; conversion keeps the original geometry.
+ignores drill points on bounded counterbores and countersinks; conversion keeps the original geometry.
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry.
 
 Holes ending at a proven earlier planar cap can retain both an entry countersink and
 a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
@@ -717,6 +727,9 @@ Missing carrier or ownership evidence, ellipses, and transformed source carriers
 refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
+A missing source carrier reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
+This means the source geometry needed for selection is unavailable; it does not establish
+that the curve is noncircular. The editable prefix and original final shape are retained.
 Use `--solidcraft-version 0.44.1` to select this patch release. The exact target stays in
 effect through input preparation and geometry-only fallbacks; JSON displays its minor, `0.44`.
 Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
@@ -1323,3 +1336,31 @@ says the design is too large to open inside SolidCraft, use the
 `.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
 "Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
 See [the plugin guide](../../docs/plugin.md).
+
+Extrudes and resolved revolves accept a profile that explicitly names an earlier active
+planar sketch feature with a resolved sketch binding. This selects the whole bound sketch
+and keeps the existing source geometry checks. Otherwise the report says "its feature
+profile has no earlier active resolved planar sketch mapping; this is not supported yet".
+Resolve the producer's sketch binding or provide an explicit neutral profile selection;
+a nearby sketch or the final body's contours do not prove that selection.
+
+Profiles from sketch features require SolidCraft 0.45 or newer. Older targets retain
+the original geometry and report "profiles from sketch features require SolidCraft 0.45
+or newer; choose a newer target to keep this feature editable".
+
+A resolved sketch frame alone does not prove profile geometry. A feature reference whose
+sketch contains only points or reference axes is refused with "its sketch feature has no
+resolved non-construction profile curves; this is not supported yet". The decoder must
+supply the actual profile curves. An empty profile table can still use the complete bound
+sketch when its non-construction curves are decoded; no loop or contour is guessed.
+
+For a whole-folder summary, run `dutchman batch-report <output-folder>` on saved
+`<stem>.report.json` / `<stem>.failed.json` files, or add `--batch-report` to
+`convert-all` for a fresh run. The desktop app offers **Batch report** after a
+folder run finishes, in the bottom bar beside the result counts. After writing,
+the status says `<converted> converted, <failed> failed · Report saved to <output folder name>/`.
+Both write `dutchman-batch-report.md` and `dutchman-batch-report.csv` in that
+folder, with relative input path, output path, outcome, and first reason per
+file. Markdown totals beneath the heading keep all four outcome categories,
+including zeros; CSV contains only the header and one row per file. These local
+summaries contain names and paths; review before sharing.

@@ -44,9 +44,13 @@ fn row(case: usize) -> Row {
 }
 
 fn harness(cases: &[usize], dark: bool) -> Harness<'static, App> {
+    harness_at(cases, dark, 1180.0)
+}
+
+fn harness_at(cases: &[usize], dark: bool, width: f32) -> Harness<'static, App> {
     let cases = cases.to_vec();
     let mut h = Harness::builder()
-        .with_size(egui::vec2(1180.0, 800.0))
+        .with_size(egui::vec2(width, 800.0))
         .build_eframe(move |cc| {
             let mut app = App::new(cc);
             app.rows = cases.into_iter().map(row).collect();
@@ -332,4 +336,159 @@ fn save_report_panel_shot(
     image.save(dir.join(&file))?;
     index.push_str(&format!("| [{file}]({file}) | {} (question {question:?}; DM {dm:?}) | {amber} amber result labels | {route} |\n", if visible { "Yes" } else { "No" }));
     Ok(())
+}
+
+// Opt-in evidence from the same synthetic main-panel setup used by the layout checks.
+#[test]
+fn control_row_screenshots() {
+    let Some(dir) = std::env::var_os("DUTCHMAN_CONTROL_SCREENSHOTS") else {
+        return;
+    };
+    let dir = PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::from("# Control rows\n\nSynthetic reports only. Each image includes the Designs box, Output folder and a result card.\n\n");
+    for width in [900, 1180] {
+        for dark in [false, true] {
+            let mut h = harness_at(&[2], dark, width as f32);
+            h.set_size(egui::vec2(width as f32, 1100.0));
+            h.run_steps(16);
+            let theme = if dark { "dark" } else { "light" };
+            let name = format!("controls-{width}-{theme}.png");
+            h.render().unwrap().save(dir.join(&name)).unwrap();
+            index.push_str(&format!("- [{name}]({name})\n"));
+        }
+    }
+    std::fs::write(dir.join("index.md"), index).unwrap();
+}
+
+fn assert_separate(rects: &[(String, egui::Rect)]) {
+    for (i, (name, rect)) in rects.iter().enumerate() {
+        for (other, other_rect) in &rects[i + 1..] {
+            assert!(
+                !rect.shrink(0.25).intersects(other_rect.shrink(0.25)),
+                "{name} {rect:?} overlaps {other} {other_rect:?}"
+            );
+        }
+    }
+}
+
+fn assert_control_rows(rects: &[(String, egui::Rect)]) {
+    for (i, (name, rect)) in rects.iter().enumerate() {
+        for (other, other_rect) in &rects[i + 1..] {
+            assert!(
+                (rect.height() - other_rect.height()).abs() <= 0.5,
+                "{name} {rect:?} and {other} {other_rect:?} differ in height"
+            );
+            if rect.y_range().intersects(other_rect.y_range()) {
+                assert!(
+                    (rect.center().y - other_rect.center().y).abs() <= 0.5,
+                    "{name} {rect:?} and {other} {other_rect:?} differ in centre line"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn main_panel_control_rows_align_without_overlaps() {
+    for width in [900.0, 1180.0, 1600.0, 460.0] {
+        for dark in [false, true] {
+            let mut h = harness_at(&[2], dark, width);
+            h.set_size(egui::vec2(width, 1400.0));
+            h.run_steps(16);
+            let hint = if cfg!(target_os = "macos") {
+                "Drop, or paste files or links (⌘V)"
+            } else {
+                "Drop, or paste files or links (Ctrl+V)"
+            };
+            let designs = [
+                "Add link",
+                "Connect Onshape",
+                "Add files…",
+                "Check a folder",
+                "Add folder…",
+                "Clear",
+            ];
+            let mut controls: Vec<_> = designs
+                .iter()
+                .map(|label| (label.to_string(), h.get_by_label(label).rect()))
+                .collect();
+            let field = h.get_by_role(egui::accesskit::Role::TextInput).rect();
+            controls.push(("Link field".into(), field));
+            assert_control_rows(&controls);
+            if width == 460.0 {
+                assert!(
+                    h.get_by_label("Connect Onshape").rect().top() > field.bottom(),
+                    "The narrow case must exercise wrapping"
+                );
+            }
+            for (name, rect) in &controls {
+                assert!(
+                    rect.left() >= 0.0 && rect.right() <= width,
+                    "{name} outside width {width}: {rect:?}"
+                );
+            }
+            let last = controls
+                .iter()
+                .map(|(_, rect)| rect.bottom())
+                .fold(0.0_f32, f32::max);
+            let hint_rect = h.get_by_label(hint).rect();
+            assert!(hint_rect.top() >= last + theme::SPACE_2 - 0.5);
+            assert!(hint_rect.bottom() < h.get_by_label("Convert").rect().top());
+            controls.push((hint.into(), hint_rect));
+            assert_separate(&controls);
+            // All accessible widget allocations in each box, including text and headings.
+            // Query widget roles only; exclude containers and their inline text nodes.
+            let sections = [
+                (
+                    h.get_by_label("DESIGNS").rect().bottom(),
+                    hint_rect.bottom(),
+                ),
+                (
+                    h.get_by_label("OUTPUT FOLDER").rect().bottom(),
+                    h.get_by_label("Change…").rect().bottom(),
+                ),
+                (
+                    h.get_by_label("Partly converted").rect().top(),
+                    h.get_by_label(REPORT_THIS_FILE).rect().bottom(),
+                ),
+            ];
+            for (top, bottom) in sections {
+                let widgets: Vec<_> = h
+                    .query_all(egui_kittest::kittest::By::new().predicate(|node| {
+                        matches!(
+                            node.role(),
+                            egui::accesskit::Role::Button
+                                | egui::accesskit::Role::Label
+                                | egui::accesskit::Role::TextInput
+                                | egui::accesskit::Role::CheckBox
+                                | egui::accesskit::Role::ComboBox
+                                | egui::accesskit::Role::Link
+                        )
+                    }))
+                    .filter_map(|node| {
+                        let rect = node.rect();
+                        (rect.top() >= top - 0.5
+                            && rect.bottom() <= bottom + 0.5
+                            && rect.is_positive())
+                        .then(|| (format!("{node:?}"), rect))
+                    })
+                    .collect();
+                assert!(!widgets.is_empty());
+                assert_separate(&widgets);
+            }
+            for labels in [
+                vec!["converted", "Change…"],
+                vec!["Open in SolidCraft", "Show in folder", "Add matching STEP"],
+                vec!["Save the full log…", REPORT_THIS_FILE],
+            ] {
+                let rects: Vec<_> = labels
+                    .iter()
+                    .map(|label| (label.to_string(), h.get_by_label(label).rect()))
+                    .collect();
+                assert_control_rows(&rects);
+                assert_separate(&rects);
+            }
+        }
+    }
 }

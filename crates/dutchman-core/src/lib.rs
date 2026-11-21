@@ -838,3 +838,79 @@ fn check_input(input: &Path) -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn missing_links_are_reported_but_embedded_components_are_complete() {
+        let mut model = read(
+            Format::FusionArchive,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/generated_unit_cube.f3d"),
+            &mut Report::default(),
+        )
+        .unwrap();
+        let body = model.ir.geometry.bodies[0].id.clone();
+        // Both reader representations of a missing design, then a component embedded
+        // after breaking its link. All identities and product structure are synthetic.
+        for (prototype, bodies, missing) in [
+            (json!({"kind": "unresolved"}), json!([]), true),
+            (
+                json!({"kind": "local", "definition": "synthetic:assembly:component#part/unresolved"}),
+                json!([]),
+                true,
+            ),
+            (
+                json!({"kind": "local", "definition": "synthetic:assembly:component#part/unresolved"}),
+                json!([body]),
+                false,
+            ),
+        ] {
+            model.ir.model.product_definitions = serde_json::from_value(json!([{
+                "id": "synthetic:assembly:component#part/unresolved", "kind": "part",
+                "bodies": bodies, "sketches": [], "bom_properties": {}
+            }]))
+            .unwrap();
+            model.ir.model.occurrences = serde_json::from_value(json!([{
+                "id": "synthetic:assembly:occurrence#1", "ordinal": 1, "name": "Component",
+                "parent": {"kind": "root"}, "prototype": prototype,
+                "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]
+            }]))
+            .unwrap();
+            let names = missing_linked_components(&model);
+            assert_eq!(names, if missing { vec!["Component"] } else { vec![] });
+            let mut report = Report::default();
+            report.set_completeness(Completeness {
+                placed: 1,
+                placed_empty: 0,
+                left_out: Vec::new(),
+            });
+            report.record_missing_links(&names);
+            report.set_outcome(Outcome {
+                mode: Mode::History,
+                check: Check::Verified,
+                features: Vec::new(),
+            });
+            let losses: Vec<_> = report
+                .losses()
+                .iter()
+                .filter(|loss| loss.subject == "linked components")
+                .collect();
+            if missing {
+                assert_eq!(losses.len(), 1);
+                assert_eq!(losses[0].severity, Severity::Dropped);
+                assert!(matches!(
+                    report.outcome().unwrap().check,
+                    Check::Unverified(_)
+                ));
+                assert_eq!(report.completeness().unwrap().left_out[0].count, 1);
+            } else {
+                assert!(losses.is_empty());
+                assert_eq!(report.outcome().unwrap().check, Check::Verified);
+                assert!(report.completeness().unwrap().left_out.is_empty());
+            }
+        }
+    }
+}

@@ -33,7 +33,11 @@ history, with no flattened-history warning.
     delete-face selection cadmpeg leaves native is reported as such and stops the history there;
   - move face, as SolidCraft's offset face: planar faces cadmpeg resolves in the feature's own
     input topology and moves along their normal, each written as a point inside the face with
-    the signed distance. Translations along a direction, rotations, non-planar faces and native
+    the signed distance. For SolidCraft 0.45 or newer, the selection also names the unique
+    earlier body in the part’s history. Ambiguous body ownership is refused. Circular trims
+    use interior candidates with clearance from both outer boundaries and holes, accounting
+    for the exact curves beyond their sampled chords. Older targets keep the previous
+    point-only representation. Translations along a direction, rotations, non-planar faces and native
     selections are reported with their reason and stop the history there;
   - constant-radius fillets and equal-setback chamfers, on edges proven on SolidCraft's own
     replay of the history before them (so they need `solidcraft-cli`); a Fusion fillet with a
@@ -310,10 +314,12 @@ and newer also keep an ISO tolerance class such as `6H`. What doesn't carry acro
 length in a through or recessed hole, or any of these on an older target) is listed in the
 report as Degraded. Taper, exit treatments, and modeled threads are not supported yet,
 and the report names the option.
-A counterbore, countersink, or chamfered entry with a drill point keeps both for SolidCraft
-0.22.1 and newer. For an older target the reason is "SolidCraft holes take a drill point only
-on a plain drilled hole": SolidCraft 0.21.0 ignores `tip_angle` on counterbores and
-countersinks. Conversion keeps the original geometry.
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry. The
+bounded-hole refusal remains "SolidCraft holes take a drill point only on a plain drilled
+hole".
 
 Holes ending at a proven earlier planar extrusion or box cap retain their drill point
 and supported entry recess. Fusion Extents To measures to the cylindrical shoulder,

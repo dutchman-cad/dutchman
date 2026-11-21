@@ -520,14 +520,17 @@ pub(super) fn historical(
                         .to_owned(),
                 );
             }
-            let circle = Circle::stored(
-                edge.as_str().ok_or(INPUT_SOURCE)?,
-                ends.0,
-                point,
-                tangent,
-                ctx,
-            )
-            .ok_or(
+            let id = edge.as_str().ok_or(INPUT_SOURCE)?;
+            if ctx
+                .row("edges", id)
+                .and_then(|edge| edge.pointer("/carrier/curve"))
+                .and_then(Value::as_str)
+                .and_then(|id| ctx.row("curves", id))
+                .is_none()
+            {
+                return Err("its closed input edge has no resolved historical curve carrier, which is not supported yet".to_owned());
+            }
+            let circle = Circle::stored(id, ends.0, point, tangent, ctx).ok_or(
                 "blends on closed input curves other than proven circles are not supported yet",
             )?;
             Input {
@@ -3050,7 +3053,16 @@ mod tests {
         // A tangent along the diameter: not a circle through these points.
         let along = super::CutCircle::closed([7.5, 5.0, 10.0], [2.5, 5.0, 10.0], [1.0, 0.0, 0.0]);
         assert!(along.is_none());
-        let model = json!({"feature_input_topologies": [{"id": "st", "input_of": "f", "edges": ["e"],
+        let model = json!({
+            // Resolve the carrier so this case reaches the inconsistent-tangent proof.
+            "bodies": [{"id": "body", "kind": "wire"}],
+            "regions": [{"id": "region", "body": "body", "shells": ["shell"]}],
+            "shells": [{"id": "shell", "region": "region", "members": [{"kind": "wire_edge", "id": "e"}]}],
+            "edges": [{"id": "e", "carrier": {"curve": "c", "param_range": [0, std::f64::consts::TAU]}}],
+            "curves": [{"id": "c", "geometry": {"kind": "solved", "value": {
+                "kind": "circle", "center": {"x": 5.0, "y": 5.0, "z": 10.0},
+                "axis": {"x": 0.0, "y": 0.0, "z": 1.0}, "radius": 2.5}}}],
+            "feature_input_topologies": [{"id": "st", "input_of": "f", "edges": ["e"],
             "edge_geometry": [{"edge": "e", "start": {"x": 7.5, "y": 5.0, "z": 10.0}, "end": {"x": 7.5, "y": 5.0, "z": 10.0},
                 "interior": {"x": 2.5, "y": 5.0, "z": 10.0}, "tangent": {"x": 1.0, "y": 0.0, "z": 0.0}, "faces": []}],
             "bodies": [], "faces": [], "vertices": []}]});
@@ -3059,6 +3071,15 @@ mod tests {
         let feature = json!({"id": "f", "name": "Fillet", "definition": {"kind": "operation", "value": {"kind": "fillet", "value": {"groups": [group]}}}});
         let mut ctx = Context::testing(&model);
         ctx.target_version = crate::SolidCraftVersion::V0_44_1;
+        ctx.named_bodies.push(("body".into(), "Body 1".into()));
+        assert!(super::Circle::stored(
+            "e",
+            [7.5, 5.0, 10.0],
+            [2.5, 5.0, 10.0],
+            [0.0, 1.0, 0.0],
+            &ctx,
+        )
+        .is_some());
         let error = super::map(
             &feature,
             super::super::operation(&feature),

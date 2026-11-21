@@ -513,6 +513,12 @@ placement. A region without a proven selection is refused, including centroid-on
 covers discovery, mapping and candidate evaluations, and late results are refused. These stricter
 requirements apply to new measured inference; the earlier two-reading comparison is unchanged.
 
+Offset faces targeting SolidCraft 0.45 or newer bind their historical face points to the
+unique earlier named body in the part's history. Circular boundaries use points clear of
+both outer trims and holes. An offset-face body blocker means ownership is not proven;
+selecting among several input bodies is not supported yet. The original geometry is kept.
+Older targets keep the previous point-only representation.
+
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face
 blocker means the source selection or historical boundary is not supported yet; final-body
@@ -594,6 +600,9 @@ Missing carrier or ownership evidence, ellipses, and transformed source carriers
 refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
+A missing source carrier reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
+This means the source geometry needed for selection is unavailable; it does not establish
+that the curve is noncircular. The editable prefix and original final shape are retained.
 Use `--solidcraft-version 0.44.1` to select this patch release. The exact target stays in
 effect through input preparation and geometry-only fallbacks; JSON displays its minor, `0.44`.
 Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
@@ -666,10 +675,12 @@ excluded from valid placement locations. Missing replay, an unproven boundary, o
 drilling reports `blocked` with its specific `reason`. This adds no report fields.
 This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
 original geometry with a named reason.
-Counterbores, countersinks, and chamfered entries with drill points map for SolidCraft 0.22.1
-and newer; for an older target they report
-`SolidCraft holes take a drill point only on a plain drilled hole`: SolidCraft 0.21.0 ignores
-`tip_angle` on entry recesses. This uses the existing blocked feature and reason fields.
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry. The
+bounded-hole refusal remains `SolidCraft holes take a drill point only on a plain drilled
+hole` in the existing blocked feature and reason fields; no report fields change.
 
 Holes ending at a proven earlier planar cap can retain both an entry countersink and
 a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
@@ -1987,6 +1998,39 @@ does not increase source feature counts. Unsupported generated edge identities u
 `its generated edge identity has no resolved source geometry, which is not supported yet`
 as the existing history blocker reason. The report schema and field names are unchanged.
 
+### Whole-folder summaries
+
+`dutchman batch-report <output-folder>` reads existing `dutchman.convert/1`
+`<stem>.report.json` and `<stem>.failed.json` reports recursively, without opening
+source designs. `convert-all --batch-report` summarises that invocation's results.
+The desktop app offers **Batch report** in the bottom bar after a folder run
+finishes, beside the converted and failed counts. After writing, its status
+says `<converted> converted, <failed> failed · Report saved to <output folder name>/`. JSON schemas are unchanged.
+
+The Markdown and CSV files are named `dutchman-batch-report.md` and
+`dutchman-batch-report.csv`. Columns are Input path, Output path, Outcome, and
+First reason. Directly below the Markdown heading, a totals line counts all
+files and each of the four outcomes, including zero categories, using “1 file”
+for a single file. CSV contains only its header and one row per file.
+Inputs are relative to their common parent; outputs beneath the
+output folder are relative to that folder. Output paths elsewhere remain as
+recorded. A failed file without an output path has an empty cell. Rows sort by
+input path. Full history and Geometry only describe the retained mode; they do
+not add a verification claim. Partial N of M uses `history.rebuilt` and
+`history.needing`, falling back to `history.mapped` and `history.total` for older
+reports. Flattened verification always gives Geometry only.
+
+First reason uses the failure message, otherwise the first `blocked` or
+`left_out` feature reason, excluding downstream notes (including “after the
+first” and “follows … blocker”), then the verification reason or first loss.
+When both success and failure sidecars name the same input, the newest sidecar
+wins; equal timestamps choose the last report in path order. Other duplicate
+input paths follow the same rule. Unreadable or unrecognised reports stop the
+export with an error. Reads skip symbolic links and are bounded to 32 directory
+levels, 100,000 entries, 10,000 reports, 64 MiB per report, and 256 MiB in total.
+Each output file is replaced atomically. These are local reports containing
+names, paths, and unredacted reasons.
+
 The [public fixture score workflow](fixture-score.md) wraps the conversion report
 in the fixture sweep result record (`exit`, `reopen_exit`, `report`, `evaluation`,
 `seconds`). Download skips add `skip_reason`; execution failures add
@@ -2028,3 +2072,20 @@ radius stations are not bound to a source start vertex, which is not supported y
 the decoded selection binds their radius positions to an ordered, directed input chain.
 Carrier sample order alone does not supply that binding. The refusal retains the editable
 prefix and original final geometry; no report fields or schemas change.
+
+Extrudes and resolved revolves accept a profile that explicitly names an earlier active
+planar sketch feature with a resolved sketch binding. This selects the whole bound sketch
+and keeps the existing source geometry checks. Otherwise the report says "its feature
+profile has no earlier active resolved planar sketch mapping; this is not supported yet".
+Resolve the producer's sketch binding or provide an explicit neutral profile selection;
+a nearby sketch or the final body's contours do not prove that selection.
+
+Profiles from sketch features require SolidCraft 0.45 or newer. Older targets retain
+the original geometry and report "profiles from sketch features require SolidCraft 0.45
+or newer; choose a newer target to keep this feature editable".
+
+A resolved sketch frame alone does not prove profile geometry. A feature reference whose
+sketch contains only points or reference axes is refused with "its sketch feature has no
+resolved non-construction profile curves; this is not supported yet". The decoder must
+supply the actual profile curves. An empty profile table can still use the complete bound
+sketch when its non-construction curves are decoded; no loop or contour is guessed.

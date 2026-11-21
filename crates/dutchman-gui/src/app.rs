@@ -152,6 +152,10 @@ pub struct App {
     available: Option<u64>,
     pending: Option<PendingRun>,
     out_dir: Option<PathBuf>,
+    batch_report_key: Option<(PathBuf, usize, bool)>,
+    batch_report_ready: bool,
+    batch_report_finished: bool,
+    batch_report_saved: Option<PathBuf>,
     /// Reopen output settings after a result has collapsed them.
     output_expanded: bool,
     options: ConvertOptions,
@@ -469,6 +473,10 @@ impl App {
             available: None,
             pending: None,
             out_dir: None,
+            batch_report_key: None,
+            batch_report_ready: false,
+            batch_report_finished: false,
+            batch_report_saved: None,
             output_expanded: false,
             options,
             diagnosis: None,
@@ -715,6 +723,8 @@ impl App {
             crate::paste::Source::Download(link) => (link.name.clone(), "Downloading…".to_owned()),
         };
         self.intake.progress = None;
+        self.batch_report_finished = false;
+        self.batch_report_saved = None;
         self.rows.clear();
         self.rows.push(Row {
             input: PathBuf::from(name),
@@ -863,6 +873,9 @@ impl App {
 
     /// Sets the folder designs are written to.
     pub fn set_out_dir(&mut self, dir: PathBuf) {
+        self.batch_report_key = None;
+        self.batch_report_finished = false;
+        self.batch_report_saved = None;
         self.out_dir = Some(dir);
     }
 
@@ -1264,6 +1277,9 @@ impl App {
         let Some(out_dir) = self.out_dir.clone() else {
             return;
         };
+        self.batch_report_key = None;
+        self.batch_report_finished = false;
+        self.batch_report_saved = None;
         self.pending = Some(PendingRun {
             options: self.options.clone(),
             kind: RunKind::Batch {
@@ -1279,6 +1295,7 @@ impl App {
             return;
         };
         self.refresh_blocked_checker();
+        self.batch_report_saved = None;
         self.notice = None;
         self.diagnostic_stopped = false;
         self.diagnostic_path = None;
@@ -1535,7 +1552,7 @@ impl App {
         match pick {
             Pick::Files | Pick::Folder => self.add_inputs(paths),
             Pick::Output => {
-                self.out_dir = Some(first);
+                self.set_out_dir(first);
                 if let Some(source) = self.intake.choosing_output.take() {
                     self.open_source(source, ctx);
                 }
@@ -1562,6 +1579,27 @@ impl App {
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(message) = self.messages.try_recv() {
             match message {
+                Message::BatchReportsFound { key, found } => {
+                    if self.batch_report_key.as_ref() == Some(&key) {
+                        self.batch_report_ready = found;
+                    }
+                }
+                Message::BatchReportWritten(result) => {
+                    self.batch_report_key = None;
+                    match result {
+                        Ok(folder) => {
+                            if self.out_dir.as_ref() == Some(&folder) {
+                                self.batch_report_saved = Some(folder);
+                                self.notice = None;
+                            }
+                        }
+                        Err(error) => {
+                            self.batch_report_saved = None;
+                            self.notice = Some(error);
+                        }
+                    }
+                }
+
                 Message::Downloaded(results) => {
                     self.downloading = false;
                     for result in results {
@@ -1686,6 +1724,9 @@ impl App {
                 }
                 Message::Done => {
                     self.run = None;
+                    self.batch_report_key = None;
+                    self.batch_report_finished = self.inputs.iter().any(|path| path.is_dir())
+                        && self.rows.iter().any(|row| row.report.is_some());
                     if let Some(path) = self.diagnostic_path.clone() {
                         let failed = self.row_logs.iter().any(|(index, log)| {
                             log == &path
@@ -2098,7 +2139,7 @@ impl App {
                 });
             // Use spare room below compact controls, while retaining the pinned
             // boundary when Advanced or a long input list needs its own scroll area.
-            if self.rows.len() == 1 {
+            if !self.rows.is_empty() {
                 report_top = (choices.top() + area.content_size.y + theme::SPACE_4).min(pinned_top);
             }
         });
@@ -2372,9 +2413,7 @@ impl App {
             },
         );
         framed(ui, &p, p.surface_2, hovering, padding, |ui| {
-            if !self.inputs.is_empty() {
-                ui.spacing_mut().item_spacing.y = 0.0;
-            }
+            ui.spacing_mut().item_spacing = egui::Vec2::splat(theme::SPACE_2);
             if self.inputs.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(theme::SPACE_4);
@@ -2408,27 +2447,31 @@ impl App {
                                     ui.vertical(|ui| {
                                         let folder =
                                             if dutchman_core::Format::from_path(input).is_some() {
-                                                input
-                                                    .parent()
-                                                    .filter(|parent| !parent.as_os_str().is_empty())
-                                                    .unwrap_or_else(|| Path::new("."))
+                                                input.parent().filter(|parent| {
+                                                    !parent.as_os_str().is_empty()
+                                                        && *parent != Path::new(".")
+                                                })
                                             } else {
-                                                input.as_path()
+                                                Some(input.as_path())
                                             };
-                                        // One paragraph lets the estimate continue on the
-                                        // folder's last line, keeping both texts complete.
+                                        // Keep real folders and their estimates in one paragraph.
                                         let mut line = egui::text::LayoutJob::default();
-                                        RichText::new(display(folder)).append_to(
-                                            &mut line,
-                                            ui.style(),
-                                            egui::FontSelection::Default,
-                                            Align::Center,
-                                        );
-                                        let mut tooltip = display(folder);
+                                        let mut tooltip = String::new();
+                                        if let Some(folder) = folder {
+                                            tooltip = display(folder);
+                                            RichText::new(&tooltip).append_to(
+                                                &mut line,
+                                                ui.style(),
+                                                egui::FontSelection::Default,
+                                                Align::Center,
+                                            );
+                                        }
                                         if let Some((text, hover, large)) =
                                             estimate.as_ref().filter(|_| index == 0)
                                         {
-                                            RichText::new(format!(" — {text}"))
+                                            let prefix =
+                                                if folder.is_some() { " — " } else { "" };
+                                            RichText::new(format!("{prefix}{text}"))
                                                 .small()
                                                 .color(if *large { p.lantern_text } else { p.tide })
                                                 .append_to(
@@ -2437,11 +2480,15 @@ impl App {
                                                     egui::FontSelection::Default,
                                                     Align::Center,
                                                 );
-                                            tooltip.push('\n');
+                                            if !tooltip.is_empty() {
+                                                tooltip.push('\n');
+                                            }
                                             tooltip.push_str(hover);
                                         }
-                                        ui.add(egui::Label::new(line).wrap())
-                                            .on_hover_text(tooltip);
+                                        if !line.text.is_empty() {
+                                            ui.add(egui::Label::new(line).wrap())
+                                                .on_hover_text(tooltip);
+                                        }
                                         if dutchman_core::Format::from_path(input).is_some()
                                             && (self.inputs.len() > 1 || estimate.is_none())
                                         {
@@ -2450,16 +2497,8 @@ impl App {
                                         if let Some(format) =
                                             dutchman_core::Format::from_path(input)
                                         {
-                                            let level = format
-                                                .headline_level()
-                                                .map(|level| format!("  {level}"))
-                                                .unwrap_or_default();
                                             ui.add(
-                                                egui::Label::new(format!(
-                                                    "{}{level}",
-                                                    format.status_for(input)
-                                                ))
-                                                .wrap(),
+                                                egui::Label::new(format.status_for(input)).wrap(),
                                             );
                                         }
                                     });
@@ -2498,21 +2537,26 @@ impl App {
             if self.inputs.is_empty() {
                 ui.add_space(theme::SPACE_2);
             }
-            ui.horizontal_wrapped(|ui| {
-                ui.add_enabled_ui(!self.running(), |ui| {
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut self.share_link)
-                            .hint_text("Public Fusion or Google Drive file link")
-                            .char_limit(8192)
-                            .desired_width(260.0),
-                    );
-                    if ui.button("Add link").clicked()
-                        || (field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                    {
-                        let link = std::mem::take(&mut self.share_link);
-                        self.queue_links(&link);
-                    }
-                });
+            theme::control_row(ui, |ui| {
+                let enabled = !self.running();
+                let height = theme::control_height(ui);
+                let field = ui.add_enabled(
+                    enabled,
+                    egui::TextEdit::singleline(&mut self.share_link)
+                        .hint_text("Public Fusion or Google Drive file link")
+                        .char_limit(8192)
+                        .desired_width(260.0_f32.min(ui.available_width()))
+                        .min_size(egui::vec2(0.0, height))
+                        .vertical_align(Align::Center),
+                );
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Add link"))
+                    .clicked()
+                    || (field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                {
+                    let link = std::mem::take(&mut self.share_link);
+                    self.queue_links(&link);
+                }
                 if ui
                     .button(if self.onshape.connected() {
                         "Onshape connected ✓"
@@ -2534,47 +2578,49 @@ impl App {
                     ui.label("Downloading shared files…");
                 });
             }
-            ui.horizontal_wrapped(|ui| {
-                ui.add_enabled_ui(
-                    !self.running() && !self.updater.blocks_conversions(),
-                    |ui| {
-                        if ui.button("Add files…").clicked() {
-                            worker::pick(Pick::Files, self.sender.clone(), ui.ctx().clone());
-                        }
-                        if ui.button("Check a folder").clicked() {
-                            self.notice = None;
-                            self.doctor = Some(crate::doctor::Page::new(None));
-                        }
-                        if ui.button("Add folder…").clicked() {
-                            worker::pick(Pick::Folder, self.sender.clone(), ui.ctx().clone());
-                        }
-                        if !self.inputs.is_empty() && ui.button("Clear").clicked() {
-                            self.inputs.clear();
-                            self.rows.clear();
-                            self.report_row = None;
-                            self.report_done = None;
-                            self.private_send = None;
-                            self.consent.card = None;
-                            self.output_expanded = false;
-                            self.keep_used_downloads();
-                        }
-                    },
-                );
+            theme::control_row(ui, |ui| {
+                let enabled = !self.running() && !self.updater.blocks_conversions();
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Add files…"))
+                    .clicked()
+                {
+                    worker::pick(Pick::Files, self.sender.clone(), ui.ctx().clone());
+                }
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Check a folder"))
+                    .clicked()
+                {
+                    self.notice = None;
+                    self.doctor = Some(crate::doctor::Page::new(None));
+                }
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Add folder…"))
+                    .clicked()
+                {
+                    worker::pick(Pick::Folder, self.sender.clone(), ui.ctx().clone());
+                }
+                if !self.inputs.is_empty()
+                    && ui
+                        .add_enabled(enabled, egui::Button::new("Clear"))
+                        .clicked()
+                {
+                    self.inputs.clear();
+                    self.rows.clear();
+                    self.batch_report_finished = false;
+                    self.batch_report_saved = None;
+                    self.report_row = None;
+                    self.report_done = None;
+                    self.private_send = None;
+                    self.consent.card = None;
+                    self.output_expanded = false;
+                    self.keep_used_downloads();
+                }
             });
-            ui.allocate_ui_with_layout(
-                egui::vec2(
-                    ui.available_width(),
-                    ui.text_style_height(&egui::TextStyle::Small),
-                ),
-                Layout::left_to_right(Align::Center).with_main_wrap(true),
-                |ui| {
-                    ui.small(if cfg!(target_os = "macos") {
-                        "Drop, or paste files or links (⌘V)"
-                    } else {
-                        "Drop, or paste files or links (Ctrl+V)"
-                    });
-                },
-            );
+            ui.small(if cfg!(target_os = "macos") {
+                "Drop, or paste files or links (⌘V)"
+            } else {
+                "Drop, or paste files or links (Ctrl+V)"
+            });
         });
     }
 
@@ -2656,6 +2702,46 @@ impl App {
         });
     }
 
+    fn batch_report_button(&mut self, ui: &mut egui::Ui) {
+        if !self.batch_report_finished {
+            return;
+        }
+        let Some(folder) = self.out_dir.clone() else {
+            return;
+        };
+        let running = self.running();
+        let key = (
+            folder.clone(),
+            self.rows.iter().filter(|row| row.report.is_some()).count(),
+            running,
+        );
+        if self.batch_report_key.as_ref() != Some(&key) {
+            self.batch_report_ready = false;
+            self.batch_report_key = Some(key.clone());
+            if !running {
+                let sender = self.sender.clone();
+                let ctx = ui.ctx().clone();
+                std::thread::spawn(move || {
+                    let found = dutchman::batch_report::report_paths(&folder)
+                        .is_ok_and(|paths| !paths.is_empty());
+                    let _ = sender.send(Message::BatchReportsFound { key, found });
+                    ctx.request_repaint();
+                });
+            }
+        }
+        if self.batch_report_ready && !running && ui.button("Batch report").clicked() {
+            self.batch_report_ready = false;
+            let folder = self.out_dir.clone().unwrap_or_default();
+            let sender = self.sender.clone();
+            let ctx = ui.ctx().clone();
+            std::thread::spawn(move || {
+                let result = dutchman::batch_report::write_folder(&folder).map(|_| folder);
+                let _ = sender.send(Message::BatchReportWritten(result));
+                ctx.request_repaint();
+            });
+        }
+    }
+
     fn output_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let p = *theme::palette(ui);
         let wide = is_wide(ui);
@@ -2673,27 +2759,29 @@ impl App {
                     .unwrap_or_else(|| "Not chosen yet".to_owned());
                 let mut path_clicked = false;
                 let mut change_clicked = false;
-                egui::Sides::new().shrink_left().truncate().show(
-                    ui,
-                    |ui| {
-                        if ui
-                            .add(
-                                egui::Button::new(RichText::new(&path).monospace())
-                                    .frame(false)
-                                    .truncate(),
-                            )
-                            .on_hover_text(&path)
-                            .clicked()
-                        {
-                            path_clicked = true;
-                        }
-                    },
-                    |ui| {
-                        if ui.button("Change…").clicked() {
-                            change_clicked = true;
-                        }
-                    },
-                );
+                theme::control_row(ui, |ui| {
+                    egui::Sides::new().shrink_left().truncate().show(
+                        ui,
+                        |ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new(RichText::new(&path).monospace())
+                                        .frame(false)
+                                        .truncate(),
+                                )
+                                .on_hover_text(&path)
+                                .clicked()
+                            {
+                                path_clicked = true;
+                            }
+                        },
+                        |ui| {
+                            if ui.button("Change…").clicked() {
+                                change_clicked = true;
+                            }
+                        },
+                    );
+                });
                 self.output_expanded = path_clicked || change_clicked;
             });
             return;
@@ -2701,28 +2789,32 @@ impl App {
         panel(ui, &p, false, |ui| {
             let running = self.running();
             let sender = self.sender.clone();
-            egui::Sides::new().shrink_left().truncate().show(
-                ui,
-                |ui| match &self.out_dir {
-                    Some(dir) => {
-                        ui.add(
-                            egui::Label::new(RichText::new(display(dir)).monospace()).truncate(),
-                        )
-                        .on_hover_text(display(dir));
-                    }
-                    None => {
-                        ui.label(RichText::new("Not chosen yet").color(p.tide));
-                    }
-                },
-                |ui| {
-                    if ui
-                        .add_enabled(!running, egui::Button::new("Choose…"))
-                        .clicked()
-                    {
-                        worker::pick(Pick::Output, sender, ctx.clone());
-                    }
-                },
-            );
+            theme::control_row(ui, |ui| {
+                egui::Sides::new().shrink_left().truncate().show(
+                    ui,
+                    |ui| match &self.out_dir {
+                        Some(dir) => {
+                            ui.add_sized(
+                                egui::vec2(ui.available_width(), theme::control_height(ui)),
+                                egui::Label::new(RichText::new(display(dir)).monospace())
+                                    .truncate(),
+                            )
+                            .on_hover_text(display(dir));
+                        }
+                        None => {
+                            ui.label(RichText::new("Not chosen yet").color(p.tide));
+                        }
+                    },
+                    |ui| {
+                        if ui
+                            .add_enabled(!running, egui::Button::new("Choose…"))
+                            .clicked()
+                        {
+                            worker::pick(Pick::Output, sender, ctx.clone());
+                        }
+                    },
+                );
+            });
             ui.add_space(theme::SPACE_2);
             ui.add_enabled_ui(!self.running(), |ui| {
                 self.choices_ui(ui);
@@ -2897,10 +2989,19 @@ impl App {
                     ui.label(RichText::new(why).small().color(p.tide));
                 }
             }
-            if let Some(summary) = summary.filter(|_| !self.rows.is_empty()) {
+            if let Some(folder) = &self.batch_report_saved {
+                let saved = format!("Report saved to {}/", file_name(folder));
+                let status = match summary.filter(|_| !self.rows.is_empty()) {
+                    Some(summary) => format!("{summary} · {saved}"),
+                    None => saved,
+                };
+                ui.label(RichText::new(status).color(p.tide));
+            } else if let Some(summary) = summary.filter(|_| !self.rows.is_empty()) {
                 ui.label(RichText::new(summary).color(p.tide));
             }
+            self.batch_report_button(ui);
             ui.menu_button("Formats", |ui| {
+                ui.label("L0–L9: cadmpeg’s published format-support level; each conversion’s report says what that file kept.");
                 for format in dutchman_core::Format::ALL {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(format.name());
@@ -3416,6 +3517,7 @@ fn row_ui(
     running: bool,
     log: Option<(&Path, bool)>,
 ) -> Option<Action> {
+    ui.spacing_mut().item_spacing = egui::Vec2::splat(theme::SPACE_2);
     let mut action = None;
     let colour = result_colour(p, row.report.as_ref(), view);
     let word = view.status_word;
@@ -3440,7 +3542,7 @@ fn row_ui(
         crate::onshape::is_bundle(&row.input) && row.input.is_file() && row.report.is_some();
     if output.is_some() || step_button || bundle {
         // One row of buttons under it.
-        ui.horizontal_wrapped(|ui| {
+        theme::control_row(ui, |ui| {
             if let Some(output) = output {
                 if is_macro {
                     if ui.button("Show in folder").clicked() {
@@ -3470,7 +3572,10 @@ fn row_ui(
                 if ui.button("Show bundle").clicked() {
                     action = Some(Action::Reveal(row.input.clone()));
                 }
-                if ui.add_enabled(!running, egui::Button::new("Send to Dutchman")).clicked() {
+                if ui
+                    .add_enabled(!running, egui::Button::new("Send to Dutchman"))
+                    .clicked()
+                {
                     action = Some(Action::Consent(index));
                 }
             }
@@ -3619,7 +3724,7 @@ fn row_ui(
                     }
                 });
         }
-        ui.horizontal_wrapped(|ui| {
+        theme::control_row(ui, |ui| {
             if !view.components.is_empty() && ui.button("Save the full log…").clicked() {
                 action = Some(Action::Pick(Pick::SaveLog(index)));
             }
@@ -3833,7 +3938,7 @@ fn report_this_file(ui: &mut egui::Ui) -> bool {
         egui::Button::new(RichText::new(REPORT_THIS_FILE).strong().color(p.spectre))
             .fill(p.surface_2)
             .stroke(Stroke::new(1.0_f32, p.spectre))
-            .min_size(egui::vec2(0.0, 30.0)),
+            .min_size(egui::vec2(0.0, theme::control_height(ui))),
     )
     .on_hover_text("Choose this file in \"Is there a problem? Is something missing?\"")
     .clicked()
@@ -4071,6 +4176,116 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn input_row_shows_plain_capability_and_only_meaningful_folders() {
+        use egui_kittest::kittest::Queryable;
+        let absolute = std::env::current_dir().unwrap().join("synthetic.f3d");
+        for input in [
+            PathBuf::from("synthetic.f3d"),
+            PathBuf::from("./synthetic.f3d"),
+            PathBuf::from("designs/synthetic.f3d"),
+            absolute,
+        ] {
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(1000.0, 1400.0))
+                .build_eframe(|cc| {
+                    let mut app = App::new(cc);
+                    app.inputs = vec![input.clone()];
+                    app.size_inputs = Some(app.inputs.clone());
+                    app.estimate_key = Some(app.current_estimate_key());
+                    app
+                });
+            harness.run_steps(8);
+            assert!(harness
+                .query_by_label("Fusion .f3d: reads geometry")
+                .is_some());
+            assert!(harness.query_by_label_contains("L5").is_none());
+            assert!(harness.query_by_label(".").is_none());
+            assert!(harness.query_by_label("synthetic.f3d").is_some());
+            if let Some(parent) = input
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty() && *parent != Path::new("."))
+            {
+                assert!(harness.query_by_label(&display(parent)).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn batch_report_button_requires_a_finished_folder_run_and_says_where_saved() {
+        use egui_kittest::kittest::Queryable;
+        let folder = tempfile::tempdir().unwrap();
+        let output = folder.path().join("synthetic.sc");
+        let report = json!({
+            "schema": "dutchman.convert/1", "ok": true, "mode": "history",
+            "input": {"path": "synthetic.f3d"}, "losses": []
+        });
+        dutchman::saved_report::save(&output, &report).unwrap();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1180.0, 800.0))
+            .build_eframe(|cc| {
+                let mut app = App::new(cc);
+                app.set_out_dir(folder.path().to_path_buf());
+                app.inputs = vec![folder.path().to_path_buf()];
+                app
+            });
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Batch report").is_none());
+        {
+            let app = harness.state_mut();
+            app.intake.active = true;
+            app.rows = vec![Row {
+                input: PathBuf::from("synthetic.f3d"),
+                output: Some(output),
+                status: Status::Converted,
+                report: Some(report),
+                size: None,
+                progress: None,
+                job: None,
+            }];
+        }
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Batch report").is_none());
+        harness.state_mut().intake.active = false;
+        harness.state().sender.send(Message::Done).unwrap();
+        for _ in 0..500 {
+            harness.run_steps(2);
+            if harness.query_by_label("Batch report").is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let button = harness.get_by_label("Batch report").rect();
+        let summary = harness.get_by_label("1 converted, 0 failed").rect();
+        assert!(button.left() >= summary.right());
+        assert!((button.center().y - summary.center().y).abs() < 10.0);
+        harness.get_by_label("Batch report").click_accesskit();
+        let status = format!(
+            "1 converted, 0 failed · Report saved to {}/",
+            file_name(folder.path())
+        );
+        for _ in 0..500 {
+            harness.run_steps(2);
+            if harness.query_by_label(&status).is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        harness.get_by_label(&status);
+        assert!(folder.path().join("dutchman-batch-report.md").is_file());
+        assert!(folder.path().join("dutchman-batch-report.csv").is_file());
+        harness.state_mut().intake.active = true;
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Batch report").is_none());
+        harness.state_mut().intake.active = false;
+        harness
+            .state_mut()
+            .set_out_dir(folder.path().join("another-output"));
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Batch report").is_none());
+        assert!(harness.query_by_label(&status).is_none());
+    }
 
     #[test]
     fn paste_keeps_onshape_public_shares_and_local_files_in_their_intakes() {
@@ -5049,7 +5264,7 @@ mod tests {
         harness.run_steps(8);
         assert!(harness
             .query_by_label(
-                ". — synthetic.f3d needs under 0.1 GB of memory and under a minute to convert."
+                "synthetic.f3d needs under 0.1 GB of memory and under a minute to convert."
             )
             .is_some());
     }
@@ -5107,13 +5322,13 @@ mod tests {
         harness.run_steps(8);
         assert!(harness
             .query_by_label(
-                ". — synthetic.f3d needs about 2.5 GB of memory and about 3 min to convert."
+                "synthetic.f3d needs about 2.5 GB of memory and about 3 min to convert."
             )
             .is_some());
         assert!(harness.query_by_label("4.0 GB of memory free").is_some());
         assert!(harness
             .query_by_label(
-                ". — synthetic.f3d needs about 90.0 GB of memory and about 1 min to convert."
+                "synthetic.f3d needs about 90.0 GB of memory and about 1 min to convert."
             )
             .is_none());
     }

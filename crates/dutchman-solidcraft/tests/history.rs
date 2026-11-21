@@ -3333,6 +3333,165 @@ fn counterbores_and_countersinks_keep_their_entry_dimensions() {
     }
 }
 
+fn pointed_hole_forms() -> Vec<(Value, &'static str, f64)> {
+    let pi = std::f64::consts::PI;
+    vec![
+        (json!({"kind": "simple"}), "simple", 0.0),
+        (
+            json!({"kind": "simple_drilled", "drill_point_angle": 118_f64.to_radians()}),
+            "simple",
+            0.0,
+        ),
+        (
+            json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
+            "counterbore",
+            24.0 * pi,
+        ),
+        (
+            json!({"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0,
+            "drill_point_angle": 118_f64.to_radians()}),
+            "counterbore",
+            24.0 * pi,
+        ),
+        // A 90 degree entry is a 2 mm deep frustum, less the bore it overlaps.
+        (
+            json!({"kind": "countersink", "diameter": 8.0, "angle": pi / 2.0}),
+            "countersink",
+            32.0 * pi / 3.0,
+        ),
+        (
+            json!({"kind": "chamfer", "diameter": 8.0, "angle": pi / 2.0}),
+            "countersink",
+            32.0 * pi / 3.0,
+        ),
+    ]
+}
+
+#[test]
+fn through_all_holes_drop_drill_points_on_every_target() {
+    for version in [
+        "0.18.2".parse().unwrap(),
+        "0.22.0".parse().unwrap(),
+        "0.22.1".parse().unwrap(),
+        dutchman_solidcraft::SolidCraftVersion::default(),
+    ] {
+        for (form, kind, _) in pointed_hole_forms() {
+            // Readers may carry the point on the form, on the bottom, or both.
+            for separate_bottom in [false, true] {
+                if !separate_bottom
+                    && !matches!(
+                        form["kind"].as_str(),
+                        Some("simple_drilled" | "counterbore_drilled")
+                    )
+                {
+                    continue;
+                }
+                let model = holed_cube(4.0, |hole| {
+                    hole["shape"]["construction"]["value"]["kind"] = form.clone();
+                    if separate_bottom {
+                        hole["bottom"] = json!({"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": true});
+                    }
+                });
+                let (document, report) = convert(
+                    &model,
+                    &SolidCraftWriter::new()
+                        .verification(Verification::Off)
+                        .target_version(Some(version)),
+                );
+                assert!(
+                    history_line(&report).starts_with("4 of 4 features rebuilt"),
+                    "{report:?}"
+                );
+                let hole = &document["features"][3];
+                assert_eq!(hole["hole"]["type"], kind);
+                assert!(hole["hole"].get("tip_angle").is_none(), "{hole}");
+                assert!(hole.get("depth").is_none());
+                assert!(hole.get("to").is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn bounded_entry_recess_points_follow_the_existing_version_gate() {
+    for version in ["0.18.2", "0.22.0", "0.22.1"] {
+        for (form, kind, _) in pointed_hole_forms().into_iter().skip(2) {
+            for to_face in [false, true] {
+                let model = holed_cube(4.0, |hole| {
+                    hole["shape"]["construction"]["value"]["kind"] = form.clone();
+                    if to_face {
+                        to_face_hole(hole);
+                    } else {
+                        hole["extent"] = json!({"kind": "blind", "length": 6.0});
+                    }
+                    hole["bottom"] = json!({"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": false});
+                });
+                let (document, report) = convert(
+                    &model,
+                    &SolidCraftWriter::new()
+                        .verification(Verification::Off)
+                        .target_version(Some(version.parse().unwrap())),
+                );
+                if version == "0.22.1" {
+                    assert!(
+                        history_line(&report).starts_with("4 of 4 features rebuilt"),
+                        "{report:?}"
+                    );
+                    assert_eq!(document["features"][3]["hole"]["type"], kind);
+                    assert_eq!(
+                        document["features"][3]["hole"]["tip_angle"],
+                        "118.00000000000001"
+                    );
+                    assert_eq!(
+                        document["features"][3]["depth"],
+                        if to_face { "10 mm" } else { "6 mm" }
+                    );
+                } else {
+                    assert!(
+                        history_line(&report).contains(
+                            "SolidCraft holes take a drill point only on a plain drilled hole"
+                        ),
+                        "{report:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn solidcraft_replays_through_all_holes_without_drill_points() {
+    let Some(cli) = solidcraft() else { return };
+    let detected =
+        dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()));
+    for version in [
+        "0.18.2".parse().unwrap(),
+        dutchman_solidcraft::SolidCraftVersion::default(),
+    ] {
+        if detected < version {
+            continue;
+        }
+        for (form, _, extra) in pointed_hole_forms() {
+            let model = holed_cube(4.0, |hole| {
+                hole["shape"]["construction"]["value"]["kind"] = form;
+                hole["bottom"] = json!({"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": false});
+            });
+            let writer = SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(version));
+            let (bytes, report) = written_with(&model, &writer);
+            assert!(
+                history_line(&report).starts_with("4 of 4 features rebuilt"),
+                "{report:?}"
+            );
+            let got = volumes(&cli, &bytes);
+            let want = 1000.0 - 40.0 * std::f64::consts::PI - extra;
+            assert_eq!(got.len(), 1, "{got:?}");
+            assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
+        }
+    }
+}
+
 #[test]
 fn solidcraft_drills_counterbores_and_countersinks() {
     let Some(cli) = solidcraft() else { return };
@@ -4541,10 +4700,6 @@ fn unsupported_hole_forms_have_specific_reasons() {
             "its countersink diameter or angle is not resolved",
         ),
         (
-            json!({"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0, "drill_point_angle": 1.5}),
-            "SolidCraft holes take a drill point only on a plain drilled hole",
-        ),
-        (
             json!({"kind": "counterdrill", "diameter": 8.0, "entry_diameter": 9.0, "depth": 2.0, "angle": 1.5}),
             "a counterdrill with a conical entry and cylindrical recess is not mapped yet",
         ),
@@ -4583,8 +4738,12 @@ fn unsupported_hole_forms_have_specific_reasons() {
                     .verification(Verification::Off)
                     .target_version(Some("0.22.0".parse().unwrap())),
             );
-            assert!(history_line(&report)
-                .contains("SolidCraft holes take a drill point only on a plain drilled hole"));
+            assert_eq!(
+                history_line(&report)
+                    .contains("SolidCraft holes take a drill point only on a plain drilled hole"),
+                blind,
+                "{report:?}"
+            );
             // SolidCraft 0.22.1 and later keep the entry form and its drill point. Name the
             // version: the default target follows the installed SolidCraft, which can be older.
             let (_, report) = convert(
@@ -12557,6 +12716,41 @@ fn closed_circle_blends_keep_older_targets_and_non_circular_curves_refused() {
 }
 
 #[test]
+fn closed_blends_distinguish_missing_historical_carriers_from_non_circular_curves() {
+    let base = closed_circle_blend(true, 0.71);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    // A historical identity is independent of the geometry topology's identities.
+    // Keep the same samples, but do not give this selection an exact stored carrier.
+    let edge = json!("synthetic:historical:edge#0");
+    let model = &mut wire["model"];
+    let state = &mut model["feature_input_topologies"][0];
+    state["edges"] = json!([edge]);
+    state["edge_geometry"][0]["edge"] = edge.clone();
+    model["features"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
+        json!([edge]);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.45.0".parse().unwrap()));
+    let (_, report) = convert(&model, &writer);
+    assert!(
+        history_line(&report).contains("no resolved historical curve carrier"),
+        "{report:?}"
+    );
+    assert!(
+        !history_line(&report).contains("closed input curves other than proven circles"),
+        "{report:?}"
+    );
+}
+
+#[test]
 fn closed_circle_blends_refuse_ellipses_whose_samples_alias_a_circle() {
     let base = closed_circle_blend(false, 0.0);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
@@ -15657,6 +15851,164 @@ fn a_face_moved_along_its_normal_becomes_an_offset_face_at_a_point_inside_it() {
     assert!(
         p[0] > 1.0 && p[0] < 9.0 && p[1] > 1.0 && p[1] < 9.0,
         "{p:?}"
+    );
+}
+
+#[test]
+fn offset_face_body_binding_preserves_older_targets() {
+    let model = face_move(json!({"kind": "offset", "distance": 2.0}));
+    for (target, bound) in [("0.18.2", false), ("0.44.1", false), ("0.45.0", true)] {
+        let (doc, report) = convert(
+            &model,
+            &SolidCraftWriter::new()
+                .target_version(Some(target.parse().unwrap()))
+                .verification(Verification::Off),
+        );
+        let features = doc["features"].as_array().unwrap();
+        let offset = features
+            .iter()
+            .find(|f| f["type"] == "offset_face")
+            .unwrap_or_else(|| panic!("{}", history_line(&report)));
+        assert_eq!(offset.get("body").is_some(), bound, "{target}: {offset}");
+        if bound {
+            let extrude = features.iter().find(|f| f["type"] == "extrude").unwrap();
+            assert_eq!(offset["body"], extrude["body_names"][0]);
+        }
+    }
+}
+
+#[test]
+fn offset_faces_refuse_input_topology_without_unique_body_ownership() {
+    let mut model = face_move(json!({"kind": "offset", "distance": 2.0}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["feature_input_topologies"][0]["bodies"] = json!([
+        "test:face:historical-body#one",
+        "test:face:historical-body#two"
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (doc, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .target_version(Some("0.45.0".parse().unwrap()))
+            .verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("several bodies without face ownership"),
+        "{}",
+        history_line(&report)
+    );
+    assert!(!doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "offset_face"));
+}
+
+#[test]
+fn solidcraft_offsets_coincident_local_faces_on_their_own_bodies() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = assembly_of_histories();
+    let first = face_move(json!({"kind": "offset", "distance": 2.0}));
+    let mut second = face_move(json!({"kind": "offset", "distance": 1.0}));
+    let mut wire = serde_json::to_value(&second.ir).unwrap();
+    // The earlier body's offset top and the later body's input top both lie
+    // at z=12 in their components' local frames. Placements stay separate.
+    wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["side"]["termination"]
+        ["length"] = json!(12.0);
+    wire["model"]["parameters"][0]["expression"] = json!("12 mm");
+    wire["model"]["parameters"][0]["value"]["value"] = json!(12.0);
+    for edge in wire["model"]["feature_input_topologies"][0]["edge_geometry"]
+        .as_array_mut()
+        .unwrap()
+    {
+        for key in ["start", "interior", "end"] {
+            edge[key]["z"] = json!(12.0);
+        }
+    }
+    second.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let assembly = model.assembly.as_mut().unwrap();
+    assembly.parts = vec![
+        Model {
+            name: "First".into(),
+            source_file: Some("First.f3d".into()),
+            ..first
+        },
+        Model {
+            name: "Second".into(),
+            source_file: Some("Second.f3d".into()),
+            ..second
+        },
+    ];
+    assembly.placements.truncate(2);
+    let (bytes, report) = written_with(
+        &model,
+        &replaying(&cli).target_version(Some("0.45.0".parse().unwrap())),
+    );
+    assert!(
+        history_line(&report).contains("features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let mut actual = volumes(&cli, &bytes);
+    actual.sort_by(f64::total_cmp);
+    assert_eq!(actual.len(), 2);
+    for (got, expected) in actual.iter().zip([1200.0, 1300.0]) {
+        assert!((got - expected).abs() < 1e-3, "{actual:?}");
+    }
+}
+
+#[test]
+fn solidcraft_offsets_an_annular_face_from_its_interior() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = nested_native_profile(&[10.0, 4.0]);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let template =
+        serde_json::to_value(&face_move(json!({"kind": "offset", "distance": 2.0})).ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(template["model"]["features"][2].clone());
+    let mut topology = template["model"]["feature_input_topologies"][0].clone();
+    let face = "test:face:historical-face#target";
+    topology["edges"] = json!([
+        "test:face:historical-edge#outer",
+        "test:face:historical-edge#inner"
+    ]);
+    topology["faces"] = json!([
+        face,
+        "test:face:historical-face#outer",
+        "test:face:historical-face#inner"
+    ]);
+    topology["edge_geometry"] = json!([10.0, 4.0]
+        .into_iter()
+        .enumerate()
+        .map(|(k, r)| {
+            let side = if k == 0 { "outer" } else { "inner" };
+            json!({"edge": format!("test:face:historical-edge#{side}"),
+            "start": {"x": r, "y": 0.0, "z": 10.0}, "end": {"x": r, "y": 0.0, "z": 10.0},
+            "interior": {"x": -r, "y": 0.0, "z": 10.0}, "tangent": {"x": 0.0, "y": 1.0, "z": 0.0},
+            "faces": [face, format!("test:face:historical-face#{side}")]})
+        })
+        .collect::<Vec<_>>());
+    wire["model"]["feature_input_topologies"] = json!([topology]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let writer = replaying(&cli).target_version(Some("0.45.0".parse().unwrap()));
+    let (doc, report) = convert(&model, &writer);
+    let offset = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "offset_face")
+        .unwrap_or_else(|| panic!("{}", history_line(&report)));
+    let p = offset["faces"][0].as_array().unwrap();
+    let radius = p[0].as_f64().unwrap().hypot(p[1].as_f64().unwrap());
+    assert!(radius > 6.0 && radius < 8.0, "{p:?}");
+    let actual = volumes(&cli, &written_with(&model, &writer).0);
+    let expected = std::f64::consts::PI * 84.0 * 12.0;
+    assert_eq!(actual.len(), 1);
+    assert!(
+        (actual[0] - expected).abs() / expected < dutchman_solidcraft::VOLUME_TOLERANCE,
+        "{actual:?}"
     );
 }
 
@@ -19484,6 +19836,222 @@ fn a_nonzero_evaluator_exit_without_named_failures_writes_an_unverified_design()
             .losses()
             .iter()
             .any(|loss| loss.code.as_deref() == Some("geometry/import-failed")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn feature_profiles_take_the_complete_bound_sketch_for_extrudes_and_revolves() {
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0));
+    let full = json!({"kind": "one_sided", "termination": {
+        "kind": "angle", "angle": std::f64::consts::TAU}});
+    let partial = json!({"kind": "one_sided", "termination": {
+        "kind": "angle", "angle": std::f64::consts::FRAC_PI_2}});
+    let mut no_profile_table = cube_with_history(10.0, whole_sketch(), None);
+    let mut wire = serde_json::to_value(&no_profile_table.ir).unwrap();
+    wire["model"]["sketches"][0]["profiles"] = json!([]);
+    no_profile_table.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    for (mut model, path) in [
+        (
+            cube_with_history(10.0, whole_sketch(), None),
+            "/model/features/1/definition/value/value/profile/value",
+        ),
+        (
+            no_profile_table,
+            "/model/features/1/definition/value/value/profile/value",
+        ),
+        (
+            ring_history(full),
+            "/model/features/1/definition/value/value/construction/value/profile",
+        ),
+        (
+            ring_history(partial),
+            "/model/features/1/definition/value/value/construction/value/profile",
+        ),
+    ] {
+        let (expected, expected_report) = convert(&model, &writer);
+        assert_eq!(expected_report.outcome().unwrap().mode, Mode::History);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        *wire.pointer_mut(path).unwrap() =
+            json!({"kind": "feature", "value": "f3d:model:feature#1"});
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (actual, report) = convert(&model, &writer);
+        assert_eq!(report.outcome().unwrap().mode, Mode::History, "{report:?}");
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn feature_profiles_require_an_earlier_active_resolved_planar_sketch() {
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0));
+    for case in [
+        "missing",
+        "self",
+        "suppressed",
+        "later",
+        "unresolved",
+        "not_sketch",
+    ] {
+        let mut model = cube_with_history(
+            10.0,
+            json!({"kind": "feature", "value": "f3d:model:feature#1"}),
+            None,
+        );
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        match case {
+            "missing" => {
+                wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]["value"]
+                    ["value"] = json!("f3d:model:feature#999")
+            }
+            "self" => {
+                wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]["value"]
+                    ["value"] = json!("f3d:model:feature#2")
+            }
+            "suppressed" => wire["model"]["features"][0]["suppressed"] = json!(true),
+            "later" => wire["model"]["features"][0]["ordinal"] = json!(2),
+            "unresolved" => {
+                wire["model"]["features"][0]["definition"]["value"]["value"]["sketch"] =
+                    json!({"kind": "unresolved"})
+            }
+            "not_sketch" => {
+                wire["model"]["features"][0]["definition"]["value"] =
+                    json!({"kind": "datum_principal_plane", "value": {"plane": "top"}})
+            }
+            _ => assert_eq!(case, "not_sketch", "unknown rejection case"),
+        }
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(&model, &writer);
+        assert_ne!(
+            report.outcome().unwrap().mode,
+            Mode::History,
+            "{case}: {report:?}"
+        );
+        assert!(
+            document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f["type"] != "extrude"),
+            "{case}: {document}"
+        );
+        // The unresolved producer can itself stop the timeline first.
+        if case != "unresolved" {
+            assert!(
+                report.losses().iter().any(|loss| {
+                    loss.detail.contains(
+                        "its feature profile has no earlier active resolved planar sketch mapping",
+                    )
+                }),
+                "{case}: {report:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn feature_profiles_still_compare_the_selected_area_with_the_source_cap() {
+    let mut model = cube_with_history(
+        10.0,
+        json!({"kind": "feature", "value": "f3d:model:feature#1"}),
+        None,
+    );
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    for entity in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
+        for end in ["start", "end"] {
+            let u = &mut entity["geometry"][end]["u"];
+            *u = json!(u.as_f64().unwrap() * 2.0);
+        }
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0)),
+    );
+    assert_ne!(report.outcome().unwrap().mode, Mode::History);
+    assert!(
+        report.losses().iter().any(|loss| loss.detail.contains(
+            "its profile region doesn't match the source (swept 200.0 mm², the source 100.0 mm²)"
+        )),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn feature_profiles_keep_original_geometry_for_targets_before_045() {
+    let model = cube_with_history(
+        10.0,
+        json!({"kind": "feature", "value": "f3d:model:feature#1"}),
+        None,
+    );
+    for target in ["0.18.2", "0.44.1"] {
+        let writer = SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(target.parse().unwrap()));
+        let (document, report) = convert(&model, &writer);
+        assert_ne!(report.outcome().unwrap().mode, Mode::History);
+        assert!(document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "import"));
+        assert!(
+            report.losses().iter().any(|loss| loss
+                .detail
+                .contains("profiles from sketch features require SolidCraft 0.45 or newer")),
+            "{target}: {report:?}"
+        );
+    }
+}
+
+#[test]
+fn feature_profiles_do_not_treat_reference_axes_as_profile_geometry() {
+    let mut model = cube_with_history(
+        10.0,
+        json!({"kind": "feature", "value": "f3d:model:feature#1"}),
+        None,
+    );
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketches"][0]["profiles"] = json!([]);
+    wire["model"]["sketch_constraints"] = json!([]);
+    wire["model"]["sketch_entities"] = json!([
+        entity(
+            1,
+            json!({"kind": "reference_line", "origin": {"u": 0.0, "v": 0.0},
+                         "direction": {"u": 1.0, "v": 0.0}})
+        ),
+        entity(
+            2,
+            json!({"kind": "reference_line", "origin": {"u": 0.0, "v": 0.0},
+                         "direction": {"u": 0.0, "v": 1.0}})
+        ),
+        entity(
+            3,
+            json!({"kind": "point", "position": {"u": 0.0, "v": 0.0}})
+        ),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0)),
+    );
+    assert_ne!(report.outcome().unwrap().mode, Mode::History);
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["type"] != "extrude"));
+    assert!(
+        report.losses().iter().any(|loss| loss
+            .detail
+            .contains("its sketch feature has no resolved non-construction profile curves")),
         "{report:?}"
     );
 }

@@ -79,6 +79,11 @@ edges and a bounding rectangle cannot establish that match. See [sheet metal](hi
 for the remaining plate and bend limits. Synthetic CADIR tests build polygonal bases in code
 and replay L-shaped and notched examples with the released SolidCraft CLI.
 
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry.
+
 ## Upstream gaps, in the order they block history
 
 1. **Native features.** Most Inventor features still come from the codec in native form, so

@@ -927,11 +927,9 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
     harness.state_mut().set_out_dir(dir.path().join("out"));
     harness.run_steps(8);
     assert!(harness
-        .query_by_label("Creo .prt: opens, no geometry yet  L1")
+        .query_by_label("Creo .prt: opens, no geometry yet")
         .is_some());
-    assert!(harness
-        .query_by_label("NX .prt: reads geometry  L1")
-        .is_some());
+    assert!(harness.query_by_label("NX .prt: reads geometry").is_some());
     convert(&mut harness);
     assert!(harness
         .state()
@@ -4309,9 +4307,13 @@ fn a_running_card_shows_the_feature_and_the_measured_note() {
                         && (rect.rect.width() / track.width() - 29.0 / 37.0).abs() < 0.001
                         && rect.fill == palette.spectre)
             }));
-            assert!(harness
-                .query_by_label("Fusion .f3d: reads geometry")
-                .is_none());
+            // Only the input row names the format; the running card doesn't repeat it.
+            assert_eq!(
+                harness
+                    .query_all_by_label("Fusion .f3d: reads geometry")
+                    .count(),
+                1
+            );
             let note = dutchman_core::progress_words::measured();
             assert_eq!(harness.query_by_label(note).is_some(), measured);
             if let Some(dir) = std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS") {

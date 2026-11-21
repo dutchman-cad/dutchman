@@ -283,7 +283,11 @@ fn points_on(
         let [face] = faces.as_slice() else {
             return Err(BAD.to_owned());
         };
-        points.push(point_in(face, planar_only)?);
+        points.push(point_in(
+            face,
+            planar_only,
+            planar_only && ctx.target_version >= crate::SolidCraftVersion::V0_45_0,
+        )?);
     }
     Ok(points)
 }
@@ -539,7 +543,7 @@ fn samples(face: &Boundary) -> Vec<V3> {
 }
 
 /// A point on one face: planar when its boundary is flat, else the cylinder it is part of.
-fn point_in(face: &Boundary, planar_only: bool) -> Result<V3, String> {
+fn point_in(face: &Boundary, planar_only: bool, deep: bool) -> Result<V3, String> {
     let samples: Vec<V3> = face
         .edges
         .iter()
@@ -553,7 +557,7 @@ fn point_in(face: &Boundary, planar_only: bool) -> Result<V3, String> {
         })
         .collect();
     match plane(std::slice::from_ref(face), &samples) {
-        Ok((origin, normal)) => planar_point(face, origin, normal),
+        Ok((origin, normal)) => planar_point_with_clearance(face, origin, normal, deep),
         Err(_) if planar_only => Err("a face that is not planar cannot be moved yet".to_owned()),
         Err(_) => cylinder_point(face),
     }
@@ -563,6 +567,18 @@ fn point_in(face: &Boundary, planar_only: bool) -> Result<V3, String> {
 /// its outline corners make that lie inside it, holes left out. If those all land in holes,
 /// try interval midpoints on bounded scan lines through the same loops.
 fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
+    planar_point_with_clearance(face, origin, normal, false)
+}
+
+/// Offset faces compare scan-line candidates even when a corner triangle fits.
+/// On circular trims those triangles hug the rim; subtract the maximum chord
+/// error from every candidate's clearance to prove room from the exact curves.
+fn planar_point_with_clearance(
+    face: &Boundary,
+    origin: V3,
+    normal: V3,
+    deep: bool,
+) -> Result<V3, String> {
     let helper = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
         .into_iter()
         .min_by(|a, b| dot(*a, normal).abs().total_cmp(&dot(*b, normal).abs()))
@@ -586,6 +602,18 @@ fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
             .fold(f64::INFINITY, f64::min)
     };
     let mut best: Option<([f64; 2], f64)> = None;
+    let chord_error = face.edges.iter().fold(0.0_f64, |error, edge| {
+        let sagitta = match edge {
+            Edge::Line { .. } => 0.0,
+            Edge::Arc { radius, .. } => {
+                radius * (1.0 - (edge_sweep(edge).abs() / f64::from(ARC_STEPS) / 2.0).cos())
+            }
+            Edge::Circle { radius, .. } => {
+                radius * (1.0 - (TAU / f64::from(CIRCLE_STEPS) / 2.0).cos())
+            }
+        };
+        error.max(sagitta)
+    });
     for ring in &rings {
         let n = ring.len();
         for i in 0..n {
@@ -600,37 +628,26 @@ fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
             if !inside_face(centre) {
                 continue;
             }
-            let room = clearance(centre);
+            let room = clearance(centre) - if deep { chord_error } else { 0.0 };
             if room > 1e-3 && best.is_none_or(|(_, most)| room > most) {
                 best = Some((centre, room));
             }
         }
     }
-    if best.is_none() {
+    if deep || best.is_none() {
         // Corner triangles can all land in holes (or the opening of a thin frame).
         // Intersections with every trim ring split a scan line into intervals; their
         // midpoints also find narrow strips that a uniform point grid would miss.
         // Keep the old picks when available, and apply the same containment and
         // clearance proof to every new candidate. Curve chords need extra room:
         // their sagitta bounds the difference from the actual circular boundary.
-        let chord_error = face.edges.iter().fold(0.0_f64, |error, edge| {
-            let sagitta = match edge {
-                Edge::Line { .. } => 0.0,
-                Edge::Arc { radius, .. } => {
-                    radius * (1.0 - (edge_sweep(edge).abs() / f64::from(ARC_STEPS) / 2.0).cos())
-                }
-                Edge::Circle { radius, .. } => {
-                    radius * (1.0 - (TAU / f64::from(CIRCLE_STEPS) / 2.0).cos())
-                }
-            };
-            error.max(sagitta)
-        });
         for centre in scan_candidates(&rings) {
             if !inside_face(centre) {
                 continue;
             }
-            let room = clearance(centre);
-            if room > 1e-3 + chord_error && best.is_none_or(|(_, most)| room > most) {
+            let room = clearance(centre) - if deep { chord_error } else { 0.0 };
+            let minimum = 1e-3 + if deep { 0.0 } else { chord_error };
+            if room > minimum && best.is_none_or(|(_, most)| room > most) {
                 best = Some((centre, room));
             }
         }
@@ -1531,6 +1548,21 @@ mod tests {
         edge(&r).unwrap()
     }
 
+    #[test]
+    fn offset_annulus_pick_stays_well_inside_both_exact_rims() {
+        // Concentric synthetic trims. The old corner-triangle candidate is
+        // barely inside the outer rim; the scan intervals reach the ring's middle.
+        let face = Boundary {
+            edges: vec![circle(10.0), circle(4.0)],
+            area: 0.0,
+        };
+        let old = point_in(&face, true, false).unwrap();
+        let p = point_in(&face, true, true).unwrap();
+        assert!(norm(old) > 9.9, "{old:?}");
+        assert!(norm(p) > 6.0 && norm(p) < 8.0, "{p:?}");
+        assert_eq!(p[2], 0.0);
+    }
+
     fn entry_from_rows(mut rows: Vec<Value>) -> Result<Option<EntryFace>, String> {
         for (k, row) in rows.iter_mut().enumerate() {
             row["edge"] = json!(format!("edge{k}"));
@@ -1790,7 +1822,7 @@ mod tests {
             line(quarter),
         ];
         let edges: Vec<Edge> = rows.iter().map(|r| edge(r).unwrap()).collect();
-        let p = point_in(&Boundary { edges, area: 1.0 }, false).unwrap();
+        let p = point_in(&Boundary { edges, area: 1.0 }, false, false).unwrap();
         let half = quarter / 2.0;
         assert!((p[0] - 5.0 * half.cos()).abs() < 1e-6, "{p:?}");
         assert!((p[1] - 5.0 * half.sin()).abs() < 1e-6, "{p:?}");
@@ -1821,7 +1853,7 @@ mod tests {
             radius: 0.35,
             axis: [0.0, 0.0, 1.0],
         }));
-        let p = point_in(&Boundary { edges, area: 0.0 }, true).unwrap();
+        let p = point_in(&Boundary { edges, area: 0.0 }, true, false).unwrap();
         assert_eq!(p[2], 0.0);
         assert!(
             p[0] > 0.001 && p[0] < 119.999 && p[1] > 0.001 && p[1] < 79.999,
@@ -1849,7 +1881,7 @@ mod tests {
                 .unwrap()
             })
             .collect();
-        let p = point_in(&Boundary { edges, area: 100.0 }, false).unwrap();
+        let p = point_in(&Boundary { edges, area: 100.0 }, false, false).unwrap();
         assert!(
             p[0] > 1.0 && p[0] < 9.0 && p[1] > 1.0 && p[1] < 9.0,
             "{p:?}"

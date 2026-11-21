@@ -809,6 +809,39 @@ pub fn loss_counts(losses: &[&Value]) -> String {
     format!("Losses: {}", parts.join(", "))
 }
 
+/// Compact result words for a whole-folder report, using the same status policy as cards.
+pub fn batch_outcome(report: &Value) -> String {
+    let view = FileView::from_report(report);
+    if view.status == Status::Failed {
+        return view.status_word.to_owned();
+    }
+    if report
+        .pointer("/verification/status")
+        .and_then(Value::as_str)
+        == Some("flattened")
+    {
+        return "Geometry only".to_owned();
+    }
+    match report.get("mode").and_then(Value::as_str) {
+        Some("history") => "Full history".to_owned(),
+        Some("partial_history") => {
+            let count = |new, old| {
+                report
+                    .pointer(new)
+                    .or_else(|| report.pointer(old))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            format!(
+                "Partial {} of {}",
+                count("/history/rebuilt", "/history/mapped"),
+                count("/history/needing", "/history/total")
+            )
+        }
+        _ => "Geometry only".to_owned(),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {

@@ -1257,9 +1257,12 @@ fn map_into(
             "CADIR v11 design-only history is not mapped yet: its ordered selections and evaluation states have no model-history projection".to_owned(),
         );
     }
-    let document =
+    let mut document =
         serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
     check_version(&document)?;
+    if let Some(model) = document.get_mut("model") {
+        profile::resolve_sketch_features(model, target_version);
+    }
     let wire = document.get("model").unwrap_or(&Value::Null);
     let (params, param_names) = params::map(model, report);
     references.params = params.clone();

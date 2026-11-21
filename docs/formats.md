@@ -3,7 +3,8 @@
 `dutchman formats` lists what this build reads and converts. **Reads** says whether a
 format's geometry can be read today; **Level** is cadmpeg's published headline level on its
 format-support ladder (`L0`–`L9`); each conversion's own report says what that file kept.
-The desktop app's **Formats** list shows the same.
+The desktop app's **Formats** list shows the same and explains the level codes.
+The **Designs** input row shows only the plain reader status.
 
 <!-- formats: generated from dutchman formats --markdown -->
 | Format | Files | Reads | Level | Converts |
