@@ -688,6 +688,17 @@ Offset datum planes need no building feature when their support resolves or all 
 consumers carry independent resolved sketch placements. Otherwise the history reason
 names the unresolved plane reference; resolved skipped planes count as `not_needed`.
 
+
+Body moves require SolidCraft 0.45 or newer. This requirement applies only to designs
+with a body move; it does not trigger a general history-loss notice for older targets.
+Dutchman keeps resolved translations
+and axis-angle rotations, including explicit pivots, when every selected body has
+a proven earlier name. CADIR supplies millimetres and radians; the writer never
+infers a transform from final geometry. Unresolved body selections, unresolved
+point-to-point motion, and copied body result identities remain blockers. Bodies
+available only as final geometry also require a captured pre-move body. Older
+targets keep the original final geometry with a named version refusal.
+
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face
 blocker means the source selection or historical boundary is not supported yet; final-body

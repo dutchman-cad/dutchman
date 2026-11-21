@@ -283,6 +283,17 @@ bbox or volume separately from the final imported shape. Cosmetic metric thread 
 require resolved cylindrical face geometry; a historical face ID alone is reported as
 having no resolved input surface geometry.
 
+
+Body moves require SolidCraft 0.45 or newer. This requirement applies only to designs
+with a body move; it does not trigger a general history-loss notice for older targets.
+Dutchman keeps resolved translations
+and axis-angle rotations, including explicit pivots, when every selected body has
+a proven earlier name. CADIR supplies millimetres and radians; the writer never
+infers a transform from final geometry. Unresolved body selections, unresolved
+point-to-point motion, and copied body result identities remain blockers. Bodies
+available only as final geometry also require a captured pre-move body. Older
+targets keep the original final geometry with a named version refusal.
+
 When a feature blocks SolidCraft history conversion, earlier editable features and
 resolved sketches are kept in a hidden **Editable history (partial)** component. The
 original final shape remains visible as an Import after the kept history. Show the

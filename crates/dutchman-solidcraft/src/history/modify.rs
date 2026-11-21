@@ -200,6 +200,8 @@ fn generated_names(
 
 /// The body of a selection in the feature's own input state, when that state holds exactly
 /// one body and the history so far has named exactly one: the two are then the same body.
+/// A captured import can register final and historical ids under the same body name;
+/// these aliases describe one live SolidCraft body, not two input candidates.
 /// A state with several bodies says nothing about which named body each one is.
 fn input_state_body(
     source: &Value,
@@ -236,6 +238,7 @@ fn input_state_body(
     if selected != held {
         return Err("it selects a body its input state does not hold".to_owned());
     }
+    let mut seen = std::collections::BTreeSet::new();
     let mut live = ctx
         .named_bodies
         .iter()
@@ -244,7 +247,8 @@ fn input_state_body(
             ctx.generated_bodies
                 .iter()
                 .map(|(_, name)| (None, name.clone())),
-        );
+        )
+        .filter(|(_, name)| seen.insert(name.clone()));
     match (live.next(), live.next()) {
         (Some(body), None) => Ok(vec![body]),
         _ => Err("its one input body is not the one body an earlier feature named".to_owned()),
@@ -797,6 +801,33 @@ fn split_bodies(source: &Value, definition: &Value, ctx: &mut Context) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_single_historical_input_accepts_aliases_of_one_imported_body() {
+        let model = json!({"feature_input_topologies": [{
+            "id": "input", "input_of": "move", "bodies": ["input-body"]
+        }]});
+        let mut ctx = Context::testing(&model);
+        // A captured base import names its final output and its historical topology
+        // with the same SolidCraft body name, as import_history_body does.
+        ctx.named_bodies.extend([
+            ("final-body".into(), "Imported body".into()),
+            ("captured-body".into(), "Imported body".into()),
+        ]);
+        let source = json!({"id": "move"});
+        let selection = json!({"kind": "historical", "value": {
+            "state": "input", "bodies": ["input-body"], "native": "retained"
+        }});
+        assert_eq!(
+            body_names(&source, &selection, &ctx).unwrap(),
+            ["Imported body"]
+        );
+        ctx.named_bodies
+            .push(("other-body".into(), "Other body".into()));
+        assert!(body_names(&source, &selection, &ctx)
+            .unwrap_err()
+            .contains("one body an earlier feature named"));
+    }
 
     #[test]
     fn removal_resolves_generated_bodies_from_both_identity_sources() {

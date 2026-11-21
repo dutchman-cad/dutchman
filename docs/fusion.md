@@ -109,6 +109,16 @@ mesh count, so the message names none.
 
 ## Parts and history
 
+Body moves require SolidCraft 0.45 or newer. This requirement applies only to designs
+with a body move; it does not trigger a general history-loss notice for older targets.
+Dutchman keeps resolved translations
+and axis-angle rotations, including explicit pivots, when every selected body has
+a proven earlier name. CADIR supplies millimetres and radians; the writer never
+infers a transform from final geometry. Unresolved body selections, unresolved
+point-to-point motion, and copied body result identities remain blockers. Bodies
+available only as final geometry also require a captured pre-move body. Older
+targets keep the original final geometry with a named version refusal.
+
 A face extrusion on an imported base needs a matching source result as well as a
 proved input face. Matching a boundary and its outward side cannot establish that
 the historical base and the final body use the same frame. The writer checks a
@@ -660,6 +670,12 @@ Dutchman uses only that neutral operation. The table designation supplies the no
 secondary numeric values are compared at their serialized decimal precision. Unsupported
 class or hand suffixes in a designation are still reported. See [cosmetic threads](history.md)
 for rounding, inch units, and target limits.
+
+A captured base import can name the same body by its final and historical geometry
+identities. A Move selecting the sole body in its own input state resolves those
+aliases to one earlier SolidCraft body name. Distinct earlier body names remain
+ambiguous and are refused; native identifiers and final geometry do not establish
+a historical match.
 
 Modeled thread history remains blocked even on SolidCraft 0.45: the available nominal
 thread data cannot prove an exact helical reconstruction. The final modeled geometry is
