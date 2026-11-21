@@ -75,6 +75,20 @@ class UnprovenPlacementsTests(unittest.TestCase):
         self.assertEqual(self.run_with_file(report, {"Panel": {"count": 3}, "Rail": entry(1)}).returncode, 1)
         self.assertEqual(self.run_with_file(report, {"Panel": {"count": 0, "reason": "x"}, "Rail": entry(1)}).returncode, 1)
 
+    def test_only_unplaced_accepts_a_written_design_that_failed_for_unplaced_parts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report, design = Path(directory) / "r.json", Path(directory) / "d.sc"
+            good = {"ok": False, "completeness": {"unplaced": {"Panel": 1}},
+                    "verification": {"status": "partial", "reason": "1 part couldn't be placed (its position in the archive couldn't be read)."}}
+            report.write_text(json.dumps(good))
+            self.assertEqual(MODULE.only_unplaced(report, design), 1)  # no design written
+            design.write_text("x")
+            self.assertEqual(MODULE.only_unplaced(report, design), 0)
+            report.write_text(json.dumps({"ok": False, "completeness": {"unplaced": {}}}))
+            self.assertEqual(MODULE.only_unplaced(report, design), 1)  # another failure
+            report.write_text(json.dumps(dict(good, ok=True)))
+            self.assertEqual(MODULE.only_unplaced(report, design), 1)  # not a failure at all
+
     def test_shipped_allowlists_are_well_formed(self):
         folder = SCRIPT.parent / "gate-allowances"
         for path in sorted(folder.glob("*.json")):

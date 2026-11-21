@@ -77,7 +77,22 @@ def load_allowances(inline, path):
     return result
 
 
+def only_unplaced(report_path, design_path):
+    """Return 0 when a failed conversion wrote its design and failed only for unplaced parts."""
+    try:
+        report = json.loads(Path(report_path).read_text())
+    except (OSError, ValueError):
+        return 1
+    if not Path(design_path).is_file() or report.get("ok") is not False:
+        return 1
+    unplaced = (report.get("completeness") or {}).get("unplaced") or {}
+    reason = (report.get("verification") or {}).get("reason") or ""
+    return 0 if unplaced and "couldn't be placed" in reason else 1
+
+
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "--only-unplaced":
+        return only_unplaced(sys.argv[2], sys.argv[3])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report", type=Path)
     parser.add_argument("--allowances", default="{}", help="part name to reason JSON object")

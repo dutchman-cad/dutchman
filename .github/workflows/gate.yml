@@ -91,7 +91,11 @@ jobs:
           echo "SOLIDCRAFT_CLI=$PWD/solidcraft-${version}-linux-x86_64/bin/solidcraft-cli" >> "$GITHUB_ENV"
       - name: Convert
         run: |
-          bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}.sc --json --quiet --yes > out/${{ matrix.name }}.json 2> out/convert.log || { tail -n 40 out/convert.log; exit 1; }
+          # Exit 1 with a written design is expected when parts couldn't be placed; the next step
+          # checks those parts against the allowlist. Any other failure stops here.
+          bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}.sc --json --quiet --yes > out/${{ matrix.name }}.json 2> out/convert.log \
+            || python3 scripts/unproven-placements.py --only-unplaced out/${{ matrix.name }}.json out/${{ matrix.name }}.sc \
+            || { tail -n 40 out/convert.log; exit 1; }
       - name: Reject unreadable part positions
         env:
           UNPLACED_ALLOWANCES: ${{ toJSON(matrix.unplaced_allowances || fromJSON('{}')) }}
@@ -101,7 +105,9 @@ jobs:
           python3 scripts/unproven-placements.py out/${{ matrix.name }}.json --allowances "$UNPLACED_ALLOWANCES" "${extra[@]}"
       - name: Convert the source for comparison
         run: |
-          bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}-source.sc --import-only --json --quiet --yes > out/${{ matrix.name }}-source.json 2> out/source.log || { tail -n 40 out/source.log; exit 1; }
+          bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}-source.sc --import-only --json --quiet --yes > out/${{ matrix.name }}-source.json 2> out/source.log \
+            || python3 scripts/unproven-placements.py --only-unplaced out/${{ matrix.name }}-source.json out/${{ matrix.name }}-source.sc \
+            || { tail -n 40 out/source.log; exit 1; }
       - name: Compare the written design with the source, body by body
         env:
           BODY_COMPARE_NO_SCOPE: "1"
