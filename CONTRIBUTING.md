@@ -12,7 +12,7 @@ synthetic test files and pull requests are all welcome.
    claims never lapse. A maintainer can also assign an issue to you; that counts as claiming it.
    Comment `/unclaim` to give it up; see [issue claims](docs/claiming.md).
 
-Pick a CAD program below, then an unchecked, unclaimed item on its master issue, and open a pull
+Pick a CAD program below, then an unchecked, unclaimed item on its parent issue, and open a pull
 request. Every issue labelled [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 or [good first issue](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 is open to anyone. Each issue states what is known, what is unknown, and how to verify the change
@@ -23,7 +23,7 @@ with [AGENTS.md](AGENTS.md). Reading a native file belongs in
 
 ### Pick a CAD program
 
-Each program has one master issue. Paste its block into your AI agent: it picks a sub-issue,
+Each program has one parent issue. Paste its block into your AI agent: it picks a sub-issue,
 claims it, and works it to a pull request.
 
 **SolidWorks** (`.sldprt`, `.sldasm`): [dutchman#866](https://github.com/dutchman-cad/dutchman/issues/866).
@@ -53,7 +53,7 @@ Follow AGENTS.md and docs/agents/solid-edge.md
 Open a pull request when the issue's "How to verify" passes
 ```
 
-**Everything else** (Fusion, Onshape, Inventor, FreeCAD, CATIA, NX, Creo, Rhino): no master issue
+**Everything else** (Fusion, Onshape, Inventor, FreeCAD, CATIA, NX, Creo, Rhino): no parent issue
 yet. Start from a [file that didn't convert](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3Aneeds-fixture)
 or the [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 list, or ask in the [Discord](https://discord.gg/yTcseBEdeu) which program is next.
