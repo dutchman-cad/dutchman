@@ -193,7 +193,10 @@ jobs:
       matrix:
         # ARM64 is test-arm below, which gets a second try when its runner is shut down.
         os: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && needs.changes.outputs.platform != 'true')) && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
-    runs-on: ${{ matrix.os }}
+    # The merge queue's and main's Linux run uses the self-hosted 'flyer' runners (warm build:
+    # about 6 min against 12 on GitHub). Pull requests never do, so code from forks never runs
+    # there. Set the repository variable FLYER to 'off' to send these runs back to GitHub.
+    runs-on: ${{ (matrix.os == 'ubuntu-latest' && vars.FLYER != 'off' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))) && fromJSON('["self-hosted", "flyer"]') || matrix.os }}
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 30 || 25 }}
     env:
       # Debug info is most of a cold Windows build's time and is not needed to run the tests.
@@ -203,10 +206,17 @@ jobs:
       # Keep the low-space fallback for older images without deleting 19 GiB on every run.
       - uses: actions/checkout@v7
       - name: Check free disk space
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: bash scripts/ci-disk-space.sh
       - uses: dtolnay/rust-toolchain@stable
+      # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
+      - name: Keep the build on the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME" >> "$GITHUB_ENV"
+          if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           shared-key: test-${{ matrix.os }}-debug
           # Save the build even when a test fails, so the next run does not start cold.
