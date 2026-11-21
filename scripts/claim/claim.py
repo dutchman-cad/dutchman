@@ -6,7 +6,7 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 DRAFT_HOURS = 24
@@ -54,6 +54,14 @@ def dependencies(text, repository):
     return sorted({(m[1] or repository, int(m[2])) for line in prose(text)
                    for m in re.finditer(r'\b(?:depends\s+on|stacked\s+on)\s+'
                                         r'(?:([\w.-]+/[\w.-]+))?#([1-9][0-9]*)\b', line, re.I)})
+
+
+def has_label(issue, name):
+    return any(label['name'].lower() == name for label in issue.get('labels', []))
+
+
+def is_master(issue):
+    return has_label(issue, 'master')
 
 
 def stamp(value):
@@ -123,7 +131,9 @@ class GitHub:
         self.token = token
 
     def request(self, method, path, data=None):
-        request = Request('https://api.github.com/repos/' + path,
+        url = ('https://api.github.com' + path if path.startswith('/')
+               else 'https://api.github.com/repos/' + path)
+        request = Request(url,
                           data=json.dumps(data).encode() if data is not None else None,
                           headers={'Authorization': 'Bearer ' + self.token,
                                    'Accept': 'application/vnd.github+json',
@@ -151,6 +161,53 @@ class GitHub:
             if len(batch) < 100:
                 return result
         raise ValueError('GitHub pagination limit reached; narrow the query before retrying.')
+
+    def search_issues(self, query):
+        """Open-issue search hits for a query; GitHub serves at most 1000 results."""
+        result = []
+        for page in range(1, 11):
+            batch = self.request('GET', '/search/issues?' + urlencode(
+                {'q': query, 'per_page': 100, 'page': page}, quote_via=quote))['items']
+            result.extend(batch)
+            if len(batch) < 100:
+                break
+        return result
+
+    def native_sub_issues(self, number):
+        try:
+            return self.pages(f'issues/{number}/sub_issues')
+        except HTTPError as error:
+            error.close()
+            if error.code in {404, 410}:
+                return []
+            raise
+
+    def open_parts(self, number, limit=10):
+        """Open, unassigned, unclaimed, unblocked sub-issues of a master issue."""
+        phrase = re.compile(rf'part\s+of\s+#{number}(?!\d)', re.I)
+        found = {}
+        for issue in self.search_issues(f'repo:{self.repository} is:issue is:open in:body '
+                                        f'"Part of #{number}"'):
+            if phrase.search(issue.get('body') or ''):
+                found[issue['number']] = issue
+        for issue in self.native_sub_issues(number):
+            found.setdefault(issue['number'], issue)
+        return [issue for _, issue in sorted(found.items())
+                if issue['number'] != number and issue.get('state', 'open') == 'open'
+                and 'pull_request' not in issue and not is_master(issue)
+                and not issue.get('assignees') and not has_label(issue, 'claimed')
+                and not has_label(issue, 'blocked')][:limit]
+
+    def refuse_master(self, number, actor):
+        parts = self.open_parts(number)
+        if parts:
+            lines = '\n'.join(f'- #{p["number"]} {p["title"]}' for p in parts)
+            tail = f'These parts are open:\n\n{lines}'
+        else:
+            tail = ('All its parts are taken or waiting on a dependency right now. '
+                    'Watch this issue to see when one opens up.')
+        self.comment(number, f'@{actor}, this issue tracks a whole program of work, so it cannot be '
+                     f'claimed as one piece. Please claim one of its parts instead. {tail}')
 
     def comment(self, number, body):
         self.call('POST', f'issues/{number}/comments', {'body': body})
@@ -275,6 +332,11 @@ class GitHub:
         now = now or datetime.now(timezone.utc)
         issue = self.call('GET', f'issues/{number}')
         if issue['state'] != 'open' or issue.get('locked') or 'pull_request' in issue:
+            return
+        if is_master(issue):
+            # A pull request never claims a master issue; a /claim command gets one reply.
+            if source is None:
+                self.refuse_master(number, actor)
             return
         claimant, date = self.resolve_owners(issue)
         if claimant and claimant.lower() != actor.lower():
@@ -447,6 +509,8 @@ def sweep_issue(api, number, now):
         if any(label['name'] == 'claimed' for label in issue.get('labels', [])):
             api.remove_label(number)
         return
+    if is_master(issue):
+        return
     if issue.get('locked') or not any(label['name'] == 'claimed' for label in issue.get('labels', [])):
         return
     claimant, date = api.resolve_owners(issue)
@@ -525,7 +589,7 @@ def sweep_issue(api, number, now):
 def sweep(api, now):
     failures = []
     for issue in api.pages('issues?state=open&labels=claimed'):
-        if 'pull_request' in issue:
+        if 'pull_request' in issue or is_master(issue):
             continue
         try:
             sweep_issue(api, issue['number'], now)
@@ -598,6 +662,8 @@ def reconcile_assignment(api, payload):
     number = payload['issue']['number']
     issue = api.call('GET', f'issues/{number}')
     if issue['state'] != 'open' or issue.get('locked') or 'pull_request' in issue:
+        return
+    if is_master(issue):
         return
     labeled = any(label['name'] == 'claimed' for label in issue.get('labels', []))
     login = assignee['login']

@@ -6,6 +6,10 @@ code are ignored. A maintainer can also assign an issue to you; that counts as c
 Comment `/unclaim` to give it up. Bot comments, locked issues, closed
 issues and pull requests are ignored as command targets.
 
+Issues labelled `master` track a whole program of work, so they cannot be claimed. Claim
+one of their sub-issues instead; comment `/claim` on the master issue and the bot points
+you at the parts that are still open.
+
 Open a linked pull request within **24 hours**, even a rough draft. The bot mentions you
 in a reminder after **12 hours**, once for that deadline. Comments alone do not extend
 the draft deadline. Once a linked pull request exists, the claim lapses after **5 days**

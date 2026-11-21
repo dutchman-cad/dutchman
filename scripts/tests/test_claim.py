@@ -53,6 +53,7 @@ class FakeGitHub(claim.GitHub):
         self.fail_reply = False
         self.dependencies = {}
         self.race = None
+        self.native = {}
         self.next_comment = 100
         self.issue(1)
 
@@ -100,6 +101,16 @@ class FakeGitHub(claim.GitHub):
             return copy.deepcopy({'reviews': self.reviews, 'comments': self.review_comments,
                                   'commits': self.commits}[parts[2]].get(number, []))
         raise AssertionError(path)
+
+    def search_issues(self, query):
+        self.calls.append(('SEARCH', query, None))
+        number = query.rsplit('#', 1)[1].rstrip('"')
+        # GitHub's text search is fuzzy: "Part of #84" also finds "Part of #840".
+        return copy.deepcopy([i for i in self.issues.values() if i['state'] == 'open'
+                              and f'part of #{number}'[:-1] in (i['body'] or '').lower()])
+
+    def native_sub_issues(self, number):
+        return copy.deepcopy(self.native.get(number, []))
 
     def request(self, method, path, data=None):
         if path.startswith(self.repository + '/'):
@@ -975,6 +986,104 @@ class ApiTests(unittest.TestCase):
         paths = [path for method, path, _ in self.api.calls if method == 'PAGES']
         self.assertEqual(paths.count('issues?state=open&labels=claimed'), 1)
         self.assertFalse(any(path.startswith('pulls?') for path in paths))
+
+
+class MasterIssueTests(unittest.TestCase):
+    def setUp(self):
+        self.api = FakeGitHub()
+        self.api.issue(840, labels=[{'name': 'master'}], title='Solid Edge support')
+
+    def part(self, number, title='A part', body=None, **kwargs):
+        return self.api.issue(number, title=title, body=body or 'Part of #840', **kwargs)
+
+    def test_claim_on_master_refuses_and_lists_open_parts_only(self):
+        self.part(841, 'Open part')
+        self.part(842, 'Assigned', assignees=[user('someone')])
+        self.part(843, 'Claimed', labels=[{'name': 'claimed'}])
+        self.part(844, 'Blocked', labels=[{'name': 'blocked'}])
+        self.part(845, 'Closed', state='closed')
+        self.part(846, 'lowercase reference', body='part of #840, more')
+        self.part(847, 'Other program', body='Part of #84')
+        self.part(848, 'Longer number', body='Part of #8400')
+        self.api.claim(840, 'contributor', comment_id=5)
+        text = self.api.bodies(840)
+        self.assertIn('@contributor', text)
+        self.assertIn('whole program', text)
+        self.assertIn('- #841 Open part', text)
+        self.assertIn('- #846 lowercase reference', text)
+        for number in (842, 843, 844, 845, 847, 848):
+            self.assertNotIn(f'#{number}', text)
+        self.assertEqual(self.api.issues[840]['assignees'], [])
+        self.assertEqual(self.api.issues[840]['labels'], [{'name': 'master'}])
+        self.assertFalse(any(path.endswith('/assignees') or path.endswith('/labels')
+                             for method, path, _ in self.api.calls if method == 'POST'))
+
+    def test_native_sub_issues_listed_once_and_capped_at_ten(self):
+        for number in range(850, 865):
+            self.part(number, f'Part {number}')
+        self.api.native[840] = [self.api.issues[850], {'number': 899, 'title': 'Native', 'state': 'open',
+                                                       'labels': [], 'assignees': []}]
+        self.api.claim(840, 'contributor')
+        lines = [line for line in self.api.bodies(840).splitlines() if line.startswith('- #')]
+        self.assertEqual(len(lines), 10)
+        self.assertEqual(len(set(lines)), 10)
+
+    def test_native_sub_issue_404_is_tolerated(self):
+        class Missing(FakeGitHub):
+            def pages(self, path):
+                raise HTTPError(path, 404, 'Not found', {}, None)
+        api = Missing()
+        api.issue(840, labels=[{'name': 'master'}])
+        self.assertEqual(claim.GitHub.native_sub_issues(api, 840), [])
+
+    def test_claim_on_master_with_no_open_parts(self):
+        self.part(842, 'Assigned', assignees=[user('someone')])
+        self.part(844, 'Blocked', labels=[{'name': 'blocked'}])
+        self.api.claim(840, 'contributor')
+        text = self.api.bodies(840)
+        self.assertIn('taken or waiting on a dependency', text)
+        self.assertIn('Watch this issue', text)
+        self.assertNotIn('- #', text)
+        self.assertEqual(self.api.issues[840]['assignees'], [])
+
+    def test_command_reply_comes_once(self):
+        self.api.comments[840] = [comment('/claim', cid=7)]
+        claim.reconcile_commands(self.api, 840)
+        claim.reconcile_commands(self.api, 840)
+        self.assertEqual(self.api.bodies(840).count('whole program'), 1)
+
+    def test_pr_part_of_master_does_not_claim_it(self):
+        self.api.pr(11, title='Part of #840')
+        claim.reconcile_pr(self.api, 11, at(1))
+        self.assertEqual(self.api.issues[840]['assignees'], [])
+        self.assertEqual(self.api.bodies(840), '')
+
+    def test_pr_still_claims_sub_issue(self):
+        self.part(841)
+        self.api.pr(11, title='Part of #840', body='Fixes #841')
+        claim.reconcile_pr(self.api, 11, at(1))
+        self.assertEqual(self.api.issues[841]['assignees'], [user('contributor')])
+        self.assertEqual(self.api.issues[840]['assignees'], [])
+
+    def test_maintainer_assignment_on_master_is_not_a_claim(self):
+        self.api.permissions['writer'] = 'write'
+        self.api.issues[840]['assignees'] = [user('contributor')]
+        self.api.event(840, 'assigned', assignee=user('contributor'), actor=user('writer'))
+        payload = {'action': 'assigned', 'issue': {'number': 840}, 'sender': user('writer'),
+                   'assignee': user('contributor')}
+        claim.reconcile_assignment(self.api, payload)
+        self.assertEqual(self.api.issues[840]['labels'], [{'name': 'master'}])
+        self.assertEqual(self.api.bodies(840), '')
+
+    def test_sweep_skips_master_issues(self):
+        self.api.issues[840]['labels'].append({'name': 'claimed'})
+        self.api.issues[840]['assignees'] = [user('contributor')]
+        self.api.event(840, 'assigned', START, assignee=user('contributor'))
+        self.api.event(840, 'labeled', START, label={'name': 'claimed'})
+        self.assertEqual(self.api.sweep(10), [])
+        claim.sweep_issue(self.api, 840, at(10))
+        self.assertEqual(self.api.issues[840]['assignees'], [user('contributor')])
+        self.assertEqual(self.api.bodies(840), '')
 
 
 class ErrorTests(unittest.TestCase):
