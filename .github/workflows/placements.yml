@@ -113,8 +113,13 @@ jobs:
         run: |
           chmod +x bin/dutchman
           mkdir out
+          # Exit 1 with the design written is expected when parts couldn't be placed; the placement
+          # check below still compares every placement. Any other failure stops here.
           bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}.sc \
-            --preset standard --part-positions "${{ matrix.positions }}" --no-verify 2> out/convert.log
+            --preset standard --part-positions "${{ matrix.positions }}" --no-verify --json \
+            > out/${{ matrix.name }}-report.json 2> out/convert.log \
+            || python3 scripts/unproven-placements.py --only-unplaced out/${{ matrix.name }}-report.json out/${{ matrix.name }}.sc \
+            || { tail -n 20 out/convert.log; exit 1; }
           python3 scripts/placements.py out/${{ matrix.name }}.sc \
             --out out/${{ matrix.name }}.json --check corpus/placements/${{ matrix.name }}.json
       - uses: actions/upload-artifact@v7
@@ -163,8 +168,12 @@ jobs:
           # The job has swap the memory stop does not count, so it runs past the stop. Its peak
           # memory is logged to calibrate the stop.
           /usr/bin/time -v bin/dutchman convert in/Voron_2.4r2_Assembly.f3d -o out/voron.sc \
-            --preset standard --no-verify --no-memory-check 2> out/convert.log || status=$?
+            --preset standard --no-verify --no-memory-check --json > out/voron-report.json 2> out/convert.log || status=$?
           grep -E 'Maximum resident|Elapsed' out/convert.log || true
+          # Exit 1 with the design written and only unplaced parts is a result, not a failure.
+          if [ "$status" -eq 1 ] && python3 scripts/unproven-placements.py --only-unplaced out/voron-report.json out/voron.sc; then
+            status=0
+          fi
           if [ "$status" -ne 0 ]; then
             tail -n 5 out/convert.log
             if [ "$status" -eq 137 ] || grep -qiE 'out of memory|memory allocation|needs about .* GB' out/convert.log; then
