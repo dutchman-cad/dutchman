@@ -303,8 +303,10 @@ fn group(
                 out.insert("style".to_owned(), json!({"type": "constant"}));
             }
             Some("variable") => {
+                // A radius law needs a source binding to an ordered, directed
+                // chain. Carrier sample order alone does not supply that binding.
                 return Err(
-                    "variable fillets need a proven chain direction, which is not supported yet"
+                    "variable fillets need a proven chain direction: their radius stations are not bound to a source start vertex, which is not supported yet"
                         .to_owned(),
                 );
             }

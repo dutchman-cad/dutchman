@@ -403,9 +403,18 @@ simplification. Explain that the converted design keeps its original geometry.
 
 Holes keep chamfered entries and tapped holes (the bore plus an ISO metric thread label; a
 thread's hand, class, and length are listed as losses). Taper, exit treatments, modeled
-threads, and entry recesses with drill points block history: explain the reported reason.
+threads, and entry recesses with drill points on older targets block history: explain the reported reason.
 "SolidCraft holes take a drill point only on a plain drilled hole" means SolidCraft 0.21.0
 ignores drill points on counterbores and countersinks; conversion keeps the original geometry.
+
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
+
+Cosmetic thread contradictions name both the designation's nominal size and secondary
+numeric values. Metric labels tolerate decimal rounding and unit-conversion noise.
+Matching UNC/UNF values still report that SolidCraft's separate cosmetic Thread feature
+is not supported yet; tapped-hole support does not imply separate Thread support.
 
 Planar hole-entry faces can have rounded corners or existing circular holes. Their own
 source boundary and SolidCraft replay must prove the face before drilling; placements must
@@ -458,6 +467,12 @@ A bend without its mapped attached plate remains blocked.
 - One file: `convert` with `input` and `output` (ending in `.sc`; legacy `.solidcraft`
   and `.solvecraft` names also work). Default names use `.solidcraft` for targets before
   SolidCraft 0.25.1.
+- Folder outputs keep paths relative to each input folder, so `in/ProjectA/part.f3d`
+  writes `out/ProjectA/part.sc`. Same-named files in other subfolders stay separate;
+  linked design companions and desktop reports stay beside the design. Repeating a run
+  into an explicit output folder reuses the paths and replaces designs unless overwrite
+  is disabled. Identical companions are reused; edited companions cause a conflict and
+  are kept. Single-file output paths are unchanged.
 - Many files or a folder: `convert_all` with `inputs` and `out_dir`. One failure does not stop
   the rest; the call is an error when any file failed, and each file has its own report in
   `results`.
@@ -1228,7 +1243,6 @@ can have several ids; dropped or merged rows have none. Inspection returns empty
 with `not_written`. These fields are additive; schemas and existing fields are unchanged.
 See [the JSON report reference](../../docs/json.md) for the matching values.
 
-
 ## Counts-only anonymous reports
 
 Use `--report-counts --report-anon FILE` with `convert` or `convert-all` to write
@@ -1262,7 +1276,6 @@ by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.
 
-
 Parallel directed hole placements on one entry plane can supply complete locations
 without a source sketch. For SolidCraft 0.44.1 or newer, Dutchman writes an editable
 location sketch and a multi-point hole. The hole's form and termination must also
@@ -1276,6 +1289,33 @@ resolved sketch-entity geometry reports `its generated edge identity has no reso
 source geometry, which is not supported yet`. A numeric feature-local path alone
 does not prove which rebuilt edge to select. The editable prefix and original final
 geometry are retained; a generated reference with missing or blank fields is still refused.
+
+When no final source shape is available, conversion keeps the editable history before the
+failed feature, leaves out its dependent suffix, and checks the remaining design again.
+The report names the omitted features and the rebuild reason. Conversion stops only if
+no usable history remains or the remaining design cannot be made to open.
+
+When SolidCraft reports a feature that fails to rebuild, conversion removes that feature and
+its dependent body history and keeps the final source shape with the editable prefix before the
+failure. The report names the feature and SolidCraft's reason, even when the source shape could
+not be measured. Before omission, refused STEP imports with excess shared edge uses get identical edge
+copies for uses beyond the first two and are rechecked. Faces, curves, vertices, names, and
+placements are retained; `geometry/sheet-edges-split` records the repair. A final opening
+check also covers geometry-only output, hidden history, and
+assemblies. If SolidCraft also refuses the available final source shape, omission is the last
+resort: `geometry/import-failed` says the body geometry is **MISSING** and names the feature
+and reason. A combined import may leave out the whole part. Review these losses before using
+the result. If a named failure cannot be removed, conversion stops without writing it. An
+evaluator error or nonzero exit without named failed features means verification is
+unavailable: the design is still written, marked unverified, with the reason. Verification
+turned off remains unchecked.
+
+Variable-radius fillets with an unproven chain direction report `variable fillets need
+a proven chain direction: their radius stations are not bound to a source start vertex,
+which is not supported yet`. Mapping a radius law requires
+an ordered, directed input chain with its radius positions bound to that traversal.
+Carrier sample order alone does not supply that binding. The editable prefix and original
+final geometry are retained when the direction is unresolved.
 
 The SolidCraft plugin checks estimated memory and time before native decoding. When it
 says the design is too large to open inside SolidCraft, use the

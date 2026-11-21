@@ -351,14 +351,15 @@ sections, tangent-path extension, and post-sweep simplification are not mapped);
 turning either way (tapered coils, flat spirals and triangular sections are not mapped);
 simple, counterbore and countersink
 holes drilled at the circle centres, arc centres or points of a sketch (including explicit
-entity selections), or at a directed spatial placement, through all or to a depth, flat or,
-for simple holes, with a drill point; axes placed on proven earlier extrusion caps and holes
-ending at those caps (the cap must match the sole polygonal profile of the last earlier
+entity selections), or at a directed spatial placement, through all or to a depth, flat or
+with a drill point (entry recesses retain the point on targets supporting their tip angle);
+axes placed on proven earlier extrusion caps and holes ending at those caps, including
+pointed holes (the cap must match the sole polygonal profile of the last earlier
 solid feature's one-sided new-body extrusion; a face from final geometry alone is not enough);
 chamfered entries map as countersinks; a tapped hole keeps its resolved bore and an ISO
 metric thread label (`M6x1`, the pitch from the designation, the source, or the coarse
 series), and the thread's hand, class, and length are reported as Degraded, not mapped;
-entry recesses combined with drill points, exit treatments, taper, and modeled threads are not mapped;
+exit treatments, taper, and modeled threads are not mapped;
 patterns of earlier features or named bodies, linear in one or
 two directions (a symmetric direction, with instances on both sides of the original, becomes a
 centred SolidCraft direction), circular over a partial span or all the way round, or at fixed spacing along

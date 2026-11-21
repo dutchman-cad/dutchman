@@ -3595,6 +3595,200 @@ fn a_hole_to_an_earlier_cap_keeps_a_point_on_that_face() {
     assert!(hole.get("depth").is_none());
 }
 
+#[test]
+fn a_plain_drilled_to_face_hole_keeps_its_shoulder_depth() {
+    let model = holed_cube(4.0, |hole| {
+        to_face_hole(hole);
+        hole.as_object_mut().unwrap().remove("bottom");
+        hole["shape"]["construction"]["value"]["kind"] = json!({
+            "kind": "simple_drilled", "drill_point_angle": 118_f64.to_radians()
+        });
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let hole = &document["features"][3];
+    assert_eq!(hole["hole"]["type"], "drilled");
+    assert_eq!(hole["hole"]["tip_angle"], "118.00000000000001");
+    assert_eq!(hole["depth"], "10 mm");
+}
+
+/// Entirely synthetic: the cube, a countersink ending at its bottom cap, and a
+/// separate box added afterwards. The bottom flag exercises CADIR depth conventions.
+fn countersink_to_face_with_later_box(to_tip: bool) -> Model {
+    let mut model = holed_cube(4.0, |hole| {
+        to_face_hole(hole);
+        hole["shape"]["construction"]["value"]["kind"] = json!({
+            "kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2
+        });
+        hole["bottom"] = json!({"kind": "angled",
+            "included_angle": 118_f64.to_radians(), "depth_to_tip": to_tip});
+    });
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#5", "ordinal": 4, "name": "Later box", "suppressed": false,
+            "definition": {"kind": "operation", "value": block([2.0; 3], [
+                [1.0, 0.0, 0.0, 20.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]
+            ])}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []
+        }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn countersink_to_face_with_a_drill_point_keeps_later_history() {
+    for to_tip in [false, true] {
+        let (document, report) = convert(
+            &countersink_to_face_with_later_box(to_tip),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_44_0)),
+        );
+        assert!(
+            history_line(&report).starts_with("5 of 5 features rebuilt"),
+            "{}",
+            history_line(&report)
+        );
+        let hole = &document["features"][3];
+        assert_eq!(hole["type"], "hole");
+        assert_eq!(hole["hole"]["type"], "countersink");
+        assert_eq!(hole["hole"]["cs_diameter"], "8 mm");
+        assert_eq!(hole["hole"]["cs_angle"], "90");
+        assert_eq!(hole["hole"]["tip_angle"], "118.00000000000001");
+        let depth: f64 = hole["depth"]
+            .as_str()
+            .unwrap()
+            .trim_end_matches(" mm")
+            .parse()
+            .unwrap();
+        let point = 2.0 / 59_f64.to_radians().tan();
+        assert!((depth - if to_tip { 10.0 - point } else { 10.0 }).abs() < 1e-9);
+        assert!(hole.get("to").is_none());
+        assert_eq!(document["features"][4]["type"], "box");
+        assert_eq!(document["features"][4]["name"], "Later box");
+    }
+}
+
+#[test]
+fn pointed_to_face_holes_still_require_a_proven_earlier_cap() {
+    for native in [false, true] {
+        let mut model = countersink_to_face_with_later_box(false);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        if native {
+            wire["model"]["features"][3]["definition"]["value"]["value"]["extent"]["face"] =
+                json!({"kind": "native", "value": "unresolved-face"});
+        } else {
+            // The saved bottom is z=0; the earlier extrusion instead starts at z=2.
+            wire["model"]["sketches"][0]["placement"]["frame"]["origin"]["z"] = json!(2.0);
+        }
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_44_0)),
+        );
+        let reason = if native {
+            "its face has no resolved geometry"
+        } else {
+            "its face is not proven to exist before the hole"
+        };
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn solidcraft_replays_countersink_to_face_with_a_drill_point_and_later_box() {
+    let Some(cli) = solidcraft() else { return };
+    // A drill point on a countersink needs SolidCraft 0.22.1 or newer.
+    if dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()))
+        < dutchman_solidcraft::SolidCraftVersion::V0_22_1
+    {
+        eprintln!("skipped: the countersink drill point needs SolidCraft 0.22.1 or newer");
+        return;
+    }
+    let bore = std::f64::consts::PI * 4.0;
+    // Extra material removed by the entry frustum beyond the cylindrical bore.
+    let entry = std::f64::consts::PI * 2.0 * (16.0 + 8.0 + 4.0) / 3.0 - bore * 2.0;
+    for to_tip in [false, true] {
+        let mut got = volumes(
+            &cli,
+            &written(&countersink_to_face_with_later_box(to_tip)).0,
+        );
+        got.sort_by(f64::total_cmp);
+        let point = 2.0 / 59_f64.to_radians().tan();
+        let removed =
+            bore * if to_tip {
+                10.0 - 2.0 * point / 3.0
+            } else {
+                10.0
+            } + entry;
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!((got[0] - 8.0).abs() < 1e-6, "{got:?}");
+        let want = 1000.0 - removed;
+        assert!((got[1] - want).abs() / want < 1e-3, "{got:?} vs {want}");
+    }
+}
+
+#[test]
+fn solidcraft_replays_countersink_to_face_with_a_later_fillet() {
+    let Some(cli) = solidcraft() else { return };
+    // A drill point on a countersink needs SolidCraft 0.22.1 or newer.
+    if dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()))
+        < dutchman_solidcraft::SolidCraftVersion::V0_22_1
+    {
+        eprintln!("skipped: the countersink drill point needs SolidCraft 0.22.1 or newer");
+        return;
+    }
+    let mut model = countersink_to_face_with_later_box(false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // Reuse the synthetic vertical-corner input geometry, after the hole instead
+    // of directly after the extrusion. This edge is unchanged by the hole.
+    let blend = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let source = serde_json::to_value(&blend.ir).unwrap();
+    let mut fillet = source["model"]["features"][2].clone();
+    fillet["id"] = json!("f3d:model:feature#5");
+    fillet["ordinal"] = json!(4);
+    fillet["name"] = json!("Later fillet");
+    fillet["dependencies"] = json!(["f3d:model:feature#4"]);
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    features.pop();
+    features.push(fillet);
+    wire["model"]["feature_input_topologies"] = source["model"]["feature_input_topologies"].clone();
+    wire["model"]["feature_input_topologies"][0]["input_of"] = json!("f3d:model:feature#5");
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (bytes, report) = written_with(&model, &replaying(&cli));
+    assert!(
+        history_line(&report).starts_with("5 of 5 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let got = volumes(&cli, &bytes);
+    let pi = std::f64::consts::PI;
+    let bore = pi * 4.0;
+    let entry = pi * 2.0 * (16.0 + 8.0 + 4.0) / 3.0 - bore * 2.0;
+    let corner = 10.0 * (1.0 - std::f64::consts::FRAC_PI_4);
+    let want = 1000.0 - bore * 10.0 - entry - corner;
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(
+        (got[0] - want).abs() / want < dutchman_solidcraft::VOLUME_TOLERANCE,
+        "{got:?} vs {want}"
+    );
+}
+
 const HOLE_INPUT: &str = "test:hole:feature-input#4";
 const HOLE_FACE: &str = "test:hole:historical-face#entry";
 
@@ -12488,6 +12682,78 @@ fn solidcraft_replays_closed_circle_fillets_and_hole_chamfers_across_seams() {
     }
 }
 
+/// A closed boss edge and a hole rim use the same carrier proof, with opposite
+/// material sides. Check the actual removed ring independently of edge seam placement.
+#[test]
+fn solidcraft_chamfers_closed_boss_and_hole_edges() {
+    let Some(cli) = closed_blend_cli() else {
+        return;
+    };
+    let writer = replaying(&cli).target_version(Some("0.45.0".parse().unwrap()));
+    let setback: f64 = 0.5;
+    for hole in [false, true] {
+        for seam in [0.0, 0.71, 2.5] {
+            let base = closed_circle_blend_from(hole, seam, true);
+            let mut wire = serde_json::to_value(&base.ir).unwrap();
+            let operation = &mut wire["model"]["features"]
+                .as_array_mut()
+                .unwrap()
+                .last_mut()
+                .unwrap()["definition"]["value"];
+            operation["kind"] = json!("chamfer");
+            let group = &mut operation["value"]["groups"][0];
+            group.as_object_mut().unwrap().remove("radius");
+            group["spec"] = json!({"kind": "distance", "distance": setback});
+            operation["value"]["flip_direction"] = json!(false);
+            let model = Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ..base
+            };
+            let (bytes, report) = written_with(&model, &writer);
+            let expected_features = if hole { 5 } else { 3 };
+            assert!(
+                history_line(&report).starts_with(&format!(
+                    "{expected_features} of {expected_features} features rebuilt"
+                )),
+                "{}",
+                history_line(&report)
+            );
+            let measured = evaluated(&cli, &bytes);
+            let [body] = measured["bodies"].as_array().unwrap().as_slice() else {
+                panic!("expected one chamfered body: {measured}");
+            };
+            let pi = std::f64::consts::PI;
+            let radius = if hole { 2.0 } else { 5.0 };
+            let original = if hole {
+                1000.0 - pi * radius * radius * 10.0
+            } else {
+                pi * radius * radius * 10.0
+            };
+            // Pappus: triangle area s²/2, centroid radius r ± s/3.
+            let sign = if hole { 1.0 } else { -1.0 };
+            let removed = pi * setback * setback * (radius + sign * setback / 3.0);
+            let expected = original - removed;
+            assert!(
+                (body["volume_mm3"].as_f64().unwrap() - expected).abs() < 1e-6 * expected,
+                "hole={hole}, seam={seam}: {body}"
+            );
+            let depth =
+                setback * (4.0 * radius + sign * setback) / (4.0 * (3.0 * radius + sign * setback));
+            let z = (5.0 * original - (10.0 - depth) * removed) / expected;
+            for (axis, wanted) in [
+                (0, if hole { 5.0 } else { 0.0 }),
+                (1, if hole { 5.0 } else { 0.0 }),
+                (2, z),
+            ] {
+                assert!(
+                    (body["center_of_mass"][axis].as_f64().unwrap() - wanted).abs() < 1e-6,
+                    "hole={hole}, seam={seam}: {body}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn solidcraft_replays_closed_circle_work_with_a_connected_straight_edge_chain() {
     let Some(cli) = closed_blend_cli() else {
@@ -13990,6 +14256,22 @@ fn a_fillet_of_tangency_weight_one_maps_as_a_circular_fillet() {
 
 #[cfg(unix)]
 #[test]
+fn an_opening_check_that_runs_out_of_time_leaves_the_design_unverified() {
+    let host = std::sync::Arc::new(RecordedEvaluator::default());
+    let writer = SolidCraftWriter::new()
+        .evaluator(host)
+        .opening_timeout(std::time::Duration::ZERO);
+    let (_, report) = convert(&cube_with_history(10.0, first_profile(), None), &writer);
+    match &report.outcome().unwrap().check {
+        Check::Unverified(why) => assert!(
+            why.contains("SolidCraft didn't finish checking the written design"),
+            "{why}"
+        ),
+        other => panic!("expected unverified, got {other:?}"),
+    }
+}
+
+#[test]
 fn a_fillet_remains_mapped_when_standing_up() {
     let model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
     // This mapping fixture stores the pre-fillet cube. Recorded measurements isolate
@@ -14012,7 +14294,8 @@ fn a_fillet_remains_mapped_when_standing_up() {
             "edges",
             "original",
             "history",
-            "verification-parameters"
+            "verification-parameters",
+            "opening"
         ]
     );
     assert_eq!(
@@ -16337,7 +16620,7 @@ impl dutchman_solidcraft::SolidCraftEvaluator for RecordedEvaluator {
         let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
         let document: Value =
             serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
-        if self.require_untransformed {
+        if self.require_untransformed && label != "opening" {
             // A verification-parameters document carries no occurrences to check.
             for occurrence in document["occurrences"].as_array().into_iter().flatten() {
                 assert_eq!(
@@ -16422,7 +16705,8 @@ fn a_host_evaluator_proves_a_blend_and_verifies_the_fixture() {
             "edges",
             "original",
             "history",
-            "verification-parameters"
+            "verification-parameters",
+            "opening"
         ]
     );
 }
@@ -16438,7 +16722,10 @@ fn a_host_evaluator_skips_parameter_verification_for_history_without_parameters(
     let (_, report) = convert(&model, &writer);
     assert_eq!(report.outcome().unwrap().mode, Mode::History);
     assert_eq!(report.outcome().unwrap().check, Check::Verified);
-    assert_eq!(*host.calls.lock().unwrap(), ["original", "history"]);
+    assert_eq!(
+        *host.calls.lock().unwrap(),
+        ["original", "history", "opening"]
+    );
 }
 
 #[test]
@@ -16460,7 +16747,13 @@ fn a_host_evaluator_reports_geometry_warnings_after_replacing_a_differing_replay
     ));
     assert_eq!(
         *host.calls.lock().unwrap(),
-        ["original", "history", "verification-parameters", "import"]
+        [
+            "original",
+            "history",
+            "verification-parameters",
+            "import",
+            "opening"
+        ]
     );
     assert!(report
         .losses()
@@ -18730,6 +19023,107 @@ fn opaque_generated_edge_identities_are_supported_cadir_but_need_source_geometry
     }
 }
 
+/// Ordered edges and their endpoints do not bind radius parameter zero to a
+/// chain end. Neither carrier reversal nor missing endpoints may invent that binding.
+#[test]
+fn variable_fillet_without_radius_origin_keeps_source_geometry() {
+    for (reverse, endpoints) in [(false, false), (true, false), (false, true), (true, true)] {
+        let base = input_blend(
+            "fillet",
+            json!({"kind": "variable", "points": [
+            {"parameter": 0.0, "radius": 0.5},
+            {"parameter": 0.4, "radius": 1.5},
+            {"parameter": 1.0, "radius": 1.0}]}),
+            false,
+        );
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let m = &mut wire["model"];
+        m["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
+            json!(["near", "opposite"]);
+        m["feature_input_topologies"][0]["faces"] =
+            json!(["front", "left", "back", "right", "top"]);
+        let samples = m["feature_input_topologies"][0]["edge_geometry"]
+            .as_array_mut()
+            .unwrap();
+        // A connected, ordered open chain still has no radius-origin binding.
+        samples[1]["faces"] = json!(["front", "top"]);
+        samples[1]["interior"] = json!({"x": 5.0, "y": 0.0, "z": 10.0});
+        samples[1]["tangent"] = json!({"x": 1.0, "y": 0.0, "z": 0.0});
+        samples[1]["start"] = json!({"x": 0.0, "y": 0.0, "z": 10.0});
+        samples[1]["end"] = json!({"x": 10.0, "y": 0.0, "z": 10.0});
+        for sample in samples {
+            if !endpoints {
+                let row = sample.as_object_mut().unwrap();
+                row.remove("start");
+                row.remove("end");
+            }
+            if reverse {
+                for axis in ["x", "y", "z"] {
+                    sample["tangent"][axis] = json!(-sample["tangent"][axis].as_f64().unwrap());
+                }
+            }
+        }
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base
+        };
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report)
+                .contains("their radius stations are not bound to a source start vertex"),
+            "{report:?}"
+        );
+        assert_partial(&document, &report, 1);
+        assert!(!document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature["type"] == "fillet"));
+    }
+}
+
+/// An opaque producer edge and ordered endpoint radii supply neither input
+/// geometry nor a binding between a radius station and a spatial chain endpoint.
+#[test]
+fn variable_fillet_generated_edge_without_radius_origin_keeps_source_geometry() {
+    for (start, end) in [(3.0, 1.0), (1.0, 3.0)] {
+        let base = input_blend(
+            "fillet",
+            json!({"kind": "variable", "points": [
+                {"parameter": 0.0, "radius": start},
+                {"parameter": 1.0, "radius": end}]}),
+            false,
+        );
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        wire["model"]["feature_input_topologies"] = json!([]);
+        wire["model"]["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"] = json!({"kind": "generated", "value": {
+                "edges": [{"feature": "f3d:model:feature#2", "local_id": "synthetic-edge"}],
+                "native": "synthetic selection"}});
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base
+        };
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report)
+                .contains("their radius stations are not bound to a source start vertex"),
+            "{report:?}"
+        );
+        assert_partial(&document, &report, 1);
+        assert!(!document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature["type"] == "fillet"));
+    }
+}
+
 /// Invented annular blank with a curved side notch and a separate round cut
 /// contour in the revolve sketch, then an axial cut and a historical fillet pick.
 /// Only the rectangle is in the source profile table; both cut contours stay solid.
@@ -18935,6 +19329,167 @@ fn unresolved_revolve_keeps_construction_and_reference_helpers() {
         "{report:?}"
     );
     assert_eq!(document["features"][1]["profiles"]["type"], "all");
+}
+
+/// Synthetic refusals follow the actual feature rows, including hidden history.
+#[derive(Debug)]
+struct FailedRebuild {
+    feature_type: &'static str,
+    original_unavailable: bool,
+}
+
+impl dutchman_solidcraft::SolidCraftEvaluator for FailedRebuild {
+    fn evaluate(
+        &self,
+        design: &[u8],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Value, String> {
+        if label == "original" && self.original_unavailable {
+            return Ok(json!({"evaluation_failed": "Synthetic source measurement refusal"}));
+        }
+        let mut result = dutchman_solidcraft::SolidCraftEvaluator::evaluate(
+            &RecordedEvaluator::default(),
+            design,
+            timeout,
+            label,
+        )?;
+        let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
+        let document: Value =
+            serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        result["timeline"] = json!(document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|feature| feature["type"] == self.feature_type && feature["suppressed"] != true)
+            .map(
+                |feature| json!({"id": feature["id"], "name": feature["name"],
+                "error": "Synthetic rebuild refusal"})
+            )
+            .collect::<Vec<_>>());
+        Ok(result)
+    }
+
+    fn run(
+        &self,
+        design: &[u8],
+        commands: &[Value],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Vec<Value>, String> {
+        dutchman_solidcraft::SolidCraftEvaluator::run(
+            &RecordedEvaluator::default(),
+            design,
+            commands,
+            timeout,
+            label,
+        )
+    }
+}
+
+#[test]
+fn failed_rebuilds_keep_the_final_shape_and_name_the_feature_even_without_source_measurements() {
+    for original_unavailable in [false, true] {
+        let model = cube_with_history(10.0, first_profile(), None);
+        let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(FailedRebuild {
+            feature_type: "extrude",
+            original_unavailable,
+        }));
+        let (document, report) = convert(&model, &writer);
+        let (source, _) = convert(
+            &model,
+            &SolidCraftWriter::new()
+                .import_only(true)
+                .verification(Verification::Off),
+        );
+        let source_blob = source["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|feature| feature["type"] == "import")
+            .unwrap()["step_blob"]
+            .clone();
+        let features = document["features"].as_array().unwrap();
+        assert!(features
+            .iter()
+            .any(|feature| feature["type"] == "import" && feature["step_blob"] == source_blob));
+        assert!(
+            features.iter().all(|feature| feature["type"] != "extrude"),
+            "{document}"
+        );
+        assert!(
+            features
+                .iter()
+                .any(|feature| feature["type"] == "import" && feature["suppressed"] == false),
+            "{document}"
+        );
+        let blocked = report
+            .outcome()
+            .unwrap()
+            .features
+            .iter()
+            .find(|feature| feature.kind == "extrude")
+            .unwrap();
+        assert_eq!(blocked.status, dutchman_core::FeatureStatus::Blocked);
+        let reason = blocked.reason.as_ref().unwrap();
+        assert!(reason.contains(blocked.name.as_ref().unwrap()), "{reason}");
+        assert!(reason.contains("Synthetic rebuild refusal"), "{reason}");
+    }
+}
+
+#[test]
+fn a_refused_source_import_reports_missing_geometry_as_a_last_resort() {
+    let model = cube_with_history(10.0, first_profile(), None);
+    let host = std::sync::Arc::new(FailedRebuild {
+        feature_type: "import",
+        original_unavailable: false,
+    });
+    let writer = SolidCraftWriter::new()
+        .import_only(true)
+        .evaluator(host.clone());
+    let (document, report) = convert(&model, &writer);
+    assert!(
+        document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|feature| feature["type"] != "import"),
+        "{document}"
+    );
+    assert!(
+        report.losses().iter().any(
+            |loss| loss.code.as_deref() == Some("geometry/import-failed")
+                && loss.detail.contains("MISSING")
+                && loss.detail.contains("Synthetic rebuild refusal")
+                && loss.detail.contains(&loss.subject)
+        ),
+        "{report:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_nonzero_evaluator_exit_without_named_failures_writes_an_unverified_design() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = tempfile::tempdir().unwrap();
+    let cli = scratch.path().join("solidcraft-cli");
+    std::fs::write(&cli, "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.45.0'; exit 0; fi\nexit 1\n").unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let writer = SolidCraftWriter::new().verification(Verification::With(cli));
+    let (document, report) = convert(&cube_with_history(10.0, first_profile(), None), &writer);
+    assert!(!document["features"].as_array().unwrap().is_empty());
+    assert!(
+        matches!(&report.outcome().unwrap().check,
+        Check::Unverified(why) if why.contains("exited with")),
+        "{report:?}"
+    );
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("geometry/import-failed")),
+        "{report:?}"
+    );
 }
 
 #[test]

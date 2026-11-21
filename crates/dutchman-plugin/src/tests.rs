@@ -280,6 +280,20 @@ fn all_conversion_results_use_the_desktop_words() {
 }
 
 #[test]
+fn manifest_entries_reference_the_packaged_ship_icon() {
+    let manifest: Value = serde_json::from_str(include_str!("../plugin.json")).unwrap();
+    for entry in manifest["runtime"]["entries"].as_array().unwrap() {
+        assert_eq!(
+            entry["input_schema"]["x-solidcraft-icon"],
+            "icons/dutchman.svg"
+        );
+    }
+    let icon = include_str!("../icons/dutchman.svg");
+    assert!(icon.len() <= 64 * 1024);
+    assert!(icon.contains("viewBox=\"0 0 64 64\""));
+}
+
+#[test]
 fn manifest_tells_people_where_to_open_files() {
     let manifest: Value = serde_json::from_str(include_str!("../plugin.json")).unwrap();
     assert_eq!(

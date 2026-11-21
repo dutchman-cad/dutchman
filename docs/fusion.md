@@ -125,6 +125,8 @@ assumed motion bindings are reported separately.
 
 Bodies a Combine used up as a tool, or that a Remove step took out of the design, are left out when cadmpeg marks them hidden and no component owns them; an Info `bodies` note gives the count. A body an active Remove deletes is left out too, even when cadmpeg lists it as shown, as long as cadmpeg resolves which body the Remove names; an Info note on the Remove gives the count. Bodies you hid yourself stay available and are written marked hidden: SolidCraft 0.42 and newer open them hidden, while older releases show a part with both shown and hidden bodies whole. An Info note gives the count. A hidden body the editable history rebuilds has no STEP of its own to carry that mark, so it is listed in the design's hidden bodies instead, at every placement of its part, and opens hidden too.
 
+Fusion's own STEP export leaves hidden bodies out, so a STEP you export from Fusion can have fewer bodies than the design Dutchman writes, and a design whose bodies are all hidden exports as an empty STEP. When the counts differ, check the extra bodies in SolidCraft's browser: if they're hidden there, they're the bodies you hid in Fusion, not extra geometry.
+
 | What the codec gives | What Dutchman does |
 |---|---|
 | The design's B-rep, with body transforms applied. | Converts it: restated as STEP, written as SolidCraft's import. |
@@ -136,9 +138,9 @@ Bodies a Combine used up as a tool, or that a Remove step took out of the design
 | A mesh body whose container cadmpeg cannot decode. | Leaves it out and reports it as an undecoded mesh body. |
 | Parameters, planar sketches with typed and native constraints. | Mapped, including point-on-curve coincidences, point-to-line distances, resolved finite-endpoint distances, and parallel-line spacing. Dimensions keep their parameter expressions, so user parameters drive the editable geometry. Native constraints without neutral operands are reported as not carried. |
 | Spatial (3D) sketches. | Mapped as SolidCraft 3D sketches at their solved positions (lines, arcs, circles, splines, points). On targets 0.44 and newer, neutral point joins, point distances, line lengths (including repeated lengths), principal-axis directions and line-to-line and line-to-arc endpoint tangencies carry across; dimensions keep their parameters. Meeting endpoints alone do not create relations. Sweep paths and rails follow their selected curves. Other constraints and links to model edges are reported as not carried. |
-| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. An absent designation is derived exactly from diameter and pitch; conflicting or nonmetric designations, modeled threads, and unresolved faces remain reported losses. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
+| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. The designation supplies the nominal size; secondary diameter and pitch may agree at their stated decimal precision. An absent designation is derived exactly from diameter and pitch. Contradictions name both sizes; UNC/UNF cosmetic Thread output, modeled threads, and unresolved faces remain reported losses. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
 | Body Mirror and Remove steps. | A Mirror of bodies maps when its bodies are named by earlier features, are a body the final model leaves out that cadmpeg names by the extrude that made it, or are the only body in the Mirror's own input; it joins its copy to the body when Fusion did. A Remove of such bodies maps as a SolidCraft Remove on SolidCraft 0.40 and newer. |
-| Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map, on a face of the extrusion or box made just before them; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, including on full circles such as a hole's rim, and unequal chamfers on straight edges and full circles with the face their distance runs along proven on the source's final body, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
+| Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map, on a face of the extrusion or box made just before them; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, including on full circles such as a boss's top edge or a hole's rim, and unequal chamfers on straight edges and full circles with the face their distance runs along proven on the source's final body, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
 
 Fusion stores consumed Combine tools (with keep-tools off) and bodies removed by the
 timeline alongside its live bodies. For `.f3d`, designs inside `.f3z`, and component parts,
@@ -150,6 +152,14 @@ reported as a history blocker.
 User-hidden bodies that still belong to a component are kept, with an Info note. Hidden
 occurrences remain hidden; the current writer shows a part with both shown and hidden bodies
 whole, so its hidden members can appear visible in SolidCraft.
+
+Holes ending at a proven earlier planar extrusion or box cap retain their drill point,
+including countersunk entries. Fusion measures Extents To to the cylindrical shoulder;
+the conical point extends beyond the selected face. Dutchman resolves that distance
+along the drilling direction and keeps the countersink at the entry. Unresolved,
+offset, tilted, or unproven terminating faces retain a specific history blocker.
+Later features rebuild when the hole maps. A refused hole still stops body-building
+history; independently resolved reference sketches remain available.
 
 Holes on planar historical entry faces can keep their editable history when the boundary
 includes circular arcs or whole circles, including a rounded corner or an earlier through
@@ -629,3 +639,12 @@ this fallback: replacing them would discard earlier body history. No geometry is
 reconstructed from an unavailable sketch. The feature is `mapped`, written as an Import, and
 `history/body-fallback-imported` reports the lost recipe as Degraded. Later features
 and verification use the imported body as usual.
+
+Fusion thread construction records carry a designation, nominal-size text, profile/type,
+physical pitch, and, in extended records, class and hand controls. The pinned codec projects
+the designation, numeric nominal size, profile as `standard`, and pitch into CADIR; it does
+not expose nominal-size text precision or class on the neutral cosmetic-thread operation.
+Dutchman uses only that neutral operation. The table designation supplies the nominal size;
+secondary numeric values are compared at their serialized decimal precision. Unsupported
+class or hand suffixes in a designation are still reported. See [cosmetic threads](history.md)
+for rounding, inch units, and target limits.

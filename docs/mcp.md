@@ -617,9 +617,19 @@ filled face, and outward drilling use the existing blocked feature reason; the o
 geometry remains available.
 This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
 original geometry with a named reason.
-Entry recesses with drill points report "SolidCraft holes take a drill point only on a
-plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
-points, but Dutchman retains this limit for compatibility with older releases.
+Entry recesses with drill points map on targets that support their tip angle. Older
+targets report "SolidCraft holes take a drill point only on a plain drilled hole"
+and retain the original geometry.
+
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
+
+Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
+secondary numeric values. ISO metric table designations tolerate decimal rounding and
+floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
+separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
+[cosmetic threads](history.md) for details.
 
 Offset datum planes need no building feature when their support resolves or all their
 consumers carry independent resolved sketch placements. Otherwise the history reason
@@ -651,7 +661,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `input` | string | Absolute path of a native CAD file: `.f3d`, `.f3z`, `.ipt`, `.iam` or `.sldprt` or `.FCStd`. |
 | `output` | string | Absolute path of the `.sc` file to write (`.solidcraft` and `.solvecraft` also work). An existing file is replaced, unless `overwrite` is false. |
 | `inputs` | array of strings, at least one | Absolute paths of files, and of folders to search (with their subfolders) for files Dutchman knows. |
-| `out_dir` | string | Absolute path of the folder for the designs, keeping each input folder's layout. Created if missing. |
+| `out_dir` | string | Absolute path of the folder for the designs, keeping paths relative to each input folder. Linked design companions stay beside each design. Created if missing; repeated runs reuse the same paths. |
 | `jobs` | integer, at least 1 | How many files to convert at once. Default: the machine's cores, at most 8. |
 | `timeout` | integer, at least 1 | Seconds one file may take before it is stopped and reported as failed. Default 900. |
 | `max_memory_mb` | integer | Megabytes one file may hold before it is stopped and reported as failed. Default 0, no limit; a file also stops if the computer really runs low on memory. |
@@ -1285,7 +1295,6 @@ can have several ids; dropped or merged rows have none. Inspection returns empty
 with `not_written`. These fields are additive; schemas and existing fields are unchanged.
 See [the JSON report reference](json.md) for the matching values.
 
-
 ## Counts-only anonymous reports
 
 Use `--report-counts --report-anon FILE` with `convert` or `convert-all` to write
@@ -1311,6 +1320,13 @@ source geometry, which is not supported yet`. A numeric feature-local path alone
 does not prove which rebuilt edge to select. The editable prefix and original final
 geometry are retained; a generated reference with missing or blank fields is still refused.
 
+Variable-radius fillets with an unproven chain direction report `variable fillets need
+a proven chain direction: their radius stations are not bound to a source start vertex,
+which is not supported yet`. Mapping a radius law requires
+an ordered, directed input chain with its radius positions bound to that traversal.
+Carrier sample order alone does not supply that binding. The editable prefix and original
+final geometry are retained when the direction is unresolved.
+
 The CLI also provides `dutchman preflight <file> --json` for budgeted reading and
 history planning without writing a design. The default target gets a forecast;
 other targets and exhausted budgets return unknown. This is not an MCP tool.
@@ -1319,12 +1335,35 @@ See [preflight](preflight.md) for tiers, counts and limits.
 Library planning outcomes used by preflight keep empty output ids with
 `not_written`; preflight saves no design.
 
+When no final source shape is available, conversion keeps the editable history before the
+failed feature, leaves out its dependent suffix, and checks the remaining design again.
+The report names the omitted features and the rebuild reason. Conversion stops only if
+no usable history remains or the remaining design cannot be made to open.
+
+When SolidCraft reports a feature that fails to rebuild, conversion removes that feature and
+its dependent body history and keeps the final source shape with the editable prefix before the
+failure. The report names the feature and SolidCraft's reason, even when the source shape could
+not be measured. Before omission, refused STEP imports with excess shared edge uses get identical edge
+copies for uses beyond the first two and are rechecked. Faces, curves, vertices, names, and
+placements are retained; `geometry/sheet-edges-split` records the repair. A final opening
+check also covers geometry-only output, hidden history, and
+assemblies. If SolidCraft also refuses the available final source shape, omission is the last
+resort: `geometry/import-failed` says the body geometry is **MISSING** and names the feature
+and reason. A combined import may leave out the whole part. Review these losses before using
+the result. If a named failure cannot be removed, conversion stops without writing it. An
+evaluator error or nonzero exit without named failed features means verification is
+unavailable: the design is still written, marked unverified, with the reason. Verification
+turned off remains unchecked.
+
 The SolidCraft plugin checks estimated memory and time before native decoding. When it
 says the design is too large to open inside SolidCraft, use the
 [Dutchman desktop app](https://github.com/dutchman-cad/dutchman/releases/latest) to save a
 `.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
 "Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
 See [the plugin guide](plugin.md).
+
+The [public fixture score workflow](fixture-score.md) runs the CLI on public
+fixtures and collects scoreboard evidence. It does not require an MCP server.
 
 Extrudes and resolved revolves accept a profile that explicitly names an earlier active
 planar sketch feature with a resolved sketch binding. This selects the whole bound sketch

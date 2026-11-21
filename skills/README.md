@@ -60,3 +60,6 @@ Plugin authoring and evaluator integration details are documented on that page.
 The plugin aborts on host input failures before writing output. Its bounded loss report
 prioritizes dropped and degraded losses and includes an explicit truncation notice and
 `details.truncation` counts when shortened; see [the plugin contract](../docs/plugin.md).
+
+Maintainers can run the [public fixture score workflow](../docs/fixture-score.md)
+to collect public conversion and reopen evidence without sending local designs.
