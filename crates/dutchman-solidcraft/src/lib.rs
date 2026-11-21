@@ -1111,6 +1111,7 @@ impl SolidCraftWriter {
             verify::Expected {
                 solids: solid_bodies(model),
                 sheets: sheet_bodies(model),
+                single_body_regions: single_body_regions(model),
             },
             progress,
             model,
@@ -1164,6 +1165,7 @@ impl SolidCraftWriter {
             verify::Expected {
                 solids: solid_bodies(model),
                 sheets: sheet_bodies(model),
+                single_body_regions: single_body_regions(model),
             },
             progress,
             &model.name,
@@ -1493,6 +1495,20 @@ fn solid_bodies(model: &Model) -> usize {
         .count()
 }
 
+/// Only one solid body gives an unambiguous owner for all imported regions.
+/// Keep the ordinary per-piece comparison for mixed or multiple source bodies.
+fn single_body_regions(model: &Model) -> usize {
+    let geometry = &model.ir.geometry;
+    match geometry.bodies.as_slice() {
+        [body] if body.kind == cadmpeg_ir::topology::BodyKind::Solid => geometry
+            .regions
+            .iter()
+            .filter(|region| region.body == body.id)
+            .count(),
+        _ => 0,
+    }
+}
+
 impl SolidCraftWriter {
     /// Opens geometry written as an import in SolidCraft, when a SolidCraft CLI is found, and
     /// reports it as Degraded when SolidCraft shows less of it than the model holds: geometry
@@ -1505,8 +1521,9 @@ impl SolidCraftWriter {
         progress: Option<&dutchman_core::Progress<'_>>,
     ) {
         let expected = verify::Expected {
-            solids: solid_bodies(model),
+            solids: solid_bodies(model).max(single_body_regions(model)),
             sheets: sheet_bodies(model),
+            single_body_regions: single_body_regions(model),
         };
         self.check_geometry(design, expected, report, progress, &model.name);
     }

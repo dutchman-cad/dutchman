@@ -74,6 +74,14 @@ centre, with volume breaking ties. When the evaluator gives no box for a pair, t
 | `flattened` | No body-building prefix could be retained. The design keeps the imported geometry and mapped sketches with resolved planes, hidden for reference. |
 | `not_applicable` | There was no history to write, or `--import-only`. |
 
+When the source is one solid body with several disconnected regions, STEP imports
+those regions as separate solids. If history retains them in one body, verification
+requires every source region to import with positive volume, area and complete bounds,
+then compares their summed volume and area and combined bounding box with the replayed
+body. Available centroids are combined by volume; closure requires every region to
+be closed. Missing regions still fail. If replay also splits the regions, the usual
+per-piece checks apply. Single-region bodies and designs with multiple source bodies
+keep their existing one-to-one comparisons.
 
 ### Verification tolerances
 
@@ -86,7 +94,7 @@ cancel):
 
 | Compared | Allowed difference |
 |---|---|
-| Bodies | The same count. Bodies are paired by nearest box centre, volume breaking ties. |
+| Bodies | The same comparison count after the single-body disconnected-region normalization described above. Otherwise, bodies are paired by nearest box centre, volume breaking ties. |
 | Volume | The larger of 1e-4 (0.01%) of the larger volume and the mesh allowance: each body's area times the mesh chord, `max(5e-5 of the box diagonal, 1e-4 mm)`, summed for both bodies. With no area or box from SolidCraft, only 1e-4. |
 | Area | 1e-3 (0.1%) of the larger area, when SolidCraft gives both. |
 | Position (box centre) and box corners | The larger of 0.01 mm and 2e-4 (0.02%, four mesh chords) of the larger box diagonal; the centre distance and each minimum and maximum coordinate. Skipped when SolidCraft gives no box. |
@@ -109,7 +117,9 @@ replayed box diagonal when the stored box is the solid's own, or 1 mm and 2% whe
 over sampled points. More replayed bodies than the source lists is not a difference.
 
 **Geometry written as an import:** a solid body with a volume below 1e-6 mm³ counts as having
-none. There is no original to compare with, so only SolidCraft's own warnings apply.
+none. For a single solid body with multiple regions, every imported region must have
+volume. There is no independent source measurement to compare with; SolidCraft's warnings
+also apply.
 
 **Proofs against the source before a feature maps** (a failed proof leaves the feature out or
 refuses the choice rather than failing the replay):

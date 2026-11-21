@@ -184,3 +184,13 @@ location sketch and a multi-point hole. The hole's form and termination must als
 be supported. Each placement still passes the single-hole entry-face checks. Different drilling directions, different entry planes, and
 multiple unsigned axes remain not supported yet; the original geometry is retained.
 Older targets report `multiple spatial hole locations need SolidCraft 0.44 patch 1 or newer`.
+
+A single solid body may contain disconnected lumps. The STEP encoder writes one
+solid per connected region, which SolidCraft displays separately even when editable
+history retains one body. A `MANIFOLD_SOLID_BREP` has one outer shell;
+`BREP_WITH_VOIDS` adds cavity shells, not disconnected outer regions. SolidCraft can
+keep an all-closed `SHELL_BASED_SURFACE_MODEL` together; a model mixing open and closed
+shells splits its solids from its sheets. Dutchman retains the encoder's solid-per-region
+STEP representation and reconciles the body grouping during verification. It compares
+the lumps' combined volume, surface area and bounds, and still rejects missing lumps; see
+[How a history is checked](history.md#how-a-history-is-checked).

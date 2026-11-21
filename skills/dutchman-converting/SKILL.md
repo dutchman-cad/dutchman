@@ -609,6 +609,12 @@ Never remove or change the quarantine attribute.
 - If something is off, say exactly what ("SolidCraft could not mesh 3 faces"), and don't
   claim the conversion is fine.
 
+For a source consisting of one solid body with disconnected lumps, verification can
+compare the imported pieces together against one replayed body. Every source region
+must remain present; their summed volume and area and combined bounds must agree.
+Single-lump and multiple-source-body comparisons retain their existing checks. See
+[How a history is checked](../../docs/history.md#how-a-history-is-checked).
+
 When conversion reports `verification_checks`, explain the individual source comparisons:
 volume, surface area, bounds, counts, closure, centroid and evaluated named parameters,
 including their quantity kinds.

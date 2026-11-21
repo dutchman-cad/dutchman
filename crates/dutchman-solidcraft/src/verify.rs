@@ -6,6 +6,7 @@
 use crate::SolidCraftEvaluator;
 
 mod evidence;
+mod regions;
 use dutchman_core::time::Instant;
 pub(crate) use evidence::{compare_report, record_unavailable};
 use std::path::{Path, PathBuf};
@@ -1175,6 +1176,10 @@ fn compare_measurements(
             return Outcome::Unverified(format!("cannot evaluate the original geometry: {why}"))
         }
     };
+    let (expected, replayed) = match regions::normalize(expected, replayed, bodies) {
+        Ok(pair) => pair,
+        Err(outcome) => return outcome,
+    };
     if let Some(evidence) = evidence {
         *evidence = evidence::measurements(&expected, &replayed);
     }
@@ -1421,6 +1426,8 @@ pub(crate) struct Expected {
     pub solids: usize,
     /// Its sheet bodies: open by design, so neither a volume nor an open shell is a fault.
     pub sheets: usize,
+    /// Connected regions when the entire source is one solid body; zero otherwise.
+    pub single_body_regions: usize,
 }
 
 /// A body volume, in cubic millimetres, below which SolidCraft gives the body none.
@@ -3139,6 +3146,7 @@ mod tests {
         let six = Expected {
             solids: 1,
             sheets: 0,
+            ..Expected::default()
         };
         assert_eq!(shown(&eval(6, None), six), Shown::Whole);
         let original = eval(6, None);
@@ -3162,6 +3170,7 @@ mod tests {
         let one_sheet = Expected {
             solids: 1,
             sheets: 1,
+            ..Expected::default()
         };
         assert_eq!(shown(&merged, one_sheet), Shown::Whole);
         for (volume, area, measure) in [(900.0, 600.0, "volume"), (1000.0, 500.0, "area")] {
@@ -3207,6 +3216,7 @@ mod tests {
         let two = Expected {
             solids: 2,
             sheets: 0,
+            ..Expected::default()
         };
         assert_eq!(shown(&eval(&[1000.0, 8.0]), two), Shown::Whole);
         assert_eq!(
@@ -3621,6 +3631,7 @@ mod cli_tests {
             Expected {
                 solids: 0,
                 sheets: 0,
+                ..Expected::default()
             },
         )
     }
@@ -3773,6 +3784,7 @@ mod cli_tests {
         let one_sheet = Expected {
             solids: 1,
             sheets: 1,
+            ..Expected::default()
         };
         assert_eq!(
             shown(&eval(&[1000.0, -2629.0], &[open]), one_sheet),

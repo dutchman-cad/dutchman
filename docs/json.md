@@ -552,6 +552,16 @@ from the original's position`; a box mismatch gives `a body's box differs from t
 original's by 2.500 mm`. When SolidCraft gives no box for a pair, only area and volume are
 compared. A face-count difference (SolidCraft can merge faces on one surface) produces
 no geometry loss, nor does an open-shell warning when the compared measurements agree.
+
+When the source is one solid body with several disconnected regions, STEP imports
+those regions as separate solids. If history retains them in one body, verification
+requires every source region to import with positive volume, area and complete bounds,
+then compares their summed volume and area and combined bounding box with the replayed
+body. Available centroids are combined by volume; closure requires every region to
+be closed. Missing regions still fail. If replay also splits the regions, the usual
+per-piece checks apply. Single-region bodies and designs with multiple source bodies
+keep their existing one-to-one comparisons.
+
 Geometry-only output has no independent source measurements; evaluation errors, unmeshable faces, solids
 without volume, solids opened as open shells, and bodies inside out still produce `Degraded` losses with subject `geometry` and stage `solidcraft`.
 Sheets remain exempt from volume and closed-shell checks. The GUI, CLI, web app, and MCP
@@ -860,7 +870,13 @@ not attempted; it must never be interpreted as a pass.
 
 `geometry.body_count` records source and written counts. `geometry.bodies` pairs bodies by
 box position, then volume, retaining zero-based `source_index` and `written_index`.
-Indices refer to the evaluated source and replay body lists, rather than native topology ids.
+Indices refer to the comparison's source and replay body lists, rather than native topology ids.
+For a single source body whose disconnected regions import separately but replay together,
+the source comparison list contains one combined body at index zero. Its volume and area
+are sums, its box encloses all regions, its centroid is volume-weighted when available,
+and its closure is true only when all regions report closed. Kernel counts are summed.
+All imported regions must be present before combining; single-region and multiple-source-body
+comparisons keep their existing pairing.
 Each body's `checks` contains `volume`, `surface_area`, `bounding_box`, `centroid`, `faces`,
 `edges`, `shells`, `closed_shell` and `manifold`. Geometric, closure and parameter checks
 use `status`: `pass`, `fail` or `not_checked`. Kernel face, edge and shell counts are

@@ -358,6 +358,12 @@ and retained editable history stays unverified. This applies to `convert` and ea
 off; `no_memory_check: true` forces requested checks. Automatic part work uses at most two
 workers and budgets each detailed part's temporary peak and the retained preparation queue.
 
+For a source consisting of one solid body with disconnected lumps, verification can
+compare the imported pieces together against one replayed body. Every source region
+must remain present; their summed volume and area and combined bounds must agree.
+Single-lump and multiple-source-body comparisons retain their existing checks. See
+[How a history is checked](history.md#how-a-history-is-checked).
+
 Conversion results share the CLI's additive `verification_checks` array. It records final
 history comparisons per part and body, including measurement evidence and replayed named
 parameter values and quantity kinds compared with the source. Geometric, closure and
