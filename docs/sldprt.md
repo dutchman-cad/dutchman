@@ -6,7 +6,10 @@ decoding land in cadmpeg and reach Dutchman when the pin is bumped. This page sa
 Dutchman makes of what that codec gives, and which upstream gaps keep SolidWorks history from
 replaying. It drives what is asked of cadmpeg next.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`f1338aa2`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`0096ab93`, after cadmpeg 0.6.12).
+Assembly decoding completes the document root after projecting the component tree,
+so assemblies retain one root definition and project conversion can group their referenced parts.
+
 `dutchman formats` reports the reader's current reader status alongside what Dutchman converts.
 
 Compact extrusion continuation records now supply their join or cut operation when their
@@ -96,6 +99,12 @@ placement is reported.
 
 ## Assemblies (`.sldasm`)
 
+Ordered child occurrences now belong to product definitions, and external file
+paths and configuration names belong to the prototype definition's storage.
+Dutchman follows those references through local sub-assemblies when planning
+folder and ZIP projects, so parts claimed by an assembly are not converted again
+as unused parts.
+
 Assemblies convert as placed parts and nested components. cadmpeg supplies product definitions,
 occurrences and placements; Dutchman resolves external `.sldprt` and `.sldasm` references
 through the shared assembly file finder. Absolute Windows paths are matched by file name,
@@ -105,7 +114,9 @@ of its own, conversion stops with "none of the assembly's parts could be found o
 report lists each part file it looked for.
 See [finding part files](inventor.md#finding-the-part-files) for the shared search rules.
 
-Local sub-assemblies keep their component tree. Referenced assembly files are read recursively,
+The file's root component stays around its placed parts, including when CADIR stores
+those occurrences directly on the file definition. Local sub-assemblies keep their
+component tree. Referenced assembly files are read recursively,
 with cycle protection and a depth limit of 32. Repeated references to the saved active
 configuration share one read across the whole assembly tree, including sibling sub-assemblies.
 Saved display tessellations are released before building that tree; exact geometry and feature

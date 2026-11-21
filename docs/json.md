@@ -1,5 +1,12 @@
 # Machine-readable reports
 
+Component catalogs follow assembly nesting, including repeated insertions.
+Assembly files claim their referenced parts, so a project converts its roots
+and then its unused parts. Nested placement, visibility, and suppression
+overrides apply separately to each insertion.
+Alternate representations and instance bodies are not supported yet;
+the report names that limitation rather than treating the design as empty.
+
 Folder conversions retain paths relative to each input folder in the existing
 `results[].output.path` field: `in/ProjectA/part.f3d` writes
 `out/ProjectA/part.sc`. Same-named files in other subfolders have distinct paths.

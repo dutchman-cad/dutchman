@@ -549,15 +549,23 @@ fn raw_joint_model(definition: Value) -> Model {
     let mut model = joint_model();
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let identity = dutchman_core::placement::IDENTITY;
-    wire["model"]["product_definitions"] = json!([{"id": "synthetic:test:product#part", "kind": "part", "bom_properties": {}, "bodies": [], "sketches": []}]);
-    wire["model"]["occurrences"] = json!([
-        {"id": "synthetic:test:occurrence#base", "ordinal": 0, "name": "Base",
-         "prototype": {"kind": "local", "definition": "synthetic:test:product#part"},
-         "parent": {"kind": "root"}, "transform": identity, "scale": [1.0, 1.0, 1.0]},
-        {"id": "synthetic:test:occurrence#arm", "ordinal": 1, "name": "Arm",
-         "prototype": {"kind": "local", "definition": "synthetic:test:product#part"},
-         "parent": {"kind": "root"}, "transform": identity, "scale": [1.0, 1.0, 1.0]}
+    wire["model"]["product_definitions"] = json!([
+        {"id": "synthetic:test:product#part", "kind": "part", "bom_properties": {}, "bodies": [], "sketches": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]},
+        {"id": "synthetic:test:product#root", "kind": "assembly", "bom_properties": {}, "bodies": [], "sketches": [], "storage":{"kind":"file", "document":{}}, "tessellations":[], "occurrences":["synthetic:test:occurrence#base", "synthetic:test:occurrence#arm"], "instance_bodies":[], "representations":[]}
     ]);
+    wire["model"]["occurrences"] = json!([
+        {"id": "synthetic:test:occurrence#base", "name": "Base",
+         "prototype": "synthetic:test:product#part",
+         "transform": identity, "overrides": []},
+        {"id": "synthetic:test:occurrence#arm", "name": "Arm",
+         "prototype": "synthetic:test:product#part",
+         "transform": identity, "overrides": []}
+    ]);
+    // Arena order is independent of the file definition's placement order.
+    wire["model"]["occurrences"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
     let joint = &model.assembly.as_ref().unwrap().joints[0];
     let connector = |name: &str, frame| {
         json!({

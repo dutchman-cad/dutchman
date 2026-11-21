@@ -1,5 +1,12 @@
 # Getting started
 
+Component catalogs follow assembly nesting, including repeated insertions.
+Assembly files claim their referenced parts, so a project converts its roots
+and then its unused parts. Nested placement, visibility, and suppression
+overrides apply separately to each insertion.
+Alternate representations and instance bodies are not supported yet;
+the report names that limitation rather than treating the design as empty.
+
 The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
 Folder and selection summaries use the highest per-file memory estimate and sum the displayed
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show

@@ -17254,7 +17254,7 @@ fn hidden_cube_with_history() -> Model {
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     wire["geometry"]["bodies"][0]["visible"] = json!(false);
-    wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#root", "kind": "part", "bodies": [body], "bom_properties": {}, "sketches": []}]);
+    wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#root", "kind": "part", "bodies": [body], "bom_properties": {}, "sketches": [], "storage": {"kind":"embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": []}]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model

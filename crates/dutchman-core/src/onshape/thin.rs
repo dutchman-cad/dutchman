@@ -31,10 +31,8 @@ pub(super) fn owner(ir: &CadIr) -> Mapping<cadmpeg_ir::ids::ProductDefinitionId>
     let [definition] = ir.model.product_definitions.as_slice() else {
         return Err("thin construction needs one admitted Part Studio product scope".into());
     };
-    if ir.model.occurrences.iter().any(|occurrence| {
-        !matches!(occurrence.parent, cadmpeg_ir::products::OccurrenceParent::Root {})
-            || !matches!(&occurrence.prototype, cadmpeg_ir::products::PrototypeReference::Local { definition: owner } if owner == &definition.id)
-    })
+    if !ir.model.occurrences.is_empty()
+        || !definition.occurrences.is_empty()
         || definition.bodies.len() != ir.geometry.bodies.len()
         || ir
             .geometry
@@ -233,7 +231,137 @@ pub(super) fn feature(
     )
 }
 
-pub(super) fn install_scope(ir: &mut CadIr, report: &mut super::Report) -> Mapping<()> {
+// The design layer has its own sketch arenas. Keep its thin-profile picks closed
+// over those records; the model history still carries the sketch's constraints.
+fn install_profiles(ctx: &cadmpeg_core::decode::DecodeContext<'_>, ir: &mut CadIr) -> Mapping<()> {
+    let mut selected = BTreeSet::new();
+    for feature in &ir.design.features {
+        let wire = serde_json::to_value(feature).map_err(|error| error.to_string())?;
+        if let Some(picks) = wire.pointer("/definition/operation/value/profile/picks/value") {
+            for pick in picks.as_array().ok_or("thin profile picks are missing")? {
+                selected.insert(
+                    text(pick.get("target").ok_or("thin pick is missing")?, "value")?.to_owned(),
+                );
+            }
+        }
+    }
+    let sketches: BTreeSet<_> = ir
+        .model
+        .sketch_entities
+        .iter()
+        .filter(|entity| selected.contains(entity.id().as_str()))
+        .map(|entity| entity.sketch.as_str())
+        .collect();
+    ctx.charge_entities(
+        cadmpeg_core::decode::u64_from_index(selected.len())
+            .saturating_add(cadmpeg_core::decode::u64_from_index(sketches.len())),
+        "Onshape thin profile admission",
+    )
+    .map_err(|error| error.to_string())?;
+    super::reserve_history(ctx, &mut ir.design.sketches, sketches.len())
+        .map_err(|error| error.to_string())?;
+    super::reserve_history(ctx, &mut ir.design.sketch_entities, selected.len())
+        .map_err(|error| error.to_string())?;
+    let mut owners = BTreeMap::new();
+    for feature in &ir.model.features {
+        let wire = serde_json::to_value(feature).map_err(|error| error.to_string())?;
+        if let Some(sketch) = wire
+            .pointer("/definition/value/value/sketch/sketch")
+            .and_then(Value::as_str)
+        {
+            owners.insert(sketch.to_owned(), feature.id.clone());
+        }
+    }
+    for sketch in ir
+        .model
+        .sketches
+        .iter()
+        .filter(|sketch| sketches.contains(sketch.id.as_str()))
+    {
+        let owner = owners
+            .get(sketch.id.as_str())
+            .ok_or("thin profile sketch has no history owner")?;
+        let (origin, normal, x_axis) = sketch
+            .placement
+            .resolved()
+            .ok_or("thin profile sketch frame is unresolved")?;
+        let z = topology::unit(topology::vector(&json!(normal), 1.0)?)?;
+        let x = topology::unit(topology::vector(&json!(x_axis), 1.0)?)?;
+        push(
+            &mut ir.design.sketches,
+            json!({"id":sketch.id,"owner":owner,
+            "plane":{"kind":"placed","inputs":[],"after":[],"resolved":{
+                "origin":origin,"x_axis":topology::point(x),"y_axis":topology::point(topology::cross(z,x)),"z_axis":topology::point(z)},"resolved_in":{}},
+            "solve":{"status":"current"},"native_options":{},"source_settings":{}}),
+        )?;
+    }
+    for entity in ir
+        .model
+        .sketch_entities
+        .iter()
+        .filter(|entity| selected.contains(entity.id().as_str()))
+    {
+        let curve = profile_curve(&entity.geometry)?;
+        push(
+            &mut ir.design.sketch_entities,
+            json!({"id":entity.id(),"sketch":entity.sketch,
+            "definition":{"kind":"defined","value":{"form":{"kind":"native","value":"onshape:model-sketch-entity"},"solved":curve}},
+            "construction":entity.construction,"roles":[],"native_options":{},"source_settings":{}}),
+        )?;
+    }
+    if ir.design.sketch_entities.len() != selected.len() {
+        return Err("thin profile curve is missing from the model history".into());
+    }
+    Ok(())
+}
+
+fn profile_curve(geometry: &cadmpeg_ir::sketches::SketchGeometry) -> Mapping<Value> {
+    let mut wire = serde_json::to_value(geometry).map_err(|error| error.to_string())?;
+    let kind = text(&wire, "kind")?.to_owned();
+    let fields = wire
+        .as_object_mut()
+        .ok_or("thin profile curve is missing")?;
+    fields.remove("kind");
+    match kind.as_str() {
+        "line" | "circle" => {}
+        "arc" => {
+            let start = fields
+                .remove("start_angle")
+                .ok_or("thin arc start is missing")?;
+            let end = fields
+                .remove("end_angle")
+                .ok_or("thin arc end is missing")?;
+            fields.insert("start".into(), start);
+            fields.insert("end".into(), end);
+        }
+        "ellipse" => {
+            let angle = fields
+                .remove("major_angle")
+                .and_then(|value| value.as_f64())
+                .ok_or("thin ellipse direction is missing")?;
+            let major = fields
+                .remove("major_radius")
+                .ok_or("thin ellipse major radius is missing")?;
+            let minor = fields
+                .remove("minor_radius")
+                .ok_or("thin ellipse minor radius is missing")?;
+            fields.insert("major".into(), json!([angle.cos(), angle.sin()]));
+            fields.insert("radii".into(), json!([major, minor]));
+            if let Some(bounds) = fields.remove("bounds") {
+                fields.insert("range".into(), bounds);
+            }
+        }
+        _ => return Err("thin profile curve is not supported yet".into()),
+    }
+    Ok(json!({"kind":kind,"value":wire}))
+}
+
+pub(super) fn install_scope(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    ir: &mut CadIr,
+    report: &mut super::Report,
+) -> Mapping<()> {
+    install_profiles(ctx, ir)?;
     for source in &ir.model.features {
         if ir
             .design

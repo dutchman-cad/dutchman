@@ -21,6 +21,12 @@ those sides is not supported yet, so the final STEP geometry remains.
 
 # Converting CAD files with Dutchman
 
+Component catalogs follow assembly nesting, including repeated insertions.
+Assembly files claim their referenced parts, so a project converts its roots
+and then its unused parts. Nested placement, visibility, and suppression
+overrides apply separately to each insertion.
+Alternate representations and instance bodies are not supported yet;
+the report names that limitation rather than treating the design as empty.
 Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
 components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
 Select target 0.44 explicitly when the existing default is older.

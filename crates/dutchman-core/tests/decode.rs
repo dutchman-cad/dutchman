@@ -414,6 +414,16 @@ fn solidworks_assembly_resolves_parts_and_keeps_reader_losses() {
         &mut report,
     )
     .unwrap();
+    assert_eq!(
+        model
+            .ir
+            .model
+            .product_definitions
+            .iter()
+            .filter(|definition| definition.is_root())
+            .count(),
+        1
+    );
     let assembly = model.assembly.unwrap();
     let parts = assembly.parts[0].assembly.as_ref().unwrap();
     assert_eq!(parts.placements.len(), 2);

@@ -28,6 +28,8 @@ mod progress;
 pub mod progress_words;
 mod refusal;
 pub mod source;
+#[cfg(test)]
+mod test_products;
 pub mod time;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
@@ -230,8 +232,7 @@ pub fn assembly_references(
         return Ok(Vec::new());
     }
     let model = decode_file(format, input, &mut Report::default(), None)?;
-    let value = serde_json::to_value(&model.ir.model.occurrences)
-        .map_err(|err| Error::Decode(format!("cannot read assembly references: {err}")))?;
+    let value = assembly::products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
     let finder = locate::Finder::new(search);
     let folder = input.parent().unwrap_or(Path::new("."));
     let mut references: std::collections::BTreeSet<_> = value
@@ -285,13 +286,8 @@ pub fn assembly_references(
             .map(|definition| (definition.id.as_str(), definition))
             .collect();
         for row in value.as_array().into_iter().flatten().take(MAX_PLACEMENTS) {
-            if row
-                .pointer("/parent/kind")
-                .and_then(serde_json::Value::as_str)
-                == Some("root")
-            {
-                continue;
-            }
+            // The document root is now a definition rather than a placed holder.
+            // Its direct children can themselves be saved local sub-assemblies.
             let definition = row
                 .pointer("/prototype/definition")
                 .and_then(serde_json::Value::as_str)
@@ -428,7 +424,7 @@ fn local_components(
 }
 
 /// Occurrences whose design is a linked document the file doesn't contain: the reader states
-/// their prototype as unresolved.
+/// their prototype as unresolved or refers to an empty unresolved definition.
 fn missing_linked_components(model: &Model) -> Vec<String> {
     let (Ok(definitions), Ok(occurrences)) = (
         serde_json::to_value(&model.ir.model.product_definitions),
@@ -436,6 +432,13 @@ fn missing_linked_components(model: &Model) -> Vec<String> {
     ) else {
         return Vec::new();
     };
+    missing_linked_component_names(&definitions, &occurrences)
+}
+
+fn missing_linked_component_names(
+    definitions: &serde_json::Value,
+    occurrences: &serde_json::Value,
+) -> Vec<String> {
     // The placeholder is either a definition with no bodies and no children, or no definition
     // at all (readers that name the unresolved prototype without stating it).
     let empty = |id: &str| {
@@ -457,15 +460,19 @@ fn missing_linked_components(model: &Model) -> Vec<String> {
         .into_iter()
         .flatten()
         .filter_map(|row| {
-            // The reader states the prototype as unresolved, or (newer readers) as an empty
-            // placeholder definition named for the unresolved occurrence.
+            // Definition-owned products name the prototype directly by id. Keep the older
+            // tagged forms too; an unresolved suffix alone must not hide stored geometry.
             let unresolved = row
                 .pointer("/prototype/kind")
                 .and_then(serde_json::Value::as_str)
                 == Some("unresolved")
                 || row
-                    .pointer("/prototype/definition")
+                    .get("prototype")
                     .and_then(serde_json::Value::as_str)
+                    .or_else(|| {
+                        row.pointer("/prototype/definition")
+                            .and_then(serde_json::Value::as_str)
+                    })
                     .is_some_and(|definition| {
                         definition.ends_with("/unresolved") && empty(definition)
                     });
@@ -804,7 +811,6 @@ fn write_output(output: &Path, bytes: &[u8], replace: bool) -> Result<(), Error>
 }
 
 fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {
-    let expected = writer.extension();
     let matches = output
         .extension()
         .and_then(|ext| ext.to_str())
@@ -814,7 +820,7 @@ fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {
     } else {
         Err(Error::WrongOutputExtension {
             path: output.to_path_buf(),
-            expected,
+            expected: writer.extension(),
         })
     }
 }
@@ -912,5 +918,76 @@ mod tests {
                 assert!(report.completeness().unwrap().left_out.is_empty());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod output_checks {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn accepted_suffixes_do_not_probe_the_default_and_errors_still_name_it() {
+        struct ProbedWriter(Cell<usize>);
+        impl Writer for ProbedWriter {
+            fn extension(&self) -> &'static str {
+                self.0.set(self.0.get() + 1);
+                "sc"
+            }
+
+            fn accepts_extension(&self, extension: &str) -> bool {
+                matches!(extension, "sc" | "solidcraft")
+            }
+
+            fn write(
+                &self,
+                _: &Model,
+                _: &mut dyn std::io::Write,
+                _: &mut Report,
+            ) -> Result<(), Error> {
+                Ok(())
+            }
+        }
+        let writer = ProbedWriter(Cell::new(0));
+        assert!(check_output(Path::new("design.sc"), &writer).is_ok());
+        assert!(check_output(Path::new("design.solidcraft"), &writer).is_ok());
+        assert_eq!(writer.0.get(), 0);
+        assert!(matches!(
+            check_output(Path::new("design.txt"), &writer),
+            Err(Error::WrongOutputExtension { expected: "sc", .. })
+        ));
+        assert_eq!(writer.0.get(), 1);
+    }
+}
+
+#[cfg(test)]
+mod missing_links_tests {
+    use super::missing_linked_component_names;
+    use serde_json::json;
+
+    #[test]
+    fn unresolved_prototypes_keep_both_tagged_forms_and_definition_ids() {
+        let definitions = json!([
+            {"id":"link/unresolved", "storage":{"kind":"external"}, "bodies":[], "occurrences":[]},
+            {"id":"body/unresolved", "bodies":["body"], "occurrences":[]},
+            {"id":"assembly/unresolved", "bodies":[], "occurrences":["child"]},
+            {"id":"local", "storage":{"kind":"embedded"}, "bodies":[], "occurrences":[]}
+        ]);
+        let occurrences = json!([
+            {"name":"direct", "prototype":"link/unresolved"},
+            {"name":"tagged", "prototype":{"kind":"local", "definition":"link/unresolved"}},
+            {"name":"old", "prototype":{"kind":"unresolved"}},
+            {"name":"absent", "prototype":"absent/unresolved"},
+            {"name":"old absent", "prototype":{"definition":"absent/unresolved"}},
+            {"name":"stored body", "prototype":"body/unresolved"},
+            {"name":"stored children", "prototype":"assembly/unresolved"},
+            {"name":"tagged body", "prototype":{"definition":"body/unresolved"}},
+            {"name":"tagged children", "prototype":{"definition":"assembly/unresolved"}},
+            {"name":"local empty", "prototype":"local"}
+        ]);
+        assert_eq!(
+            missing_linked_component_names(&definitions, &occurrences),
+            ["direct", "tagged", "old", "absent", "old absent"]
+        );
     }
 }

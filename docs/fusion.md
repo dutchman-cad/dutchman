@@ -5,12 +5,19 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`f1338aa2`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`0096ab93`, after cadmpeg 0.6.12).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
 placements resolve. Mapping still depends on the resolved operands each feature needs.
 Sketch names follow their timeline sketch features.
+Independent F3Z member decodes state their own document root, so minimum-reproduction
+checks validate each member as a complete document.
+
+Linked components whose designs are absent from the file are left out and reported,
+including unresolved placeholders in definition-owned product structure. Export the
+assembly as `.f3z`, or put the linked designs' `.f3d` files beside it. Breaking a link
+before export stores the component locally and does not report it as missing.
 
 Revolve profiles and axes now follow their stored curve and region selections, including
 resolved unions of subdivided regions. Unresolved stored selections remain native and
@@ -451,6 +458,17 @@ including assembly holders, rather than additional history representations in th
 
 ## Components
 
+At this pin, each product definition lists its children once. Dutchman expands
+those children for every insertion and applies nested placement, visibility and
+suppression overrides along that insertion path. File definitions that also stand
+for a root component retain the document container in the written component tree.
+
+Exact placement compatibility remains blocked for archives whose joint operands
+lose an insertion path during cadmpeg's shared-occurrence rewrite. The product
+placements survive, but the joint can no longer select one copy. This is an
+upstream limitation, not a reason to substitute a guessed placement; see
+[the product API notes](cadir-v11.md#definition-owned-product-structure).
+
 Assemblies with multiple top-level designs group each design's features into a uniquely
 named timeline folder, including the root design's own features when present, while keeping
 feature order and leaving joints outside folders; a single part or one top-level design
@@ -561,7 +579,9 @@ transform, and each component as a product definition.
   inserted. Within an already posed component, an isolated leaf pose marker yields to a
   partner held by joints that already close; the design root alone does not override that
   child pose. Explicit holder poses and child poses already
-  confirmed by a solved joint stay protected. This also preserves a child component named by
+  confirmed by a solved joint stay protected. A joint from the design root to a child with
+  an explicit source pose checks that child's placement directly, including when its containing
+  component has no pose of its own. This also preserves a child component named by
   a contained pose inside an inserted design when that design has no current pose of its own. An inserted design's own current
   pose holds the design; its children still use their own poses or joints. A contained pose is
   matched within that design instance and its stored owner chain, so an

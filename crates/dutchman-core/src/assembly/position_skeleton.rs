@@ -73,10 +73,12 @@ impl<'a> Skeleton<'a> {
             &inserted_designs(&occurrences),
         );
         assembly.joints = joints;
-        assembly.held = paths
+        assembly.held = rows
             .iter()
-            .filter(|(id, _)| id.contains("occurrence#root-"))
-            .map(|(_, p)| p.path.clone())
+            .filter(|row| is_root_component(row))
+            .filter_map(|row| row.get("id").and_then(Value::as_str))
+            .filter_map(|id| paths.get(id))
+            .map(|p| p.path.clone())
             .collect();
         Ok(Self { assembly, paths })
     }

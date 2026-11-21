@@ -359,7 +359,7 @@ fn repro_member_api_checks_each_independent_synthetic_document() {
     let mut visited = Vec::new();
     dutchman_core::repro::members(&input, &mut |ordinal, total, name, model| {
         assert!(ordinal > 0 && ordinal <= total);
-        assert!(dutchman_core::repro::check(&model.unwrap()).is_ok());
+        dutchman_core::repro::check(&model.unwrap()).unwrap();
         visited.push(name.to_owned());
         false
     })
