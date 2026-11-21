@@ -378,6 +378,9 @@ jobs:
     if: always() && !cancelled() && needs.changes.outputs.full == 'true' && needs.changes.outputs.docker == 'true' && (needs.changes.outputs.full != 'true' || needs.placements.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    # Reports, never blocks: a slow or failed image build here doesn't fail CI or hold a release.
+    # The published image is checked before it is pushed (release-image.yml).
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
         timeout-minutes: 5
@@ -589,7 +592,6 @@ jobs:
               "wasm": native, "msrv": native,
               "solidcraft-roundtrip": native or (event == "pull_request" and outputs.get("floor") == "true"),
               "test-macos": (full and outputs.get("rust") == "true") or (event == "pull_request" and outputs.get("platform") == "true"),
-              "docker": full and outputs.get("docker") == "true",
               "placements": full or (event == "merge_group" and code),
               "release-build": event == "workflow_dispatch" and os.environ["RELEASE_BUILDS"] == "true",
           }
@@ -611,6 +613,9 @@ jobs:
                   bad["changes"] = "full matrix filters must all be true"
           if event in ("pull_request", "merge_group") and full:
               bad["changes"] = "pre-merge checks must use selective coverage"
+          # The image build is reported, not required: release-image.yml checks the published image.
+          if needs["docker"]["result"] not in ("success", "skipped"):
+              print("docker (reported only): " + needs["docker"]["result"])
           for job, need in sorted(needs.items()):
               print(job + ": " + need["result"])
           sys.exit(f"unexpected job results: {bad}" if bad else 0)
