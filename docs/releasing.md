@@ -106,7 +106,8 @@ the SolidCraft plugin, from the tag's commit; every other file is a candidate's 
 
 A tag push runs `release.yml` as it was at the tagged commit. When the workflow has been fixed
 on main since the candidate was tagged, start the release from main instead, so the fix applies
-while every build still comes from the tag's commit:
+while every build still comes from the tag's commit (the release's own scripts, such as the
+candidate-run finder, run from the workflow's commit too):
 `gh workflow run release.yml --ref main -f tag=vX.Y.Z`. A dry run
 (`v0.0.0-dryrun*`, dispatched the same way) does everything except create the release; when no
 `v0.0.0-rc.dryrun*` candidate exists for the commit, it reuses that commit's real candidate

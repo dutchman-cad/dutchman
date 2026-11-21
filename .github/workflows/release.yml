@@ -54,6 +54,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      # The release's own scripts come from the commit this workflow runs from (main, when the
+      # release is dispatched there), so a fix to them applies to a candidate tagged before it.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts
       - id: version
         run: |
           set -euo pipefail
@@ -76,7 +83,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Require full CI on the release commit
-        run: python3 scripts/require-green-ci.py "$REPO" "$(git rev-parse HEAD)" "$TAG"
+        run: python3 .release-tools/scripts/require-green-ci.py "$REPO" "$(git rev-parse HEAD)" "$TAG"
       - id: find
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -89,10 +96,10 @@ jobs:
           [[ "$DRY" == true ]] && prefix="v0.0.0-rc.dryrun"
           # A dry run creates nothing, so it may also reuse the real candidate's builds of the
           # same commit, proving the release path without another full candidate build.
-          if [[ "$DRY" == true ]] && ! scripts/find-release-run.sh "$SHA" "$VERSION" "$prefix" >/dev/null 2>&1; then
+          if [[ "$DRY" == true ]] && ! .release-tools/scripts/find-release-run.sh "$SHA" "$VERSION" "$prefix" >/dev/null 2>&1; then
             prefix="v$VERSION-rc."
           fi
-          if id=$(scripts/find-release-run.sh "$SHA" "$VERSION" "$prefix"); then
+          if id=$(.release-tools/scripts/find-release-run.sh "$SHA" "$VERSION" "$prefix"); then
             echo "run_id=$id" >> "$GITHUB_OUTPUT"
             echo "Reusing the release files of candidate run $id: https://github.com/$GITHUB_REPOSITORY/actions/runs/$id"
             exit 0
