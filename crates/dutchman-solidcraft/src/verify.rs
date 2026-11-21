@@ -423,6 +423,8 @@ pub const WINDOW_OLDEST: [u64; 3] = [0, 40, 0];
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
 pub enum VersionGate {
+    /// Rigid moves of resolved earlier bodies.
+    MoveBody,
     /// Linked Insert Design with cached bodies and a source file.
     LinkedDesign,
     /// Thin walls verified against the current SolidCraft document format.
@@ -465,6 +467,7 @@ pub enum VersionGate {
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::MoveBody => SolidCraftVersion::V0_45_0,
             Self::LinkedDesign => SolidCraftVersion::V0_44_0,
             Self::ThinExtrude => SolidCraftVersion::V0_44_0,
             Self::TopologicalEdges => SolidCraftVersion::V0_44_0,
@@ -496,6 +499,7 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         return true;
     }
     if [
+        VersionGate::MoveBody,
         VersionGate::HistoryBody,
         VersionGate::SplitFaces,
         VersionGate::ScopedBodies,
@@ -3941,6 +3945,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
+        assert!(!VersionGate::MoveBody.supported(previous));
+        assert!(VersionGate::MoveBody.supported(target));
+        assert!(target_loses_history(previous));
         assert!(!target_loses_history(target));
     }
 

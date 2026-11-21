@@ -26,6 +26,7 @@ mod hole;
 pub(crate) mod infer;
 mod loft;
 mod modify;
+mod move_body;
 mod move_face;
 pub(crate) mod params;
 mod pattern;
@@ -2463,6 +2464,7 @@ fn map_feature(
             blend::map(feature, definition, ctx, report).map(Mapped::Feature)
         }
         Some("move_face") => move_face::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("move_body") => move_body::map(feature, definition, ctx, preceding).map(Mapped::Feature),
         Some("delete_face") => delete_face::map(feature, definition, ctx).map(Mapped::Feature),
         Some("hole") => hole::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("sheet_metal_base_flange") => {
