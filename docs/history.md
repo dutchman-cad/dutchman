@@ -33,7 +33,11 @@ history, with no flattened-history warning.
     delete-face selection cadmpeg leaves native is reported as such and stops the history there;
   - move face, as SolidCraft's offset face: planar faces cadmpeg resolves in the feature's own
     input topology and moves along their normal, each written as a point inside the face with
-    the signed distance. Translations along a direction, rotations, non-planar faces and native
+    the signed distance. For SolidCraft 0.45 or newer, the selection also names the unique
+    earlier body in the part’s history. Ambiguous body ownership is refused. Circular trims
+    use interior candidates with clearance from both outer boundaries and holes, accounting
+    for the exact curves beyond their sampled chords. Older targets keep the previous
+    point-only representation. Translations along a direction, rotations, non-planar faces and native
     selections are reported with their reason and stop the history there;
   - constant-radius fillets and equal-setback chamfers, on edges proven on SolidCraft's own
     replay of the history before them (so they need `solidcraft-cli`); a Fusion fillet with a

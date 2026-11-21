@@ -166,6 +166,12 @@ bbox or volume separately from the final imported shape. Cosmetic metric thread 
 require resolved cylindrical face geometry; a historical face ID alone is reported as
 having no resolved input surface geometry.
 
+Offset faces targeting SolidCraft 0.45 or newer bind their historical face points to the
+unique earlier named body in the part's history. Circular boundaries use points clear of
+both outer trims and holes. An offset-face body blocker means ownership is not proven;
+selecting among several input bodies is not supported yet. The original geometry is kept.
+Older targets keep the previous point-only representation.
+
 When a feature blocks SolidCraft history conversion, earlier editable features and
 resolved sketches are kept in a hidden **Editable history (partial)** component. The
 original final shape remains visible as an Import after the kept history. Show the

@@ -15855,6 +15855,164 @@ fn a_face_moved_along_its_normal_becomes_an_offset_face_at_a_point_inside_it() {
 }
 
 #[test]
+fn offset_face_body_binding_preserves_older_targets() {
+    let model = face_move(json!({"kind": "offset", "distance": 2.0}));
+    for (target, bound) in [("0.18.2", false), ("0.44.1", false), ("0.45.0", true)] {
+        let (doc, report) = convert(
+            &model,
+            &SolidCraftWriter::new()
+                .target_version(Some(target.parse().unwrap()))
+                .verification(Verification::Off),
+        );
+        let features = doc["features"].as_array().unwrap();
+        let offset = features
+            .iter()
+            .find(|f| f["type"] == "offset_face")
+            .unwrap_or_else(|| panic!("{}", history_line(&report)));
+        assert_eq!(offset.get("body").is_some(), bound, "{target}: {offset}");
+        if bound {
+            let extrude = features.iter().find(|f| f["type"] == "extrude").unwrap();
+            assert_eq!(offset["body"], extrude["body_names"][0]);
+        }
+    }
+}
+
+#[test]
+fn offset_faces_refuse_input_topology_without_unique_body_ownership() {
+    let mut model = face_move(json!({"kind": "offset", "distance": 2.0}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["feature_input_topologies"][0]["bodies"] = json!([
+        "test:face:historical-body#one",
+        "test:face:historical-body#two"
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (doc, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .target_version(Some("0.45.0".parse().unwrap()))
+            .verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("several bodies without face ownership"),
+        "{}",
+        history_line(&report)
+    );
+    assert!(!doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "offset_face"));
+}
+
+#[test]
+fn solidcraft_offsets_coincident_local_faces_on_their_own_bodies() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = assembly_of_histories();
+    let first = face_move(json!({"kind": "offset", "distance": 2.0}));
+    let mut second = face_move(json!({"kind": "offset", "distance": 1.0}));
+    let mut wire = serde_json::to_value(&second.ir).unwrap();
+    // The earlier body's offset top and the later body's input top both lie
+    // at z=12 in their components' local frames. Placements stay separate.
+    wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["side"]["termination"]
+        ["length"] = json!(12.0);
+    wire["model"]["parameters"][0]["expression"] = json!("12 mm");
+    wire["model"]["parameters"][0]["value"]["value"] = json!(12.0);
+    for edge in wire["model"]["feature_input_topologies"][0]["edge_geometry"]
+        .as_array_mut()
+        .unwrap()
+    {
+        for key in ["start", "interior", "end"] {
+            edge[key]["z"] = json!(12.0);
+        }
+    }
+    second.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let assembly = model.assembly.as_mut().unwrap();
+    assembly.parts = vec![
+        Model {
+            name: "First".into(),
+            source_file: Some("First.f3d".into()),
+            ..first
+        },
+        Model {
+            name: "Second".into(),
+            source_file: Some("Second.f3d".into()),
+            ..second
+        },
+    ];
+    assembly.placements.truncate(2);
+    let (bytes, report) = written_with(
+        &model,
+        &replaying(&cli).target_version(Some("0.45.0".parse().unwrap())),
+    );
+    assert!(
+        history_line(&report).contains("features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let mut actual = volumes(&cli, &bytes);
+    actual.sort_by(f64::total_cmp);
+    assert_eq!(actual.len(), 2);
+    for (got, expected) in actual.iter().zip([1200.0, 1300.0]) {
+        assert!((got - expected).abs() < 1e-3, "{actual:?}");
+    }
+}
+
+#[test]
+fn solidcraft_offsets_an_annular_face_from_its_interior() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = nested_native_profile(&[10.0, 4.0]);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let template =
+        serde_json::to_value(&face_move(json!({"kind": "offset", "distance": 2.0})).ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(template["model"]["features"][2].clone());
+    let mut topology = template["model"]["feature_input_topologies"][0].clone();
+    let face = "test:face:historical-face#target";
+    topology["edges"] = json!([
+        "test:face:historical-edge#outer",
+        "test:face:historical-edge#inner"
+    ]);
+    topology["faces"] = json!([
+        face,
+        "test:face:historical-face#outer",
+        "test:face:historical-face#inner"
+    ]);
+    topology["edge_geometry"] = json!([10.0, 4.0]
+        .into_iter()
+        .enumerate()
+        .map(|(k, r)| {
+            let side = if k == 0 { "outer" } else { "inner" };
+            json!({"edge": format!("test:face:historical-edge#{side}"),
+            "start": {"x": r, "y": 0.0, "z": 10.0}, "end": {"x": r, "y": 0.0, "z": 10.0},
+            "interior": {"x": -r, "y": 0.0, "z": 10.0}, "tangent": {"x": 0.0, "y": 1.0, "z": 0.0},
+            "faces": [face, format!("test:face:historical-face#{side}")]})
+        })
+        .collect::<Vec<_>>());
+    wire["model"]["feature_input_topologies"] = json!([topology]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let writer = replaying(&cli).target_version(Some("0.45.0".parse().unwrap()));
+    let (doc, report) = convert(&model, &writer);
+    let offset = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "offset_face")
+        .unwrap_or_else(|| panic!("{}", history_line(&report)));
+    let p = offset["faces"][0].as_array().unwrap();
+    let radius = p[0].as_f64().unwrap().hypot(p[1].as_f64().unwrap());
+    assert!(radius > 6.0 && radius < 8.0, "{p:?}");
+    let actual = volumes(&cli, &written_with(&model, &writer).0);
+    let expected = std::f64::consts::PI * 84.0 * 12.0;
+    assert_eq!(actual.len(), 1);
+    assert!(
+        (actual[0] - expected).abs() / expected < dutchman_solidcraft::VOLUME_TOLERANCE,
+        "{actual:?}"
+    );
+}
+
+#[test]
 fn rotated_and_slid_faces_are_refused_for_their_motion() {
     let rotate = json!({"kind": "rotate",
         "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},

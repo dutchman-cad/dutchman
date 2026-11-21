@@ -513,6 +513,12 @@ placement. A region without a proven selection is refused, including centroid-on
 covers discovery, mapping and candidate evaluations, and late results are refused. These stricter
 requirements apply to new measured inference; the earlier two-reading comparison is unchanged.
 
+Offset faces targeting SolidCraft 0.45 or newer bind their historical face points to the
+unique earlier named body in the part's history. Circular boundaries use points clear of
+both outer trims and holes. An offset-face body blocker means ownership is not proven;
+selecting among several input bodies is not supported yet. The original geometry is kept.
+Older targets keep the previous point-only representation.
+
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face
 blocker means the source selection or historical boundary is not supported yet; final-body
