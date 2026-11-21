@@ -87,6 +87,11 @@ jobs:
           # The candidate tags whose run may be used: vX.Y.Z-rc.N for this version.
           prefix="v$VERSION-rc."
           [[ "$DRY" == true ]] && prefix="v0.0.0-rc.dryrun"
+          # A dry run creates nothing, so it may also reuse the real candidate's builds of the
+          # same commit, proving the release path without another full candidate build.
+          if [[ "$DRY" == true ]] && ! scripts/find-release-run.sh "$SHA" "$VERSION" "$prefix" >/dev/null 2>&1; then
+            prefix="v$VERSION-rc."
+          fi
           if id=$(scripts/find-release-run.sh "$SHA" "$VERSION" "$prefix"); then
             echo "run_id=$id" >> "$GITHUB_OUTPUT"
             echo "Reusing the release files of candidate run $id: https://github.com/$GITHUB_REPOSITORY/actions/runs/$id"
@@ -96,8 +101,40 @@ jobs:
           echo "::error title=No release candidate for $TAG::No successful release-candidate build exists for commit $SHA. Tag that commit $rc (git tag $rc $SHA && git push origin $rc), wait for release-build.yml to pass, then run this again: gh workflow run release.yml -f tag=$TAG."
           exit 1
 
-  draft-release:
+  # The SolidCraft plugin is built here, from the release tag's own commit: the candidate
+  # builds (release-build.yml) don't make it. A dispatched run takes this file from main and
+  # still builds the tagged commit's plugin.
+  plugin:
     needs: find
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.find.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.find.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-tools
+        run: cargo install --locked wasm-tools --version 1.263.0
+      - name: Build and package the plugin
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --target wasm32-unknown-unknown -p dutchman-plugin
+          bash scripts/package-plugin.sh target/wasm32-unknown-unknown/release/dutchman_plugin.wasm plugin-out "$VERSION"
+          (cd plugin-out && sha256sum --check --strict "dutchman-plugin-$VERSION.zip.sha256")
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dutchman-plugin
+          path: |
+            plugin-out/dutchman-plugin-${{ needs.find.outputs.version }}.zip
+            plugin-out/dutchman-plugin-${{ needs.find.outputs.version }}.zip.sha256
+          if-no-files-found: error
+
+  draft-release:
+    needs: [find, plugin]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -121,6 +158,10 @@ jobs:
           run-id: ${{ needs.find.outputs.run_id }}
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: dutchman-plugin
+          path: artifacts/plugin
       - name: Flatten artifacts and check checksums and version
         shell: bash
         run: |
