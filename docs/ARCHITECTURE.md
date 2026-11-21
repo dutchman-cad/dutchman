@@ -5,6 +5,9 @@ as a command-line tool and becomes a SolidCraft plugin once SolidCraft has plugi
 design rule is low coupling, high cohesion: one self-contained conversion core, and a thin
 SolidCraft adapter that can later sit behind a plugin interface unchanged.
 
+To build, test and open a pull request, see [CONTRIBUTING.md](../CONTRIBUTING.md); AI coding
+agents start with the shorter [AGENTS.md](../AGENTS.md).
+
 ## Pipeline
 
 ```
