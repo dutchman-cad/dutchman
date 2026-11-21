@@ -16745,15 +16745,11 @@ fn a_host_evaluator_reports_geometry_warnings_after_replacing_a_differing_replay
         report.outcome().unwrap().check,
         Check::Flattened(_)
     ));
+    // The final opening check gets the same bytes the import check evaluated, so it reuses
+    // that evaluation instead of asking SolidCraft again.
     assert_eq!(
         *host.calls.lock().unwrap(),
-        [
-            "original",
-            "history",
-            "verification-parameters",
-            "import",
-            "opening"
-        ]
+        ["original", "history", "verification-parameters", "import"]
     );
     assert!(report
         .losses()
