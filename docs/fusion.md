@@ -669,7 +669,15 @@ loss. See [modeled threads](history.md) for the profile and face-selection limit
 Unreadable local and xref positions, including local stored-frame fallbacks and
 positions assumed to be the identity, count
 as unplaced in `completeness.unplaced`, together with children whose world position
-depends on them. They produce an incomplete result with partial verification.
+depends on them. They produce an incomplete result with partial verification and JSON `ok: false`.
+This includes single designs flattened into one part when local occurrence poses
+remain unreadable. Overlapping native-envelope and unresolved-path findings use
+the largest aggregate count, since the reader cannot identify distinct occurrences.
+The position-selection counters still describe expanded occurrences, so those
+counters can be zero while completeness reports unplaced local components.
+Bodies decoded into the neutral model but absent from written component occurrences
+are counted in `completeness.left_out`; an undecoded geometry blob remains a reader
+loss and does not establish how many bodies it contains.
 The release gate rejects these positions even when the written design matches the
 imported source. Exceptions must name each part and document the reason and tracking
 issue in the gate matrix's `unplaced_allowances` map; unmatched legacy loss

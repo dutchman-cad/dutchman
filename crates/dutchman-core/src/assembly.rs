@@ -15,6 +15,8 @@ mod sketch_instance;
 mod slicing;
 mod solidworks;
 
+pub(crate) use poses::flattened_completeness;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -955,6 +957,52 @@ fn local_components_with_threads(
         identities,
         definitions,
     };
+    // Owned bodies are excluded from the loose-body part. If their definition has
+    // no occurrence, no slice writes them; account for that gap explicitly.
+    fn written_bodies(assembly: &Assembly, kept: &mut BTreeSet<String>, depth: usize) {
+        if depth > MAX_DEPTH {
+            return;
+        }
+        for part in &assembly.parts {
+            if let Some(sub) = &part.assembly {
+                written_bodies(sub, kept, depth + 1);
+            } else {
+                kept.extend(
+                    part.ir
+                        .geometry
+                        .bodies
+                        .iter()
+                        .map(|body| body.id.to_string()),
+                );
+            }
+        }
+    }
+    let mut kept_bodies = BTreeSet::new();
+    written_bodies(&assembly, &mut kept_bodies, 0);
+    let missing = model
+        .ir
+        .geometry
+        .bodies
+        .iter()
+        .filter(|body| !kept_bodies.contains(body.id.as_str()))
+        .count();
+    if missing != 0 {
+        let reason = "A decoded body belongs to a component with no written occurrence";
+        assembly.left_out.extend((0..missing).map(|_| LeftOut {
+            name: None,
+            file: None,
+            reason: reason.to_owned(),
+            stage: Stage::Map,
+        }));
+        report.push_coded(
+            Severity::Dropped,
+            "component bodies",
+            "dutchman/assembly.bodies-without-occurrences",
+            format!(
+                "{missing} decoded bodies have no written component occurrence and are left out"
+            ),
+        );
+    }
     fn bindings(assembly: &Assembly, kept: &mut BTreeSet<String>) {
         for part in &assembly.parts {
             kept.extend(
@@ -3950,6 +3998,46 @@ mod tests {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
         }
+    }
+
+    #[test]
+    fn unproven_positions_account_for_bodies_without_occurrences() {
+        let model = with_components(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut orphan = wire["geometry"]["bodies"][0].clone();
+        orphan["id"] = json!("synthetic:test:body#unplaced");
+        wire["geometry"]["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(orphan);
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "synthetic:test:component#unplaced", "kind": "part",
+                "bodies": ["synthetic:test:body#unplaced"], "sketches": [], "bom_properties": {}
+            }));
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let mut report = Report::default();
+        let (assembly, _) = local_components_with_threads(
+            &model,
+            &BTreeMap::new(),
+            1,
+            crate::PartPositions::FirstPlaced,
+            &mut report,
+        )
+        .unwrap()
+        .unwrap();
+        let counts = assembly.completeness();
+        assert_eq!(counts.placed, 2);
+        assert_eq!(counts.left_out_count(), 1);
+        assert_eq!(counts.left_out[0].stage, Stage::Map);
+        assert!(report.losses().iter().any(
+            |loss| loss.code.as_deref() == Some("dutchman/assembly.bodies-without-occurrences")
+        ));
     }
 
     #[test]

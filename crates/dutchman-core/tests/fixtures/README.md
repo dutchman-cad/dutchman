@@ -284,3 +284,11 @@ It is an authored 20 × 30 × 10 mm pad with one R2 vertical-edge fillet: volume
 Linked-component completeness tests in `dutchman-core/src/lib.rs` use synthetic
 CADIR product definitions and occurrences on `generated_unit_cube.f3d`. They cover
 unresolved links and embedded component geometry without additional native files.
+
+The `unproven_positions_in_a_flattened_design_override_verified_replay` unit test
+builds three synthetic component definitions around copies of the generated unit
+cube's body, with overlapping stored frames and no expanded occurrences. Reader
+findings are constructed in code; no archive from a user is used. The
+`unproven_positions_account_for_bodies_without_occurrences` unit test adds one
+synthetic body and an uninstantiated definition to the authored Inventor cube.
+These tests add no fixture files.

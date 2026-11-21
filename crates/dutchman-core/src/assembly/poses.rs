@@ -7,6 +7,49 @@ fn stored_frame_fallback(id: &str) -> bool {
     id.starts_with("f3d:") && id.ends_with("/stored-frame-occurrence")
 }
 
+/// A flattened design has no occurrence tree on which to record placement proof.
+/// The reader's aggregate findings overlap (an unread envelope can also have an
+/// unresolved path), so retain the largest count rather than adding them together.
+pub(crate) fn flattened_completeness(model: &Model, report: &Report) -> Option<Completeness> {
+    let unread = report
+        .losses()
+        .iter()
+        .filter(|loss| {
+            matches!(
+                loss.code.as_deref(),
+                Some(
+                    "f3d/assembly.local-occurrence-path-pose-unresolved"
+                        | "f3d/assembly.local-occurrence-envelope-native"
+                        | "f3d/assembly.stored-frame-occurrence"
+                )
+            )
+        })
+        .filter_map(|loss| loss.detail.split_whitespace().next()?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+        .min(MAX_PLACEMENTS as u64);
+    let fallback = model
+        .ir
+        .model
+        .occurrences
+        .iter()
+        .filter(|row| stored_frame_fallback(row.id.as_str()))
+        .count() as u64;
+    let count = unread.max(fallback);
+    if count == 0 {
+        return None;
+    }
+    Some(Completeness {
+        // Geometry remains in its stored frame. A successful replay of that same
+        // flattened source cannot prove any of these occurrence positions.
+        unplaced: BTreeMap::from([(
+            "Local components with unreadable positions".to_owned(),
+            count,
+        )]),
+        ..Completeness::default()
+    })
+}
+
 /// Retain occurrence-level proof independently of the transform used by the writer.
 /// These are decoded native records and decode losses, never source bytes.
 pub(super) fn unproven(document: &Value, report: &Report) -> BTreeSet<String> {

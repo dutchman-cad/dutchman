@@ -246,7 +246,9 @@ impl FileView {
                 .map(PathBuf::from)
         };
         let input = path("/input/path").unwrap_or_default();
-        let progress = if report.get("ok").and_then(Value::as_bool) == Some(true) {
+        let progress = if report.get("ok").and_then(Value::as_bool) == Some(true)
+            || (json::unplaced_message(report).is_some() && report.get("error").is_none())
+        {
             Progress::Converted
         } else {
             Progress::Failed

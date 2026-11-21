@@ -426,7 +426,9 @@ pub fn line(result: &Value) -> String {
         .pointer("/input/path")
         .and_then(Value::as_str)
         .unwrap_or("?");
-    if result.get("ok") == Some(&json!(true)) {
+    if result.get("ok") == Some(&json!(true))
+        || (report::unplaced_message(result).is_some() && result.get("error").is_none())
+    {
         if let Some(pages) = result.get("pages").and_then(Value::as_array) {
             let paths = pages
                 .iter()

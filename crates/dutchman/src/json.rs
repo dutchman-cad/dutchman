@@ -426,7 +426,12 @@ pub fn failure_at(
 pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value> {
     let mut out = Map::new();
     out.insert("schema".to_owned(), json!(schema));
-    out.insert("ok".to_owned(), json!(true));
+    out.insert(
+        "ok".to_owned(),
+        json!(report
+            .completeness()
+            .is_none_or(|counts| counts.unplaced_count() == 0)),
+    );
     out.insert("input".to_owned(), input);
     if let Some((requested, used)) = report.threads() {
         out.insert(
@@ -1791,6 +1796,18 @@ mod tests {
             ["assembly: all 3 placements placed"]
         );
         assert!(completeness_lines(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn unproven_positions_do_not_report_ok_after_writing() {
+        let mut report = Report::default();
+        report.set_completeness(Completeness {
+            unplaced: std::collections::BTreeMap::from([("Local components".to_owned(), 3)]),
+            ..Completeness::default()
+        });
+        let fields = success("dutchman.convert/1", json!({}), &report);
+        assert_eq!(fields["ok"], false);
+        assert_eq!(fields["completeness"]["unplaced"]["Local components"], 3);
     }
 
     #[test]
