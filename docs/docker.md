@@ -244,7 +244,7 @@ The source image’s Rust build stops after 30 minutes, including dependency dow
 a 15-second connection timeout, a five-minute transfer timeout, and up to three retries
 within a ten-minute retry window.
 
-In CI, the source image step has a 45-minute deadline. Layer cache transfers have a
+In CI, the source image step has a 100-minute deadline. Layer cache transfers have a
 five-minute deadline and export only final-image layers. Each main commit runs independently,
 so a stuck run does not hold up checks for newer commits. Pull requests and merge groups
 keep their existing cancellation behavior.
