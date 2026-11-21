@@ -1,0 +1,127 @@
+{
+ "model": "RailCore II ZL v1 (gate.yml matrix source)",
+ "generated_from": "Dutchman 0.3.0 rc.10 (release/0.3.0-rc10 + #861), gate run 44928097886",
+ "tracking": "https://github.com/cadmpeg/cadmpeg/issues/1880 and https://github.com/dutchman-cad/dutchman/issues/863",
+ "unplaced": {
+  "90965A160 (1)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "90965A160 (2)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "90965A160 (3)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "90965A160 (4)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "90965A160 (5)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "94645A102 (1)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "Feet / Foot / unnamed part": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "GT2_20t_wheel_pulley v1 v1 (1)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "M5x50 CH (1)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "RailCoreII-ZL v1 component 1": {
+   "count": 9,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "Smooth Idler(Mirror) (1) (1)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "Y Rail / 90965A160 (1)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "Y Rail / 90965A160 (2)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "Y Rail / 90965A160 (3)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "Y Rail / 90965A160 (4)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "Y Rail / 90965A160 (5)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "Y Rail / 94645A102 (1)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "Y Rail / GT2_20t_wheel_pulley v1 v1 (1)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "Y Rail / M5x50 CH (1)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "Y Rail / Smooth Idler(Mirror) (1) (1)": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "ZL_1_Z_Tower / LeadScrew Coupler / unnamed part": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "ZL_2_Z_Tower / LeadScrew Coupler / unnamed part": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "ZL_2_Z_Tower / ZL_Z_Yoke_2 / unnamed part": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "xref Foot: 1 component definition(s) own bodies but have no placed occurrence; each is placed once below the document root with the identity transform, so its bodies keep their stored frames": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "xref LeadScrew Coupler: 1 component definition(s) own bodies but have no placed occurrence; each is placed once below the document root with the identity transform, so its bodies keep their stored frames": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "xref Y Carriage: 1 local component occurrence(s) are not placed: the document projects its bodies after product structure, so component body ownership is not known": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "xref Y Rail: 8 local component occurrence(s) are not placed: the containing component has no resolved instance path": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "xref Y Rail: 9 component definition(s) own bodies but have no placed occurrence; each is placed once below the document root with the identity transform, so its bodies keep their stored frames": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "xref Y Rail: 9 registered local occurrence envelope(s) retain their native records because their complete field grammar is unresolved.": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  },
+  "xref ZL_Z_Yoke_2: 1 component definition(s) own bodies but have no placed occurrence; each is placed once below the document root with the identity transform, so its bodies keep their stored frames": {
+   "count": 1,
+   "reason": "local placement not decoded or stored-frame fallback unproven; cadmpeg/cadmpeg#1880, dutchman-cad/dutchman#863"
+  }
+ }
+}

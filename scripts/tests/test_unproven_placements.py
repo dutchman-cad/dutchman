@@ -43,6 +43,45 @@ class UnprovenPlacementsTests(unittest.TestCase):
         self.assertEqual(self.run_check(report, '{"Panel":""}').returncode, 1)
         self.assertEqual(self.run_check(report, '{"Other":"Unrelated"}').returncode, 1)
 
+    def run_with_file(self, report, unplaced):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            path.write_text(json.dumps(report))
+            allow = Path(directory) / "allow.json"
+            allow.write_text(json.dumps({"unplaced": unplaced}))
+            return subprocess.run([sys.executable, str(SCRIPT), str(path), "--allowances-file", str(allow)],
+                                  capture_output=True, text=True)
+
+    def test_allowlist_file_pins_names_and_counts(self):
+        report = {"ok": True, "completeness": {"unplaced": {"Panel": 3, "Rail": 1}}}
+        entry = lambda n: {"count": n, "reason": "synthetic; tracking issue"}
+        exact = {"Panel": entry(3), "Rail": entry(1)}
+        self.assertEqual(self.run_with_file(report, exact).returncode, 0)
+        # A part becoming unplaced more often fails like a new part.
+        grown = {"ok": True, "completeness": {"unplaced": {"Panel": 4, "Rail": 1}}}
+        result = self.run_with_file(grown, exact)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("expects ×3", result.stdout)
+        added = {"ok": True, "completeness": {"unplaced": {"Panel": 3, "Rail": 1, "Bolt": 1}}}
+        result = self.run_with_file(added, exact)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Bolt ×1: position could not be read; not in the allowlist", result.stdout)
+        # Progress is not a failure: a part that is placed now is only reported as stale.
+        fewer = {"ok": True, "completeness": {"unplaced": {"Panel": 3}}}
+        result = self.run_with_file(fewer, exact)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Rail: now placed", result.stdout)
+        # Every file entry needs a positive count and a reason.
+        self.assertEqual(self.run_with_file(report, {"Panel": {"count": 3}, "Rail": entry(1)}).returncode, 1)
+        self.assertEqual(self.run_with_file(report, {"Panel": {"count": 0, "reason": "x"}, "Rail": entry(1)}).returncode, 1)
+
+    def test_shipped_allowlists_are_well_formed(self):
+        folder = SCRIPT.parent / "gate-allowances"
+        for path in sorted(folder.glob("*.json")):
+            data = json.loads(path.read_text())
+            self.assertIn("tracking", data, path.name)
+            MODULE.load_allowances("{}", path)
+
     def test_each_legacy_loss_fails_even_when_geometry_was_verified(self):
         for code in MODULE.CODES:
             with self.subTest(code=code):
