@@ -130,9 +130,9 @@ jobs:
               {"os":"windows-latest","target":"x86_64-pc-windows-msvc","jobs":4}]') }}
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container || '' }}
-    # An uncached Windows release build alone takes 65-87 minutes; the Windows job then
-    # builds and tests the installer and compiles the release updater tests.
-    timeout-minutes: 180
+    # Release builds are uncached. rc.1 measured 176 minutes on Windows (release build, then the
+    # installer and the release updater tests) and 140 on arm64 Linux, close to the old 180 cap.
+    timeout-minutes: 300
     env:
       CARGO_BUILD_JOBS: ${{ matrix.jobs }}
     steps:

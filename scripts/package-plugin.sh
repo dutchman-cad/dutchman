@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Wrap the wasm32-unknown-unknown build of dutchman-plugin as a SolidCraft plugin package:
 #   scripts/package-plugin.sh <dutchman_plugin.wasm> <output folder> [<version>]
-# writes <output folder>/dutchman.wasm, plugin.json and dutchman-plugin.zip. With a version
+# writes <output folder>/dutchman.wasm, plugin.json, icons/ and dutchman-plugin.zip. With a version
 # (a release's X.Y.Z) the manifest says that version and the zip is dutchman-plugin-<version>.zip,
 # with a .sha256 beside it.
 #
@@ -63,7 +63,9 @@ else
     cp "$root/crates/dutchman-plugin/plugin.json" "$out/plugin.json"
 fi
 rm -f "$out/$zip_name"
-(cd "$out" && zip -q -X "$zip_name" plugin.json dutchman.wasm)
+mkdir -p "$out/icons"
+cp "$root/crates/dutchman-plugin/icons/dutchman.svg" "$out/icons/dutchman.svg"
+(cd "$out" && zip -q -X "$zip_name" plugin.json dutchman.wasm icons/dutchman.svg)
 if [ -n "$version" ]; then
     (cd "$out" && sha256sum "$zip_name" > "$zip_name.sha256")
 fi

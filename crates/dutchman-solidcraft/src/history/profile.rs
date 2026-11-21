@@ -1,6 +1,6 @@
 //! Which closed profiles of a sketch a feature uses, as a SolidCraft profile selection.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value};
 
@@ -17,6 +17,100 @@ pub(super) fn planar(reference: &Value) -> &Value {
     }
 }
 
+/// A Feature profile takes the complete curve result, rather than an opaque native pick.
+/// Resolve only an earlier, active planar sketch operation. Normalize the mapping copy so
+/// region selection, cap proving, and sketch-curve classification see the same reference.
+pub(super) fn resolve_sketch_features(model: &mut Value, target: crate::SolidCraftVersion) {
+    if target < crate::SolidCraftVersion::V0_45_0 {
+        return;
+    }
+    let profile_sketches: BTreeSet<String> = model
+        .get("sketch_entities")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entity| profile_curve(entity))
+        .filter_map(|entity| entity.get("sketch").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    let Some(features) = model.get_mut("features").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let sketches: BTreeMap<String, (u64, String)> = features
+        .iter()
+        .filter_map(|feature| {
+            if feature.pointer("/definition/kind").and_then(Value::as_str) != Some("operation")
+                || super::operation_kind(feature) != Some("sketch")
+                || feature.get("suppressed").and_then(Value::as_bool) != Some(false)
+            {
+                return None;
+            }
+            let binding = super::operation(feature).get("sketch")?;
+            if binding.get("kind").and_then(Value::as_str) != Some("planar") {
+                return None;
+            }
+            Some((
+                feature.get("id")?.as_str()?.to_owned(),
+                (
+                    feature.get("ordinal")?.as_u64()?,
+                    binding.get("sketch")?.as_str()?.to_owned(),
+                ),
+            ))
+        })
+        .collect();
+    for feature in features {
+        let Some(ordinal) = feature.get("ordinal").and_then(Value::as_u64) else {
+            continue;
+        };
+        let path = match super::operation_kind(feature) {
+            Some("extrude") => "/definition/value/value/profile",
+            Some("revolve")
+                if super::operation(feature)
+                    .pointer("/construction/kind")
+                    .and_then(Value::as_str)
+                    == Some("resolved") =>
+            {
+                "/definition/value/value/construction/value/profile"
+            }
+            _ => continue,
+        };
+        let Some(reference) = feature.pointer_mut(path) else {
+            continue;
+        };
+        let reference = if reference.get("kind").and_then(Value::as_str) == Some("planar") {
+            let Some(value) = reference.get_mut("value") else {
+                continue;
+            };
+            value
+        } else {
+            reference
+        };
+        if reference.get("kind").and_then(Value::as_str) != Some("feature") {
+            continue;
+        }
+        let Some((source_ordinal, sketch)) = reference
+            .get("value")
+            .and_then(Value::as_str)
+            .and_then(|id| sketches.get(id))
+        else {
+            continue;
+        };
+        if *source_ordinal < ordinal && profile_sketches.contains(sketch) {
+            *reference = json!({"kind": "sketch", "value": sketch});
+        }
+    }
+}
+
+/// Points and infinite reference axes cannot bound a profile, even when a sketch has a
+/// resolved frame. Unknown curve kinds still reach the sketch mapper's existing refusal.
+fn profile_curve(entity: &Value) -> bool {
+    entity.get("construction").and_then(Value::as_bool) != Some(true)
+        && entity
+            .pointer("/geometry/kind")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| !matches!(kind, "point" | "reference_line"))
+}
+
 /// The sketch a profile reference uses, and the SolidCraft profile selection for it.
 pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String, Value), String> {
     let profile = planar(profile.ok_or("it has no profile")?);
@@ -25,6 +119,33 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
         .and_then(Value::as_str)
         .unwrap_or("unknown");
     let value = profile.get("value").unwrap_or(&Value::Null);
+    if kind == "feature" {
+        if ctx.target_version < crate::SolidCraftVersion::V0_45_0 {
+            return Err(
+                "profiles from sketch features require SolidCraft 0.45 or newer; choose a newer target to keep this feature editable"
+                    .to_owned(),
+            );
+        }
+        if let Some(producer) = value.as_str().and_then(|id| ctx.row("features", id)) {
+            if super::operation_kind(producer) == Some("sketch") {
+                if let Some(sketch) = super::operation(producer)
+                    .pointer("/sketch/sketch")
+                    .and_then(Value::as_str)
+                {
+                    if !sketch_entities(ctx, sketch).into_iter().any(profile_curve) {
+                        return Err(
+                            "its sketch feature has no resolved non-construction profile curves; this is not supported yet"
+                                .to_owned(),
+                        );
+                    }
+                }
+            }
+        }
+        return Err(
+            "its feature profile has no earlier active resolved planar sketch mapping; this is not supported yet"
+                .to_owned(),
+        );
+    }
     if kind == "sketch" {
         let sketch = value.as_str().ok_or("its profile sketch is malformed")?;
         // Every loop of the sketch, as the extrude takes them: loops inside loops are holes.

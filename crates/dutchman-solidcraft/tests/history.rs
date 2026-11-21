@@ -12716,6 +12716,41 @@ fn closed_circle_blends_keep_older_targets_and_non_circular_curves_refused() {
 }
 
 #[test]
+fn closed_blends_distinguish_missing_historical_carriers_from_non_circular_curves() {
+    let base = closed_circle_blend(true, 0.71);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    // A historical identity is independent of the geometry topology's identities.
+    // Keep the same samples, but do not give this selection an exact stored carrier.
+    let edge = json!("synthetic:historical:edge#0");
+    let model = &mut wire["model"];
+    let state = &mut model["feature_input_topologies"][0];
+    state["edges"] = json!([edge]);
+    state["edge_geometry"][0]["edge"] = edge.clone();
+    model["features"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
+        json!([edge]);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.45.0".parse().unwrap()));
+    let (_, report) = convert(&model, &writer);
+    assert!(
+        history_line(&report).contains("no resolved historical curve carrier"),
+        "{report:?}"
+    );
+    assert!(
+        !history_line(&report).contains("closed input curves other than proven circles"),
+        "{report:?}"
+    );
+}
+
+#[test]
 fn closed_circle_blends_refuse_ellipses_whose_samples_alias_a_circle() {
     let base = closed_circle_blend(false, 0.0);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
@@ -12836,6 +12871,78 @@ fn solidcraft_replays_closed_circle_fillets_and_hole_chamfers_across_seams() {
                             < 1e-5
                     );
                 }
+            }
+        }
+    }
+}
+
+/// A closed boss edge and a hole rim use the same carrier proof, with opposite
+/// material sides. Check the actual removed ring independently of edge seam placement.
+#[test]
+fn solidcraft_chamfers_closed_boss_and_hole_edges() {
+    let Some(cli) = closed_blend_cli() else {
+        return;
+    };
+    let writer = replaying(&cli).target_version(Some("0.45.0".parse().unwrap()));
+    let setback: f64 = 0.5;
+    for hole in [false, true] {
+        for seam in [0.0, 0.71, 2.5] {
+            let base = closed_circle_blend_from(hole, seam, true);
+            let mut wire = serde_json::to_value(&base.ir).unwrap();
+            let operation = &mut wire["model"]["features"]
+                .as_array_mut()
+                .unwrap()
+                .last_mut()
+                .unwrap()["definition"]["value"];
+            operation["kind"] = json!("chamfer");
+            let group = &mut operation["value"]["groups"][0];
+            group.as_object_mut().unwrap().remove("radius");
+            group["spec"] = json!({"kind": "distance", "distance": setback});
+            operation["value"]["flip_direction"] = json!(false);
+            let model = Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ..base
+            };
+            let (bytes, report) = written_with(&model, &writer);
+            let expected_features = if hole { 5 } else { 3 };
+            assert!(
+                history_line(&report).starts_with(&format!(
+                    "{expected_features} of {expected_features} features rebuilt"
+                )),
+                "{}",
+                history_line(&report)
+            );
+            let measured = evaluated(&cli, &bytes);
+            let [body] = measured["bodies"].as_array().unwrap().as_slice() else {
+                panic!("expected one chamfered body: {measured}");
+            };
+            let pi = std::f64::consts::PI;
+            let radius = if hole { 2.0 } else { 5.0 };
+            let original = if hole {
+                1000.0 - pi * radius * radius * 10.0
+            } else {
+                pi * radius * radius * 10.0
+            };
+            // Pappus: triangle area s²/2, centroid radius r ± s/3.
+            let sign = if hole { 1.0 } else { -1.0 };
+            let removed = pi * setback * setback * (radius + sign * setback / 3.0);
+            let expected = original - removed;
+            assert!(
+                (body["volume_mm3"].as_f64().unwrap() - expected).abs() < 1e-6 * expected,
+                "hole={hole}, seam={seam}: {body}"
+            );
+            let depth =
+                setback * (4.0 * radius + sign * setback) / (4.0 * (3.0 * radius + sign * setback));
+            let z = (5.0 * original - (10.0 - depth) * removed) / expected;
+            for (axis, wanted) in [
+                (0, if hole { 5.0 } else { 0.0 }),
+                (1, if hole { 5.0 } else { 0.0 }),
+                (2, z),
+            ] {
+                assert!(
+                    (body["center_of_mass"][axis].as_f64().unwrap() - wanted).abs() < 1e-6,
+                    "hole={hole}, seam={seam}: {body}"
+                );
             }
         }
     }
@@ -19575,6 +19682,222 @@ fn a_nonzero_evaluator_exit_without_named_failures_writes_an_unverified_design()
             .losses()
             .iter()
             .any(|loss| loss.code.as_deref() == Some("geometry/import-failed")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn feature_profiles_take_the_complete_bound_sketch_for_extrudes_and_revolves() {
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0));
+    let full = json!({"kind": "one_sided", "termination": {
+        "kind": "angle", "angle": std::f64::consts::TAU}});
+    let partial = json!({"kind": "one_sided", "termination": {
+        "kind": "angle", "angle": std::f64::consts::FRAC_PI_2}});
+    let mut no_profile_table = cube_with_history(10.0, whole_sketch(), None);
+    let mut wire = serde_json::to_value(&no_profile_table.ir).unwrap();
+    wire["model"]["sketches"][0]["profiles"] = json!([]);
+    no_profile_table.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    for (mut model, path) in [
+        (
+            cube_with_history(10.0, whole_sketch(), None),
+            "/model/features/1/definition/value/value/profile/value",
+        ),
+        (
+            no_profile_table,
+            "/model/features/1/definition/value/value/profile/value",
+        ),
+        (
+            ring_history(full),
+            "/model/features/1/definition/value/value/construction/value/profile",
+        ),
+        (
+            ring_history(partial),
+            "/model/features/1/definition/value/value/construction/value/profile",
+        ),
+    ] {
+        let (expected, expected_report) = convert(&model, &writer);
+        assert_eq!(expected_report.outcome().unwrap().mode, Mode::History);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        *wire.pointer_mut(path).unwrap() =
+            json!({"kind": "feature", "value": "f3d:model:feature#1"});
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (actual, report) = convert(&model, &writer);
+        assert_eq!(report.outcome().unwrap().mode, Mode::History, "{report:?}");
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn feature_profiles_require_an_earlier_active_resolved_planar_sketch() {
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0));
+    for case in [
+        "missing",
+        "self",
+        "suppressed",
+        "later",
+        "unresolved",
+        "not_sketch",
+    ] {
+        let mut model = cube_with_history(
+            10.0,
+            json!({"kind": "feature", "value": "f3d:model:feature#1"}),
+            None,
+        );
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        match case {
+            "missing" => {
+                wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]["value"]
+                    ["value"] = json!("f3d:model:feature#999")
+            }
+            "self" => {
+                wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]["value"]
+                    ["value"] = json!("f3d:model:feature#2")
+            }
+            "suppressed" => wire["model"]["features"][0]["suppressed"] = json!(true),
+            "later" => wire["model"]["features"][0]["ordinal"] = json!(2),
+            "unresolved" => {
+                wire["model"]["features"][0]["definition"]["value"]["value"]["sketch"] =
+                    json!({"kind": "unresolved"})
+            }
+            "not_sketch" => {
+                wire["model"]["features"][0]["definition"]["value"] =
+                    json!({"kind": "datum_principal_plane", "value": {"plane": "top"}})
+            }
+            _ => assert_eq!(case, "not_sketch", "unknown rejection case"),
+        }
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(&model, &writer);
+        assert_ne!(
+            report.outcome().unwrap().mode,
+            Mode::History,
+            "{case}: {report:?}"
+        );
+        assert!(
+            document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f["type"] != "extrude"),
+            "{case}: {document}"
+        );
+        // The unresolved producer can itself stop the timeline first.
+        if case != "unresolved" {
+            assert!(
+                report.losses().iter().any(|loss| {
+                    loss.detail.contains(
+                        "its feature profile has no earlier active resolved planar sketch mapping",
+                    )
+                }),
+                "{case}: {report:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn feature_profiles_still_compare_the_selected_area_with_the_source_cap() {
+    let mut model = cube_with_history(
+        10.0,
+        json!({"kind": "feature", "value": "f3d:model:feature#1"}),
+        None,
+    );
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    for entity in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
+        for end in ["start", "end"] {
+            let u = &mut entity["geometry"][end]["u"];
+            *u = json!(u.as_f64().unwrap() * 2.0);
+        }
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0)),
+    );
+    assert_ne!(report.outcome().unwrap().mode, Mode::History);
+    assert!(
+        report.losses().iter().any(|loss| loss.detail.contains(
+            "its profile region doesn't match the source (swept 200.0 mm², the source 100.0 mm²)"
+        )),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn feature_profiles_keep_original_geometry_for_targets_before_045() {
+    let model = cube_with_history(
+        10.0,
+        json!({"kind": "feature", "value": "f3d:model:feature#1"}),
+        None,
+    );
+    for target in ["0.18.2", "0.44.1"] {
+        let writer = SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(target.parse().unwrap()));
+        let (document, report) = convert(&model, &writer);
+        assert_ne!(report.outcome().unwrap().mode, Mode::History);
+        assert!(document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "import"));
+        assert!(
+            report.losses().iter().any(|loss| loss
+                .detail
+                .contains("profiles from sketch features require SolidCraft 0.45 or newer")),
+            "{target}: {report:?}"
+        );
+    }
+}
+
+#[test]
+fn feature_profiles_do_not_treat_reference_axes_as_profile_geometry() {
+    let mut model = cube_with_history(
+        10.0,
+        json!({"kind": "feature", "value": "f3d:model:feature#1"}),
+        None,
+    );
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketches"][0]["profiles"] = json!([]);
+    wire["model"]["sketch_constraints"] = json!([]);
+    wire["model"]["sketch_entities"] = json!([
+        entity(
+            1,
+            json!({"kind": "reference_line", "origin": {"u": 0.0, "v": 0.0},
+                         "direction": {"u": 1.0, "v": 0.0}})
+        ),
+        entity(
+            2,
+            json!({"kind": "reference_line", "origin": {"u": 0.0, "v": 0.0},
+                         "direction": {"u": 0.0, "v": 1.0}})
+        ),
+        entity(
+            3,
+            json!({"kind": "point", "position": {"u": 0.0, "v": 0.0}})
+        ),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0)),
+    );
+    assert_ne!(report.outcome().unwrap().mode, Mode::History);
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["type"] != "extrude"));
+    assert!(
+        report.losses().iter().any(|loss| loss
+            .detail
+            .contains("its sketch feature has no resolved non-construction profile curves")),
         "{report:?}"
     );
 }
