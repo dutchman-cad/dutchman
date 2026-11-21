@@ -228,6 +228,15 @@ drag the app into Applications and launch it. Eject and remount to check persist
 Also build with a failing `osascript` earlier on `PATH` to check that the plain fallback
 still mounts, retains all three items and passes `hdiutil verify`.
 
+## Where release binaries are built
+
+Every binary that is published (release archives, the AppImage, the Windows installer, the
+plugin zip, the container image) is built on GitHub's hosted runners, which start clean for
+each job. The self-hosted `flyer` runners run CI tests only, for the merge queue and pushes to
+`main` (`ci.yml`), never for pull requests and never for anything that ships. Moving a release
+build to a self-hosted runner needs a GitHub build and a self-hosted build of the same commit
+to match bit for bit first.
+
 ## Stable and nightly
 
 A stable release depends on cadmpeg at one commit of its `main` branch, taken from cadmpeg's
