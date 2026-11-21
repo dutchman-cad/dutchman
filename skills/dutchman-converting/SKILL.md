@@ -1340,3 +1340,7 @@ sketch contains only points or reference axes is refused with "its sketch featur
 resolved non-construction profile curves; this is not supported yet". The decoder must
 supply the actual profile curves. An empty profile table can still use the complete bound
 sketch when its non-construction curves are decoded; no loop or contour is guessed.
+
+For the SolidCraft plugin's separate conditional-options package, `options_for` filters the
+form only; conversion still detects the selected file's format. Use the normal package on
+SolidCraft 0.44/0.45. See [plugin options](../../docs/plugin.md#conditional-options-package-031-draft).

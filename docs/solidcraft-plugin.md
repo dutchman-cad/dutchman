@@ -76,6 +76,13 @@ The dialog shows three options:
   turns a Y-up design to Z-up.
 - **Include hidden bodies** (off): also bring in hidden or consumed bodies.
 
+For the 0.3.1 draft, a separate conditions-enabled package adds **Options for**. Selecting
+Fusion or FreeCAD shows Include hidden bodies; selecting Inventor or SolidWorks hides it.
+All formats keeps every option visible. This filter does not choose the file format:
+Dutchman still detects that from the file. It needs a SolidCraft nightly containing
+#19723 and #19908, or the next release after 0.45.0. The normal package keeps the three
+options above for 0.44/0.45; see [package selection](plugin.md#conditional-options-package-031-draft).
+
 ## Limits
 
 - SolidCraft 0.44 or newer, desktop only for now.

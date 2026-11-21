@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Wrap the wasm32-unknown-unknown build of dutchman-plugin as a SolidCraft plugin package:
-#   scripts/package-plugin.sh <dutchman_plugin.wasm> <output folder> [<version>]
+#   scripts/package-plugin.sh <dutchman_plugin.wasm> <output folder> [<version>] [--dialog-conditions]
 # writes <output folder>/dutchman.wasm, plugin.json, icons/ and dutchman-plugin.zip. With a version
 # (a release's X.Y.Z) the manifest says that version and the zip is dutchman-plugin-<version>.zip,
 # with a .sha256 beside it.
@@ -11,8 +11,13 @@
 # Each such import is bound to a stub that traps, and the script fails unless the finished
 # component imports craft:plugin interfaces only.
 set -euo pipefail
+dialog_conditions=false
+if [[ ${!#} == --dialog-conditions ]]; then
+    dialog_conditions=true
+    set -- "${@:1:$#-1}"
+fi
 if [ $# -lt 2 ] || [ $# -gt 3 ]; then
-    echo "usage: $0 <dutchman_plugin.wasm> <output folder> [<version>]" >&2
+    echo "usage: $0 <dutchman_plugin.wasm> <output folder> [<version>] [--dialog-conditions]" >&2
     exit 2
 fi
 core=$1
@@ -20,6 +25,10 @@ out=$2
 version=${3:-}
 wasm_tools=${WASM_TOOLS:-wasm-tools}
 root=$(cd "$(dirname "$0")/.." && pwd)
+manifest="$root/crates/dutchman-plugin/plugin.json"
+if $dialog_conditions; then
+    manifest="$root/crates/dutchman-plugin/plugin-dialog-conditions.json"
+fi
 mkdir -p "$out"
 stubs=$(mktemp -d "$out/.stubs.XXXXXX")
 trap 'rm -rf "$stubs"' EXIT
@@ -50,7 +59,7 @@ if [ -n "$version" ]; then
     case "$version" in
         *[!0-9.]* | .* | *. | *..*) echo "The version must look like X.Y.Z, not $version" >&2; exit 2 ;;
     esac
-    python3 - "$root/crates/dutchman-plugin/plugin.json" "$out/plugin.json" "$version" <<'PY'
+    python3 - "$manifest" "$out/plugin.json" "$version" <<'PY'
 import json, sys
 manifest = json.load(open(sys.argv[1]))
 manifest["version"] = sys.argv[3]
@@ -60,7 +69,7 @@ with open(sys.argv[2], "w") as f:
 PY
     zip_name=dutchman-plugin-$version.zip
 else
-    cp "$root/crates/dutchman-plugin/plugin.json" "$out/plugin.json"
+    cp "$manifest" "$out/plugin.json"
 fi
 rm -f "$out/$zip_name"
 mkdir -p "$out/icons"

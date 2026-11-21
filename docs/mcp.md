@@ -1276,6 +1276,10 @@ The [SolidCraft plugin component](plugin.md) is a separate streaming importer fr
 It does not add or change MCP tools. Its evaluator uses the host's existing
 command surface through the `evaluate` import, subject to host permissions.
 
+The optional SolidCraft [conditional options package](plugin.md#conditional-options-package-031-draft)
+filters dialog controls only. It adds no CLI or MCP arguments or report fields; the normal
+plugin package retains its existing options for SolidCraft 0.44/0.45.
+
 The plugin aborts on host input failures before writing output. Its bounded loss report
 prioritizes dropped and degraded losses and includes an explicit truncation notice and
 `details.truncation` counts when shortened; see [the plugin contract](plugin.md).

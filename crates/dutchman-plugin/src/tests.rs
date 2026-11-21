@@ -20,6 +20,15 @@ fn native_options_and_structured_report() {
         .unwrap()
     };
     let (design, report) = run("{}");
+    for format in ["all", "fusion", "inventor", "solidworks", "freecad"] {
+        let (filtered, filtered_report) = run(&format!(r#"{{"options_for":"{format}"}}"#));
+        assert_eq!(
+            filtered, design,
+            "the dialog filter must not select a decoder"
+        );
+        assert_eq!(filtered_report, report);
+    }
+    assert!(serde_json::from_str::<Options>(r#"{"options_for":"other"}"#).is_err());
     let report: Value = serde_json::from_str(&report).unwrap();
     assert!(report["summary"].as_str().unwrap().len() <= 240);
     assert!(report["items"].is_array());
@@ -51,6 +60,50 @@ fn native_options_and_structured_report() {
     }
     assert!(serde_json::from_str::<Options>(r#"{"up_axis":"other"}"#).is_err());
     assert!(serde_json::from_str::<Options>(r#"{"extra":true}"#).is_err());
+}
+
+#[test]
+fn dialog_condition_manifest_preserves_the_legacy_contract() {
+    let legacy: Value = serde_json::from_str(include_str!("../plugin.json")).unwrap();
+    let mut conditional: Value =
+        serde_json::from_str(include_str!("../plugin-dialog-conditions.json")).unwrap();
+    let properties = conditional["runtime"]["entries"][0]["input_schema"]["properties"]
+        .as_object_mut()
+        .unwrap();
+    let selector = properties.remove("options_for").unwrap();
+    assert_eq!(selector["type"], "string");
+    assert_eq!(selector["default"], "all");
+    let choices: Vec<_> = selector["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|choice| choice["const"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        choices,
+        ["all", "fusion", "inventor", "solidworks", "freecad"]
+    );
+    let visibility = properties
+        .get_mut("include_hidden_bodies")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("x-solidcraft-visible-when")
+        .unwrap();
+    assert_eq!(visibility["field"], "options_for");
+    assert_eq!(
+        visibility["in"],
+        serde_json::json!(["all", "fusion", "freecad"])
+    );
+    // No annotation, capability, permission or default leaks into the older-host package.
+    assert_eq!(conditional, legacy);
+    // New hosts omit hidden keys; both old defaults and that omission remain accepted.
+    let omitted: Options = serde_json::from_str(r#"{"options_for":"inventor"}"#).unwrap();
+    assert!(!omitted.include_hidden_bodies);
+    assert!(omitted.editable_history);
+    let explicit: Options =
+        serde_json::from_str(r#"{"options_for":"inventor","include_hidden_bodies":true}"#).unwrap();
+    assert!(explicit.include_hidden_bodies);
 }
 #[test]
 fn member_lookup_stays_relative_and_handles_stored_windows_names() {

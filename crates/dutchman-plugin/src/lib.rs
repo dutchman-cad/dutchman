@@ -31,9 +31,22 @@ pub enum UpAxis {
     StandUp,
 }
 
+/// A dialog filter only: the source file always determines the conversion format.
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OptionsFor {
+    #[default]
+    All,
+    Fusion,
+    Inventor,
+    Solidworks,
+    Freecad,
+}
+
 #[derive(Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Options {
+    pub options_for: OptionsFor,
     pub editable_history: bool,
     pub up_axis: UpAxis,
     pub include_hidden_bodies: bool,
@@ -41,6 +54,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            options_for: OptionsFor::All,
             editable_history: true,
             up_axis: UpAxis::AsIs,
             include_hidden_bodies: false,

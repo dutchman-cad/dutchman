@@ -34,6 +34,38 @@ FreeCAD shapes and consumed Fusion bodies. Stand up adds a +90° X rotation (+Y 
 to a wrapper occurrence only after mapping and checks, preserving editable local features.
 These two opt-in controls are plugin options; they do not add CLI flags.
 
+### Conditional options package (0.3.1 draft)
+
+The optional `plugin-dialog-conditions.json` manifest uses the merged SolidCraft
+#19723/#19908 schema. It needs a nightly containing both changes, or the next release
+after 0.45.0 (expected 0.46; confirm the published version before distributing it).
+Build the package explicitly, into a separate output folder:
+
+```sh
+scripts/package-plugin.sh <module.wasm> <conditions-folder> 0.3.1 --dialog-conditions
+```
+
+Without `--dialog-conditions`, packaging still uses the unchanged `plugin.json`, including
+its three options and existing capabilities. Keep distributing that package to 0.44/0.45.
+The host manifest has no minimum-version field. Although `input_schema` is arbitrary JSON,
+the older form renderer rejects unknown property keywords: it does not silently ignore
+`x-solidcraft-visible-when`. Do not install the conditional package on those hosts.
+
+The conditional dialog adds **Options for** (`options_for`): All formats (default), Fusion,
+Inventor, SolidWorks, or FreeCAD. **Include hidden bodies** has
+`"x-solidcraft-visible-when": {"field":"options_for","in":["all","fusion","freecad"]}`.
+Keep editable history and Up axis apply to every format and stay visible. The host omits
+hidden keys before calling the importer; the guest supplies their existing defaults.
+The filter never chooses a decoder, changes the file picker, or overrides explicitly
+supplied conversion options. It is a form hint, not a security or format-validation rule.
+
+Conditions only inspect sibling scalar values; the host does not inject the selected
+file's extension, and the menu opens the options before the file picker. The user selects
+the filter. All formats preserves the existing controls without selecting one. Automatic
+filtering needs a host file-context API. There is no project-folder option to condition:
+Inventor assemblies still use the approved input folder, and FreeCAD currently has no
+additional conversion options beyond the shared visibility control.
+
 There is no plugin UI code. The host draws the form, loss report, Open and Cancel controls
 and asks for read access to the selected input's folder (`input_folder`) for assembly
 parts. There is no network or clock permission and no write grant. The plugin resolves relative part paths and relocates stored absolute paths by their

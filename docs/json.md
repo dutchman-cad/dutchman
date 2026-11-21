@@ -1873,6 +1873,10 @@ CLI and MCP `dutchman.convert/1` schemas are unchanged. The plugin checks its me
 time budget before native decoding; a refusal returns an importer error, without output,
 and directs the user to the desktop app download.
 
+The optional SolidCraft [conditional options package](plugin.md#conditional-options-package-031-draft)
+filters dialog controls only. It adds no CLI or MCP arguments or report fields; the normal
+plugin package retains its existing options for SolidCraft 0.44/0.45.
+
 `history/body-fallback-imported` is a `Degraded` loss naming the feature in `subject`.
 Its stored result becomes a timeline Import and the feature row has status
 `mapped`, as for Base Feature body imports. The loss explains why its recipe could
