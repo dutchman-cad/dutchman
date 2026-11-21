@@ -4,6 +4,8 @@ import copy
 import importlib.util
 import io
 import json
+import os
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError
@@ -488,8 +490,10 @@ class ApiTests(unittest.TestCase):
         self.api.issue(1, 'contributor', body='Depends on other/project#2')
         self.api.issue(2, 'contributor')
         self.api.dependencies['other/project/issues/2'] = HTTPError('', 500, 'Retry', {}, None)
-        with contextlib.redirect_stderr(io.StringIO()):
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
             self.assertEqual(self.api.sweep(2), [1])
+        self.assertIn('-> 500', errors.getvalue())
         self.assertTrue(self.api.issues[1]['labels'])
         self.assertFalse(self.api.issues[2]['labels'])
 
@@ -504,7 +508,9 @@ class ApiTests(unittest.TestCase):
         self.api.pr()
         claim.reconcile_pr(self.api, 10, now=self.api.now)
         claim.reconcile_pr(self.api, 10, now=self.api.now)
-        self.assertEqual(self.api.bodies(10).count('already claimed'), 1)
+        self.assertEqual(self.api.bodies(1).count('already claimed'), 1)
+        self.assertIn('For pull request #10:', self.api.bodies())
+        self.assertFalse(self.api.bodies(10))
         self.assertEqual(self.api.resolve_owners(self.api.issues[1])[0], 'writer')
 
     def test_lowest_open_pr_wins_and_competing_reply_deduped(self):
@@ -512,8 +518,10 @@ class ApiTests(unittest.TestCase):
         self.api.pr(10, actor='earlier')
         claim.reconcile_pr(self.api, 20, now=self.api.now)
         claim.reconcile_pr(self.api, 20, now=self.api.now)
-        self.assertIn('pull request #10', self.api.bodies(20))
-        self.assertEqual(self.api.bodies(20).count('dutchman-claim-competing:'), 1)
+        self.assertIn('pull request #10', self.api.bodies(1))
+        self.assertEqual(self.api.bodies(1).count('dutchman-claim-competing:'), 1)
+        self.assertIn('For pull request #20:', self.api.bodies())
+        self.assertFalse(self.api.bodies(20))
         claim.reconcile_pr(self.api, 10, now=self.api.now)
         self.assertEqual(self.api.resolve_owners(self.api.issues[1])[0], 'earlier')
 
@@ -527,7 +535,7 @@ class ApiTests(unittest.TestCase):
         self.api.pr(5, actor='other', title='Work', body='Closes #1')
         self.api.pr(10)
         claim.reconcile_pr(self.api, 10, now=self.api.now)
-        self.assertIn('pull request #5', self.api.bodies(10))
+        self.assertIn('pull request #5', self.api.bodies(1))
         self.assertFalse(self.api.issues[1]['labels'])
 
     def test_foreign_pr_same_number_cannot_claim_or_reserve(self):
@@ -661,6 +669,125 @@ class ApiTests(unittest.TestCase):
         self.api.sweep(5)
         self.assertFalse(self.api.issues[1]['labels'])
 
+    def test_real_claimant_activity_resets_idle_period(self):
+        sources = ('created', 'commit_author', 'commit_committer', 'review',
+                   'review_comment', 'pr_comment', 'issue_comment', 'ready_for_review', 'reopened')
+        for source in sources:
+            with self.subTest(source=source):
+                api = FakeGitHub()
+                api.issue(1, 'contributor')
+                api.pr(when=at(4) if source == 'created' else START)
+                if source.startswith('commit_'):
+                    dates = {'author': {'date': START.isoformat()},
+                             'committer': {'date': START.isoformat()}}
+                    dates[source.removeprefix('commit_')]['date'] = at(4).isoformat()
+                    api.commits[10] = [{'author': user('Contributor'),
+                                        'committer': user('web-flow', 'Bot'), 'commit': dates}]
+                elif source == 'review':
+                    api.reviews[10] = [{'user': user(), 'submitted_at': at(4).isoformat(),
+                                        'state': 'COMMENTED'}]
+                elif source == 'review_comment':
+                    api.review_comments[10] = [comment('progress', when=at(4))]
+                elif source in {'pr_comment', 'issue_comment'}:
+                    api.comments[10 if source == 'pr_comment' else 1].append(
+                        comment('progress', when=at(4)))
+                elif source in {'ready_for_review', 'reopened'}:
+                    api.events[10] = []
+                    api.event(10, source, at(4), actor=user())
+                api.sweep(6)
+                self.assertTrue(api.issues[1]['labels'])
+                api.sweep(9)
+                self.assertFalse(api.issues[1]['labels'])
+
+    def test_commit_committer_login_cannot_extend_another_authors_claim(self):
+        self.api.issue(1, 'contributor')
+        self.api.pr()
+        self.api.commits[10] = [{'author': user('other'), 'committer': user(),
+                                 'commit': {'author': {'date': at(4).isoformat()},
+                                            'committer': {'date': at(4).isoformat()}}}]
+        self.api.sweep(5)
+        self.assertFalse(self.api.issues[1]['labels'])
+
+    def test_real_timestamps_determine_who_acted_last(self):
+        for source in ('commit', 'review', 'review_comment', 'pr_comment', 'issue_comment', 'event'):
+            with self.subTest(source=source):
+                api = FakeGitHub()
+                api.issue(1, 'contributor')
+                api.pr(draft=False)
+                api.reviews[10] = [{'user': user('reviewer'), 'submitted_at': at(3).isoformat(),
+                                    'state': 'CHANGES_REQUESTED'}]
+                if source == 'commit':
+                    api.commits[10] = [{'author': user(), 'commit': {
+                        'author': {'date': at(4).isoformat()},
+                        'committer': {'date': at(4).isoformat()}}}]
+                elif source == 'review':
+                    api.reviews[10].append({'user': user(), 'submitted_at': at(4).isoformat(),
+                                            'state': 'COMMENTED'})
+                elif source == 'event':
+                    api.events[10] = []
+                    api.event(10, 'ready_for_review', at(4), actor=user())
+                elif source == 'review_comment':
+                    api.review_comments[10] = [comment('updated', when=at(4))]
+                else:
+                    api.comments[1 if source == 'issue_comment' else 10].append(
+                        comment('updated', when=at(4)))
+                api.sweep(20)
+                self.assertTrue(api.issues[1]['labels'])
+                api.comments[10].append(comment('please revise', 'reviewer', at(21)))
+                api.sweep(21)
+                self.assertFalse(api.issues[1]['labels'])
+
+    def test_bots_and_legacy_activity_records_do_not_extend_claim(self):
+        self.api.issue(1, 'contributor')
+        self.api.pr(draft=False)
+        self.api.reviews[10] = [{'user': user('reviewer'), 'submitted_at': at(1).isoformat(),
+                                 'state': 'CHANGES_REQUESTED'},
+                                {'user': user('automation[bot]', 'Bot'),
+                                 'submitted_at': at(4).isoformat(), 'state': 'CHANGES_REQUESTED'}]
+        self.api.comments[10].append(comment(
+            '<!-- dutchman-claim-activity: {"action":"synchronize","at":"2026-01-05T00:00:00Z"} -->',
+            'github-actions[bot]', at(4), kind='Bot'))
+        self.api.review_comments[10] = [comment('update', 'automation[bot]', at(4), kind='Bot')]
+        self.api.events[10] = []
+        self.api.event(10, 'ready_for_review', at(4), actor=user('automation[bot]', 'Bot'))
+        self.api.sweep(6)
+        self.assertFalse(self.api.issues[1]['labels'])
+
+    def test_pr_api_failure_warns_without_failing_check(self):
+        self.api.issue(1, 'contributor')
+        self.api.pr()
+        pages = self.api.pages
+
+        def fail_commits(path):
+            if path == 'pulls/10/commits':
+                raise HTTPError(path, 403, 'Forbidden', {}, None)
+            return pages(path)
+
+        output, errors = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': self.api.repository,
+                                    'GITHUB_TOKEN': 'unused', 'GITHUB_EVENT_NAME': 'pull_request_target',
+                                    'PR_NUMBER': '10'}), patch.object(claim, 'GitHub', return_value=self.api), \
+                patch.object(self.api, 'pages', side_effect=fail_commits), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            self.assertEqual(claim.run(), 0)
+        self.assertIn('::warning::', output.getvalue())
+        self.assertIn('GET pulls/10/commits -> 403', errors.getvalue())
+        self.assertTrue(self.api.issues[1]['labels'])
+        self.assertFalse(self.api.comments[10])
+
+    def test_pr_events_never_write_pr_comments_or_activity_markers(self):
+        self.api.pr(draft=False)
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': self.api.repository,
+                                    'GITHUB_TOKEN': 'unused', 'GITHUB_EVENT_NAME': 'pull_request_target',
+                                    'PR_NUMBER': '10'}), patch.object(claim, 'GitHub', return_value=self.api):
+            self.assertEqual(claim.run(), 0)
+        self.assertFalse(self.api.comments[10])
+        self.assertFalse(any('dutchman-claim-activity:' in c['body']
+                             for comments in self.api.comments.values() for c in comments))
+        writes = [path for method, path, _ in self.api.calls if method in {'POST', 'PATCH', 'DELETE'}]
+        self.assertTrue(writes)
+        self.assertTrue(all(path.startswith(('issues/', 'labels')) for path in writes))
+
     def test_cross_repo_keyword_never_claims_local_issue(self):
         self.api.pr(title='Fixes other/project#1')
         claim.reconcile_pr(self.api, 10, now=START)
@@ -718,6 +845,47 @@ class ApiTests(unittest.TestCase):
         paths = [path for method, path, _ in self.api.calls if method == 'PAGES']
         self.assertEqual(paths.count('issues?state=open&labels=claimed'), 1)
         self.assertFalse(any(path.startswith('pulls?') for path in paths))
+
+
+class ErrorTests(unittest.TestCase):
+    def test_http_errors_include_method_path_and_status_without_secrets(self):
+        api = claim.GitHub('group/project', 'secret-token')
+        for method, path in [('GET', 'pulls/835/commits'), ('POST', 'issues/1/comments')]:
+            with self.subTest(method=method):
+                error = HTTPError('https://api.github.com/repos/group/project/' + path + '?token=secret',
+                                  403, 'Forbidden', {}, None)
+                with patch.object(claim, 'urlopen', side_effect=error):
+                    with self.assertRaises(HTTPError) as raised:
+                        api.call(method, path + '?token=secret')
+                message = claim.describe_error(raised.exception)
+                raised.exception.close()
+                self.assertEqual(message, f'{method} group/project/{path} -> 403')
+                self.assertNotIn('secret', message)
+
+    def test_pr_path_warns_and_succeeds_but_commands_and_sweep_fail(self):
+        for event in ('pull_request_target', 'issue_comment', 'schedule'):
+            for error in (HTTPError('pulls/835/commits?token=secret', 403, 'Forbidden', {}, None),
+                          ValueError('Some issue checks failed; retry.')):
+                with self.subTest(event=event, error=type(error).__name__):
+                    output, errors = io.StringIO(), io.StringIO()
+                    with patch.dict(os.environ, {'GITHUB_EVENT_NAME': event}), \
+                            patch.object(claim, 'main', side_effect=error), \
+                            contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                        code = claim.run()
+                    self.assertEqual(code, 0 if event == 'pull_request_target' else 1)
+                    self.assertEqual('::warning::' in output.getvalue(), event == 'pull_request_target')
+                    self.assertNotIn('secret', output.getvalue() + errors.getvalue())
+                    if isinstance(error, HTTPError):
+                        self.assertIn('GET pulls/835/commits -> 403', errors.getvalue())
+
+    def test_pagination_keeps_all_activity_pages(self):
+        api = claim.GitHub('group/project', 'unused')
+        for path in ('pulls/10/commits', 'pulls/10/reviews', 'pulls/10/comments',
+                     'issues/10/comments', 'issues/10/events', 'issues/1/comments'):
+            with self.subTest(path=path), patch.object(api, 'call', side_effect=[[{}] * 100, [{}]]) as call:
+                self.assertEqual(len(api.pages(path)), 101)
+                self.assertEqual(call.call_args_list[1].args,
+                                 ('GET', f'{path}?per_page=100&page=2'))
 
 
 if __name__ == '__main__':

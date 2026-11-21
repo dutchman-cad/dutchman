@@ -12,13 +12,13 @@ without activity from you, with one warning on day **4** of each quiet period. Y
 activity starts a new quiet period and allows a new warning. The bot checks hourly.
 
 Activity includes your issue comments, linked PR comments and review replies, opening
-or updating a linked PR, and pushes to it. Other people's comments do not extend your
-claim. A review requesting changes starts a fresh five-day grace period, measured from
+a linked PR, marking it ready for review or reopening it, and commits authored by you.
+Other people's comments do not extend your claim. A review requesting changes starts a fresh five-day grace period, measured from
 the later of that review and your latest activity.
 
 Claims stay active while an open, ready (non-draft) linked PR waits on maintainers:
-your push, update or reply is the last action, including after a review. Claims also stay
-active while the issue or an open linked PR body says `Depends on #N`,
+your commit, ready-for-review event, reopening or reply is the last action, including
+after a review. Claims also stay active while the issue or an open linked PR body says `Depends on #N`,
 `Depends on owner/repo#N`, or `Stacked on #N` and that dependency is open. A dependency
 returning 404 is treated as not open. Other lookup errors leave that issue alone, log a
 retry message, and allow the sweep to continue with other issues.
@@ -37,10 +37,10 @@ limited to 100 issues per PR, and local to this repository. Cross-repository ref
 foreign PRs and incidental mentions do not reserve issues. Bot PRs are ignored.
 
 Existing claims are respected. When several open PRs compete for an unrecorded claim,
-the lowest-numbered PR wins; later PRs get one reply pointing to it. A comment claim on
-an unclaimed issue with someone else's qualifying open PR also gets a reply pointing to
-that PR. A PR conflict reply names the claimant and explains the lapse rules; repeated
-edits and pushes do not repeat that reply. A claimant's own PR ensures the label exists.
+the lowest-numbered PR wins; the issue gets one notice per competing PR pointing to it.
+A comment claim on an unclaimed issue with someone else's qualifying open PR also gets a reply pointing to
+that PR. A PR conflict notice on the issue names the PR and claimant and explains the
+lapse rules; repeated edits and pushes do not repeat that reply. A claimant's own PR ensures the label exists.
 
 On lapse the bot unassigns the claimant, removes `claimed`, and says the issue is free.
 **It leaves pull requests open.** The issue comment links the existing PRs and invites
@@ -69,8 +69,11 @@ A failure while recording a new claim rolls back its assignment and newly added 
 
 The sweep reads only open issues labelled `claimed`, then fetches details for those
 issues. Linked PR candidates come from each issue's timeline; the bot verifies their
-current title, body, repository and author. Claimant updates and pushes also create
-hidden activity records on PRs. Warning markers contain the claim date, deadline phase
+current title, body, repository and author. Activity comes only from API reads: PR
+creation, author and committer dates of commits whose author login matches the claimant,
+reviews, review comments, issue and PR comments, and ready-for-review or reopened events.
+PR title/body edits alone do not reset inactivity. The bot never posts activity records
+or conflict notices on PRs. Warning markers contain the claim date, deadline phase
 and quiet-period start. Bot comments never count as claimant activity.
 
 No-op commands get a thumbs-up reaction; unexplained refusals get an eyes reaction.
@@ -94,3 +97,7 @@ per-issue concurrency; PR handling retains per-PR concurrency, with a separate h
 sweep group. There is no repository-wide group that could discard unrelated commands.
 Fresh reads, assignment conflict repair and idempotent receipts handle overlapping jobs.
 The workflow becomes active when it reaches the default branch.
+
+API failures log the HTTP method, API path and status without query parameters or tokens.
+A PR-event error produces a workflow warning and succeeds so bot failures cannot block
+a contributor’s PR; the hourly sweep retries. Comment-command errors still fail their job.

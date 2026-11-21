@@ -66,9 +66,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_SENDER: ${{ github.event.sender.login }}
-          PR_ACTION: ${{ github.event.action }}
-          PR_UPDATED_AT: ${{ github.event.pull_request.updated_at }}

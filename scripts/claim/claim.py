@@ -6,7 +6,7 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 DRAFT_HOURS = 24
@@ -16,7 +16,6 @@ RULE = ('Open a pull request within 24 hours, even a rough draft; after that, th
         'on a maintainer or a dependency. /unclaim releases it.')
 WRITE_PERMISSIONS = {'write', 'maintain', 'admin'}
 CLAIM = '<!-- dutchman-claim-state:'
-ACTIVITY = '<!-- dutchman-claim-activity:'
 
 
 def prose(text):
@@ -129,11 +128,16 @@ class GitHub:
                                    'Accept': 'application/vnd.github+json',
                                    'X-GitHub-Api-Version': '2022-11-28',
                                    'Content-Type': 'application/json'}, method=method)
-        with urlopen(request, timeout=60) as response:
-            raw = response.read(16 * 1024 * 1024 + 1)
-            if len(raw) > 16 * 1024 * 1024:
-                raise ValueError('GitHub response is too large; retry with a smaller query.')
-            return json.loads(raw) if raw else None
+        try:
+            with urlopen(request, timeout=60) as response:
+                raw = response.read(16 * 1024 * 1024 + 1)
+                if len(raw) > 16 * 1024 * 1024:
+                    raise ValueError('GitHub response is too large; retry with a smaller query.')
+                return json.loads(raw) if raw else None
+        except HTTPError as error:
+            error.api_method = method
+            error.api_path = path.split('?', 1)[0]
+            raise
 
     def call(self, method, path, data=None):
         return self.request(method, self.repository + '/' + path, data)
@@ -245,12 +249,13 @@ class GitHub:
         return claimant, date
 
     def conflict(self, number, claimant, date, source=None):
-        marker = f'<!-- dutchman-claim-conflict:{number} -->'
-        if source and any(own_comment(c) and marker in c['body']
-                          for c in self.pages(f'issues/{source}/comments')):
+        marker = f'<!-- dutchman-claim-conflict:{number}:{source or number} -->'
+        if any(own_comment(c) and marker in c['body']
+               for c in self.pages(f'issues/{number}/comments')):
             return
         since = f' since {date.date().isoformat()}' if date else ''
-        self.comment(source or number, f'Issue #{number} is already claimed by @{claimant}{since}. '
+        link = f'For pull request #{source}: ' if source else ''
+        self.comment(number, link + f'Issue #{number} is already claimed by @{claimant}{since}. '
                      'It lapses if no pull request exists within 24 hours, or after 5 idle days '
                      'with a pull request, except for review, dependencies and maintainer claims. '
                      f'Ask them before continuing.\n\n{marker}')
@@ -280,10 +285,11 @@ class GitHub:
         if pulls:
             first = min(pulls, key=lambda pr: pr['number'])
             if first['user']['login'].lower() != actor.lower() or (source and source != first['number']):
-                marker = f'<!-- dutchman-claim-competing:{number}:{first["number"]} -->'
-                target = source or number
+                marker = f'<!-- dutchman-claim-competing:{number}:{first["number"]}:{source or number} -->'
+                target = number
+                link = f'For pull request #{source}: ' if source else ''
                 if not any(own_comment(c) and marker in c['body'] for c in self.pages(f'issues/{target}/comments')):
-                    self.comment(target, f'Issue #{number} already has pull request #{first["number"]} '
+                    self.comment(target, link + f'Issue #{number} already has pull request #{first["number"]} '
                                  f'by @{first["user"]["login"]}; continue there or coordinate with them.\n\n{marker}')
                 return
         self.ensure_label()
@@ -339,7 +345,7 @@ class GitHub:
             if added_label and not remaining.get('assignees'):
                 self.remove_label(number)
             raise ValueError(f'Could not finish claim on issue #{number}; rolled back the assignment '
-                             f'and label ({type(error).__name__}). Retry /claim.') from error
+                             f'and label ({describe_error(error)}). Retry /claim.') from error
         self.react(number, comment_id, '+1')
 
     def unclaim(self, number, actor, comment_id=None):
@@ -358,9 +364,22 @@ class GitHub:
             self.react(number, comment_id, '+1')
 
 
+def human(actor):
+    return bool(actor and actor.get('type') != 'Bot'
+                and not actor.get('login', '').endswith('[bot]'))
+
+
+def describe_error(error):
+    if isinstance(error, HTTPError):
+        path = getattr(error, 'api_path', urlsplit(error.geturl() or '').path)
+        path = path.split('?', 1)[0].removeprefix('/repos/').lstrip('/')
+        return f'{getattr(error, "api_method", "GET")} {path} -> {error.code}'
+    return str(error) if isinstance(error, ValueError) else type(error).__name__
+
+
 def comment_actions(comments):
     return [{'actor': c['user']['login'], 'at': stamp(c['updated_at'])}
-            for c in comments if c['user'].get('type') != 'Bot']
+            for c in comments if human(c['user'])]
 
 
 def own_comment(comment):
@@ -442,27 +461,24 @@ def sweep_issue(api, number, now):
         pc = api.pages(f'issues/{pn}/comments')
         pa = comment_actions(pc)
         pa.append({'actor': claimant, 'at': stamp(pr['created_at']), 'kind': 'opened'})
-        for c in pc:
-            if own_comment(c) and c['body'].startswith(ACTIVITY):
-                record = json.loads(c['body'][len(ACTIVITY):].removesuffix(' -->').strip())
-                pa.append({'actor': claimant, 'at': stamp(record['at']),
-                           'kind': 'push' if record['action'] == 'synchronize' else record['action']})
         for review in api.pages(f'pulls/{pn}/reviews'):
-            if review.get('submitted_at') and review.get('user'):
+            if review.get('submitted_at') and human(review.get('user')):
                 pa.append({'actor': review['user']['login'], 'at': stamp(review['submitted_at']),
-                           'kind': review['state']})
-        for event in api.pages(f'issues/{pn}/timeline'):
+                           'kind': 'reply' if review['state'] == 'COMMENTED' else review['state']})
+        for event in api.pages(f'issues/{pn}/events'):
             actor = event.get('actor')
-            if (actor and event.get('created_at')
-                    and event.get('event') in {'head_ref_force_pushed', 'ready_for_review',
-                                               'converted_to_draft', 'reopened'}):
+            if (human(actor) and event.get('created_at')
+                    and event.get('event') in {'ready_for_review', 'reopened'}):
                 pa.append({'actor': actor['login'], 'at': stamp(event['created_at']),
-                           'kind': 'push' if event['event'] == 'head_ref_force_pushed' else event['event']})
+                           'kind': event['event']})
         pa.extend(comment_actions(api.pages(f'pulls/{pn}/comments')))
         for commit in api.pages(f'pulls/{pn}/commits'):
-            if commit.get('committer'):
-                pa.append({'actor': commit['committer']['login'],
-                           'at': stamp(commit['commit']['committer']['date']), 'kind': 'push'})
+            author = commit.get('author')
+            if human(author) and author['login'].lower() == claimant.lower():
+                for role in ('author', 'committer'):
+                    date_value = commit.get('commit', {}).get(role, {}).get('date')
+                    if date_value:
+                        pa.append({'actor': claimant, 'at': stamp(date_value), 'kind': 'push'})
         actions.extend(pa)
         if pr['state'] == 'open':
             bodies.append(pr.get('body') or '')
@@ -506,7 +522,7 @@ def sweep(api, now):
             if isinstance(error, HTTPError):
                 error.close()
             failures.append(issue['number'])
-            print(f'Could not check issue #{issue["number"]} ({type(error).__name__}); '
+            print(f'Could not check issue #{issue["number"]} ({describe_error(error)}); '
                   'check API access and retry. Continuing with other issues.', file=sys.stderr)
     return failures
 
@@ -573,14 +589,6 @@ def main():
         sweep_issue(api, number, datetime.now(timezone.utc))
     elif event == 'pull_request_target':
         number = int(os.environ['PR_NUMBER'])
-        pr = api.call('GET', f'pulls/{number}')
-        if (pr['base']['repo']['full_name'] == api.repository
-                and pr['user'].get('type') != 'Bot'
-                and os.environ['PR_SENDER'].lower() == pr['user']['login'].lower()):
-            record = {'action': os.environ['PR_ACTION'], 'at': os.environ['PR_UPDATED_AT']}
-            body = ACTIVITY + ' ' + json.dumps(record) + ' -->'
-            if not any(own_comment(c) and c['body'] == body for c in api.pages(f'issues/{number}/comments')):
-                api.comment(number, body)
         reconcile_pr(api, number)
         # Also re-evaluate claims from references removed by an edit, or closed PRs.
         if sweep(api, datetime.now(timezone.utc)):
@@ -589,14 +597,22 @@ def main():
         raise ValueError('Some issue checks failed; see the issue numbers above and retry.')
 
 
-if __name__ == '__main__':
+def run():
     try:
         main()
     except (HTTPError, OSError, ValueError, KeyError) as error:
         if isinstance(error, HTTPError):
             error.close()
-        print(f'Claim automation could not finish ({type(error).__name__}); check API permissions and retry.',
-              file=sys.stderr)
-        if isinstance(error, ValueError):
-            print(str(error), file=sys.stderr)
-        sys.exit(1)
+        message = f'Claim automation could not finish ({describe_error(error)}); check API access and retry.'
+        print(message, file=sys.stderr)
+        if os.environ.get('GITHUB_EVENT_NAME') == 'pull_request_target':
+            # A bot failure must not block a contributor's pull request. The sweep retries.
+            escaped = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+            print(f'::warning::{escaped}')
+            return 0
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(run())
