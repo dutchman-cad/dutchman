@@ -1345,7 +1345,7 @@ For a whole-folder summary, run `dutchman batch-report <output-folder>` on saved
 `<stem>.report.json` / `<stem>.failed.json` files, or add `--batch-report` to
 `convert-all` for a fresh run. The desktop app offers **Batch report** after a
 folder run finishes, in the bottom bar beside the result counts. After writing,
-the status says `Report saved to <output folder name>/`.
+the status says `<converted> converted, <failed> failed · Report saved to <output folder name>/`.
 Both write `dutchman-batch-report.md` and `dutchman-batch-report.csv` in that
 folder, with relative input path, output path, outcome, and first reason per
 file. Markdown totals beneath the heading keep all four outcome categories,

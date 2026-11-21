@@ -1129,7 +1129,7 @@ See [the plugin guide](plugin.md).
 After a folder run finishes in the desktop app, choose **Batch report** in the
 bottom bar, after the converted and failed counts. The button is hidden before
 a run and while conversion is running. Writing runs in the background; the
-status then says `Report saved to <output folder name>/` or shows a folder
+status then says `<converted> converted, <failed> failed · Report saved to <output folder name>/` or shows a folder
 permission error.
 
 For a fresh CLI run, use `dutchman convert-all designs --out-dir converted --batch-report`.

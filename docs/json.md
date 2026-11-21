@@ -1994,7 +1994,7 @@ as the existing history blocker reason. The report schema and field names are un
 source designs. `convert-all --batch-report` summarises that invocation's results.
 The desktop app offers **Batch report** in the bottom bar after a folder run
 finishes, beside the converted and failed counts. After writing, its status
-says `Report saved to <output folder name>/`. JSON schemas are unchanged.
+says `<converted> converted, <failed> failed · Report saved to <output folder name>/`. JSON schemas are unchanged.
 
 The Markdown and CSV files are named `dutchman-batch-report.md` and
 `dutchman-batch-report.csv`. Columns are Input path, Output path, Outcome, and

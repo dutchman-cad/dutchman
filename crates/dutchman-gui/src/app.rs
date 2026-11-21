@@ -2139,7 +2139,7 @@ impl App {
                 });
             // Use spare room below compact controls, while retaining the pinned
             // boundary when Advanced or a long input list needs its own scroll area.
-            if self.rows.len() == 1 {
+            if !self.rows.is_empty() {
                 report_top = (choices.top() + area.content_size.y + theme::SPACE_4).min(pinned_top);
             }
         });
@@ -2981,9 +2981,12 @@ impl App {
                 }
             }
             if let Some(folder) = &self.batch_report_saved {
-                ui.label(
-                    RichText::new(format!("Report saved to {}/", file_name(folder))).color(p.tide),
-                );
+                let saved = format!("Report saved to {}/", file_name(folder));
+                let status = match summary.filter(|_| !self.rows.is_empty()) {
+                    Some(summary) => format!("{summary} · {saved}"),
+                    None => saved,
+                };
+                ui.label(RichText::new(status).color(p.tide));
             } else if let Some(summary) = summary.filter(|_| !self.rows.is_empty()) {
                 ui.label(RichText::new(summary).color(p.tide));
             }
@@ -4209,7 +4212,10 @@ mod tests {
         assert!(button.left() >= summary.right());
         assert!((button.center().y - summary.center().y).abs() < 10.0);
         harness.get_by_label("Batch report").click_accesskit();
-        let status = format!("Report saved to {}/", file_name(folder.path()));
+        let status = format!(
+            "1 converted, 0 failed · Report saved to {}/",
+            file_name(folder.path())
+        );
         for _ in 0..500 {
             harness.run_steps(2);
             if harness.query_by_label(&status).is_some() {
