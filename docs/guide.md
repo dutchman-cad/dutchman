@@ -1202,7 +1202,10 @@ sketch when its non-construction curves are decoded; no loop or contour is guess
 
 ## Claim work before starting
 
-Comment `/claim` on an issue before working on it, or `/unclaim` to release it.
-Claims lapse after 3 days without activity from you, with one warning after 2 days.
-A ready PR waiting on a maintainer or an open dependency keeps the claim active.
-See [claiming an issue](claiming.md) for the activity and dependency rules.
+Comment `/claim` on the issue first: claim, then a draft pull request within 24 hours,
+even rough. Comment `/unclaim` to release it. After a linked pull request exists, claims
+lapse after 5 days without activity from you. The bot reminds you at 12 hours without a
+pull request, and a day before an idle claim lapses. A ready pull request waiting on a
+maintainer or an open dependency keeps the claim active; maintainer claims never lapse.
+On lapse, pull requests stay open for others to continue with the original author credited
+in a `Co-authored-by:` trailer. See [claiming an issue](claiming.md) for the full rules.

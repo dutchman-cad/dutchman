@@ -7,7 +7,7 @@ pull-request rules. This page adds what is specific to Solid Edge.
 ## Where the work splits
 
 First, comment `/claim` on the issue. Comment `/unclaim` to release it; see the
-[three-day activity rule and exceptions](../claiming.md).
+[24-hour draft deadline, five-day activity rule and exceptions](../claiming.md).
 
 cadmpeg reads the file; Dutchman maps what cadmpeg read onto SolidCraft. A Dutchman issue starts
 only when the cadmpeg issue it names under **Depends on** has landed **and** Dutchman's cadmpeg pin
