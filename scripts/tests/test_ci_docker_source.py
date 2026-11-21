@@ -36,6 +36,24 @@ class DockerSourceTests(unittest.TestCase):
         with patch.object(SOURCE.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)):
             self.assertTrue(SOURCE.select('missing'))
 
+    def test_new_ref_compares_with_main(self):
+        # A tag push sends forty zeros as its previous commit: compare with where it left main.
+        def run(args, **kwargs):
+            if args[:2] == ['git', 'merge-base']:
+                return subprocess.CompletedProcess(args, 0, stdout='abc123\n')
+            return subprocess.CompletedProcess(args, 0)
+        with patch.object(SOURCE.subprocess, 'run', side_effect=run), \
+             patch.object(SOURCE.subprocess, 'check_output', return_value=b'') as diff:
+            self.assertFalse(SOURCE.select('0' * 40))
+            diff.assert_called_once_with(['git', 'diff', '--name-only', '-z', 'abc123', 'HEAD'])
+        with patch.object(SOURCE.subprocess, 'run', side_effect=run), \
+             patch.object(SOURCE.subprocess, 'check_output', return_value=b'Dockerfile\0'):
+            self.assertTrue(SOURCE.select('0' * 40))
+
+    def test_new_ref_without_main_fails_open(self):
+        with patch.object(SOURCE.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, stdout='')):
+            self.assertTrue(SOURCE.select('0' * 40))
+
     def test_whole_group_diff_includes_dockerfile(self):
         with patch.object(SOURCE.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
              patch.object(SOURCE.subprocess, 'check_output', return_value=b'docs/guide.md\0Dockerfile\0') as diff:

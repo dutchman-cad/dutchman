@@ -22,7 +22,24 @@ def required(paths):
     return any(not unrelated(path) for path in paths)
 
 
+NEW_REF = '0' * 40
+
+
+def tested_base(base):
+    """The commit to compare against; a newly pushed ref compares with where it left main.
+
+    A pushed tag (or a new branch) has no previous commit: GitHub sends forty zeros. Its commit
+    was already checked when it reached main, so only what it adds beyond main needs the source
+    build. A tag on a main commit therefore takes the same fast path main took.
+    """
+    if base != NEW_REF:
+        return base
+    found = subprocess.run(['git', 'merge-base', 'HEAD', 'origin/main'], capture_output=True, text=True)
+    return found.stdout.strip() if found.returncode == 0 and found.stdout.strip() else base
+
+
 def select(base):
+    base = tested_base(base)
     if subprocess.run(['git', 'cat-file', '-e', f'{base}^{{commit}}'], capture_output=True).returncode:
         return True
     diff = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, 'HEAD'])
