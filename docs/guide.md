@@ -89,6 +89,10 @@ Simplify the sketch or split the bundle when the recovery budget is exhausted;
 the final STEP shape remains available. Native symmetric distances and parameter
 fallback defaults stay unchanged.
 
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
+
 Onshape quantities need a dimensioned expression or explicit supported units.
 Malformed or repeated Boolean operands, unresolved latest variable bindings,
 face/cap sketch attachments without a stored complete frame, up-to-next extents without
@@ -593,6 +597,12 @@ are kept and reported as a conflict. Single-file output paths are unchanged.
 
 [Feature history and the SolidCraft check](history.md)
 
+Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
+secondary numeric values. ISO metric table designations tolerate decimal rounding and
+floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
+separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
+[cosmetic threads](history.md) for details.
+
 One stored sketch loop does not prove a native profile selection when other solid
 curves remain, including curves needed by a later trimmed cut. Dutchman requires
 source-confirmed inference in that case; otherwise it preserves the final shape
@@ -1066,7 +1076,6 @@ by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.
 
-
 Parallel directed hole placements on one entry plane can supply complete locations
 without a source sketch. For SolidCraft 0.44.1 or newer, Dutchman writes an editable
 location sketch and a multi-point hole. The hole's form and termination must also
@@ -1100,6 +1109,13 @@ the result. If a named failure cannot be removed, conversion stops without writi
 evaluator error or nonzero exit without named failed features means verification is
 unavailable: the design is still written, marked unverified, with the reason. Verification
 turned off remains unchecked.
+
+Variable-radius fillets with an unproven chain direction report `variable fillets need
+a proven chain direction: their radius stations are not bound to a source start vertex,
+which is not supported yet`. Mapping a radius law requires
+an ordered, directed input chain with its radius positions bound to that traversal.
+Carrier sample order alone does not supply that binding. The editable prefix and original
+final geometry are retained when the direction is unresolved.
 
 The SolidCraft plugin checks estimated memory and time before native decoding. When it
 says the design is too large to open inside SolidCraft, use the

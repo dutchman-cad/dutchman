@@ -3595,6 +3595,200 @@ fn a_hole_to_an_earlier_cap_keeps_a_point_on_that_face() {
     assert!(hole.get("depth").is_none());
 }
 
+#[test]
+fn a_plain_drilled_to_face_hole_keeps_its_shoulder_depth() {
+    let model = holed_cube(4.0, |hole| {
+        to_face_hole(hole);
+        hole.as_object_mut().unwrap().remove("bottom");
+        hole["shape"]["construction"]["value"]["kind"] = json!({
+            "kind": "simple_drilled", "drill_point_angle": 118_f64.to_radians()
+        });
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let hole = &document["features"][3];
+    assert_eq!(hole["hole"]["type"], "drilled");
+    assert_eq!(hole["hole"]["tip_angle"], "118.00000000000001");
+    assert_eq!(hole["depth"], "10 mm");
+}
+
+/// Entirely synthetic: the cube, a countersink ending at its bottom cap, and a
+/// separate box added afterwards. The bottom flag exercises CADIR depth conventions.
+fn countersink_to_face_with_later_box(to_tip: bool) -> Model {
+    let mut model = holed_cube(4.0, |hole| {
+        to_face_hole(hole);
+        hole["shape"]["construction"]["value"]["kind"] = json!({
+            "kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2
+        });
+        hole["bottom"] = json!({"kind": "angled",
+            "included_angle": 118_f64.to_radians(), "depth_to_tip": to_tip});
+    });
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#5", "ordinal": 4, "name": "Later box", "suppressed": false,
+            "definition": {"kind": "operation", "value": block([2.0; 3], [
+                [1.0, 0.0, 0.0, 20.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]
+            ])}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []
+        }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn countersink_to_face_with_a_drill_point_keeps_later_history() {
+    for to_tip in [false, true] {
+        let (document, report) = convert(
+            &countersink_to_face_with_later_box(to_tip),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_44_0)),
+        );
+        assert!(
+            history_line(&report).starts_with("5 of 5 features rebuilt"),
+            "{}",
+            history_line(&report)
+        );
+        let hole = &document["features"][3];
+        assert_eq!(hole["type"], "hole");
+        assert_eq!(hole["hole"]["type"], "countersink");
+        assert_eq!(hole["hole"]["cs_diameter"], "8 mm");
+        assert_eq!(hole["hole"]["cs_angle"], "90");
+        assert_eq!(hole["hole"]["tip_angle"], "118.00000000000001");
+        let depth: f64 = hole["depth"]
+            .as_str()
+            .unwrap()
+            .trim_end_matches(" mm")
+            .parse()
+            .unwrap();
+        let point = 2.0 / 59_f64.to_radians().tan();
+        assert!((depth - if to_tip { 10.0 - point } else { 10.0 }).abs() < 1e-9);
+        assert!(hole.get("to").is_none());
+        assert_eq!(document["features"][4]["type"], "box");
+        assert_eq!(document["features"][4]["name"], "Later box");
+    }
+}
+
+#[test]
+fn pointed_to_face_holes_still_require_a_proven_earlier_cap() {
+    for native in [false, true] {
+        let mut model = countersink_to_face_with_later_box(false);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        if native {
+            wire["model"]["features"][3]["definition"]["value"]["value"]["extent"]["face"] =
+                json!({"kind": "native", "value": "unresolved-face"});
+        } else {
+            // The saved bottom is z=0; the earlier extrusion instead starts at z=2.
+            wire["model"]["sketches"][0]["placement"]["frame"]["origin"]["z"] = json!(2.0);
+        }
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_44_0)),
+        );
+        let reason = if native {
+            "its face has no resolved geometry"
+        } else {
+            "its face is not proven to exist before the hole"
+        };
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn solidcraft_replays_countersink_to_face_with_a_drill_point_and_later_box() {
+    let Some(cli) = solidcraft() else { return };
+    // A drill point on a countersink needs SolidCraft 0.22.1 or newer.
+    if dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()))
+        < dutchman_solidcraft::SolidCraftVersion::V0_22_1
+    {
+        eprintln!("skipped: the countersink drill point needs SolidCraft 0.22.1 or newer");
+        return;
+    }
+    let bore = std::f64::consts::PI * 4.0;
+    // Extra material removed by the entry frustum beyond the cylindrical bore.
+    let entry = std::f64::consts::PI * 2.0 * (16.0 + 8.0 + 4.0) / 3.0 - bore * 2.0;
+    for to_tip in [false, true] {
+        let mut got = volumes(
+            &cli,
+            &written(&countersink_to_face_with_later_box(to_tip)).0,
+        );
+        got.sort_by(f64::total_cmp);
+        let point = 2.0 / 59_f64.to_radians().tan();
+        let removed =
+            bore * if to_tip {
+                10.0 - 2.0 * point / 3.0
+            } else {
+                10.0
+            } + entry;
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!((got[0] - 8.0).abs() < 1e-6, "{got:?}");
+        let want = 1000.0 - removed;
+        assert!((got[1] - want).abs() / want < 1e-3, "{got:?} vs {want}");
+    }
+}
+
+#[test]
+fn solidcraft_replays_countersink_to_face_with_a_later_fillet() {
+    let Some(cli) = solidcraft() else { return };
+    // A drill point on a countersink needs SolidCraft 0.22.1 or newer.
+    if dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()))
+        < dutchman_solidcraft::SolidCraftVersion::V0_22_1
+    {
+        eprintln!("skipped: the countersink drill point needs SolidCraft 0.22.1 or newer");
+        return;
+    }
+    let mut model = countersink_to_face_with_later_box(false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // Reuse the synthetic vertical-corner input geometry, after the hole instead
+    // of directly after the extrusion. This edge is unchanged by the hole.
+    let blend = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let source = serde_json::to_value(&blend.ir).unwrap();
+    let mut fillet = source["model"]["features"][2].clone();
+    fillet["id"] = json!("f3d:model:feature#5");
+    fillet["ordinal"] = json!(4);
+    fillet["name"] = json!("Later fillet");
+    fillet["dependencies"] = json!(["f3d:model:feature#4"]);
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    features.pop();
+    features.push(fillet);
+    wire["model"]["feature_input_topologies"] = source["model"]["feature_input_topologies"].clone();
+    wire["model"]["feature_input_topologies"][0]["input_of"] = json!("f3d:model:feature#5");
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (bytes, report) = written_with(&model, &replaying(&cli));
+    assert!(
+        history_line(&report).starts_with("5 of 5 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let got = volumes(&cli, &bytes);
+    let pi = std::f64::consts::PI;
+    let bore = pi * 4.0;
+    let entry = pi * 2.0 * (16.0 + 8.0 + 4.0) / 3.0 - bore * 2.0;
+    let corner = 10.0 * (1.0 - std::f64::consts::FRAC_PI_4);
+    let want = 1000.0 - bore * 10.0 - entry - corner;
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(
+        (got[0] - want).abs() / want < dutchman_solidcraft::VOLUME_TOLERANCE,
+        "{got:?} vs {want}"
+    );
+}
+
 const HOLE_INPUT: &str = "test:hole:feature-input#4";
 const HOLE_FACE: &str = "test:hole:historical-face#entry";
 
@@ -18754,6 +18948,107 @@ fn opaque_generated_edge_identities_are_supported_cadir_but_need_source_geometry
                 history_line(&report)
             );
         }
+    }
+}
+
+/// Ordered edges and their endpoints do not bind radius parameter zero to a
+/// chain end. Neither carrier reversal nor missing endpoints may invent that binding.
+#[test]
+fn variable_fillet_without_radius_origin_keeps_source_geometry() {
+    for (reverse, endpoints) in [(false, false), (true, false), (false, true), (true, true)] {
+        let base = input_blend(
+            "fillet",
+            json!({"kind": "variable", "points": [
+            {"parameter": 0.0, "radius": 0.5},
+            {"parameter": 0.4, "radius": 1.5},
+            {"parameter": 1.0, "radius": 1.0}]}),
+            false,
+        );
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let m = &mut wire["model"];
+        m["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
+            json!(["near", "opposite"]);
+        m["feature_input_topologies"][0]["faces"] =
+            json!(["front", "left", "back", "right", "top"]);
+        let samples = m["feature_input_topologies"][0]["edge_geometry"]
+            .as_array_mut()
+            .unwrap();
+        // A connected, ordered open chain still has no radius-origin binding.
+        samples[1]["faces"] = json!(["front", "top"]);
+        samples[1]["interior"] = json!({"x": 5.0, "y": 0.0, "z": 10.0});
+        samples[1]["tangent"] = json!({"x": 1.0, "y": 0.0, "z": 0.0});
+        samples[1]["start"] = json!({"x": 0.0, "y": 0.0, "z": 10.0});
+        samples[1]["end"] = json!({"x": 10.0, "y": 0.0, "z": 10.0});
+        for sample in samples {
+            if !endpoints {
+                let row = sample.as_object_mut().unwrap();
+                row.remove("start");
+                row.remove("end");
+            }
+            if reverse {
+                for axis in ["x", "y", "z"] {
+                    sample["tangent"][axis] = json!(-sample["tangent"][axis].as_f64().unwrap());
+                }
+            }
+        }
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base
+        };
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report)
+                .contains("their radius stations are not bound to a source start vertex"),
+            "{report:?}"
+        );
+        assert_partial(&document, &report, 1);
+        assert!(!document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature["type"] == "fillet"));
+    }
+}
+
+/// An opaque producer edge and ordered endpoint radii supply neither input
+/// geometry nor a binding between a radius station and a spatial chain endpoint.
+#[test]
+fn variable_fillet_generated_edge_without_radius_origin_keeps_source_geometry() {
+    for (start, end) in [(3.0, 1.0), (1.0, 3.0)] {
+        let base = input_blend(
+            "fillet",
+            json!({"kind": "variable", "points": [
+                {"parameter": 0.0, "radius": start},
+                {"parameter": 1.0, "radius": end}]}),
+            false,
+        );
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        wire["model"]["feature_input_topologies"] = json!([]);
+        wire["model"]["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"] = json!({"kind": "generated", "value": {
+                "edges": [{"feature": "f3d:model:feature#2", "local_id": "synthetic-edge"}],
+                "native": "synthetic selection"}});
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base
+        };
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report)
+                .contains("their radius stations are not bound to a source start vertex"),
+            "{report:?}"
+        );
+        assert_partial(&document, &report, 1);
+        assert!(!document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature["type"] == "fillet"));
     }
 }
 

@@ -617,9 +617,19 @@ filled face, and outward drilling use the existing blocked feature reason; the o
 geometry remains available.
 This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
 original geometry with a named reason.
-Entry recesses with drill points report "SolidCraft holes take a drill point only on a
-plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
-points, but Dutchman retains this limit for compatibility with older releases.
+Entry recesses with drill points map on targets that support their tip angle. Older
+targets report "SolidCraft holes take a drill point only on a plain drilled hole"
+and retain the original geometry.
+
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
+
+Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
+secondary numeric values. ISO metric table designations tolerate decimal rounding and
+floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
+separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
+[cosmetic threads](history.md) for details.
 
 Offset datum planes need no building feature when their support resolves or all their
 consumers carry independent resolved sketch placements. Otherwise the history reason
@@ -1285,7 +1295,6 @@ can have several ids; dropped or merged rows have none. Inspection returns empty
 with `not_written`. These fields are additive; schemas and existing fields are unchanged.
 See [the JSON report reference](json.md) for the matching values.
 
-
 ## Counts-only anonymous reports
 
 Use `--report-counts --report-anon FILE` with `convert` or `convert-all` to write
@@ -1310,6 +1319,13 @@ resolved sketch-entity geometry reports `its generated edge identity has no reso
 source geometry, which is not supported yet`. A numeric feature-local path alone
 does not prove which rebuilt edge to select. The editable prefix and original final
 geometry are retained; a generated reference with missing or blank fields is still refused.
+
+Variable-radius fillets with an unproven chain direction report `variable fillets need
+a proven chain direction: their radius stations are not bound to a source start vertex,
+which is not supported yet`. Mapping a radius law requires
+an ordered, directed input chain with its radius positions bound to that traversal.
+Carrier sample order alone does not supply that binding. The editable prefix and original
+final geometry are retained when the direction is unresolved.
 
 The CLI also provides `dutchman preflight <file> --json` for budgeted reading and
 history planning without writing a design. The default target gets a forecast;

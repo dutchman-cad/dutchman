@@ -115,56 +115,13 @@ pub(crate) fn map(
             let length = number(extent.get("length"))
                 .filter(|length| *length > 0.0)
                 .ok_or("its depth is not given")?;
-            let bottom = definition.get("bottom").unwrap_or(&Value::Null);
-            match bottom.get("kind").and_then(Value::as_str) {
-                None => depth = Some(length),
-                Some("flat") => {
-                    if form.get("kind").and_then(Value::as_str) == Some("simple_drilled") {
-                        return Err(
-                            "its flat bottom conflicts with its drill-point form".to_owned()
-                        );
-                    }
-                    depth = Some(length);
-                }
-                Some("angled") => {
-                    let angle = number(bottom.get("included_angle"))
-                        .filter(|a| *a > 0.0 && *a < std::f64::consts::PI)
-                        .ok_or("its drill point's angle is not given")?;
-                    // SolidCraft's depth is to the shoulder, where the point begins.
-                    let to_tip = bottom.get("depth_to_tip").and_then(Value::as_bool) == Some(true);
-                    let point = diameter / 2.0 / (angle / 2.0).tan();
-                    let shoulder = if to_tip { length - point } else { length };
-                    if shoulder <= 0.0 {
-                        return Err("its drill point is deeper than the hole".to_owned());
-                    }
-                    depth = Some(shoulder);
-                    let tip = format!("{}", angle.to_degrees());
-                    match hole.as_object_mut() {
-                        Some(fields)
-                            if recess_tip
-                                && matches!(
-                                    fields.get("type").and_then(Value::as_str),
-                                    Some("counterbore" | "countersink")
-                                ) =>
-                        {
-                            fields.insert("tip_angle".to_owned(), json!(tip));
-                        }
-                        _ => hole = json!({"type": "drilled", "tip_angle": tip}),
-                    }
-                }
-                Some(other) => {
-                    return Err(format!("a hole with a {other} bottom is not mapped yet"))
-                }
-            }
+            depth = Some(bottom_depth(
+                definition, form, &mut hole, length, diameter, recess_tip,
+            )?);
         }
         Some("to_face") => {
             if number(extent.get("offset")).is_some_and(|offset| offset != 0.0) {
                 return Err("a hole that ends offset from a face is not mapped yet".to_owned());
-            }
-            if hole.get("type").and_then(Value::as_str) == Some("drilled")
-                || definition.pointer("/bottom/kind").and_then(Value::as_str) == Some("angled")
-            {
-                return Err("a hole to a face with a drill point is not mapped yet".to_owned());
             }
             let face = earlier_face(feature, extent.get("face"), ctx)?;
             if dot(sub(face.point, position), direction) <= 0.0
@@ -172,7 +129,19 @@ pub(crate) fn map(
             {
                 return Err("its terminating face is not ahead of the hole".to_owned());
             }
-            to = Some(face.point);
+            if hole.get("type").and_then(Value::as_str) == Some("drilled")
+                || definition.pointer("/bottom/kind").and_then(Value::as_str) == Some("angled")
+            {
+                // A shoulder-measured extent leaves the point beyond the face
+                // (CADIR depth_to_tip = false). Resolve the distance only after
+                // proving that this cap exists in the preceding timeline state.
+                let length = dot(sub(face.point, position), direction);
+                depth = Some(bottom_depth(
+                    definition, form, &mut hole, length, diameter, recess_tip,
+                )?);
+            } else {
+                to = Some(face.point);
+            }
         }
         Some("unresolved") => return Err("its hole termination is not resolved".to_owned()),
         Some("through_next") => {
@@ -227,6 +196,58 @@ pub(crate) fn map(
         report.push(Severity::Degraded, describe(feature), note);
     }
     Ok(out)
+}
+
+/// SolidCraft measures the cylindrical depth to the shoulder for every entry form.
+fn bottom_depth(
+    definition: &Value,
+    form: &Value,
+    hole: &mut Value,
+    length: f64,
+    diameter: f64,
+    recess_tip: bool,
+) -> Result<f64, String> {
+    let mut depth = length;
+    let bottom = definition.get("bottom").unwrap_or(&Value::Null);
+    match bottom.get("kind").and_then(Value::as_str) {
+        None => {}
+        Some("flat") => {
+            if form.get("kind").and_then(Value::as_str) == Some("simple_drilled") {
+                return Err("its flat bottom conflicts with its drill-point form".to_owned());
+            }
+        }
+        Some("angled") => {
+            let angle = number(bottom.get("included_angle"))
+                .filter(|a| *a > 0.0 && *a < std::f64::consts::PI)
+                .ok_or("its drill point's angle is not given")?;
+            // SolidCraft's depth is to the shoulder, where the point begins.
+            let to_tip = bottom.get("depth_to_tip").and_then(Value::as_bool) == Some(true);
+            let point = diameter / 2.0 / (angle / 2.0).tan();
+            let shoulder = if to_tip { length - point } else { length };
+            if shoulder <= 0.0 {
+                return Err("its drill point is deeper than the hole".to_owned());
+            }
+            depth = shoulder;
+            let tip = format!("{}", angle.to_degrees());
+            match hole.as_object_mut() {
+                Some(fields)
+                    if recess_tip
+                        && matches!(
+                            fields.get("type").and_then(Value::as_str),
+                            Some("counterbore" | "countersink")
+                        ) =>
+                {
+                    fields.insert("tip_angle".to_owned(), json!(tip));
+                }
+                _ => *hole = json!({"type": "drilled", "tip_angle": tip}),
+            }
+        }
+        Some(other) => return Err(format!("a hole with a {other} bottom is not mapped yet")),
+    }
+    if !depth.is_finite() || depth <= 0.0 {
+        return Err("its drill point is deeper than the hole".to_owned());
+    }
+    Ok(depth)
 }
 
 /// The cosmetic thread a threaded hole keeps. SolidCraft labels a hole with an ISO metric

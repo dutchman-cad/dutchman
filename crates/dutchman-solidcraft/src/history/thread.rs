@@ -19,31 +19,47 @@ pub(super) fn map(
     let pitch = number(definition.get("pitch")).filter(|v| *v > 0.0);
     let (diameter, pitch) = diameter
         .zip(pitch)
-        .filter(|(d, p)| p < d)
         .ok_or("cosmetic threads require a resolved diameter and pitch")?;
-    if let Some(standard) = definition.get("standard").and_then(Value::as_str) {
-        if !matches!(
-            standard.trim().to_ascii_lowercase().as_str(),
-            "iso" | "metric" | "iso metric" | "iso metric profile"
-        ) {
-            return Err("only ISO metric cosmetic threads are supported yet".to_owned());
-        }
+    let standard = definition
+        .get("standard")
+        .and_then(Value::as_str)
+        .map(|s| s.trim().to_ascii_lowercase());
+    let unified = matches!(
+        standard.as_deref(),
+        Some("unc" | "unf" | "ansi unified screw threads")
+    );
+    if standard.as_deref().is_some_and(|s| {
+        !matches!(s, "iso" | "metric" | "iso metric" | "iso metric profile") && !unified
+    }) {
+        return Err("only ISO metric cosmetic threads are supported yet".to_owned());
     }
-    let designation = format!("M{diameter}x{pitch}");
-    if let Some(source) = definition.get("designation").and_then(Value::as_str) {
-        if source.chars().any(|c| {
-            !(c.is_ascii_digit()
-                || c.is_whitespace()
-                || matches!(c, 'M' | 'm' | 'x' | 'X' | '×' | '.'))
-        }) {
-            return Err("a cosmetic thread designation with additional class or hand controls is not supported yet".to_owned());
+    let designation = if let Some(source) = definition.get("designation").and_then(Value::as_str) {
+        let (major, lead, inch) = designation_size(source)?;
+        if !rounded_value_agrees(diameter, major)
+            || !(rounded_value_agrees(pitch, lead)
+                || (inch && rounded_value_agrees(pitch, 25.4 / lead)))
+        {
+            let pitch_units = if inch { "mm or TPI" } else { "mm" };
+            return Err(format!(
+                "its thread designation {source:?} specifies diameter {major} mm and pitch {lead} mm, but its numbers give diameter {diameter} mm and pitch {pitch} {pitch_units}; check the source thread table"
+            ));
         }
-        if super::hole::metric_thread(source, Some(pitch)) != Some((diameter, pitch)) {
-            return Err(
-                "its thread designation does not exactly match its diameter and pitch".to_owned(),
-            );
+        if inch || unified {
+            return Err(format!(
+                "its thread designation {source:?} agrees with its numbers, but a UNC/UNF cosmetic Thread feature is not supported yet by SolidCraft"
+            ));
         }
-    }
+        // Write the table's nominal size, never the rounded secondary numbers.
+        format!("M{major}x{lead}")
+    } else {
+        if unified {
+            return Err("a UNC/UNF cosmetic thread requires a designation and is not supported yet by SolidCraft".to_owned());
+        }
+        if pitch >= diameter {
+            return Err("cosmetic threads require a resolved diameter and pitch".to_owned());
+        }
+        format!("M{diameter}x{pitch}")
+    };
     let face = cylinder_point(
         ctx,
         definition.get("face").ok_or("its thread face is missing")?,
@@ -70,6 +86,69 @@ pub(super) fn map(
             "its source does not resolve whether the thread is modeled; kept as a cosmetic annotation, without reconstructing helical geometry");
     }
     Ok(out)
+}
+
+/// Compare at the precision actually stated by a secondary table value, with a small
+/// floating-point allowance for unit conversion. Integer values provide no evidence of
+/// decimal rounding, so they must match exactly (apart from arithmetic roundoff).
+fn rounded_value_agrees(stated: f64, nominal: f64) -> bool {
+    let roundoff = 8.0 * f64::EPSILON * stated.abs().max(nominal.abs());
+    if (stated - nominal).abs() <= roundoff {
+        return true;
+    }
+    let text = stated.to_string();
+    let Some((_, decimals)) = text.split_once('.') else {
+        return false;
+    };
+    if decimals.contains(['e', 'E']) {
+        return false;
+    }
+    let Ok(places) = i32::try_from(decimals.len()) else {
+        return false;
+    };
+    let scale = 10_f64.powi(places);
+    ((nominal * scale).round() / scale - stated).abs() <= roundoff
+}
+
+/// Read nominal dimensions from the designation, not from rounded table numbers.
+fn designation_size(source: &str) -> Result<(f64, f64, bool), String> {
+    if source.len() > 128 {
+        return Err("its cosmetic thread designation is too long".to_owned());
+    }
+    let upper = source.trim().to_ascii_uppercase();
+    if let Some(metric) = upper.strip_prefix('M') {
+        if metric
+            .chars()
+            .any(|c| !(c.is_ascii_digit() || c.is_whitespace() || matches!(c, 'X' | '×' | '.')))
+        {
+            return Err("a cosmetic thread designation with additional class or hand controls is not supported yet".to_owned());
+        }
+        return super::hole::metric_thread(&upper, None)
+            .filter(|(d, p)| d.is_finite() && p.is_finite() && *p > 0.0 && p < d)
+            .map(|(d, p)| (d, p, false))
+            .ok_or_else(|| {
+                "its cosmetic thread designation does not resolve a nominal size".to_owned()
+            });
+    }
+    let unified = upper
+        .strip_suffix(" UNC")
+        .or_else(|| upper.strip_suffix(" UNF"));
+    let parsed = unified.and_then(|size| {
+        let (diameter, tpi) = size.trim().split_once('-')?;
+        let inches = if let Some((n, d)) = diameter.split_once('/') {
+            let n = n.parse::<f64>().ok()?;
+            let d = d.parse::<f64>().ok()?;
+            (d > 0.0).then_some(n / d)?
+        } else {
+            diameter.parse::<f64>().ok()?
+        };
+        let tpi = tpi.parse::<f64>().ok()?;
+        let major = inches * 25.4;
+        let pitch = 25.4 / tpi;
+        (major.is_finite() && pitch.is_finite() && pitch > 0.0 && pitch < major)
+            .then_some((major, pitch, true))
+    });
+    parsed.ok_or_else(|| "its cosmetic thread designation is not supported yet".to_owned())
 }
 
 /// A cosmetic annotation does not change topology. Its final face can therefore supply a
@@ -224,6 +303,92 @@ mod tests {
     }
 
     #[test]
+    fn rounded_metric_table_values_keep_the_designations_nominal_size() {
+        let model = model();
+        for (designation, diameter, pitch, expected) in [
+            ("M3.175x0.5", 3.18, 0.5, "M3.175x0.5"),
+            (
+                "M3.5x0.6",
+                3.5000000000000004,
+                0.6000000000000001,
+                "M3.5x0.6",
+            ),
+            ("M3", 3.0, 0.5, "M3x0.5"),
+        ] {
+            let mut d = definition();
+            d["designation"] = json!(designation);
+            d["diameter"] = json!(diameter);
+            d["pitch"] = json!(pitch);
+            let out = map(
+                &json!({}),
+                &d,
+                &mut Context::testing(&model),
+                &mut Report::default(),
+            )
+            .unwrap();
+            assert_eq!(out["designation"], expected);
+        }
+    }
+
+    #[test]
+    fn unified_table_units_agree_but_the_target_thread_feature_is_not_supported() {
+        let model = model();
+        for (designation, diameter, pitch) in [
+            ("1/4-20 UNC", 6.35, 1.27),
+            ("1/4-28 UNF", 6.35, 0.907),
+            ("5/16-18 UNC", 7.94, 18.0),
+        ] {
+            let mut d = definition();
+            d["standard"] = json!("ANSI Unified Screw Threads");
+            d["designation"] = json!(designation);
+            d["diameter"] = json!(diameter);
+            d["pitch"] = json!(pitch);
+            let reason = map(
+                &json!({}),
+                &d,
+                &mut Context::testing(&model),
+                &mut Report::default(),
+            )
+            .unwrap_err();
+            assert!(reason.contains("agrees with its numbers"), "{reason}");
+            assert!(reason.contains("not supported yet by SolidCraft"));
+        }
+    }
+
+    #[test]
+    fn contradictory_table_values_name_both_sizes() {
+        let model = model();
+        for (designation, diameter, pitch) in [
+            ("M3x0.6", 3.0, 0.5),
+            ("M3x0.5", 4.0, 0.5),
+            ("M3", 3.0, 0.6),
+            ("1/4-20 UNC", 6.35, 1.5),
+        ] {
+            let mut d = definition();
+            d["designation"] = json!(designation);
+            d["diameter"] = json!(diameter);
+            d["pitch"] = json!(pitch);
+            let reason = map(
+                &json!({}),
+                &d,
+                &mut Context::testing(&model),
+                &mut Report::default(),
+            )
+            .unwrap_err();
+            assert!(reason.contains(designation), "{reason}");
+            assert!(reason.contains("specifies diameter"), "{reason}");
+            assert!(
+                reason.contains(&format!(
+                    "numbers give diameter {diameter} mm and pitch {pitch}"
+                )),
+                "{reason}"
+            );
+        }
+        assert!(!rounded_value_agrees(3.1, 3.0));
+        assert!(!rounded_value_agrees(4.0, 3.5));
+    }
+
+    #[test]
     fn unspecified_construction_keeps_an_annotation_and_reports_the_gap() {
         let model = model();
         let mut d = definition();
@@ -243,8 +408,12 @@ mod tests {
         for (field, value, reason) in [
             ("modeled", json!(true), "modeled thread"),
             ("pitch", Value::Null, "resolved diameter and pitch"),
-            ("designation", json!("M3x0.6"), "exactly match"),
-            ("standard", json!("UNC"), "ISO metric"),
+            (
+                "designation",
+                json!("M3x0.6"),
+                "specifies diameter 3 mm and pitch 0.6 mm",
+            ),
+            ("standard", json!("UNC"), "not supported yet by SolidCraft"),
             ("standard", json!("Trapezoidal metric"), "ISO metric"),
             ("designation", json!("M3x0.5-LH"), "class or hand"),
             ("extent", Value::Null, "extent is not resolved"),
