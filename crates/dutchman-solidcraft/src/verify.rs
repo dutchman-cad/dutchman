@@ -2318,6 +2318,11 @@ fn wait(
     }
 }
 
+/// A reusable answer must also pass the geometry reader's existing schema checks.
+pub(crate) fn reusable_evaluation(value: &Value) -> bool {
+    parse(value).is_ok_and(|eval| timeline_outcome(&eval).is_none())
+}
+
 /// The bodies and timeline errors and warnings in a SolidCraft `eval` result.
 fn parse(value: &Value) -> Result<Eval, String> {
     let bodies = value

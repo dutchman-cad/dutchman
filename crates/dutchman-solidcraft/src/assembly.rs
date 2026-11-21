@@ -733,7 +733,7 @@ fn prepare_history(
     if let Ok(history) = &mapping.result {
         if history.stop.is_some() {
             let original = writer.history_design(part, history, step, Live::Original, false)?;
-            writer.check_import(part, &original, &mut part_report, progress);
+            writer.check_import(part, &original, &mut part_report, progress, None);
         }
     }
     Ok(PreparedHistory {

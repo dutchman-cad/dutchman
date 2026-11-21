@@ -2011,6 +2011,7 @@ Linked components the file places but doesn't contain are reported as a Dropped 
 loss naming them, counted under `completeness.left_out`, and the design is `unverified`: its parts are
 not all there, whatever the replay says.
 The final opening check has its own time, at least 15 minutes, not what earlier checks left.
+Opening and geometry checks share a successful evaluation only for identical written bytes with the same SolidCraft evaluator; repaired designs are evaluated again.
 When SolidCraft doesn't finish it, verification is `unverified` with the reason "Not verified:
 SolidCraft didn't finish checking the written design in N min".
 An Info loss `geometry/sheet-edges-split` names a refused STEP import whose edge uses beyond

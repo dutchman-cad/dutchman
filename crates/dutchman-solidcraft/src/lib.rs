@@ -92,6 +92,8 @@ pub struct SolidCraftWriter {
     evaluator: Option<std::sync::Arc<dyn SolidCraftEvaluator>>,
     threads: usize,
     #[cfg(test)]
+    reuse_evaluations: bool,
+    #[cfg(test)]
     prepare_hook: Option<fn(&Model)>,
     #[cfg(test)]
     prepare_available: Option<u64>,
@@ -117,6 +119,8 @@ impl Default for SolidCraftWriter {
         SolidCraftWriter {
             evaluator: None,
             threads: 0,
+            #[cfg(test)]
+            reuse_evaluations: true,
             #[cfg(test)]
             prepare_hook: None,
             #[cfg(test)]
@@ -182,12 +186,32 @@ impl SolidCraftWriter {
         }
     }
 
+    /// Share only plain evaluation answers between checks of this written design.
+    /// The selected host (and therefore binary, version and evaluation options) is fixed
+    /// for this scope. Replay scripts and other proofs keep their own evaluator.
+    fn final_evaluator(&self) -> Option<std::sync::Arc<dyn SolidCraftEvaluator>> {
+        let evaluator = self.selected_evaluator(&self.verification).ok()?;
+        #[cfg(test)]
+        if !self.reuse_evaluations {
+            return Some(evaluator);
+        }
+        Some(std::sync::Arc::new(evaluator::Reusing::new(evaluator)))
+    }
+
     /// A design of sketches alone has no source bodies to compare with. Replaying it shows
     /// whether SolidCraft rebuilds every sketch: it must run without a feature error and,
     /// like its source, build no body.
-    fn check_sketches(&self, design: &[u8]) -> Check {
+    fn check_sketches(
+        &self,
+        design: &[u8],
+        evaluator: Option<&std::sync::Arc<dyn SolidCraftEvaluator>>,
+    ) -> Check {
         const NO_BODIES: &str = "the design contains sketches and no source bodies to compare";
-        let cli = match self.selected_evaluator(&self.verification) {
+        let cli = match evaluator
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| self.selected_evaluator(&self.verification))
+        {
             Ok(cli) => cli,
             Err(why) => return Check::NotApplicable(format!("{NO_BODIES}; not replayed: {why}")),
         };
@@ -1492,14 +1516,16 @@ impl SolidCraftWriter {
         design: &[u8],
         report: &mut Report,
         progress: Option<&dutchman_core::Progress<'_>>,
+        evaluator: Option<&std::sync::Arc<dyn SolidCraftEvaluator>>,
     ) {
         let expected = verify::Expected {
             solids: solid_bodies(model),
             sheets: sheet_bodies(model),
         };
-        self.check_geometry(design, expected, report, progress, &model.name);
+        self.check_geometry(design, expected, report, progress, &model.name, evaluator);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check_geometry(
         &self,
         design: &[u8],
@@ -1507,12 +1533,17 @@ impl SolidCraftWriter {
         report: &mut Report,
         progress: Option<&dutchman_core::Progress<'_>>,
         name: &str,
+        evaluator: Option<&std::sync::Arc<dyn SolidCraftEvaluator>>,
     ) {
         if let Some(why) = self.memory_refusal() {
             report.push(Severity::Info, HISTORY, why);
             return;
         }
-        let cli = match self.selected_evaluator(&self.verification) {
+        let cli = match evaluator
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| self.selected_evaluator(&self.verification))
+        {
             Ok(cli) => cli,
             // Report a CLI that was found but cannot check the design.
             Err(verify::NoCli::TooOld(why) | verify::NoCli::Blocked(why)) => {
@@ -1626,15 +1657,23 @@ impl Writer for SolidCraftWriter {
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
         }
+        let final_evaluator = self.final_evaluator();
         if let Some(assembly) = &model.assembly {
             let bytes = assembly::write(self, model, assembly, report, progress)?;
-            let bytes = self.check_opening(bytes, report)?;
+            let bytes = self.check_opening(bytes, report, final_evaluator.as_ref())?;
             // Each part is placed any number of times, so only SolidCraft's own warnings count.
             let expected = verify::Expected {
                 sheets: placed_sheets(assembly, 0),
                 ..verify::Expected::default()
             };
-            self.check_geometry(&bytes, expected, report, progress, &model.name);
+            self.check_geometry(
+                &bytes,
+                expected,
+                report,
+                progress,
+                &model.name,
+                final_evaluator.as_ref(),
+            );
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
@@ -1677,10 +1716,10 @@ impl Writer for SolidCraftWriter {
             )?;
             report.set_outcome(Outcome {
                 mode: Mode::History,
-                check: self.check_sketches(&bytes),
+                check: self.check_sketches(&bytes, final_evaluator.as_ref()),
                 features: mapping.features,
             });
-            let bytes = self.check_opening(bytes, report)?;
+            let bytes = self.check_opening(bytes, report, final_evaluator.as_ref())?;
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
@@ -1815,7 +1854,7 @@ impl Writer for SolidCraftWriter {
                     // appear in SolidCraft's numerical eval result.
                     let original =
                         self.history_design(model, history, &step, Live::Original, false)?;
-                    self.check_import(model, &original, report, progress);
+                    self.check_import(model, &original, report, progress, final_evaluator.as_ref());
                     (
                         written,
                         Outcome {
@@ -1936,11 +1975,11 @@ impl Writer for SolidCraftWriter {
             (bytes, outcome)
         };
         if outcome.mode == Mode::Import {
-            self.check_import(model, &bytes, report, progress);
+            self.check_import(model, &bytes, report, progress, final_evaluator.as_ref());
         }
         state_tolerances(report, &outcome);
         report.set_outcome(outcome);
-        let bytes = self.check_opening(bytes, report)?;
+        let bytes = self.check_opening(bytes, report, final_evaluator.as_ref())?;
         out.write_all(&bytes)
             .map_err(|err| Error::Encode(format!("cannot write the design: {err}")))
     }
@@ -2168,3 +2207,6 @@ mod mesh_only_tests {
         assert!(out.is_empty());
     }
 }
+
+#[cfg(test)]
+mod reuse_tests;

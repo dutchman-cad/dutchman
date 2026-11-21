@@ -13,11 +13,16 @@ impl SolidCraftWriter {
         &self,
         mut bytes: Vec<u8>,
         report: &mut Report,
+        evaluator: Option<&std::sync::Arc<dyn crate::SolidCraftEvaluator>>,
     ) -> Result<Vec<u8>, Error> {
         if self.memory_refusal().is_some() {
             return Ok(bytes);
         }
-        let Ok(cli) = self.selected_evaluator(&self.verification) else {
+        let Ok(cli) = evaluator
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| self.selected_evaluator(&self.verification))
+        else {
             return Ok(bytes);
         };
         let started = dutchman_core::time::Instant::now();
@@ -499,7 +504,7 @@ mod tests {
         let bytes = container.finish(&doc).unwrap();
         let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RepairableSheet));
         let mut report = Report::default();
-        let bytes = writer.check_opening(bytes, &mut report).unwrap();
+        let bytes = writer.check_opening(bytes, &mut report, None).unwrap();
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
         let repaired: Value =
             serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
@@ -535,7 +540,7 @@ mod tests {
         ], "components": [{"id": 10, "parent": if source_component == 30 { 0 } else { 20 }, "name": "Editable history (partial)", "history_hidden": true}]})).unwrap();
             let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RefusedImport));
             let mut report = Report::default();
-            let bytes = writer.check_opening(bytes, &mut report).unwrap();
+            let bytes = writer.check_opening(bytes, &mut report, None).unwrap();
             let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
             let doc: Value =
                 serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
@@ -562,7 +567,7 @@ mod tests {
             .unwrap();
         let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RefusedImport));
         let mut report = Report::default();
-        let bytes = writer.check_opening(bytes, &mut report).unwrap();
+        let bytes = writer.check_opening(bytes, &mut report, None).unwrap();
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
         let doc: Value =
             serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
@@ -586,7 +591,7 @@ mod tests {
             .unwrap();
         let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RefusedImport));
         let error = writer
-            .check_opening(bytes, &mut Report::default())
+            .check_opening(bytes, &mut Report::default(), None)
             .unwrap_err();
         assert!(error.to_string().contains("no editable history remains"));
     }
@@ -608,9 +613,11 @@ mod tests {
             .unwrap();
         let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RefusedImport));
         let mut report = Report::default();
-        let bytes = writer.check_opening(bytes, &mut report).unwrap();
+        let bytes = writer.check_opening(bytes, &mut report, None).unwrap();
         assert_eq!(
-            writer.check_opening(bytes.clone(), &mut report).unwrap(),
+            writer
+                .check_opening(bytes.clone(), &mut report, None)
+                .unwrap(),
             bytes
         );
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
