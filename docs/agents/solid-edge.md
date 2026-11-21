@@ -6,6 +6,9 @@ pull-request rules. This page adds what is specific to Solid Edge.
 
 ## Where the work splits
 
+First, comment `/claim` on the issue. Comment `/unclaim` to release it; see the
+[three-day activity rule and exceptions](../claiming.md).
+
 cadmpeg reads the file; Dutchman maps what cadmpeg read onto SolidCraft. A Dutchman issue starts
 only when the cadmpeg issue it names under **Depends on** has landed **and** Dutchman's cadmpeg pin
 includes it (the `rev` of the `cadmpeg-*` crates in the workspace `Cargo.toml`). Until then, keep
@@ -40,3 +43,11 @@ the pull request a draft. Never read Solid Edge bytes in Dutchman: that belongs 
 8. **Open the pull request.** Docs for the change (`docs/formats.md` and the Solid Edge page), a
    `changelog.d/` fragment, "Part of #840" and "Closes #N" in the description. CI runs the full
    matrix, including the SolidCraft round trips.
+
+## Paste into your agent
+
+```text
+Work on <URL>
+Comment /claim on the issue first
+Read AGENTS.md and docs/agents/solid-edge.md, then follow the issue brief.
+```

@@ -6,7 +6,12 @@ synthetic test files and pull requests are all welcome.
 
 ## Where to start
 
-Pick an unchecked item on a master issue, comment that you're on it, and open a pull request.
+0. Comment `/claim` on the issue before starting; comment `/unclaim` to give it up.
+   A claim lapses after 3 days without activity from you, unless your ready pull request
+   is waiting on a maintainer or on an open dependency. You get one warning a day before.
+   See [issue claims](docs/claiming.md) for the activity and dependency rules.
+
+Pick an unchecked item on a master issue and open a pull request.
 [Solid Edge support](https://github.com/dutchman-cad/dutchman/issues/840) is the current one; every
 issue labelled [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 or [good first issue](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)

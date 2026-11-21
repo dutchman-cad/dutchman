@@ -48,6 +48,8 @@ release's `solidcraft-cli`:
 
 ## Pull requests
 
+Comment `/claim` before starting and `/unclaim` to release; claims lapse after 3 inactive days unless waiting on a maintainer or an open dependency ([rules](docs/claiming.md)).
+
 1. Branch from `main`; one topic per pull request, with tests for what changed.
 2. Update the docs the change affects: [docs/guide.md](docs/guide.md),
    [docs/mcp.md](docs/mcp.md), [docs/json.md](docs/json.md), the format pages, and

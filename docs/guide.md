@@ -1199,3 +1199,10 @@ sketch contains only points or reference axes is refused with "its sketch featur
 resolved non-construction profile curves; this is not supported yet". The decoder must
 supply the actual profile curves. An empty profile table can still use the complete bound
 sketch when its non-construction curves are decoded; no loop or contour is guessed.
+
+## Claim work before starting
+
+Comment `/claim` on an issue before working on it, or `/unclaim` to release it.
+Claims lapse after 3 days without activity from you, with one warning after 2 days.
+A ready PR waiting on a maintainer or an open dependency keeps the claim active.
+See [claiming an issue](claiming.md) for the activity and dependency rules.
