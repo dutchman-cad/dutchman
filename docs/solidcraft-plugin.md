@@ -16,15 +16,16 @@ the input folder it reads assembly parts from.
    [latest release](https://github.com/dutchman-cad/dutchman/releases/latest). The release also
    lists `dutchman-plugin-X.Y.Z.zip.sha256`; `dutchman-plugin.zip` is the same file under a name
    that does not change.
-2. In SolidCraft, open **Preferences > Plugins** and choose **Install plugin...**, then pick the
-   zip.
+2. In SolidCraft, open **Preferences > Plugins**, set **Max plugin fuel** to at least
+   **670960576380**, and apply it. Choose **Install plugin...**, then pick the zip.
 3. Read the confirmation screen: it shows the plugin's name, version, and what it asks for (see
    below):
    - **2048 MiB of memory**, above SolidCraft's usual 128 MiB plugin limit;
+   - **670,960,576,380 fuel**, four times the measured cost of a 41-part public robot arm;
    - **read access to the input folder**, the folder of each file you open, for an assembly's
      parts.
 
-   **Install** approves both; **Cancel** changes nothing.
+   **Install** approves the package's memory and folder access; **Cancel** installs nothing.
 
 Installing never runs the plugin. After that, **File > Open** offers the Dutchman file types, and
 Dutchman is listed in the Plugins menu, where its dialog shows the options before it asks for the
@@ -47,6 +48,7 @@ not checked.
 |---|---|
 | Read access to the folder of the file you open | An assembly names its part files; the plugin reads them from that folder. Without it, only the file you open is read. |
 | 2048 MiB of memory | Real CAD files need it; see below. |
+| 670,960,576,380 fuel | Larger assemblies need more work than SolidCraft's default fuel ceiling permits. |
 
 It has no network access, no clock or settings access, and no permission to write files. It
 cannot change the design you have open: it only produces a new one.
@@ -62,9 +64,11 @@ is a limit for one conversion, not memory the plugin holds on to between files.
 Measured: the public test files (5 to 15 KB each) need 3 to 15 MiB inside the plugin. Real
 designs are far larger, and memory grows with the design's size and its number of features, not
 the file size alone. A 68 MB Fusion archive with a long history needed about 3.8 GiB on the command
-line, which is more than the plugin can have. That file used about 57 times its size, so
-files up to roughly 30 MB should fit in 2048 MiB. A bigger one stops with a memory-limit error, and
-the `dutchman` command line, which has no such limit, converts it instead.
+line, which is more than the plugin can have. File size alone cannot predict whether a
+design fits: the plugin checks expanded archive sizes and estimated work before decoding.
+Designs above its conservative conversion budget are directed to the Dutchman app, which
+can save a `.sc` to open in SolidCraft. See [the preflight limits](plugin.md) for the formula
+and its calibration.
 
 ## Options
 
@@ -79,6 +83,10 @@ The dialog shows three options:
 ## Limits
 
 - SolidCraft 0.44 or newer, desktop only for now.
+- SolidCraft 0.45 defaults to a ceiling of 100,000,000,000 fuel. Larger requests
+  require raising **Max plugin fuel** in **Preferences > Plugins** before running
+  the plugin. The host accepts positive integer fuel limits up to `u64::MAX`;
+  increasing that ceiling does not change the plugin's own declared budget.
 - One file per conversion, at most 1 GiB read and 256 MiB written, as SolidCraft sets.
 - A file that SolidCraft's own reader handles (for example FreeCAD) still opens with SolidCraft's
   reader on File > Open when both are installed; pick Dutchman's entry from the Plugins menu to

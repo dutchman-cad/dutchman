@@ -61,7 +61,7 @@
       }
     ],
     "limits": {
-      "fuel": 100000000000,
+      "fuel": 670960576380,
       "memory_mib": 2048,
       "deadline_ms": 300000,
       "stack_kib": 16384

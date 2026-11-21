@@ -5,17 +5,22 @@ use dutchman_core::{
 };
 use std::io::{Read, Seek};
 
-/// The plugin's fuel, not its memory, is what a large design runs out of. Measured in
-/// SolidCraft 0.45 with the manifest's fuel: a design estimated at 464 MB peak opens, and
-/// one estimated at 600 MB stops for fuel. The estimate stands in for the work involved.
+/// Four times the public 41-part arm's measured 167,740,144,095 guest fuel,
+/// including real host evaluation, before this preflight update.
+/// SolidCraft 0.45 accepts up to u64::MAX, but its user ceiling must also be raised.
+pub(crate) const PLUGIN_FUEL: u64 = 670_960_576_380;
+
+/// Retain the existing conservative memory/time gate alongside the explicit fuel gate.
 pub(crate) const PLUGIN_BUDGET: Budget = Budget {
     peak_bytes: 520_000_000,
     seconds: 300,
+    fuel: PLUGIN_FUEL,
 };
 #[derive(Clone, Copy)]
 pub(crate) struct Budget {
     pub peak_bytes: u64,
     pub seconds: u64,
+    pub fuel: u64,
 }
 pub(crate) const DOWNLOAD: &str = "https://github.com/dutchman-cad/dutchman/releases/latest";
 
@@ -144,13 +149,45 @@ fn check_with<R: Read + Seek>(
 
 fn check_sizes(sizes: Sizes, parts: u64, history: bool, budget: Budget) -> Result<(), Error> {
     let choices = Choices { history };
-    if let Some(estimate) = sizes.calculate(&choices) {
-        if estimate.peak_bytes > budget.peak_bytes || estimate.seconds > budget.seconds {
-            return Err(Error::MemoryBudget(format!(
+    if estimated_fuel(sizes, parts).is_some_and(|fuel| fuel > budget.fuel)
+        || sizes.calculate(&choices).is_some_and(|estimate| {
+            estimate.peak_bytes > budget.peak_bytes || estimate.seconds > budget.seconds
+        })
+    {
+        return Err(Error::MemoryBudget(format!(
                 "This design is too large to open inside SolidCraft (about {parts} {}). Open it in the Dutchman app, which converts it to a .sc you can open here. Download the app: {DOWNLOAD}", if parts == 1 { "part" } else { "parts" })));
-        }
     }
     Ok(())
+}
+
+/// Fusion work envelope: 3 * (500M + 16K * expanded bytes + 100M * outer
+/// entries + 500M * indexed documents). Bytes are max(outer expanded bytes,
+/// summed inner expanded bytes); documents are not placed occurrences. No feature
+/// or B-rep payload is decoded. Saturation refuses counts whose cost overflows.
+///
+/// Calibrated at f174dac3 before this update in Wasmtime 50.0.2, history enabled and real CLI
+/// evaluation: arm (11,718,465 bytes / 4 entries / 2 documents),
+/// 167,740,144,095 fuel; MIC6 bed (261,515 / 17 / 1), 4,710,741,081;
+/// Mini inlet plate (260,519 / 17 / 1), 3,350,956,153; switch plate
+/// (198,568 / 17 / 1), 2,412,586,136. The unmultiplied model bounds all four;
+/// 3x reserves room for runtime differences and unseen feature complexity. The
+/// manifest requests 4x the measured arm. RailCore Mini (110,045,607 / 45 / 43)
+/// and 300ZL (74,341,274 / 71 / 69) exceed this budget as well as the old gate.
+/// Other formats retain their existing memory/time checks until measured.
+fn estimated_fuel(sizes: Sizes, parts: u64) -> Option<u64> {
+    if !matches!(
+        sizes.format,
+        Format::FusionArchive | Format::FusionMultiDocument
+    ) {
+        return None;
+    }
+    Some(
+        500_000_000u64
+            .saturating_add(sizes.bytes.saturating_mul(16_000))
+            .saturating_add(sizes.members.saturating_mul(100_000_000))
+            .saturating_add(parts.saturating_mul(500_000_000))
+            .saturating_mul(3),
+    )
 }
 
 /// A seekable view of a stored ZIP member, restricted to that member's bytes.
@@ -296,6 +333,106 @@ fn archive_directory<R: Read + std::io::Seek>(file: &mut R) -> Option<(u64, u64,
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manifest_fuel_matches_estimate_budget() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../plugin.json")).unwrap();
+        assert_eq!(
+            manifest["runtime"]["limits"]["fuel"].as_u64(),
+            Some(PLUGIN_BUDGET.fuel)
+        );
+        assert_eq!(PLUGIN_FUEL, 4 * 167_740_144_095);
+    }
+
+    #[test]
+    fn fuel_envelope_accepts_calibration_metadata() {
+        // Numeric metadata only: no third-party design is a test fixture.
+        for (format, bytes, members, parts, measured) in [
+            (
+                Format::FusionMultiDocument,
+                11_718_465,
+                4,
+                2,
+                167_740_144_095,
+            ),
+            (Format::FusionArchive, 261_515, 17, 1, 4_710_741_081),
+            (Format::FusionArchive, 260_519, 17, 1, 3_350_956_153),
+            (Format::FusionArchive, 198_568, 17, 1, 2_412_586_136),
+        ] {
+            let sizes = Sizes {
+                format,
+                bytes,
+                members,
+            };
+            assert!(estimated_fuel(sizes, parts).unwrap() >= 3 * measured);
+            for history in [false, true] {
+                assert!(check_sizes(sizes, parts, history, PLUGIN_BUDGET).is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn fuel_budget_boundary_is_inclusive_independently_of_memory_and_time() {
+        let sizes = Sizes {
+            format: Format::FusionMultiDocument,
+            bytes: 11_718_465,
+            members: 4,
+        };
+        let budget = Budget {
+            peak_bytes: u64::MAX,
+            seconds: u64::MAX,
+            fuel: estimated_fuel(sizes, 2).unwrap(),
+        };
+        assert!(check_sizes(sizes, 2, true, budget).is_ok());
+        let error = check_sizes(
+            sizes,
+            2,
+            true,
+            Budget {
+                fuel: budget.fuel - 1,
+                ..budget
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("Open it in the Dutchman app"));
+    }
+
+    #[test]
+    fn fuel_gate_bounds_bytes_entries_documents_and_overflow() {
+        let budget = Budget {
+            peak_bytes: u64::MAX,
+            seconds: u64::MAX,
+            ..PLUGIN_BUDGET
+        };
+        for (bytes, members, parts) in [
+            (110_045_607, 45, 43), // RailCore Mini metadata.
+            (74_341_274, 71, 69),  // RailCore 300ZL metadata.
+            (24_000_000, 4, 2),    // Same document count as the arm, more work.
+            (1, 10_000, 1),
+            (1, 1, 1_000),
+            (u64::MAX, u64::MAX, u64::MAX),
+        ] {
+            let sizes = Sizes {
+                format: Format::FusionMultiDocument,
+                bytes,
+                members,
+            };
+            assert!(check_sizes(sizes, parts, true, budget).is_err());
+        }
+        assert_eq!(
+            estimated_fuel(
+                Sizes {
+                    format: Format::FusionArchive,
+                    bytes: u64::MAX,
+                    members: u64::MAX,
+                },
+                u64::MAX
+            ),
+            Some(u64::MAX)
+        );
+    }
+
     #[test]
     fn memory_and_time_budget_boundaries_are_inclusive() {
         let format = Format::InventorPart;
@@ -310,6 +447,7 @@ mod tests {
         let budget = Budget {
             peak_bytes: estimate.peak_bytes,
             seconds: estimate.seconds,
+            fuel: u64::MAX,
         };
         assert!(check_with(format, size, std::io::Cursor::new([]), true, budget).is_ok());
         assert!(check_with(
@@ -358,6 +496,7 @@ mod tests {
             Budget {
                 peak_bytes: u64::MAX,
                 seconds: u64::MAX,
+                fuel: u64::MAX,
             },
         )
         .unwrap_err();
