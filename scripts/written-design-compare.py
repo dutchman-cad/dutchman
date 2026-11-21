@@ -164,17 +164,18 @@ def combine(written, source, output, prefix):
         wrapper, occurrence = offset, offset + 1
         def shifted(value):
             return offset + 2 + value if value else wrapper
-        wd['components'].append({'id': wrapper, 'name': prefix + 'source', 'parent': 0})
-        wd['occurrences'].append({'id': occurrence, 'component': wrapper, 'parent': 0,
+        # SolidCraft omits these arrays when a saved design has only root bodies.
+        wd.setdefault('components', []).append({'id': wrapper, 'name': prefix + 'source', 'parent': 0})
+        wd.setdefault('occurrences', []).append({'id': occurrence, 'component': wrapper, 'parent': 0,
                                   'name': prefix + 'source:1', 'grounded': True,
                                   'transform': [[1, 0, 0, 0], [0, 1, 0, 0],
                                                 [0, 0, 1, 0], [0, 0, 0, 1]]})
-        for original in sd['components']:
+        for original in sd.get('components', []):
             component = copy.deepcopy(original)
             component['id'] = shifted(component['id'])
             component['parent'] = shifted(component.get('parent', 0))
             wd['components'].append(component)
-        for original in sd['occurrences']:
+        for original in sd.get('occurrences', []):
             item = copy.deepcopy(original)
             for key in ('id', 'component', 'parent'):
                 item[key] = shifted(item.get(key, 0))

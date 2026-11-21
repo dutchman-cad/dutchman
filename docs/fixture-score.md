@@ -18,6 +18,10 @@ history sweep. An HTTP error, byte-count mismatch, or SHA-256 mismatch produces
 a result with `exit: null` and a `skip_reason`; it does not stop other files.
 Conversion timeouts use exit 124 and a `failure_reason`.
 
+The release gate's `scripts/written-design-compare.py` comparison is covered by
+`scripts/tests/test_written_design_compare.py`, including a SolidCraft CLI test
+that passes an identical saved box and rejects a body that is 55 mm too short.
+
 The manifest is a JSON list, or an object with a `files` list. Each row requires
 `file` (a unique relative file key), `url` (HTTPS), `sha256`, `bytes`, and
 `consent` (`cc0` or `cc-by`). Score metadata uses `app`, `step`, `recipe`,

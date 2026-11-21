@@ -544,6 +544,13 @@ jobs:
         run: |
           export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
           cargo test --locked -p dutchman-solidcraft --test history --test assembly --test topological_edges
+      - name: Test written-design comparison in SolidCraft
+        if: matrix.solidcraft.version == 'newest'
+        env:
+          BODY_COMPARE_NO_SCOPE: "1"
+        run: |
+          export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
+          python3 -m unittest discover -s scripts/tests -p test_written_design_compare.py -v
 
   # Share the Linux tools; queue groups run only the small placement smoke checks.
   placements:
