@@ -24,8 +24,8 @@ required=(
   "dutchman-$version-aarch64-unknown-linux-gnu.tar.gz"
   "dutchman-$version-x86_64-pc-windows-msvc.zip"
   "dutchman-$version-macos"
-  "dutchman-$version-plugin"
 )
+# The SolidCraft plugin zip is built by release.yml itself, from the tag's commit.
 
 # Every candidate run for the commit, newest first: "<id> <conclusion> <tag>".
 runs=$(gh api --paginate "repos/$repo/actions/workflows/$workflow/runs?head_sha=$sha&event=push&per_page=100" \

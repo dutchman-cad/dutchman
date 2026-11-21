@@ -101,8 +101,16 @@ the chosen candidate's commit, draft in about five minutes, publish, fold the CH
 
 If a release cannot be drafted because its candidate files are gone (they expire after 30
 days) or the candidate run cannot be used, tag a new candidate on the commit, wait for it to
-pass, then run `gh workflow run release.yml -f tag=vX.Y.Z`. The release workflow never builds:
-a release always ships a candidate's tested files.
+pass, then run `gh workflow run release.yml -f tag=vX.Y.Z`. The release workflow builds only
+the SolidCraft plugin, from the tag's commit; every other file is a candidate's tested build.
+
+A tag push runs `release.yml` as it was at the tagged commit. When the workflow has been fixed
+on main since the candidate was tagged, start the release from main instead, so the fix applies
+while every build still comes from the tag's commit:
+`gh workflow run release.yml --ref main -f tag=vX.Y.Z`. A dry run
+(`v0.0.0-dryrun*`, dispatched the same way) does everything except create the release; when no
+`v0.0.0-rc.dryrun*` candidate exists for the commit, it reuses that commit's real candidate
+builds, since it publishes nothing.
 
 ### Release candidates
 
@@ -135,12 +143,12 @@ tool, change the version and both checksums for each architecture together. The 
 (and their checksums) and adds version-less copies like the other assets. Changes under
 `packaging/linux/` receive the full build in the merge queue or a manual full run.
 
-The `plugin` job builds the SolidCraft plugin once, on Linux: `dutchman-plugin` for
-`wasm32-unknown-unknown` with the size settings in `.cargo/config.toml`, wrapped by
-`scripts/package-plugin.sh` into `dutchman-plugin-X.Y.Z.zip` (the manifest stamped with the
-version, and the component) with its `.sha256`. It then converts the public fixtures with the
-packaged component in Wasmtime and uploads the zip as the `dutchman-X.Y.Z-plugin` artifact.
-`release.yml` requires it and adds the version-less `dutchman-plugin.zip`. A change to
+The SolidCraft plugin is built by `release.yml`'s `plugin` job, from the release tag's
+commit: `dutchman-plugin` for `wasm32-unknown-unknown` with the size settings in
+`.cargo/config.toml`, wrapped by `scripts/package-plugin.sh` into `dutchman-plugin-X.Y.Z.zip`
+(the manifest stamped with the version, and the component) with its `.sha256`. The release
+checks that checksum, attaches the zip and adds the version-less `dutchman-plugin.zip`. The
+candidate builds (`release-build.yml`) don't build the plugin yet. A change to
 `crates/dutchman-plugin/plugin.json` or `.cargo/config.toml` starts the full build on a pull
 request. See [the plugin notes](plugin.md).
 
