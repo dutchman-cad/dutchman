@@ -82,7 +82,7 @@ class CiResultTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_queue_skips_platform_and_image_checks(self):
-        for job in ("test-arm", "test-macos", "wasm", "msrv", "solidcraft-roundtrip", "docker"):
+        for job in ("test-arm", "test-macos", "wasm", "msrv", "solidcraft-roundtrip"):
             with self.subTest(job=job):
                 result = self.check_results("merge_group", results={job: "success"})
                 self.assertNotEqual(result.returncode, 0)
@@ -97,10 +97,18 @@ class CiResultTests(unittest.TestCase):
 
     def test_main_and_tags_require_full_matrix(self):
         for event in ("push", "schedule", "workflow_dispatch"):
-            for job in ("test-arm", "test-macos", "wasm", "msrv", "solidcraft-roundtrip", "docker", "placements"):
+            for job in ("test-arm", "test-macos", "wasm", "msrv", "solidcraft-roundtrip", "placements"):
                 with self.subTest(event=event, job=job):
                     result = self.check_results(event, failed=job)
                     self.assertNotEqual(result.returncode, 0)
+
+    def test_image_build_is_reported_not_required(self):
+        # release-image.yml checks the published image before pushing it.
+        for event in ("push", "schedule", "workflow_dispatch"):
+            for outcome in ("failure", "cancelled", "skipped"):
+                with self.subTest(event=event, outcome=outcome):
+                    result = self.check_results(event, results={"docker": outcome})
+                    self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_merge_group_does_not_schedule_moved_jobs(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
