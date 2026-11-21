@@ -233,15 +233,20 @@ workflow continues to build the source `Dockerfile`, including its Rust 1.88 bui
 
 Merge groups also build the source `Dockerfile` when either Docker recipe, `.dockerignore`,
 Rust source/manifests, runtime files, or another potential build input changes. Unknown
-paths or an unavailable diff base require the source build. The reused-tools image and
-its smoke tests remain required; docs/support-only changes retain the fast image path.
+paths or an unavailable diff base require the source build. A pushed tag has no previous
+commit, so it is compared with the nearest earlier release tag and with where it left main: when
+either shows only docs, Rust sources or CI configuration changed, the tag takes main's fast path.
+Docs/support-only changes retain the fast image path. CI's Docker job reports its result but
+doesn't fail CI or hold a release: before a release image is pushed, the release workflow builds
+it from the published archives and checks that it converts a design and starts its MCP and web
+servers, and pushes nothing if any check fails.
 
-The source image’s Rust build stops after 30 minutes, including dependency downloads. Cargo uses a
+The source image’s Rust build stops after 90 minutes, including dependency downloads. Cargo uses a
 60-second HTTP timeout and up to three network retries. Optional SolidCraft downloads use
 a 15-second connection timeout, a five-minute transfer timeout, and up to three retries
 within a ten-minute retry window.
 
-In CI, the source image step has a 45-minute deadline. Layer cache transfers have a
+In CI, the source image step has a 100-minute deadline. Layer cache transfers have a
 five-minute deadline and export only final-image layers. Each main commit runs independently,
 so a stuck run does not hold up checks for newer commits. Pull requests and merge groups
 keep their existing cancellation behavior.

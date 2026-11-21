@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
     CARGO_HTTP_TIMEOUT=60 CARGO_NET_RETRY=3 \
-    timeout --kill-after=30s 30m cargo build --release --locked -p dutchman -p dutchman-web --bins \
+    timeout --kill-after=30s 90m cargo build --release --locked -p dutchman -p dutchman-web --bins \
  && install -m 0755 target/release/dutchman target/release/dutchman-mcp target/release/dutchman-web /usr/local/bin/
 
 FROM debian:bookworm-slim

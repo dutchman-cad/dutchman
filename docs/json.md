@@ -192,7 +192,10 @@ Sketch losses describe unresolved distance operands and ambiguous curve-only coi
 specifically, including dimension values that match neither the line nor its finite endpoint. Cosmetic thread blockers distinguish missing diameter/pitch from historical
 faces without input surface geometry. Unspecified modeled construction, when an annotation
 can be placed, adds a Degraded loss explaining that only the cosmetic annotation is kept.
-These use the existing loss fields; no report schema or field changes.
+Cosmetic thread contradictions name the designation’s nominal dimensions and secondary numeric
+values. Decimal rounding and floating-point conversion noise are accepted for metric labels.
+A matching UNC/UNF designation reports the separate SolidCraft cosmetic Thread limitation
+instead of a numeric conflict. These use the existing loss fields; no report schema or field changes.
 
 When bodies belonging only to inactive configurations are left out, `losses` includes an
 Info entry with code `dutchman/configuration.inactive-bodies-left-out`, subject
@@ -670,6 +673,10 @@ Counterbores, countersinks, and chamfered entries with drill points map for Soli
 and newer; for an older target they report
 `SolidCraft holes take a drill point only on a plain drilled hole`: SolidCraft 0.21.0 ignores
 `tip_angle` on entry recesses. This uses the existing blocked feature and reason fields.
+
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
 
 Sheet-metal edge flanges with proven input-edge picks and supported dimensions report
 `mapped`. Attached rectangular plates and their paired bends can also report `mapped` on an
@@ -2003,6 +2010,9 @@ cannot be safely repaired stops conversion before the output is written. An eval
 nonzero exit without named failed features is unavailable verification: output is still written
 with `verification.status: "unverified"` and the reason. Disabled verification remains
 unverified.
+Linked components the file places but doesn't contain are reported as a Dropped `linked components`
+loss naming them, counted under `completeness.left_out`, and the design is `unverified`: its parts are
+not all there, whatever the replay says.
 The final opening check has its own time, at least 15 minutes, not what earlier checks left.
 When SolidCraft doesn't finish it, verification is `unverified` with the reason "Not verified:
 SolidCraft didn't finish checking the written design in N min".
@@ -2014,3 +2024,9 @@ Only an import that still fails after available repairs may be reported as MISSI
 When no final source shape exists, `history/rebuild-failed` also describes retaining the
 editable prefix alone. Its reason names the failed feature, the omitted dependent features,
 and the rebuild error. The remaining design is checked again before writing.
+
+Variable-radius fillets retain `variable fillets need a proven chain direction: their
+radius stations are not bound to a source start vertex, which is not supported yet` until
+the decoded selection binds their radius positions to an ordered, directed input chain.
+Carrier sample order alone does not supply that binding. The refusal retains the editable
+prefix and original final geometry; no report fields or schemas change.
