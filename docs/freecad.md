@@ -54,9 +54,11 @@ as well as the visible final shape.
   replayed and checked in SolidCraft like a Fusion history. One-sided partial solid
   revolutions keep their sweep side, including `Reversed`, which cadmpeg folds into the
   axis direction, when the selected profile bounds prove one side of the axis (see
-  [revolve coverage](guide.md)). Thicknesses (shells), counterbores or
-  countersinks with a drill point, and unproven revolution sweep sides stop the history;
-  the original geometry stays visible, and the report names the first blocker.
+  [revolve coverage](guide.md)). Through-all holes omit their inactive drill point on every
+  supported target. Blind and to-face entry recesses keep their point on SolidCraft 0.22.1
+  and newer. Thicknesses (shells), bounded entry recesses with drill points on older
+  targets, and unproven revolution sweep sides stop the history; the original geometry
+  stays visible, and the report names the first blocker.
 
 Hidden container visibility takes precedence over a child's own shown flag, including
 nested Parts, groups, and PartDesign Bodies. A body hidden only by its source container can still supply a separately shown occurrence.

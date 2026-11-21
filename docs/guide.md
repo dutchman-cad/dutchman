@@ -89,6 +89,11 @@ Simplify the sketch or split the bundle when the recovery budget is exhausted;
 the final STEP shape remains available. Native symmetric distances and parameter
 fallback defaults stay unchanged.
 
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry.
+
 Holes ending at a proven earlier planar cap can retain both an entry countersink and
 a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
 the tip extends beyond it. An unproven target still blocks body-building history.

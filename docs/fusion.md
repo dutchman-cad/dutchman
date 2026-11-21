@@ -153,6 +153,11 @@ User-hidden bodies that still belong to a component are kept, with an Info note.
 occurrences remain hidden; the current writer shows a part with both shown and hidden bodies
 whole, so its hidden members can appear visible in SolidCraft.
 
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry.
+
 Holes ending at a proven earlier planar extrusion or box cap retain their drill point,
 including countersunk entries. Fusion measures Extents To to the cylindrical shoulder;
 the conical point extends beyond the selected face. Dutchman resolves that distance

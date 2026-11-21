@@ -3333,6 +3333,165 @@ fn counterbores_and_countersinks_keep_their_entry_dimensions() {
     }
 }
 
+fn pointed_hole_forms() -> Vec<(Value, &'static str, f64)> {
+    let pi = std::f64::consts::PI;
+    vec![
+        (json!({"kind": "simple"}), "simple", 0.0),
+        (
+            json!({"kind": "simple_drilled", "drill_point_angle": 118_f64.to_radians()}),
+            "simple",
+            0.0,
+        ),
+        (
+            json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
+            "counterbore",
+            24.0 * pi,
+        ),
+        (
+            json!({"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0,
+            "drill_point_angle": 118_f64.to_radians()}),
+            "counterbore",
+            24.0 * pi,
+        ),
+        // A 90 degree entry is a 2 mm deep frustum, less the bore it overlaps.
+        (
+            json!({"kind": "countersink", "diameter": 8.0, "angle": pi / 2.0}),
+            "countersink",
+            32.0 * pi / 3.0,
+        ),
+        (
+            json!({"kind": "chamfer", "diameter": 8.0, "angle": pi / 2.0}),
+            "countersink",
+            32.0 * pi / 3.0,
+        ),
+    ]
+}
+
+#[test]
+fn through_all_holes_drop_drill_points_on_every_target() {
+    for version in [
+        "0.18.2".parse().unwrap(),
+        "0.22.0".parse().unwrap(),
+        "0.22.1".parse().unwrap(),
+        dutchman_solidcraft::SolidCraftVersion::default(),
+    ] {
+        for (form, kind, _) in pointed_hole_forms() {
+            // Readers may carry the point on the form, on the bottom, or both.
+            for separate_bottom in [false, true] {
+                if !separate_bottom
+                    && !matches!(
+                        form["kind"].as_str(),
+                        Some("simple_drilled" | "counterbore_drilled")
+                    )
+                {
+                    continue;
+                }
+                let model = holed_cube(4.0, |hole| {
+                    hole["shape"]["construction"]["value"]["kind"] = form.clone();
+                    if separate_bottom {
+                        hole["bottom"] = json!({"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": true});
+                    }
+                });
+                let (document, report) = convert(
+                    &model,
+                    &SolidCraftWriter::new()
+                        .verification(Verification::Off)
+                        .target_version(Some(version)),
+                );
+                assert!(
+                    history_line(&report).starts_with("4 of 4 features rebuilt"),
+                    "{report:?}"
+                );
+                let hole = &document["features"][3];
+                assert_eq!(hole["hole"]["type"], kind);
+                assert!(hole["hole"].get("tip_angle").is_none(), "{hole}");
+                assert!(hole.get("depth").is_none());
+                assert!(hole.get("to").is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn bounded_entry_recess_points_follow_the_existing_version_gate() {
+    for version in ["0.18.2", "0.22.0", "0.22.1"] {
+        for (form, kind, _) in pointed_hole_forms().into_iter().skip(2) {
+            for to_face in [false, true] {
+                let model = holed_cube(4.0, |hole| {
+                    hole["shape"]["construction"]["value"]["kind"] = form.clone();
+                    if to_face {
+                        to_face_hole(hole);
+                    } else {
+                        hole["extent"] = json!({"kind": "blind", "length": 6.0});
+                    }
+                    hole["bottom"] = json!({"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": false});
+                });
+                let (document, report) = convert(
+                    &model,
+                    &SolidCraftWriter::new()
+                        .verification(Verification::Off)
+                        .target_version(Some(version.parse().unwrap())),
+                );
+                if version == "0.22.1" {
+                    assert!(
+                        history_line(&report).starts_with("4 of 4 features rebuilt"),
+                        "{report:?}"
+                    );
+                    assert_eq!(document["features"][3]["hole"]["type"], kind);
+                    assert_eq!(
+                        document["features"][3]["hole"]["tip_angle"],
+                        "118.00000000000001"
+                    );
+                    assert_eq!(
+                        document["features"][3]["depth"],
+                        if to_face { "10 mm" } else { "6 mm" }
+                    );
+                } else {
+                    assert!(
+                        history_line(&report).contains(
+                            "SolidCraft holes take a drill point only on a plain drilled hole"
+                        ),
+                        "{report:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn solidcraft_replays_through_all_holes_without_drill_points() {
+    let Some(cli) = solidcraft() else { return };
+    let detected =
+        dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()));
+    for version in [
+        "0.18.2".parse().unwrap(),
+        dutchman_solidcraft::SolidCraftVersion::default(),
+    ] {
+        if detected < version {
+            continue;
+        }
+        for (form, _, extra) in pointed_hole_forms() {
+            let model = holed_cube(4.0, |hole| {
+                hole["shape"]["construction"]["value"]["kind"] = form;
+                hole["bottom"] = json!({"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": false});
+            });
+            let writer = SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(version));
+            let (bytes, report) = written_with(&model, &writer);
+            assert!(
+                history_line(&report).starts_with("4 of 4 features rebuilt"),
+                "{report:?}"
+            );
+            let got = volumes(&cli, &bytes);
+            let want = 1000.0 - 40.0 * std::f64::consts::PI - extra;
+            assert_eq!(got.len(), 1, "{got:?}");
+            assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
+        }
+    }
+}
+
 #[test]
 fn solidcraft_drills_counterbores_and_countersinks() {
     let Some(cli) = solidcraft() else { return };
@@ -4541,10 +4700,6 @@ fn unsupported_hole_forms_have_specific_reasons() {
             "its countersink diameter or angle is not resolved",
         ),
         (
-            json!({"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0, "drill_point_angle": 1.5}),
-            "SolidCraft holes take a drill point only on a plain drilled hole",
-        ),
-        (
             json!({"kind": "counterdrill", "diameter": 8.0, "entry_diameter": 9.0, "depth": 2.0, "angle": 1.5}),
             "a counterdrill with a conical entry and cylindrical recess is not mapped yet",
         ),
@@ -4583,8 +4738,12 @@ fn unsupported_hole_forms_have_specific_reasons() {
                     .verification(Verification::Off)
                     .target_version(Some("0.22.0".parse().unwrap())),
             );
-            assert!(history_line(&report)
-                .contains("SolidCraft holes take a drill point only on a plain drilled hole"));
+            assert_eq!(
+                history_line(&report)
+                    .contains("SolidCraft holes take a drill point only on a plain drilled hole"),
+                blind,
+                "{report:?}"
+            );
             // SolidCraft 0.22.1 and later keep the entry form and its drill point. Name the
             // version: the default target follows the installed SolidCraft, which can be older.
             let (_, report) = convert(

@@ -59,6 +59,11 @@ A through-all extrusion cut needs an earlier named body. Features replay in neut
 ordinal order even when stored in a different order. When no earlier producer supplies a
 body, the cut stops mapping with a body-producing-feature explanation before replay.
 
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry.
+
 ## Upstream gaps, in the order they block history
 
 Found by running Dutchman's history mapper on what the codec decodes from cadmpeg's published

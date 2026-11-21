@@ -666,10 +666,12 @@ excluded from valid placement locations. Missing replay, an unproven boundary, o
 drilling reports `blocked` with its specific `reason`. This adds no report fields.
 This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
 original geometry with a named reason.
-Counterbores, countersinks, and chamfered entries with drill points map for SolidCraft 0.22.1
-and newer; for an older target they report
-`SolidCraft holes take a drill point only on a plain drilled hole`: SolidCraft 0.21.0 ignores
-`tip_angle` on entry recesses. This uses the existing blocked feature and reason fields.
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry. The
+bounded-hole refusal remains `SolidCraft holes take a drill point only on a plain drilled
+hole` in the existing blocked feature and reason fields; no report fields change.
 
 Holes ending at a proven earlier planar cap can retain both an entry countersink and
 a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and

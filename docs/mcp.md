@@ -617,9 +617,12 @@ filled face, and outward drilling use the existing blocked feature reason; the o
 geometry remains available.
 This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
 original geometry with a named reason.
-Entry recesses with drill points map on targets that support their tip angle. Older
-targets report "SolidCraft holes take a drill point only on a plain drilled hole"
-and retain the original geometry.
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry. Older
+targets report "SolidCraft holes take a drill point only on a plain drilled hole" for bounded
+entry recesses.
 
 Holes ending at a proven earlier planar cap can retain both an entry countersink and
 a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
