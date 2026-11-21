@@ -62,7 +62,8 @@ shows its own.
 ## Paste files and links
 
 With no text field focused, press ⌘V on macOS or Ctrl+V on Windows/Linux anywhere
-in the main window. Dutchman handles these clipboard contents in order:
+in the main window. The line under the Designs buttons, **Drop, or paste files or links**,
+is the reminder. Dutchman handles these clipboard contents in order:
 
 - Files or folders copied in Finder, Explorer, or your file manager: queued just like dropped files.
 - A local path, or several paths on separate lines (including `file://` URLs): queued the same way.

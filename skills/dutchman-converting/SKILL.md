@@ -403,9 +403,13 @@ simplification. Explain that the converted design keeps its original geometry.
 
 Holes keep chamfered entries and tapped holes (the bore plus an ISO metric thread label; a
 thread's hand, class, and length are listed as losses). Taper, exit treatments, modeled
-threads, and entry recesses with drill points on older targets block history: explain the reported reason.
+threads, and bounded entry recesses with drill points on older targets block history: explain the reported reason.
 "SolidCraft holes take a drill point only on a plain drilled hole" means SolidCraft 0.21.0
-ignores drill points on counterbores and countersinks; conversion keeps the original geometry.
+ignores drill points on bounded counterbores and countersinks; conversion keeps the original geometry.
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry.
 
 Holes ending at a proven earlier planar cap can retain both an entry countersink and
 a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
@@ -1343,3 +1347,14 @@ sketch contains only points or reference axes is refused with "its sketch featur
 resolved non-construction profile curves; this is not supported yet". The decoder must
 supply the actual profile curves. An empty profile table can still use the complete bound
 sketch when its non-construction curves are decoded; no loop or contour is guessed.
+
+For a whole-folder summary, run `dutchman batch-report <output-folder>` on saved
+`<stem>.report.json` / `<stem>.failed.json` files, or add `--batch-report` to
+`convert-all` for a fresh run. The desktop app offers **Batch report** after a
+folder run finishes, in the bottom bar beside the result counts. After writing,
+the status says `<converted> converted, <failed> failed · Report saved to <output folder name>/`.
+Both write `dutchman-batch-report.md` and `dutchman-batch-report.csv` in that
+folder, with relative input path, output path, outcome, and first reason per
+file. Markdown totals beneath the heading keep all four outcome categories,
+including zeros; CSV contains only the header and one row per file. These local
+summaries contain names and paths; review before sharing.

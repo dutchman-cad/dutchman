@@ -89,6 +89,11 @@ Simplify the sketch or split the bundle when the recovery budget is exhausted;
 the final STEP shape remains available. Native symmetric distances and parameter
 fallback defaults stay unchanged.
 
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry.
+
 Holes ending at a proven earlier planar cap can retain both an entry countersink and
 a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
 the tip extends beyond it. An unproven target still blocks body-building history.
@@ -1126,6 +1131,24 @@ says the design is too large to open inside SolidCraft, use the
 `.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
 "Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
 See [the plugin guide](plugin.md).
+
+### Batch report
+
+After a folder run finishes in the desktop app, choose **Batch report** in the
+bottom bar, after the converted and failed counts. The button is hidden before
+a run and while conversion is running. Writing runs in the background; the
+status then says `<converted> converted, <failed> failed · Report saved to <output folder name>/` or shows a folder
+permission error.
+
+For a fresh CLI run, use `dutchman convert-all designs --out-dir converted --batch-report`.
+For saved results, run `dutchman batch-report converted`. Both write
+`dutchman-batch-report.md` and `dutchman-batch-report.csv` in the output folder.
+Markdown starts with totals for full history, partial history, geometry only,
+and failed files, including zero counts. CSV has a header and one row per file,
+with no summary rows. Each file has its relative input path, output path,
+outcome (Full history, Partial N of M, Geometry only, or Failed), and first reason. Partial counts use
+rebuilt features and features needing rebuilding, with older mapped/total counts
+as a fallback. These local summaries include names and paths.
 
 The [public fixture score workflow](fixture-score.md) checks public fixture
 history on GitHub runners each week or on demand. It records conversion and

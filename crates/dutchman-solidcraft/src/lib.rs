@@ -62,7 +62,18 @@ pub use replay::replay_script;
 #[cfg(all(debug_assertions, not(target_family = "wasm")))]
 fn slow_part(name: &str) {
     if std::env::var("DUTCHMAN_TEST_SLOW_PART").ok().as_deref() == Some(name) {
-        std::thread::sleep(Duration::from_secs(6));
+        if let Some(release) = std::env::var_os("DUTCHMAN_TEST_SLOW_PART_RELEASE") {
+            // Let integration tests keep the step alive until they observe a heartbeat.
+            // Bound the wait even if the test process exits before releasing it.
+            let started = std::time::Instant::now();
+            while !std::path::Path::new(&release).exists()
+                && started.elapsed() < Duration::from_secs(60)
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        } else {
+            std::thread::sleep(Duration::from_secs(6));
+        }
     }
 }
 

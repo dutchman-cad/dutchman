@@ -310,10 +310,12 @@ and newer also keep an ISO tolerance class such as `6H`. What doesn't carry acro
 length in a through or recessed hole, or any of these on an older target) is listed in the
 report as Degraded. Taper, exit treatments, and modeled threads are not supported yet,
 and the report names the option.
-A counterbore, countersink, or chamfered entry with a drill point keeps both for SolidCraft
-0.22.1 and newer. For an older target the reason is "SolidCraft holes take a drill point only
-on a plain drilled hole": SolidCraft 0.21.0 ignores `tip_angle` on counterbores and
-countersinks. Conversion keeps the original geometry.
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry. The
+bounded-hole refusal remains "SolidCraft holes take a drill point only on a plain drilled
+hole".
 
 Holes ending at a proven earlier planar extrusion or box cap retain their drill point
 and supported entry recess. Fusion Extents To measures to the cylindrical shoulder,

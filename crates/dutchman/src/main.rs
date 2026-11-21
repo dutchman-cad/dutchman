@@ -52,6 +52,8 @@ enum OnshapeCommand {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Write Markdown and CSV summaries from saved per-file reports in an output folder.
+    BatchReport { folder: PathBuf },
     /// Scan and plan within budgets without writing a design.
     Preflight {
         input: PathBuf,
@@ -272,6 +274,9 @@ enum Command {
     },
     /// Convert CAD files, folders and project ZIPs into designs under one output folder.
     ConvertAll {
+        /// Write dutchman-batch-report.md and .csv in the output folder after conversion.
+        #[arg(long)]
+        batch_report: bool,
         /// Design files, project ZIPs, and folders to search with their subfolders. Every
         /// positional argument is an input file or folder; use --out-dir for the output folder.
         #[arg(required = true)]
@@ -507,6 +512,16 @@ fn run_cli() -> ExitCode {
         return contents_command(&cli.command, quiet, verbose);
     }
     match cli.command {
+        Command::BatchReport { folder } => match dutchman::batch_report::write_folder(&folder) {
+            Ok(count) => {
+                println!("Batch report: {count} files. Written dutchman-batch-report.md and dutchman-batch-report.csv.");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("dutchman: {error}");
+                ExitCode::FAILURE
+            }
+        },
         Command::Preflight {
             input,
             json: as_json,
@@ -1104,6 +1119,7 @@ fn run_cli() -> ExitCode {
             )
         }
         Command::ConvertAll {
+            batch_report,
             inputs,
             out_dir,
             jobs,
@@ -1196,6 +1212,17 @@ fn run_cli() -> ExitCode {
                     ) {
                         println!("{pitch}");
                     }
+                }
+            }
+            if batch_report {
+                let results = report
+                    .get("results")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                if let Err(error) = dutchman::batch_report::write_reports(results, &out_dir) {
+                    eprintln!("dutchman: {error}");
+                    return ExitCode::FAILURE;
                 }
             }
             let log = log.unwrap_or_else(|| out_dir.join(batch::LOG_NAME));
