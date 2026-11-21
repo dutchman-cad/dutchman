@@ -65,13 +65,13 @@ class FixtureScoreTests(unittest.TestCase):
             result = dict(exit=0, reopen_exit=0, report={}, evaluation={}, seconds=1)
             for index in range(2):
                 args = argparse.Namespace(manifest=manifest, index=index, shards=2, binary=root/'binary',
-                                          cli=root/'cli', solidcraft='0.45.0', out=out, dry_run=False, local_root=None)
+                                          cli=root/'cli', solidcraft='0.46.0', out=out, dry_run=False, local_root=None)
                 with mock.patch.object(score, 'one', return_value=result) as convert:
                     score.shard(args)
                 self.assertEqual([call.args[0]['file'] for call in convert.call_args_list],
                                  [r['file'] for r in rows[index::2]])
             score.collect(argparse.Namespace(bundle=root, out=out))
-            self.assertEqual(json.loads((out/'run.json').read_text())['solidcraft'], '0.45.0')
+            self.assertEqual(json.loads((out/'run.json').read_text())['solidcraft'], '0.46.0')
             (out / 'files/1.f3d.result.json').unlink()
             with self.assertRaisesRegex(ValueError, 'complete result'):
                 score.collect(argparse.Namespace(bundle=root, out=out))
