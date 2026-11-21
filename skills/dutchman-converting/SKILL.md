@@ -1283,3 +1283,20 @@ says the design is too large to open inside SolidCraft, use the
 `.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
 "Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
 See [the plugin guide](../../docs/plugin.md).
+
+Extrudes and resolved revolves accept a profile that explicitly names an earlier active
+planar sketch feature with a resolved sketch binding. This selects the whole bound sketch
+and keeps the existing source geometry checks. Otherwise the report says "its feature
+profile has no earlier active resolved planar sketch mapping; this is not supported yet".
+Resolve the producer's sketch binding or provide an explicit neutral profile selection;
+a nearby sketch or the final body's contours do not prove that selection.
+
+Profiles from sketch features require SolidCraft 0.45 or newer. Older targets retain
+the original geometry and report "profiles from sketch features require SolidCraft 0.45
+or newer; choose a newer target to keep this feature editable".
+
+A resolved sketch frame alone does not prove profile geometry. A feature reference whose
+sketch contains only points or reference axes is refused with "its sketch feature has no
+resolved non-construction profile curves; this is not supported yet". The decoder must
+supply the actual profile curves. An empty profile table can still use the complete bound
+sketch when its non-construction curves are decoded; no loop or contour is guessed.

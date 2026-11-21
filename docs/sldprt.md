@@ -69,13 +69,15 @@ SolidWorks fixtures (`dutchman inspect --json`).
    the codec does recover arrives as a separate feature-input sketch that no feature points
    at. Dutchman cannot place the sketch in the timeline, so the first sketch stops the history.
    Needed: the sketch feature's binding set to the CADIR sketch it owns.
-2. **Extrusion profiles are unresolved.** An extrusion's profile arrives as `unresolved` (the
-   extrusion's own native id), or, when the history places a sketch next to it, as `feature`
-   (the sketch feature). Dutchman maps profiles given as a sketch, sketch profiles, sketch
-   regions or sketch curves, so every SolidWorks extrusion stops the history ("unresolved
-   profiles are not mapped yet"). Needed: the profile as `sketch` or `sketch_profiles` of the
-   CADIR sketch. Once (1) lands, Dutchman can also read a `feature` profile as the whole sketch
-   that feature binds.
+2. **Some profiles remain unresolved.** Extrudes and resolved revolves can use a `feature`
+   profile when it names an earlier active sketch feature with a resolved planar sketch
+   binding. CADIR defines this reference as the complete curve result: Dutchman maps the
+   whole bound sketch, including its existing loop nesting and source geometry checks.
+   A missing, suppressed, later, unresolved, or non-sketch producer is refused with
+   "its feature profile has no earlier active resolved planar sketch mapping;
+   this is not supported yet". The decoder must supply that binding or an explicit neutral
+   selection; Dutchman does not select a nearby sketch or infer contours from final faces.
+   Profiles that arrive as `unresolved` still need a resolved neutral profile upstream.
 3. **Many features are native.** Features the codec does not type (for example
    `EquationDrivenCurve`) arrive as `native` and stop the history where they come.
 4. **Edge and face selections are native.** Fillet, chamfer and hole carry mostly native edge
@@ -144,3 +146,19 @@ resolved sketch-entity geometry reports `its generated edge identity has no reso
 source geometry, which is not supported yet`. A numeric feature-local path alone
 does not prove which rebuilt edge to select. The editable prefix and original final
 geometry are retained; a generated reference with missing or blank fields is still refused.
+
+Profiles from sketch features require SolidCraft 0.45 or newer. Older targets retain
+the original geometry and report "profiles from sketch features require SolidCraft 0.45
+or newer; choose a newer target to keep this feature editable".
+
+A resolved sketch frame alone does not prove profile geometry. A feature reference whose
+sketch contains only points or reference axes is refused with "its sketch feature has no
+resolved non-construction profile curves; this is not supported yet". The decoder must
+supply the actual profile curves. An empty profile table can still use the complete bound
+sketch when its non-construction curves are decoded; no loop or contour is guessed.
+
+A bound sketch still has to form the profiles the operation needs. An open chain, missing
+curve, or duplicate segment does not authorize adding a closing edge. If SolidCraft finds
+no closed profile, or replay differs from the source's position, Dutchman retains the
+original geometry and reports that refusal. The sketch binding does not override these
+checks.

@@ -551,6 +551,9 @@ pub fn solidcraft_minor(line: &str) -> Option<String> {
 pub struct SolidCraftVersion([u64; 3]);
 
 impl SolidCraftVersion {
+    /// Release used to prove profiles from resolved sketch features.
+    pub const V0_45_0: Self = Self([0, 45, 0]);
+
     /// Release used for body-edge sweep paths.
     /// Also the first release with dimensional 3D sketch wire constraints and scoped extrude booleans.
     pub const V0_44_0: Self = Self([0, 44, 0]);
