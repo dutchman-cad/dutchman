@@ -1106,6 +1106,98 @@ mod tests {
     }
 
     #[test]
+    fn multi_region_final_comparison_rejects_a_small_missing_hole() {
+        #[derive(Debug)]
+        struct Regions {
+            source: Value,
+            written: Value,
+        }
+        impl SolidCraftEvaluator for Regions {
+            fn evaluate(&self, _: &[u8], _: Duration, label: &str) -> Result<Value, String> {
+                Ok(if label == "original" {
+                    &self.source
+                } else {
+                    &self.written
+                }
+                .clone())
+            }
+            fn run(
+                &self,
+                _: &[u8],
+                _: &[Value],
+                _: Duration,
+                _: &str,
+            ) -> Result<Vec<Value>, String> {
+                Err("This comparison has no parameters".to_owned())
+            }
+        }
+        let mut first = cube()["bodies"][0].clone();
+        first["faces"] = json!(6);
+        first["edges"] = json!(12);
+        first["face_types"] = json!({"plane":6});
+        let mut second = first.clone();
+        second["bbox"] = json!({"min":[30,0,0],"max":[40,10,10]});
+        second["center_of_mass"] = json!([35, 5, 5]);
+        let mut joined = first.clone();
+        joined["volume_mm3"] = json!(2000);
+        joined["area_mm2"] = json!(1200);
+        joined["bbox"] = json!({"min":[0,0,0],"max":[40,10,10]});
+        joined["center_of_mass"] = json!([20, 5, 5]);
+        joined["faces"] = json!(12);
+        joined["edges"] = json!(24);
+        joined["face_types"] = json!({"plane":12});
+        let mut model = model();
+        model.ir.model.parameters.clear();
+        for missing_hole in [false, true] {
+            let mut drilled = second.clone();
+            if missing_hole {
+                drilled["volume_mm3"] = json!(999.9);
+                drilled["area_mm2"] = json!(600.1);
+                drilled["faces"] = json!(7);
+                drilled["face_types"]["cylinder"] = json!(1);
+            }
+            let host = Regions {
+                source: json!({"bodies":[first,drilled]}),
+                written: json!({"bodies":[joined]}),
+            };
+            let mut report = Report::default();
+            let outcome = compare_report(
+                &host,
+                DEFAULT_TIMEOUT,
+                b"written",
+                b"source",
+                Expected {
+                    solids: 1,
+                    single_body_regions: 2,
+                    ..Expected::default()
+                },
+                None,
+                &model,
+                "check",
+                &mut report,
+            );
+            if missing_hole {
+                assert!(
+                    matches!(&outcome, Outcome::Differs(why) if why.contains("faces")),
+                    "{outcome:?}"
+                );
+            } else {
+                assert_eq!(outcome, Outcome::Matches);
+            }
+            let geometry = &report.verification_checks()[0]["geometry"];
+            for check in ["volume", "surface_area", "bounding_box", "centroid"] {
+                assert_eq!(status(geometry, check), "pass", "{geometry}");
+            }
+            for check in ["merged_faces", "analytic_faces"] {
+                assert_eq!(
+                    status(geometry, check),
+                    if missing_hole { "fail" } else { "pass" }
+                );
+            }
+        }
+    }
+
+    #[test]
     fn final_comparison_records_evidence_and_downgrades_failed_checks() {
         for (parameter, closure, volume, differs) in [
             (10.0, true, 1000.0, false),

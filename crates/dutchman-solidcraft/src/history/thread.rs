@@ -13,7 +13,25 @@ pub(super) fn map(
     report: &mut Report,
 ) -> Result<Value, String> {
     if definition.get("modeled").and_then(Value::as_bool) == Some(true) {
-        return Err("a modeled thread is not supported yet".to_owned());
+        // A nominal designation is not a helical construction recipe. In particular,
+        // CADIR's CosmeticThread does not carry hand, class or the actual groove profile.
+        // SolidCraft's modeled option cannot recover those facts. Do not turn this into
+        // an annotation on the unthreaded prefix: that would discard real geometry.
+        let designation = definition
+            .get("designation")
+            .and_then(Value::as_str)
+            .filter(|text| text.len() <= 128)
+            .map(|text| format!(" {text:?}"))
+            .unwrap_or_default();
+        report.push_coded(
+            Severity::Degraded,
+            describe(feature),
+            "history/modeled-thread-retained",
+            format!(
+                "Modeled thread{designation} kept in the imported final geometry; its hand, tolerance class and exact groove profile are not resolved in CADIR, so an exact editable thread is not supported yet"
+            ),
+        );
+        return Err("a modeled thread's hand, tolerance class and exact groove profile are not resolved; an exact editable thread is not supported yet".to_owned());
     }
     let diameter = number(definition.get("diameter")).filter(|v| *v > 0.0);
     let pitch = number(definition.get("pitch")).filter(|v| *v > 0.0);
@@ -402,11 +420,34 @@ mod tests {
     }
 
     #[test]
+    fn modeled_thread_keeps_its_designation_in_a_degraded_loss_without_picking_a_face() {
+        let model = json!({});
+        for designation in [Some("M3x0.5"), None] {
+            let mut d = definition();
+            d["modeled"] = json!(true);
+            d["designation"] = json!(designation);
+            let mut report = Report::default();
+            let reason =
+                map(&json!({}), &d, &mut Context::testing(&model), &mut report).unwrap_err();
+            assert!(reason.contains("exact groove profile"));
+            let loss = &report.losses()[0];
+            assert_eq!(loss.severity, Severity::Degraded);
+            assert_eq!(
+                loss.code.as_deref(),
+                Some("history/modeled-thread-retained")
+            );
+            assert!(loss.detail.contains("imported final geometry"));
+            if let Some(designation) = designation {
+                assert!(loss.detail.contains(designation));
+            }
+        }
+    }
+
+    #[test]
     fn cosmetic_thread_refuses_unproven_or_conflicting_data() {
         let model = model();
         let mut ctx = Context::testing(&model);
         for (field, value, reason) in [
-            ("modeled", json!(true), "modeled thread"),
             ("pitch", Value::Null, "resolved diameter and pitch"),
             (
                 "designation",

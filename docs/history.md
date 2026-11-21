@@ -90,7 +90,10 @@ those regions as separate solids. If history retains them in one body, verificat
 requires every source region to import with positive volume, area and complete bounds,
 then compares their summed volume and area and combined bounding box with the replayed
 body. Available centroids are combined by volume; closure requires every region to
-be closed. Missing regions still fail. If replay also splits the regions, the usual
+be closed. Merged face and edge counts and surface-kind counts are summed when
+all regions report the corresponding measurement. Missing or overflowing counts
+remain unavailable. The combined face evidence still rejects a small missing hole
+even when volume and area fall within their allowances. Missing regions still fail. If replay also splits the regions, the usual
 per-piece checks apply. Single-region bodies and designs with multiple source bodies
 keep their existing one-to-one comparisons.
 
@@ -233,6 +236,22 @@ from opaque ID text. Modeled threads, unsupported designation controls, other st
 and unresolved extents or face geometry remain reported losses. When the source does not
 resolve whether the thread is modeled, the annotation is kept with a Degraded note; helical
 geometry is not reconstructed. Cosmetic annotations do not change the body's geometry.
+
+Modeled threads retain their original helical geometry and stop the editable history.
+The Degraded loss `history/modeled-thread-retained` keeps the source designation when
+available and names the missing construction data. SolidCraft 0.45 can cut a modeled
+thread, but its documented design profiles use flat crests and roots and omit tolerance
+allowances. CADIR's cosmetic-thread operation supplies face selections, standard,
+designation, diameter, pitch, a modeled flag, and blind length or full extent; it supplies
+no hand, tolerance class, internal/external control, or exact groove profile. A designation
+alone cannot prove that SolidCraft will rebuild the same shape. Equal volumes also cannot distinguish right- and left-hand grooves. A helix and sweep would
+need that same missing profile and placement. No editable modeled thread is claimed.
+
+Replacing the thread with a cosmetic feature on the earlier body would lose the groove.
+Attaching a cosmetic feature to the imported final body also needs a proven cylindrical
+band between circular rims; a helical face does not meet that condition. Dutchman keeps
+the designation in the loss report rather than guessing a face for an annotation. Later
+features remain blocked, and the imported final shape stays visible.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain
