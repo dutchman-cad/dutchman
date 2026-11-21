@@ -161,6 +161,12 @@ offset, tilted, or unproven terminating faces retain a specific history blocker.
 Later features rebuild when the hole maps. A refused hole still stops body-building
 history; independently resolved reference sketches remain available.
 
+Closed-edge blends need an exact historical curve carrier in addition to their
+sample positions and adjacent face identities. When that carrier is missing, the
+conversion reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
+The samples alone cannot distinguish a circle from an ellipse or another closed
+curve. The original final geometry and the editable prefix are retained.
+
 Holes on planar historical entry faces can keep their editable history when the boundary
 includes circular arcs or whole circles, including a rounded corner or an earlier through
 hole. The source's own input-edge ends, midpoints, and tangents establish the circular

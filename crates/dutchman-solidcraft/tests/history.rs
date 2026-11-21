@@ -12557,6 +12557,41 @@ fn closed_circle_blends_keep_older_targets_and_non_circular_curves_refused() {
 }
 
 #[test]
+fn closed_blends_distinguish_missing_historical_carriers_from_non_circular_curves() {
+    let base = closed_circle_blend(true, 0.71);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    // A historical identity is independent of the geometry topology's identities.
+    // Keep the same samples, but do not give this selection an exact stored carrier.
+    let edge = json!("synthetic:historical:edge#0");
+    let model = &mut wire["model"];
+    let state = &mut model["feature_input_topologies"][0];
+    state["edges"] = json!([edge]);
+    state["edge_geometry"][0]["edge"] = edge.clone();
+    model["features"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
+        json!([edge]);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.45.0".parse().unwrap()));
+    let (_, report) = convert(&model, &writer);
+    assert!(
+        history_line(&report).contains("no resolved historical curve carrier"),
+        "{report:?}"
+    );
+    assert!(
+        !history_line(&report).contains("closed input curves other than proven circles"),
+        "{report:?}"
+    );
+}
+
+#[test]
 fn closed_circle_blends_refuse_ellipses_whose_samples_alias_a_circle() {
     let base = closed_circle_blend(false, 0.0);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
