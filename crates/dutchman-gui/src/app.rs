@@ -2372,9 +2372,7 @@ impl App {
             },
         );
         framed(ui, &p, p.surface_2, hovering, padding, |ui| {
-            if !self.inputs.is_empty() {
-                ui.spacing_mut().item_spacing.y = 0.0;
-            }
+            ui.spacing_mut().item_spacing = egui::Vec2::splat(theme::SPACE_2);
             if self.inputs.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(theme::SPACE_4);
@@ -2498,21 +2496,26 @@ impl App {
             if self.inputs.is_empty() {
                 ui.add_space(theme::SPACE_2);
             }
-            ui.horizontal_wrapped(|ui| {
-                ui.add_enabled_ui(!self.running(), |ui| {
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut self.share_link)
-                            .hint_text("Public Fusion or Google Drive file link")
-                            .char_limit(8192)
-                            .desired_width(260.0),
-                    );
-                    if ui.button("Add link").clicked()
-                        || (field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                    {
-                        let link = std::mem::take(&mut self.share_link);
-                        self.queue_links(&link);
-                    }
-                });
+            theme::control_row(ui, |ui| {
+                let enabled = !self.running();
+                let height = theme::control_height(ui);
+                let field = ui.add_enabled(
+                    enabled,
+                    egui::TextEdit::singleline(&mut self.share_link)
+                        .hint_text("Public Fusion or Google Drive file link")
+                        .char_limit(8192)
+                        .desired_width(260.0_f32.min(ui.available_width()))
+                        .min_size(egui::vec2(0.0, height))
+                        .vertical_align(Align::Center),
+                );
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Add link"))
+                    .clicked()
+                    || (field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                {
+                    let link = std::mem::take(&mut self.share_link);
+                    self.queue_links(&link);
+                }
                 if ui
                     .button(if self.onshape.connected() {
                         "Onshape connected ✓"
@@ -2534,47 +2537,47 @@ impl App {
                     ui.label("Downloading shared files…");
                 });
             }
-            ui.horizontal_wrapped(|ui| {
-                ui.add_enabled_ui(
-                    !self.running() && !self.updater.blocks_conversions(),
-                    |ui| {
-                        if ui.button("Add files…").clicked() {
-                            worker::pick(Pick::Files, self.sender.clone(), ui.ctx().clone());
-                        }
-                        if ui.button("Check a folder").clicked() {
-                            self.notice = None;
-                            self.doctor = Some(crate::doctor::Page::new(None));
-                        }
-                        if ui.button("Add folder…").clicked() {
-                            worker::pick(Pick::Folder, self.sender.clone(), ui.ctx().clone());
-                        }
-                        if !self.inputs.is_empty() && ui.button("Clear").clicked() {
-                            self.inputs.clear();
-                            self.rows.clear();
-                            self.report_row = None;
-                            self.report_done = None;
-                            self.private_send = None;
-                            self.consent.card = None;
-                            self.output_expanded = false;
-                            self.keep_used_downloads();
-                        }
-                    },
-                );
+            theme::control_row(ui, |ui| {
+                let enabled = !self.running() && !self.updater.blocks_conversions();
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Add files…"))
+                    .clicked()
+                {
+                    worker::pick(Pick::Files, self.sender.clone(), ui.ctx().clone());
+                }
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Check a folder"))
+                    .clicked()
+                {
+                    self.notice = None;
+                    self.doctor = Some(crate::doctor::Page::new(None));
+                }
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Add folder…"))
+                    .clicked()
+                {
+                    worker::pick(Pick::Folder, self.sender.clone(), ui.ctx().clone());
+                }
+                if !self.inputs.is_empty()
+                    && ui
+                        .add_enabled(enabled, egui::Button::new("Clear"))
+                        .clicked()
+                {
+                    self.inputs.clear();
+                    self.rows.clear();
+                    self.report_row = None;
+                    self.report_done = None;
+                    self.private_send = None;
+                    self.consent.card = None;
+                    self.output_expanded = false;
+                    self.keep_used_downloads();
+                }
             });
-            ui.allocate_ui_with_layout(
-                egui::vec2(
-                    ui.available_width(),
-                    ui.text_style_height(&egui::TextStyle::Small),
-                ),
-                Layout::left_to_right(Align::Center).with_main_wrap(true),
-                |ui| {
-                    ui.small(if cfg!(target_os = "macos") {
-                        "Drop, or paste files or links (⌘V)"
-                    } else {
-                        "Drop, or paste files or links (Ctrl+V)"
-                    });
-                },
-            );
+            ui.small(if cfg!(target_os = "macos") {
+                "Drop, or paste files or links (⌘V)"
+            } else {
+                "Drop, or paste files or links (Ctrl+V)"
+            });
         });
     }
 
@@ -2673,27 +2676,29 @@ impl App {
                     .unwrap_or_else(|| "Not chosen yet".to_owned());
                 let mut path_clicked = false;
                 let mut change_clicked = false;
-                egui::Sides::new().shrink_left().truncate().show(
-                    ui,
-                    |ui| {
-                        if ui
-                            .add(
-                                egui::Button::new(RichText::new(&path).monospace())
-                                    .frame(false)
-                                    .truncate(),
-                            )
-                            .on_hover_text(&path)
-                            .clicked()
-                        {
-                            path_clicked = true;
-                        }
-                    },
-                    |ui| {
-                        if ui.button("Change…").clicked() {
-                            change_clicked = true;
-                        }
-                    },
-                );
+                theme::control_row(ui, |ui| {
+                    egui::Sides::new().shrink_left().truncate().show(
+                        ui,
+                        |ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new(RichText::new(&path).monospace())
+                                        .frame(false)
+                                        .truncate(),
+                                )
+                                .on_hover_text(&path)
+                                .clicked()
+                            {
+                                path_clicked = true;
+                            }
+                        },
+                        |ui| {
+                            if ui.button("Change…").clicked() {
+                                change_clicked = true;
+                            }
+                        },
+                    );
+                });
                 self.output_expanded = path_clicked || change_clicked;
             });
             return;
@@ -2701,28 +2706,32 @@ impl App {
         panel(ui, &p, false, |ui| {
             let running = self.running();
             let sender = self.sender.clone();
-            egui::Sides::new().shrink_left().truncate().show(
-                ui,
-                |ui| match &self.out_dir {
-                    Some(dir) => {
-                        ui.add(
-                            egui::Label::new(RichText::new(display(dir)).monospace()).truncate(),
-                        )
-                        .on_hover_text(display(dir));
-                    }
-                    None => {
-                        ui.label(RichText::new("Not chosen yet").color(p.tide));
-                    }
-                },
-                |ui| {
-                    if ui
-                        .add_enabled(!running, egui::Button::new("Choose…"))
-                        .clicked()
-                    {
-                        worker::pick(Pick::Output, sender, ctx.clone());
-                    }
-                },
-            );
+            theme::control_row(ui, |ui| {
+                egui::Sides::new().shrink_left().truncate().show(
+                    ui,
+                    |ui| match &self.out_dir {
+                        Some(dir) => {
+                            ui.add_sized(
+                                egui::vec2(ui.available_width(), theme::control_height(ui)),
+                                egui::Label::new(RichText::new(display(dir)).monospace())
+                                    .truncate(),
+                            )
+                            .on_hover_text(display(dir));
+                        }
+                        None => {
+                            ui.label(RichText::new("Not chosen yet").color(p.tide));
+                        }
+                    },
+                    |ui| {
+                        if ui
+                            .add_enabled(!running, egui::Button::new("Choose…"))
+                            .clicked()
+                        {
+                            worker::pick(Pick::Output, sender, ctx.clone());
+                        }
+                    },
+                );
+            });
             ui.add_space(theme::SPACE_2);
             ui.add_enabled_ui(!self.running(), |ui| {
                 self.choices_ui(ui);
@@ -3416,6 +3425,7 @@ fn row_ui(
     running: bool,
     log: Option<(&Path, bool)>,
 ) -> Option<Action> {
+    ui.spacing_mut().item_spacing = egui::Vec2::splat(theme::SPACE_2);
     let mut action = None;
     let colour = result_colour(p, row.report.as_ref(), view);
     let word = view.status_word;
@@ -3440,7 +3450,7 @@ fn row_ui(
         crate::onshape::is_bundle(&row.input) && row.input.is_file() && row.report.is_some();
     if output.is_some() || step_button || bundle {
         // One row of buttons under it.
-        ui.horizontal_wrapped(|ui| {
+        theme::control_row(ui, |ui| {
             if let Some(output) = output {
                 if is_macro {
                     if ui.button("Show in folder").clicked() {
@@ -3470,7 +3480,10 @@ fn row_ui(
                 if ui.button("Show bundle").clicked() {
                     action = Some(Action::Reveal(row.input.clone()));
                 }
-                if ui.add_enabled(!running, egui::Button::new("Send to Dutchman")).clicked() {
+                if ui
+                    .add_enabled(!running, egui::Button::new("Send to Dutchman"))
+                    .clicked()
+                {
                     action = Some(Action::Consent(index));
                 }
             }
@@ -3619,7 +3632,7 @@ fn row_ui(
                     }
                 });
         }
-        ui.horizontal_wrapped(|ui| {
+        theme::control_row(ui, |ui| {
             if !view.components.is_empty() && ui.button("Save the full log…").clicked() {
                 action = Some(Action::Pick(Pick::SaveLog(index)));
             }
@@ -3833,7 +3846,7 @@ fn report_this_file(ui: &mut egui::Ui) -> bool {
         egui::Button::new(RichText::new(REPORT_THIS_FILE).strong().color(p.spectre))
             .fill(p.surface_2)
             .stroke(Stroke::new(1.0_f32, p.spectre))
-            .min_size(egui::vec2(0.0, 30.0)),
+            .min_size(egui::vec2(0.0, theme::control_height(ui))),
     )
     .on_hover_text("Choose this file in \"Is there a problem? Is something missing?\"")
     .clicked()
