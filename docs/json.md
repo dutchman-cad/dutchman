@@ -1992,12 +1992,16 @@ as the existing history blocker reason. The report schema and field names are un
 `dutchman batch-report <output-folder>` reads existing `dutchman.convert/1`
 `<stem>.report.json` and `<stem>.failed.json` reports recursively, without opening
 source designs. `convert-all --batch-report` summarises that invocation's results.
-The desktop app offers **Batch report** for a finished run or a chosen output
-folder containing saved reports. JSON schemas are unchanged.
+The desktop app offers **Batch report** in the bottom bar after a folder run
+finishes, beside the converted and failed counts. After writing, its status
+says `Report saved to <output folder name>/`. JSON schemas are unchanged.
 
 The Markdown and CSV files are named `dutchman-batch-report.md` and
 `dutchman-batch-report.csv`. Columns are Input path, Output path, Outcome, and
-First reason. Inputs are relative to their common parent; outputs beneath the
+First reason. Directly below the Markdown heading, a totals line counts all
+files and each of the four outcomes, including zero categories, using “1 file”
+for a single file. CSV contains only its header and one row per file.
+Inputs are relative to their common parent; outputs beneath the
 output folder are relative to that folder. Output paths elsewhere remain as
 recorded. A failed file without an output path has an empty cell. Rows sort by
 input path. Full history and Geometry only describe the retained mode; they do

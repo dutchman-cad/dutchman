@@ -158,7 +158,21 @@ pub fn render(reports: &[Value], folder: &Path) -> (String, String) {
         })
         .collect();
     rows.sort();
-    let mut md = String::from("# Batch report\n\n| Input path | Output path | Outcome | First reason |\n|---|---|---|---|\n");
+    let mut full = 0;
+    let mut partial = 0;
+    let mut geometry = 0;
+    let mut failed = 0;
+    for row in &rows {
+        match row.get(2).map(String::as_str) {
+            Some("Full history") => full += 1,
+            Some("Geometry only") => geometry += 1,
+            Some(outcome) if outcome.starts_with("Partial ") => partial += 1,
+            _ => failed += 1,
+        }
+    }
+    let count = reports.len();
+    let files = if count == 1 { "file" } else { "files" };
+    let mut md = format!("# Batch report\n\n{count} {files}: {full} full history, {partial} partial, {geometry} geometry only, {failed} failed\n\n| Input path | Output path | Outcome | First reason |\n|---|---|---|---|\n");
     let mut csv_text = String::from("Input path,Output path,Outcome,First reason\r\n");
     for row in rows {
         md.push_str(&format!(

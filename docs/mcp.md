@@ -1364,9 +1364,12 @@ See [the plugin guide](plugin.md).
 
 For a local summary of an entire completed folder run, use the CLI
 `dutchman batch-report <output-folder>`, or `convert-all --batch-report` during
-conversion. The desktop app's **Batch report** button writes the same Markdown
-and CSV files. The command reads saved per-file reports, not CAD inputs, and
-writes `dutchman-batch-report.md` and `dutchman-batch-report.csv` locally.
+conversion. After a folder run finishes, the desktop app's **Batch report**
+button appears in the bottom bar beside the result counts. It writes the same
+Markdown and CSV files, then says `Report saved to <output folder name>/`.
+The command reads saved per-file reports, not CAD inputs, and writes `dutchman-batch-report.md` and `dutchman-batch-report.csv` locally.
+Markdown includes totals for all four outcomes, including zero counts, beneath
+its heading. CSV keeps a header and one row per file, without totals.
 Columns contain relative input path, output path, outcome, and first reason.
 These summaries contain names and paths. Existing MCP tool reports are unchanged.
 

@@ -28,7 +28,7 @@ fn each_outcome_has_a_row_with_the_first_cause() {
         ],
         std::path::Path::new("converted"),
     );
-    assert_eq!(md, "# Batch report\n\n| Input path | Output path | Outcome | First reason |\n|---|---|---|---|\n| failed.ipt |  | Failed | Cannot read geometry. |\n| full.ipt | full.sc | Full history |  |\n| geometry.ipt | geometry.sc | Geometry only |  |\n| partial.ipt | partial.sc | Partial 2 of 3 | edge, \"round\" &#124; &lt;missing&gt; Next line |\n");
+    assert_eq!(md, "# Batch report\n\n4 files: 1 full history, 1 partial, 1 geometry only, 1 failed\n\n| Input path | Output path | Outcome | First reason |\n|---|---|---|---|\n| failed.ipt |  | Failed | Cannot read geometry. |\n| full.ipt | full.sc | Full history |  |\n| geometry.ipt | geometry.sc | Geometry only |  |\n| partial.ipt | partial.sc | Partial 2 of 3 | edge, \"round\" &#124; &lt;missing&gt; Next line |\n");
     assert_eq!(csv, "Input path,Output path,Outcome,First reason\r\n\"failed.ipt\",\"\",\"Failed\",\"Cannot read geometry.\"\r\n\"full.ipt\",\"full.sc\",\"Full history\",\"\"\r\n\"geometry.ipt\",\"geometry.sc\",\"Geometry only\",\"\"\r\n\"partial.ipt\",\"partial.sc\",\"Partial 2 of 3\",\"edge, \"\"round\"\" | <missing>\nNext line\"\r\n");
 }
 
@@ -113,7 +113,8 @@ fn latest_report_wins_and_cli_can_summarise_saved_results() {
     let md = std::fs::read_to_string(folder.path().join("dutchman-batch-report.md")).unwrap();
     assert!(md.contains("Full history"));
     assert!(!md.contains("Earlier failure."));
-    assert_eq!(md.lines().count(), 5);
+    assert_eq!(md.lines().count(), 7);
+    assert!(md.contains("1 file: 1 full history, 0 partial, 0 geometry only, 0 failed"));
 }
 
 #[test]
@@ -152,6 +153,7 @@ fn fresh_cli_run_can_write_a_batch_report_with_failed_inputs() {
         String::from_utf8_lossy(&result.stderr)
     );
     let md = std::fs::read_to_string(output.join("dutchman-batch-report.md")).unwrap();
+    assert!(md.contains("1 file: 0 full history, 0 partial, 0 geometry only, 1 failed"));
     assert!(md.contains("| synthetic.ipt |"));
     assert!(md.contains("| Failed |"));
     assert!(output.join("dutchman-batch-report.csv").is_file());
@@ -177,4 +179,29 @@ fn markdown_markup_in_names_and_reasons_is_literal() {
         "&#42;edge&#42; &#95;blocked&#95; &#126;&#126;later&#126;&#126; &#91;reason&#93;(target)"
     ));
     assert!(csv.contains("*edge* _blocked_ ~~later~~ [reason](target)"));
+}
+
+#[test]
+fn totals_keep_zero_categories_and_count_retained_outcomes() {
+    let mut flattened = report("flattened", "history");
+    flattened["verification"] = json!({"status": "flattened"});
+    for (reports, totals) in [
+        (
+            vec![],
+            "0 files: 0 full history, 0 partial, 0 geometry only, 0 failed",
+        ),
+        (
+            vec![report("full", "history")],
+            "1 file: 1 full history, 0 partial, 0 geometry only, 0 failed",
+        ),
+        (
+            vec![report("partial", "partial_history"), flattened],
+            "2 files: 0 full history, 1 partial, 1 geometry only, 0 failed",
+        ),
+    ] {
+        let (md, csv) = batch_report::render(&reports, std::path::Path::new("converted"));
+        assert!(md.starts_with(&format!("# Batch report\n\n{totals}\n\n")));
+        assert_eq!(csv.lines().count(), reports.len() + 1);
+        assert!(csv.starts_with("Input path,Output path,Outcome,First reason\r\n"));
+    }
 }

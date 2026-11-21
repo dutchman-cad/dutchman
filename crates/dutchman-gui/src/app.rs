@@ -154,6 +154,8 @@ pub struct App {
     out_dir: Option<PathBuf>,
     batch_report_key: Option<(PathBuf, usize, bool)>,
     batch_report_ready: bool,
+    batch_report_finished: bool,
+    batch_report_saved: Option<PathBuf>,
     /// Reopen output settings after a result has collapsed them.
     output_expanded: bool,
     options: ConvertOptions,
@@ -473,6 +475,8 @@ impl App {
             out_dir: None,
             batch_report_key: None,
             batch_report_ready: false,
+            batch_report_finished: false,
+            batch_report_saved: None,
             output_expanded: false,
             options,
             diagnosis: None,
@@ -719,6 +723,8 @@ impl App {
             crate::paste::Source::Download(link) => (link.name.clone(), "Downloading…".to_owned()),
         };
         self.intake.progress = None;
+        self.batch_report_finished = false;
+        self.batch_report_saved = None;
         self.rows.clear();
         self.rows.push(Row {
             input: PathBuf::from(name),
@@ -868,6 +874,8 @@ impl App {
     /// Sets the folder designs are written to.
     pub fn set_out_dir(&mut self, dir: PathBuf) {
         self.batch_report_key = None;
+        self.batch_report_finished = false;
+        self.batch_report_saved = None;
         self.out_dir = Some(dir);
     }
 
@@ -1269,6 +1277,9 @@ impl App {
         let Some(out_dir) = self.out_dir.clone() else {
             return;
         };
+        self.batch_report_key = None;
+        self.batch_report_finished = false;
+        self.batch_report_saved = None;
         self.pending = Some(PendingRun {
             options: self.options.clone(),
             kind: RunKind::Batch {
@@ -1284,6 +1295,7 @@ impl App {
             return;
         };
         self.refresh_blocked_checker();
+        self.batch_report_saved = None;
         self.notice = None;
         self.diagnostic_stopped = false;
         self.diagnostic_path = None;
@@ -1574,10 +1586,18 @@ impl App {
                 }
                 Message::BatchReportWritten(result) => {
                     self.batch_report_key = None;
-                    self.notice = Some(match result {
-                        Ok(count) => format!("Batch report: {count} files. Saved dutchman-batch-report.md and dutchman-batch-report.csv in the output folder."),
-                        Err(error) => error,
-                    });
+                    match result {
+                        Ok(folder) => {
+                            if self.out_dir.as_ref() == Some(&folder) {
+                                self.batch_report_saved = Some(folder);
+                                self.notice = None;
+                            }
+                        }
+                        Err(error) => {
+                            self.batch_report_saved = None;
+                            self.notice = Some(error);
+                        }
+                    }
                 }
 
                 Message::Downloaded(results) => {
@@ -1704,6 +1724,9 @@ impl App {
                 }
                 Message::Done => {
                     self.run = None;
+                    self.batch_report_key = None;
+                    self.batch_report_finished = self.inputs.iter().any(|path| path.is_dir())
+                        && self.rows.iter().any(|row| row.report.is_some());
                     if let Some(path) = self.diagnostic_path.clone() {
                         let failed = self.row_logs.iter().any(|(index, log)| {
                             log == &path
@@ -2569,6 +2592,8 @@ impl App {
                         if !self.inputs.is_empty() && ui.button("Clear").clicked() {
                             self.inputs.clear();
                             self.rows.clear();
+                            self.batch_report_finished = false;
+                            self.batch_report_saved = None;
                             self.report_row = None;
                             self.report_done = None;
                             self.private_send = None;
@@ -2675,6 +2700,9 @@ impl App {
     }
 
     fn batch_report_button(&mut self, ui: &mut egui::Ui) {
+        if !self.batch_report_finished {
+            return;
+        }
         let Some(folder) = self.out_dir.clone() else {
             return;
         };
@@ -2704,7 +2732,7 @@ impl App {
             let sender = self.sender.clone();
             let ctx = ui.ctx().clone();
             std::thread::spawn(move || {
-                let result = dutchman::batch_report::write_folder(&folder);
+                let result = dutchman::batch_report::write_folder(&folder).map(|_| folder);
                 let _ = sender.send(Message::BatchReportWritten(result));
                 ctx.request_repaint();
             });
@@ -2715,7 +2743,6 @@ impl App {
         let p = *theme::palette(ui);
         let wide = is_wide(ui);
         section_label(ui, &p, "Output folder");
-        self.batch_report_button(ui);
         let has_results = self.rows.iter().any(|row| row.report.is_some());
         if !has_results {
             self.output_expanded = false;
@@ -2953,9 +2980,14 @@ impl App {
                     ui.label(RichText::new(why).small().color(p.tide));
                 }
             }
-            if let Some(summary) = summary.filter(|_| !self.rows.is_empty()) {
+            if let Some(folder) = &self.batch_report_saved {
+                ui.label(
+                    RichText::new(format!("Report saved to {}/", file_name(folder))).color(p.tide),
+                );
+            } else if let Some(summary) = summary.filter(|_| !self.rows.is_empty()) {
                 ui.label(RichText::new(summary).color(p.tide));
             }
+            self.batch_report_button(ui);
             ui.menu_button("Formats", |ui| {
                 for format in dutchman_core::Format::ALL {
                     ui.horizontal_wrapped(|ui| {
@@ -4129,51 +4161,75 @@ mod tests {
     use super::*;
 
     #[test]
-    fn batch_report_button_requires_saved_reports_and_an_idle_run() {
+    fn batch_report_button_requires_a_finished_folder_run_and_says_where_saved() {
         use egui_kittest::kittest::Queryable;
         let folder = tempfile::tempdir().unwrap();
         let output = folder.path().join("synthetic.sc");
-        for saved in [false, true] {
-            if saved {
-                dutchman::saved_report::save(
-                    &output,
-                    &json!({
-                        "schema": "dutchman.convert/1", "ok": true,
-                        "input": {"path": "synthetic.f3d"}, "losses": []
-                    }),
-                )
-                .unwrap();
-            }
-            let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
+        let report = json!({
+            "schema": "dutchman.convert/1", "ok": true, "mode": "history",
+            "input": {"path": "synthetic.f3d"}, "losses": []
+        });
+        dutchman::saved_report::save(&output, &report).unwrap();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1180.0, 800.0))
+            .build_eframe(|cc| {
                 let mut app = App::new(cc);
                 app.set_out_dir(folder.path().to_path_buf());
+                app.inputs = vec![folder.path().to_path_buf()];
                 app
             });
-            for attempt in 0..500 {
-                harness.run_steps(2);
-                if harness.query_by_label("Batch report").is_some() || (!saved && attempt >= 20) {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            assert_eq!(harness.query_by_label("Batch report").is_some(), saved);
-            if saved {
-                harness.get_by_label("Batch report").click_accesskit();
-                harness.run_steps(8);
-                for _ in 0..500 {
-                    harness.run_steps(2);
-                    if folder.path().join("dutchman-batch-report.csv").is_file() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                assert!(folder.path().join("dutchman-batch-report.md").is_file());
-                assert!(folder.path().join("dutchman-batch-report.csv").is_file());
-                harness.state_mut().intake.active = true;
-                harness.run_steps(8);
-                assert!(harness.query_by_label("Batch report").is_none());
-            }
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Batch report").is_none());
+        {
+            let app = harness.state_mut();
+            app.intake.active = true;
+            app.rows = vec![Row {
+                input: PathBuf::from("synthetic.f3d"),
+                output: Some(output),
+                status: Status::Converted,
+                report: Some(report),
+                size: None,
+                progress: None,
+                job: None,
+            }];
         }
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Batch report").is_none());
+        harness.state_mut().intake.active = false;
+        harness.state().sender.send(Message::Done).unwrap();
+        for _ in 0..500 {
+            harness.run_steps(2);
+            if harness.query_by_label("Batch report").is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let button = harness.get_by_label("Batch report").rect();
+        let summary = harness.get_by_label("1 converted, 0 failed").rect();
+        assert!(button.left() >= summary.right());
+        assert!((button.center().y - summary.center().y).abs() < 10.0);
+        harness.get_by_label("Batch report").click_accesskit();
+        let status = format!("Report saved to {}/", file_name(folder.path()));
+        for _ in 0..500 {
+            harness.run_steps(2);
+            if harness.query_by_label(&status).is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        harness.get_by_label(&status);
+        assert!(folder.path().join("dutchman-batch-report.md").is_file());
+        assert!(folder.path().join("dutchman-batch-report.csv").is_file());
+        harness.state_mut().intake.active = true;
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Batch report").is_none());
+        harness.state_mut().intake.active = false;
+        harness
+            .state_mut()
+            .set_out_dir(folder.path().join("another-output"));
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Batch report").is_none());
+        assert!(harness.query_by_label(&status).is_none());
     }
 
     #[test]
