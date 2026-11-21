@@ -15,13 +15,64 @@ test this component.
 
 Open Fusion, Inventor, SolidWorks or FreeCAD files with **File > Open**. Before reading
 native geometry, the plugin checks bounded archive indexes and the desktop app's measured
-memory/time estimate. It refuses work above its memory budget (2 GiB less 512 MiB of
-headroom) or five-minute deadline, and links to the [Dutchman app download](https://github.com/dutchman-cad/dutchman/releases/latest).
+memory/time estimate. It retains a conservative 520 MB peak-memory estimate ceiling and
+a five-minute time estimate ceiling, and links to the [Dutchman app download](https://github.com/dutchman-cad/dutchman/releases/latest).
+The guest's actual memory limit is 2048 MiB; the lower estimate ceiling also bounds conversion work.
 The app can convert larger designs and save a `.sc` to open in SolidCraft. Compressed inner archive checks are bounded to 16 MiB in total; larger checks also
 direct you to the app. The estimate is
 approximate; it is not a guarantee that every smaller design fits. SolidCraft 0.45's importer
 API has no dialog call: refusal errors appear in its status area; the Import report dialog
 is available only after a successful conversion.
+
+Fusion archives also have an explicit fuel estimate, independent of part count:
+
+```text
+estimated fuel = 3 * (500,000,000 + 16,000 * B + 100,000,000 * E + 500,000,000 * D)
+```
+
+`B` is the larger of the outer archive's expanded bytes and the sum of its inner
+archives' expanded bytes. `E` counts outer archive entries; `D` counts indexed `.f3d`
+documents, with a minimum of one. These come from bounded ZIP metadata, without reading
+features or B-rep payloads. Documents are not placed parts: the 41-part arm has only two
+indexed documents. Arithmetic saturates, so overflowing work estimates are refused.
+An estimate above the manifest's **670,960,576,380 fuel** request directs the design to the
+app before native decoding. Other formats retain the existing memory/time checks.
+
+Calibration used the component from `f174dac3`, before this preflight update, in Wasmtime 50.0.2,
+with editable history enabled and real CLI host evaluation. The fuel count includes
+instantiation, conversion and guest work during verification:
+
+| Public design | Expanded bytes `B` | Entries `E` | Documents `D` | Consumed fuel |
+|---|---:|---:|---:|---:|
+| 41-part robot arm | 11,718,465 | 4 | 2 | 167,740,144,095 |
+| 250 mm MIC6 bed | 261,515 | 17 | 1 | 4,710,741,081 |
+| Mini power inlet plate | 260,519 | 17 | 1 | 3,350,956,153 |
+| Mini power switch plate | 198,568 | 17 | 1 | 2,412,586,136 |
+
+The arm is the MIT-licensed `examples/Assem1_description/Assem1.f3z` example from
+[`fusion2URDF`](https://github.com/Adriaeik/fusion2URDF). Calibration uses observations
+only; these public design files are not added to the test fixtures.
+
+The formula before its 3x multiplier bounds all four observations; that multiplier
+reserves room for runtime differences and unseen feature complexity. The declared request
+is exactly **4x the arm's measured fuel**, replacing the old 100-billion request.
+The RailCore Mini (110,045,607 expanded bytes, 45 entries, 43 documents) and 300ZL
+(74,341,274 bytes, 71 entries, 69 documents) exceed both the fuel envelope and the retained
+memory gate. They are refused from their outer indexes before inner archive inflation.
+This is a conservative heuristic, not a guarantee for every feature mix or runtime.
+SolidCraft 0.45 uses Wasmtime 48.0.8; its real-host behavior must also be checked.
+For comparison, the rc.9 component with host evaluation refused used
+188,397,757,861 fuel on the arm, exceeding its old 100-billion request.
+
+After the update, the rebuilt component used 167,744,341,712 fuel for the arm,
+including real host evaluation, with 240,254,976 bytes of peak guest linear memory.
+The request retains more than three times that measured fuel. A synthetic archive
+with 10,000 small entries also confirmed that the compiled component refuses work
+from the fuel estimate independently of the memory estimate.
+In one headless SolidCraft 0.45.0 session, `file.import` opened all 41 arm parts in
+62.6 seconds, including first compilation and host evaluation. The subsequent
+RailCore Mini import was refused in 0.81 seconds with the existing app message;
+this timing uses the already compiled component. No GUI step is needed for these checks.
 
 The manifest supplies native host forms: Keep editable history (true), Up axis
 (As in the file, `as_is`, the default, or Stand up (Y-up to Z-up), `stand_up`), Include
@@ -273,9 +324,9 @@ One-run observations on a shared builder.
 | Native peak RSS, one 68 MB Fusion archive, `dutchman convert --threads 1 --no-verify` | 3.8 GiB (3,894,656 KiB), 2 min 51 s |
 
 The manifest asks for 2048 MiB: the public fixtures need under 16 MiB, and the native run of
-a very large archive shows memory growing to about 57 times the input, so 2 GiB covers inputs of
-roughly 30 MB. wasm32 cannot address more than 4 GiB, so the largest archives stay with the
-command line.
+a very large archive shows memory growing to about 57 times the input. These observations
+do not establish an admissible compressed file size; the preflight limits above also bound
+work. wasm32 cannot address more than 4 GiB, so the largest archives stay with the command line.
 
 The earlier cold `wasm32-wasip2` measurement took 31 minutes with up to 10.8 GiB in one
 compiler process; `dutchman-plugin-measure` repeats a cold build for this target.

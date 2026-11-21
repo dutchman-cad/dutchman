@@ -1354,7 +1354,9 @@ an ordered, directed input chain with its radius positions bound to that travers
 Carrier sample order alone does not supply that binding. The editable prefix and original
 final geometry are retained when the direction is unresolved.
 
-The SolidCraft plugin checks estimated memory and time before native decoding. When it
+The SolidCraft plugin checks estimated memory, time and Fusion archive fuel before native decoding.
+Its manifest requests 670,960,576,380 fuel; SolidCraft 0.45 users must raise **Max plugin fuel**
+in **Preferences > Plugins** to at least that value. When it
 says the design is too large to open inside SolidCraft, use the
 [Dutchman desktop app](https://github.com/dutchman-cad/dutchman/releases/latest) to save a
 `.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
