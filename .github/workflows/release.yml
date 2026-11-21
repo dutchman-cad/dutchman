@@ -117,6 +117,9 @@ jobs:
     timeout-minutes: 45
     env:
       VERSION: ${{ needs.find.outputs.version }}
+      # Two compile jobs keep the wasm release build inside the runner's memory (a full-width
+      # build ran out on the 16 GB runner); the profile, and so the plugin's bytes, are unchanged.
+      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v7
         with:
