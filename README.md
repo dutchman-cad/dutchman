@@ -233,9 +233,9 @@ For other clients:
 
 **Contributing**
 
-- **Where to start:** pick an unchecked item on a master issue and point your AI agent at it:
-  [Solid Edge support](https://github.com/dutchman-cad/dutchman/issues/840),
-  [SolidWorks support](https://github.com/dutchman-cad/dutchman/issues/866), or any issue labelled
+- **Where to start:** [pick a CAD program](CONTRIBUTING.md#pick-a-cad-program) and paste its block
+  into your AI agent: [SolidWorks](https://github.com/dutchman-cad/dutchman/issues/866),
+  [Solid Edge](https://github.com/dutchman-cad/dutchman/issues/840), or any issue labelled
   [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
   or [good first issue](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
   Each one says what is known, what isn't, and how to verify it with public files.

@@ -12,15 +12,51 @@ synthetic test files and pull requests are all welcome.
    claims never lapse. A maintainer can also assign an issue to you; that counts as claiming it.
    Comment `/unclaim` to give it up; see [issue claims](docs/claiming.md).
 
-Pick an unchecked item on a master issue and open a pull request.
-[Solid Edge support](https://github.com/dutchman-cad/dutchman/issues/840) and
-[SolidWorks support](https://github.com/dutchman-cad/dutchman/issues/866) are the current ones; every
-issue labelled [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+Pick a CAD program below, then an unchecked, unclaimed item on its master issue, and open a pull
+request. Every issue labelled [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 or [good first issue](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 is open to anyone. Each issue states what is known, what is unknown, and how to verify the change
 with public CC0 files and their STEP exports, so you can hand it straight to an AI agent: start it
 with [AGENTS.md](AGENTS.md). Reading a native file belongs in
-[cadmpeg](https://github.com/cadmpeg/cadmpeg); its issues use the same format.
+[cadmpeg](https://github.com/cadmpeg/cadmpeg); its issues use the same format. Issues labelled
+`blocked` wait on a cadmpeg piece first; the issue says which.
+
+### Pick a CAD program
+
+Each program has one master issue. Paste its block into your AI agent: it picks a sub-issue,
+claims it, and works it to a pull request.
+
+**SolidWorks** (`.sldprt`, `.sldasm`): [dutchman#866](https://github.com/dutchman-cad/dutchman/issues/866).
+cadmpeg already reads the geometry and the parts of an assembly; this is about feature history,
+holes, fillets, sweeps, lofts, sheet metal and mates.
+
+```
+Read https://github.com/dutchman-cad/dutchman/issues/866
+Pick one unchecked sub-issue that is not labelled blocked or claimed
+Comment /claim on that sub-issue, then work on it
+Clone https://github.com/dutchman-cad/dutchman
+Follow AGENTS.md and docs/agents/solidworks.md
+Open a pull request when the sub-issue's "How to verify" passes
+```
+
+**Solid Edge** (`.par`, `.psm`, `.asm`): [dutchman#840](https://github.com/dutchman-cad/dutchman/issues/840),
+reading first in [cadmpeg#1862](https://github.com/cadmpeg/cadmpeg/issues/1862). Most items wait
+on cadmpeg, so the cadmpeg side is the place to start.
+
+```
+Read https://github.com/dutchman-cad/dutchman/issues/840
+Pick one unchecked sub-issue that is not labelled blocked or claimed; if all are blocked, take the
+  open cadmpeg issue one of them depends on instead (its own block is at its top)
+Comment /claim on that issue, then work on it
+Clone https://github.com/dutchman-cad/dutchman
+Follow AGENTS.md and docs/agents/solid-edge.md
+Open a pull request when the issue's "How to verify" passes
+```
+
+**Everything else** (Fusion, Onshape, Inventor, FreeCAD, CATIA, NX, Creo, Rhino): no master issue
+yet. Start from a [file that didn't convert](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3Aneeds-fixture)
+or the [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+list, or ask in the [Discord](https://discord.gg/yTcseBEdeu) which program is next.
 
 ## Reporting a problem
 
