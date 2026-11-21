@@ -17,6 +17,10 @@ def required(paths):
         return (path.startswith(('docs/', 'changelog.d/', 'release-notes/', 'skills/', 'assets/'))
                 or (path.endswith('.md') and name != 'README.md')
                 or path.startswith('.github/ISSUE_TEMPLATE/')
+                # CI's own configuration: the daily Docker workflow builds the source image from
+                # scratch, and release-image.yml checks the published image before pushing it.
+                or path.startswith(('.github/workflows/', 'scripts/tests/'))
+                or (path.startswith('scripts/ci-') and path.endswith('.py'))
                 or (path.endswith('.rs') and name != 'build.rs')
                 or (path.startswith('crates/') and '/tests/' in path))
     return any(not unrelated(path) for path in paths)
@@ -25,25 +29,40 @@ def required(paths):
 NEW_REF = '0' * 40
 
 
-def tested_base(base):
-    """The commit to compare against; a newly pushed ref compares with where it left main.
+def git(*args):
+    found = subprocess.run(['git', *args], capture_output=True, text=True)
+    return found.stdout.strip() if found.returncode == 0 else ''
 
-    A pushed tag (or a new branch) has no previous commit: GitHub sends forty zeros. Its commit
-    was already checked when it reached main, so only what it adds beyond main needs the source
-    build. A tag on a main commit therefore takes the same fast path main took.
+
+def tested_bases(base):
+    """Commits whose CI already covered the image's inputs.
+
+    A pushed tag (or a new branch) has no previous commit: GitHub sends forty zeros. Compare it
+    with the nearest earlier release tag on its line, whose own run checked the image, and with
+    where it left main. A tag adding only docs, Rust sources or CI changes beyond either takes
+    the fast path, so release candidates build as quickly as main.
     """
     if base != NEW_REF:
-        return base
-    found = subprocess.run(['git', 'merge-base', 'HEAD', 'origin/main'], capture_output=True, text=True)
-    return found.stdout.strip() if found.returncode == 0 and found.stdout.strip() else base
+        return [base]
+    candidates = [git('describe', '--tags', '--abbrev=0', '--match', 'v*', 'HEAD^'),
+                  git('merge-base', 'HEAD', 'origin/main')]
+    return [found for found in candidates if found]
+
+
+def changed(base):
+    if subprocess.run(['git', 'cat-file', '-e', f'{base}^{{commit}}'], capture_output=True).returncode:
+        return None
+    diff = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, 'HEAD'])
+    return [path.decode('utf-8', errors='surrogateescape') for path in diff.split(b'\0') if path]
 
 
 def select(base):
-    base = tested_base(base)
-    if subprocess.run(['git', 'cat-file', '-e', f'{base}^{{commit}}'], capture_output=True).returncode:
-        return True
-    diff = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, 'HEAD'])
-    return required([path.decode('utf-8', errors='surrogateescape') for path in diff.split(b'\0') if path])
+    # The source build is skipped when any tested base shows only unrelated changes since then.
+    for candidate in tested_bases(base):
+        paths = changed(candidate)
+        if paths is not None and not required(paths):
+            return False
+    return True
 
 
 if __name__ == '__main__':

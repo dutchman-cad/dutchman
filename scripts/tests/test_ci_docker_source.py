@@ -17,12 +17,16 @@ class DockerSourceTests(unittest.TestCase):
                      'Cargo.toml', 'Cargo.lock', '.cargo/config.toml', 'rust-toolchain.toml',
                      'crates/dutchman/build.rs', 'crates/dutchman/assets/report-policy.json',
                      'licences/cadmpeg.txt', 'LICENSE', 'NOTICE', 'README.md',
-                     '.github/workflows/ci.yml', 'unknown-build-input'):
+                     'scripts/package-archive.sh', 'unknown-build-input'):
             with self.subTest(path=path):
                 self.assertTrue(SOURCE.required([path]))
 
     def test_unrelated_changes_keep_runtime_fast_path(self):
         self.assertFalse(SOURCE.required(['docs/docker.md', 'changelog.d/fix.md', 'skills/guide.md']))
+
+    def test_ci_configuration_keeps_runtime_fast_path(self):
+        self.assertFalse(SOURCE.required(['.github/workflows/ci.yml', '.github/workflows/release-image.yml',
+                                          'scripts/ci-docker-source.py', 'scripts/tests/test_ci_result.py']))
 
     def test_rust_sources_and_tests_keep_runtime_fast_path(self):
         # Every other Linux job compiles and tests these; the daily Docker workflow rebuilds the
@@ -36,22 +40,41 @@ class DockerSourceTests(unittest.TestCase):
         with patch.object(SOURCE.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)):
             self.assertTrue(SOURCE.select('missing'))
 
-    def test_new_ref_compares_with_main(self):
-        # A tag push sends forty zeros as its previous commit: compare with where it left main.
+    @staticmethod
+    def fake_git(tag='v1.0.0-rc.3', main='abc123'):
         def run(args, **kwargs):
+            if args[:2] == ['git', 'describe']:
+                return subprocess.CompletedProcess(args, 0 if tag else 128, stdout=(tag or '') + '\n')
             if args[:2] == ['git', 'merge-base']:
-                return subprocess.CompletedProcess(args, 0, stdout='abc123\n')
+                return subprocess.CompletedProcess(args, 0 if main else 1, stdout=(main or '') + '\n')
             return subprocess.CompletedProcess(args, 0)
-        with patch.object(SOURCE.subprocess, 'run', side_effect=run), \
-             patch.object(SOURCE.subprocess, 'check_output', return_value=b'') as diff:
+        return run
+
+    def diffs(self, by_base):
+        return lambda args: by_base[args[4]]
+
+    def test_new_tag_compares_with_the_previous_release_tag(self):
+        # rc.4 after rc.3 on a release branch: main is far behind, the previous tag is not.
+        with patch.object(SOURCE.subprocess, 'run', side_effect=self.fake_git()), \
+             patch.object(SOURCE.subprocess, 'check_output', side_effect=self.diffs(
+                 {'v1.0.0-rc.3': b'.github/workflows/ci.yml\0docs/docker.md\0',
+                  'abc123': b'Dockerfile\0'})):
             self.assertFalse(SOURCE.select('0' * 40))
-            diff.assert_called_once_with(['git', 'diff', '--name-only', '-z', 'abc123', 'HEAD'])
-        with patch.object(SOURCE.subprocess, 'run', side_effect=run), \
-             patch.object(SOURCE.subprocess, 'check_output', return_value=b'Dockerfile\0'):
+
+    def test_new_tag_on_main_compares_with_main(self):
+        with patch.object(SOURCE.subprocess, 'run', side_effect=self.fake_git()), \
+             patch.object(SOURCE.subprocess, 'check_output', side_effect=self.diffs(
+                 {'v1.0.0-rc.3': b'Cargo.lock\0', 'abc123': b''})):
+            self.assertFalse(SOURCE.select('0' * 40))
+
+    def test_new_tag_changing_image_inputs_since_both_builds_the_source(self):
+        with patch.object(SOURCE.subprocess, 'run', side_effect=self.fake_git()), \
+             patch.object(SOURCE.subprocess, 'check_output', side_effect=self.diffs(
+                 {'v1.0.0-rc.3': b'Dockerfile\0', 'abc123': b'Dockerfile\0'})):
             self.assertTrue(SOURCE.select('0' * 40))
 
-    def test_new_ref_without_main_fails_open(self):
-        with patch.object(SOURCE.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, stdout='')):
+    def test_new_ref_without_tag_or_main_fails_open(self):
+        with patch.object(SOURCE.subprocess, 'run', side_effect=self.fake_git(tag=None, main=None)):
             self.assertTrue(SOURCE.select('0' * 40))
 
     def test_whole_group_diff_includes_dockerfile(self):
