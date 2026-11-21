@@ -1,0 +1,67 @@
+{
+ "model": "RailCore II 300ZLT (gate.yml matrix source)",
+ "generated_from": "Dutchman 0.3.0 rc.10 (release/0.3.0-rc10 + #861), gate run 44928097886",
+ "tracking": "https://github.com/dutchman-cad/dutchman/issues/863",
+ "unplaced": {
+  "300ZLT Bearing Block / unnamed part": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "300ZLT Sides / RailCore II 300ZL v6_300ZL Bottom Panel v1 / unnamed part": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "300_ZLT_1_Z_Tower / LeadScrew Coupler / unnamed part": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "300_ZLT_2_Z_Tower / LeadScrew Coupler / unnamed part": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "300_ZLT_2_Z_Tower / ZL_Z_Yoke_2 / unnamed part": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "Feet / Foot / unnamed part": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "RailCore II 300ZLT component 1": {
+   "count": 11,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "RailCore II 300ZLT component 2": {
+   "count": 3,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "Stationary Idlers / Aluminum / ALU_Front_Stationary_Idler_Trimmed / unnamed part": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "xref 300ZLT Bearing Block: 1 component definition(s) own bodies but have no placed occurrence; each is placed once below the document root with the identity transform, so its bodies keep their stored frames": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "xref ALU_Front_Stationary_Idler_Trimmed: 1 component definition(s) own bodies but have no placed occurrence; each is placed once below the document root with the identity transform, so its bodies keep their stored frames": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "xref Foot: 1 component definition(s) own bodies but have no placed occurrence; each is placed once below the document root with the identity transform, so its bodies keep their stored frames": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "xref LeadScrew Coupler: 1 component definition(s) own bodies but have no placed occurrence; each is placed once below the document root with the identity transform, so its bodies keep their stored frames": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "xref RailCore II 300ZL v6_300ZL Bottom Panel v1: 1 component definition(s) own bodies but have no placed occurrence; each is placed once below the document root with the identity transform, so its bodies keep their stored frames": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  },
+  "xref ZL_Z_Yoke_2: 1 component definition(s) own bodies but have no placed occurrence; each is placed once below the document root with the identity transform, so its bodies keep their stored frames": {
+   "count": 1,
+   "reason": "stored-frame fallback, unproven; dutchman-cad/dutchman#863"
+  }
+ }
+}

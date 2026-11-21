@@ -48,8 +48,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Unreadable positions fail the gate. An exception must list exact part names
-          # under unplaced_allowances, each mapped to a reason and tracking issue.
+          # Unreadable positions fail the gate. An exception must list exact part names, with
+          # their counts and a reason naming the tracking issue, in scripts/gate-allowances/<name>.json
+          # (or under unplaced_allowances, names only); any other or more frequent part fails.
           # Each source is fetched from a commit of its repository and checked against its SHA-256.
           - name: 300zl
             file: RailCore II 300ZL - Nov 2019.f3z
@@ -95,7 +96,9 @@ jobs:
         env:
           UNPLACED_ALLOWANCES: ${{ toJSON(matrix.unplaced_allowances || fromJSON('{}')) }}
         run: |
-          python3 scripts/unproven-placements.py out/${{ matrix.name }}.json --allowances "$UNPLACED_ALLOWANCES"
+          extra=()
+          if [ -f "scripts/gate-allowances/${{ matrix.name }}.json" ]; then extra=(--allowances-file "scripts/gate-allowances/${{ matrix.name }}.json"); fi
+          python3 scripts/unproven-placements.py out/${{ matrix.name }}.json --allowances "$UNPLACED_ALLOWANCES" "${extra[@]}"
       - name: Convert the source for comparison
         run: |
           bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}-source.sc --import-only --json --quiet --yes > out/${{ matrix.name }}-source.json 2> out/source.log || { tail -n 40 out/source.log; exit 1; }

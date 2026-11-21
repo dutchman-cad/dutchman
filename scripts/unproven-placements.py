@@ -50,30 +50,59 @@ def unproven_placements(report):
     return parts
 
 
+def load_allowances(inline, path):
+    """Return {part name: (expected count or None, reason)}.
+
+    Inline allowances map names to reasons (any count). A reviewed allowlist file pins each
+    part's count too, so a part becoming unplaced more often fails like a new part does.
+    """
+    result = {}
+    data = json.loads(inline) or {}
+    if not isinstance(data, dict):
+        raise ValueError("allowances must map part names to nonempty reasons")
+    for name, reason in data.items():
+        if not isinstance(name, str) or not isinstance(reason, str) or not reason.strip():
+            raise ValueError("allowances must map part names to nonempty reasons")
+        result[name] = (None, reason)
+    if path:
+        listed = json.loads(Path(path).read_text()).get("unplaced")
+        if not isinstance(listed, dict):
+            raise ValueError("an allowlist file needs an unplaced object")
+        for name, entry in listed.items():
+            count, reason = (entry or {}).get("count"), (entry or {}).get("reason")
+            if (not isinstance(name, str) or type(count) is not int or count < 1
+                    or not isinstance(reason, str) or not reason.strip()):
+                raise ValueError(f"allowlist entry {name!r} needs a positive count and a reason")
+            result[name] = (count, reason)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report", type=Path)
     parser.add_argument("--allowances", default="{}", help="part name to reason JSON object")
+    parser.add_argument("--allowances-file", type=Path,
+                        help="reviewed JSON file: {\"unplaced\": {part name: {\"count\": N, \"reason\": text}}}")
     args = parser.parse_args()
     try:
         report = json.loads(args.report.read_text())
         if not isinstance(report, dict) or "ok" not in report:
             raise ValueError("expected a conversion report with an ok field")
-        allowances = json.loads(args.allowances)
-        if allowances is None:
-            allowances = {}
-        if not isinstance(allowances, dict) or any(
-            not isinstance(name, str) or not isinstance(reason, str) or not reason.strip()
-            for name, reason in allowances.items()
-        ):
-            raise ValueError("allowances must map part names to nonempty reasons")
+        allowances = load_allowances(args.allowances, args.allowances_file)
         parts = unproven_placements(report)
         failed = False
         for name, count in sorted(parts.items()):
-            reason = allowances.get(name)
-            print(f"{name} ×{count}: position could not be read"
-                  + (f"; allowed: {reason}" if reason else ""))
-            failed |= reason is None
+            allowed = allowances.get(name)
+            if allowed is None:
+                print(f"{name} ×{count}: position could not be read; not in the allowlist")
+                failed = True
+            elif allowed[0] is not None and allowed[0] != count:
+                print(f"{name} ×{count}: position could not be read; the allowlist expects ×{allowed[0]}")
+                failed = True
+            else:
+                print(f"{name} ×{count}: position could not be read; allowed: {allowed[1]}")
+        for name in sorted(set(allowances) - set(parts)):
+            print(f"{name}: now placed; remove it from the allowlist")
         return int(failed)
     except (OSError, ValueError, TypeError, AttributeError) as error:
         print(f"Could not check placement report: {error}", file=sys.stderr)

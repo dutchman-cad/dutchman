@@ -1,0 +1,1031 @@
+{
+ "model": "RailCore Mini (railcore/railcore-mini@7126633b, parts/F360/RCM_f360_archive.f3z)",
+ "generated_from": "Dutchman 0.3.0 rc.10 (release/0.3.0-rc10 + #861), gate run 44928097886",
+ "tracking": "https://github.com/cadmpeg/cadmpeg/issues/1880",
+ "unplaced": {
+  "0521c70f-b128-4cc7-b7f3-a8651a9806f0.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "0b7441c5-4d36-40b9-9b6e-ba9bb8e8ee33.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "104d132d-5e1b-48d5-a8cc-fd7985fcb0b8.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "119321ef-a608-4fd4-a55f-08bc79cf66d6.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "1f03e4bf-b6b8-4aac-8df5-9afaa8a91140.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "2": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "2 (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "2 pole terminal block large v7 (1)": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "2 pole terminal block v7 (1)": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "20x20x10_Fan": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "25 pin with case v2 (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "25mm Shoulder Bolt": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "27fae159-710d-4fe0-b93a-a8daea4a17e3.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "2X USB2": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "2X USB3": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "2X25Pin case v7 (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "2X5Pin case v6": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "2X5Pin case v6 (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "38429f9b-0eb8-4597-a8cf-e8e6ca778250.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "38763c07-b06d-468f-a89d-62abf6cfd481.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "3bf0c8eb-213b-4964-b729-554fa2c24761.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "3c02a7bb-c478-4bc2-9ad6-6582fbf5bf4a.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "3c532c3e-ce07-4a6d-b527-f6da2ec7d267.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "3ea6a878-8967-40af-aadc-69aec46e30d2.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "48655b0b-6eb6-404d-bb46-13bff2db9ef8.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "4c5217db-f03a-478b-98b2-7af4874cfb26.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "4mm Bowden Coupler v1": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "6584934e-b2a4-46f7-a3f8-6875d24ceada.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "6627T640_POSITION-CONTROL DC MOTOR": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "68617b2f-be2f-40eb-b060-3d99bd25eeca.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "6af85f9a-a1c8-4be8-b778-5fb63cea83f9.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "6de9f6f9-4591-46e6-8e8a-ceeaff68dc4a.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "706738c7-0db4-418e-94a1-683ca88d03fa.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "797c9393-8f4e-4fa0-9003-10c515f6f18b.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "7f7302d1-2659-49fb-ae24-31875eb511f2.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "82fa36f5-3b9c-4c2f-adb5-e33102cc7db4.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "88f3eb8d-8f0e-40ed-9903-d151cab193e2.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "90940A412": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "91239A118": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "91D77 D9WHV 778K, 4 GB LPDDR4 SDRAM, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "92125A138": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "97763A813": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "AlternateY-5_Y carriage": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Arm cortex Sam4E8E v6 v7": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "BASE9710016 (1) (1)": {
+   "count": 6,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "BASE9710016 (2) (1)": {
+   "count": 8,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "BASE9710016 (3)": {
+   "count": 8,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "BMG_Mount_V2 Copy": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Bearings": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Bowden Clip 1,75 v1": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "BrassCouplerRing": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "BrassCouplerRing 4mm PFTE v1": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Broadcom BCM2711B0 CPU, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Broadcom BCM54213PE Gigabit Ethernet Transceiver, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Cable_Exit": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Camera Connector, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "CaptiveTensioner v10": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component1": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component1 (1) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component1 (2) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component1 (3)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component1 (4)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component1 (5) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component1 (6) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component1 (7)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component10": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component11": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component12": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component13": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component14": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component143": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component144": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component145": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component146": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component147": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component148": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component149": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component15": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component150": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component151": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component152": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component153": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component154": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component155": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component156": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component157": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component158": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component2 (2)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component3": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component4": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component5": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component6": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component7": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component8": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Component9": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Coupling": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Coupling_Clip": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Cypress CYW43455 Wireless Module Cover, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Display Connector, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Duct_Printed_Mount_Adapter (From FS Kit)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Duet WIfi Rev 4 v2": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Duet Wifi daughter board  v25": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "E3D_Revo_Micro": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "FINAL-Alu_Front_X_Carriage-v3": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Fan_Mount": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Female Micro HDMI Connector, RPi4ModelB": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Female USB Type C Connector, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "FlyShaft2": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Foot": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Gearset": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Gigabit Ethernet Port, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "HFS3-1515-270": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "HFS3-1515-73": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Heatblock": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Heatbreak": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Heatsink": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "HubHousing V5 With Logo": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "KPJX-PM-4S_rC": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "KnurledNut": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "LDO Stepper (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "LDO_36STH17-1004AHG v6": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Latch (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "LatchShaft": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "MOSFET v9 (1)": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "MR148ZZ v2": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Micro P v5 (3)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Micro P v5 (4)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Micro P v5 (5)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Microphone Plug, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Mini Z Tower": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Mini Z Tower / NewZtowerSlide": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Mini Z Tower / NewZtowerSlide-BedOffset-Printed_Version": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Mini Z Tower bodies": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molded Gear Housing (65 teeth) v1": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 2 pin v2 (1) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 2 pin v2 (2) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 2 pin v2 (3) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 2 pin v2 (4) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 2 pin v2 (5) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 2 pin v2 (6) (4)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 2 pin v2 (7) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 2 pin v2 (8)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 3 pin v2 v6 (1) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 3 pin v2 v6 (10)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 3 pin v2 v6 (2) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 3 pin v2 v6 (3) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 3 pin v2 v6 (4) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 3 pin v2 v6 (5) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 4 pin v3 (1) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 4 pin v3 (2) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 4 pin v3 (3) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 4 pin v3 (4) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 4 pin v3 (5)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 4 pin v3 (5) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 4 pin v3 (6)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Molex PCB 4 pin v3 (7)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Mosquito-Mount v1": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Mosquito_Groove_Mount v3": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Motor Mounts": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "MxL7704 Universal PMIC, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "NewZtowerSlide": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "NewZtowerSlide-BedOffset-Printed_Version": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Nozzle": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Nuts&Bolts": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Orbiter 8MM GoblinHubs V3 v3": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Orbiter Mount": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Orbiter Spider Shaft v4": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Orbiter V2.0 Mockup": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Orbiter v2.0 mockup v5": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "OrbiterMountWithFlagReimport": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Orbiter_Mount_Height Spacer": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PCB 7mm cap v8 (1) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PCB 7mm cap v8 (2) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PCB 7mm cap v8 (3) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PCB 7mm cap v8 (4) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PCB 7mm cap v8 (5) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PCB 7mm cap v8 (6) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PCB 7mm cap v8 (7) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PCB 7mm cap v8 (8) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PCB 7mm cap v8 (9)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PCB 7mm cap v8 (9) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PCB, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PINO9710016 (1) (1)": {
+   "count": 18,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PINO9710016 (2) (1)": {
+   "count": 32,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "PINO9710016 (3)": {
+   "count": 16,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Pin Header 1x2 TH Pitch 2 (1)": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Pin Header 1x3 TH Pitch 2 (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Pin Header 2x10 TH Pitch 2 (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Pin Header 2x15 TH Pitch 2 (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Pin Header 2x5 TH Pitch 2": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Pin Header 2x5 TH Pitch 2 (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Pin Header 2x5 TH Pitch 2 (2)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Power reg R2 v4": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Power reg v5": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM Front Panel Power Switch Plate": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM Left Panel USB WiFi Plate": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM Power Inlet Plate": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM_Back Panel": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM_Bottom_Panel": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM_Front Panel": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM_Front Panel PS": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM_Left_Panel": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM_RightPanel": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM_f360_archive component 1": {
+   "count": 6,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM_f360_archive component 1 bodies": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "RCM_f360_archive component 4": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Raspberry Pi 4 Model B v1": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Revo Mount": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Rod Carrier": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "SD Card Slot, RPi4ModelB": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "SELBV13-245": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Shorty SuperPinda Mount": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Smooth Rod R": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Smoothe ROd L": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Sping": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Spring": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Spring v1": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "T10 SpurGear": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Threaded_Nut": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Trinamic 2660-PA v3 (1) (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Trinamic 2660-PA v3 (5)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Trinamic 2660-PA v3 (6)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Trinamic 2660-PA v3 (7)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Trinamic 2660-PA v3 (8)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "VIA VL805 PCIe USB 3": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "Wire Loom/ PTFE retainer": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "_MR148ZZ Ball": {
+   "count": 14,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "_MR148ZZ Inner Ring": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "_MR148ZZ Outer Ring": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "_MR148ZZ Shield1": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "_MR148ZZ Shield2": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "_SELBV13-245_r": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "_SELBV13_b": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "a6e51d85-fdc5-4a70-ba72-409d7208a454.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "an unresolved target": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "b7d0e492-44d3-450d-91c6-a03e06554a19.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "bd652b8c-5f23-4a5a-ac2b-cffd17958322.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "bondetech-extruder-simple-right-v": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "button switch v9": {
+   "count": 2,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "c0786f9c-618e-4edd-bb48-40efa2ace590.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "cd1fc35f-0e42-4ce7-b894-f1acefbb4ce3.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "choke v6 (1)": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "d6280d6b-c147-4f8c-b029-e0f616dcd5c4.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "e056a3f4-8848-4dfd-9ca5-d4fd2662a655.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "f0e56163-634f-4fed-94af-e5dc25946ccd.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "f19cf393-47d2-412f-bf9e-dd839593d1f9.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "f2e55726-938f-422d-bc98-fb5ac677d87a.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "f44b9514-b1de-461e-9318-fc493b4cb43d.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "fd5ba6c9-d6c3-4fd1-ab38-d5834082a1cc.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "ffd383ac-af41-4716-86df-959d89b3e1a5.f3d": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "microSD1 v4": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "molex_micro usb v2": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "wifi chip v3": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "xref Mini Z Tower: external occurrence an unresolved target has typed placement carrier Some(1188) for roles [] that did not close under its generation grammar": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "xref Mini Z Tower: external occurrence an unresolved target has typed placement carrier Some(1200) for roles [] that did not close under its generation grammar": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  },
+  "xref Mini Z Tower: external occurrence an unresolved target has typed placement carrier Some(1497) for roles [] that did not close under its generation grammar": {
+   "count": 1,
+   "reason": "xref/local placement not decoded; cadmpeg/cadmpeg#1880"
+  }
+ }
+}
