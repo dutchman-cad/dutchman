@@ -2447,27 +2447,31 @@ impl App {
                                     ui.vertical(|ui| {
                                         let folder =
                                             if dutchman_core::Format::from_path(input).is_some() {
-                                                input
-                                                    .parent()
-                                                    .filter(|parent| !parent.as_os_str().is_empty())
-                                                    .unwrap_or_else(|| Path::new("."))
+                                                input.parent().filter(|parent| {
+                                                    !parent.as_os_str().is_empty()
+                                                        && *parent != Path::new(".")
+                                                })
                                             } else {
-                                                input.as_path()
+                                                Some(input.as_path())
                                             };
-                                        // One paragraph lets the estimate continue on the
-                                        // folder's last line, keeping both texts complete.
+                                        // Keep real folders and their estimates in one paragraph.
                                         let mut line = egui::text::LayoutJob::default();
-                                        RichText::new(display(folder)).append_to(
-                                            &mut line,
-                                            ui.style(),
-                                            egui::FontSelection::Default,
-                                            Align::Center,
-                                        );
-                                        let mut tooltip = display(folder);
+                                        let mut tooltip = String::new();
+                                        if let Some(folder) = folder {
+                                            tooltip = display(folder);
+                                            RichText::new(&tooltip).append_to(
+                                                &mut line,
+                                                ui.style(),
+                                                egui::FontSelection::Default,
+                                                Align::Center,
+                                            );
+                                        }
                                         if let Some((text, hover, large)) =
                                             estimate.as_ref().filter(|_| index == 0)
                                         {
-                                            RichText::new(format!(" — {text}"))
+                                            let prefix =
+                                                if folder.is_some() { " — " } else { "" };
+                                            RichText::new(format!("{prefix}{text}"))
                                                 .small()
                                                 .color(if *large { p.lantern_text } else { p.tide })
                                                 .append_to(
@@ -2476,11 +2480,15 @@ impl App {
                                                     egui::FontSelection::Default,
                                                     Align::Center,
                                                 );
-                                            tooltip.push('\n');
+                                            if !tooltip.is_empty() {
+                                                tooltip.push('\n');
+                                            }
                                             tooltip.push_str(hover);
                                         }
-                                        ui.add(egui::Label::new(line).wrap())
-                                            .on_hover_text(tooltip);
+                                        if !line.text.is_empty() {
+                                            ui.add(egui::Label::new(line).wrap())
+                                                .on_hover_text(tooltip);
+                                        }
                                         if dutchman_core::Format::from_path(input).is_some()
                                             && (self.inputs.len() > 1 || estimate.is_none())
                                         {
@@ -2489,16 +2497,8 @@ impl App {
                                         if let Some(format) =
                                             dutchman_core::Format::from_path(input)
                                         {
-                                            let level = format
-                                                .headline_level()
-                                                .map(|level| format!("  {level}"))
-                                                .unwrap_or_default();
                                             ui.add(
-                                                egui::Label::new(format!(
-                                                    "{}{level}",
-                                                    format.status_for(input)
-                                                ))
-                                                .wrap(),
+                                                egui::Label::new(format.status_for(input)).wrap(),
                                             );
                                         }
                                     });
@@ -3001,6 +3001,7 @@ impl App {
             }
             self.batch_report_button(ui);
             ui.menu_button("Formats", |ui| {
+                ui.label("L0–L9: cadmpeg’s published format-support level; each conversion’s report says what that file kept.");
                 for format in dutchman_core::Format::ALL {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(format.name());
@@ -4177,6 +4178,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn input_row_shows_plain_capability_and_only_meaningful_folders() {
+        use egui_kittest::kittest::Queryable;
+        let absolute = std::env::current_dir().unwrap().join("synthetic.f3d");
+        for input in [
+            PathBuf::from("synthetic.f3d"),
+            PathBuf::from("./synthetic.f3d"),
+            PathBuf::from("designs/synthetic.f3d"),
+            absolute,
+        ] {
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(1000.0, 1400.0))
+                .build_eframe(|cc| {
+                    let mut app = App::new(cc);
+                    app.inputs = vec![input.clone()];
+                    app.size_inputs = Some(app.inputs.clone());
+                    app.estimate_key = Some(app.current_estimate_key());
+                    app
+                });
+            harness.run_steps(8);
+            assert!(harness
+                .query_by_label("Fusion .f3d: reads geometry")
+                .is_some());
+            assert!(harness.query_by_label_contains("L5").is_none());
+            assert!(harness.query_by_label(".").is_none());
+            assert!(harness.query_by_label("synthetic.f3d").is_some());
+            if let Some(parent) = input
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty() && *parent != Path::new("."))
+            {
+                assert!(harness.query_by_label(&display(parent)).is_some());
+            }
+        }
+    }
+
+    #[test]
     fn batch_report_button_requires_a_finished_folder_run_and_says_where_saved() {
         use egui_kittest::kittest::Queryable;
         let folder = tempfile::tempdir().unwrap();
@@ -5228,7 +5264,7 @@ mod tests {
         harness.run_steps(8);
         assert!(harness
             .query_by_label(
-                ". — synthetic.f3d needs under 0.1 GB of memory and under a minute to convert."
+                "synthetic.f3d needs under 0.1 GB of memory and under a minute to convert."
             )
             .is_some());
     }
@@ -5286,13 +5322,13 @@ mod tests {
         harness.run_steps(8);
         assert!(harness
             .query_by_label(
-                ". — synthetic.f3d needs about 2.5 GB of memory and about 3 min to convert."
+                "synthetic.f3d needs about 2.5 GB of memory and about 3 min to convert."
             )
             .is_some());
         assert!(harness.query_by_label("4.0 GB of memory free").is_some());
         assert!(harness
             .query_by_label(
-                ". — synthetic.f3d needs about 90.0 GB of memory and about 1 min to convert."
+                "synthetic.f3d needs about 90.0 GB of memory and about 1 min to convert."
             )
             .is_none());
     }
