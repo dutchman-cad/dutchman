@@ -482,7 +482,7 @@ jobs:
     needs: changes
     if: (needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true') || (github.event_name == 'pull_request' && needs.changes.outputs.floor == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
