@@ -151,6 +151,12 @@ User-hidden bodies that still belong to a component are kept, with an Info note.
 occurrences remain hidden; the current writer shows a part with both shown and hidden bodies
 whole, so its hidden members can appear visible in SolidCraft.
 
+Closed-edge blends need an exact historical curve carrier in addition to their
+sample positions and adjacent face identities. When that carrier is missing, the
+conversion reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
+The samples alone cannot distinguish a circle from an ellipse or another closed
+curve. The original final geometry and the editable prefix are retained.
+
 Holes on planar historical entry faces can keep their editable history when the boundary
 includes circular arcs or whole circles, including a rounded corner or an earlier through
 hole. The source's own input-edge ends, midpoints, and tangents establish the circular
