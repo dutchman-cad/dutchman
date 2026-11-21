@@ -13,7 +13,8 @@ synthetic test files and pull requests are all welcome.
    Comment `/unclaim` to give it up; see [issue claims](docs/claiming.md).
 
 Pick an unchecked item on a master issue and open a pull request.
-[Solid Edge support](https://github.com/dutchman-cad/dutchman/issues/840) is the current one; every
+[Solid Edge support](https://github.com/dutchman-cad/dutchman/issues/840) and
+[SolidWorks support](https://github.com/dutchman-cad/dutchman/issues/866) are the current ones; every
 issue labelled [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 or [good first issue](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 is open to anyone. Each issue states what is known, what is unknown, and how to verify the change
