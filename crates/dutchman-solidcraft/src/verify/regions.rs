@@ -73,6 +73,30 @@ fn aggregate(source: Eval) -> Result<Eval, Outcome> {
         if let Some(closed) = closed {
             body.insert("closed".to_owned(), json!(closed.iter().all(|v| *v)));
         }
+        for name in ["faces", "edges"] {
+            let count = raw
+                .iter()
+                .try_fold(0u64, |sum, v| sum.checked_add(v.get(name)?.as_u64()?));
+            if let Some(count) = count {
+                body.insert(name.to_owned(), json!(count));
+            }
+        }
+        // A missing kind in a reported map means zero, as in the per-body check.
+        // A missing map, malformed count or overflow makes the whole map unavailable.
+        let kinds = raw.iter().try_fold(
+            serde_json::Map::new(),
+            |mut counts, v| -> Option<serde_json::Map<String, Value>> {
+                for (kind, count) in v.get("face_types")?.as_object()? {
+                    let previous = counts.get(kind).and_then(Value::as_u64).unwrap_or(0);
+                    let sum = previous.checked_add(count.as_u64()?)?;
+                    counts.insert(kind.clone(), json!(sum));
+                }
+                Some(counts)
+            },
+        );
+        if let Some(kinds) = kinds {
+            body.insert("face_types".to_owned(), Value::Object(kinds));
+        }
         let mut kernel = serde_json::Map::new();
         for name in ["faces", "edges", "shells"] {
             let count = raw.iter().try_fold(0u64, |sum, v| {
@@ -113,6 +137,7 @@ mod tests {
         json!({"volume_mm3":1000.0,"area_mm2":600.0,
             "bbox":{"min":[x,0,0],"max":[x+10.0,10,10]},
             "center_of_mass":[x+5.0,5,5],"closed":true,
+            "faces":6,"edges":12,"face_types":{"plane":6},
             "kernel":{"faces":6,"edges":12,"shells":1}})
     }
 
@@ -120,6 +145,7 @@ mod tests {
         json!({"volume_mm3":2000.0,"area_mm2":1200.0,
             "bbox":{"min":[0,0,0],"max":[40,10,10]},
             "center_of_mass":[20,5,5],"closed":true,
+            "faces":12,"edges":24,"face_types":{"plane":12},
             "kernel":{"faces":12,"edges":24,"shells":2}})
     }
 
@@ -155,6 +181,8 @@ mod tests {
             "bounding_box",
             "centroid",
             "closed_shell",
+            "merged_faces",
+            "analytic_faces",
         ] {
             assert_eq!(
                 checks["bodies"][0]["checks"][name]["status"], "pass",
@@ -162,6 +190,63 @@ mod tests {
             );
         }
         assert_eq!(checks["bodies"][0]["checks"]["shells"]["source"], 2);
+    }
+
+    #[test]
+    fn incomplete_or_overflowing_topology_stays_unavailable() {
+        for field in ["faces", "edges", "face_types"] {
+            for value in [
+                None,
+                Some(json!("unavailable")),
+                Some(json!({"plane":"unavailable"})),
+                Some(json!(u64::MAX)),
+            ] {
+                let mut region = piece(30.0);
+                if field == "face_types" && value == Some(json!(u64::MAX)) {
+                    region[field] = json!({"plane":u64::MAX});
+                } else if let Some(value) = value {
+                    region[field] = value;
+                } else {
+                    region.as_object_mut().unwrap().remove(field);
+                }
+                let (source, written) =
+                    evaluations(vec![piece(0.0), region], vec![joined()], 2).unwrap();
+                let checks = evidence::measurements(&source, &written);
+                let check = match field {
+                    "faces" => "merged_faces",
+                    "edges" => "merged_edges",
+                    _ => "analytic_faces",
+                };
+                assert_eq!(
+                    checks["bodies"][0]["checks"][check]["status"], "not_checked",
+                    "{checks}"
+                );
+                assert!(source.raw["bodies"][0].get(field).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn freeform_and_mesh_regions_keep_their_topology_exclusions() {
+        for kind in ["other", "mesh"] {
+            let mut region = piece(30.0);
+            region["face_types"][kind] = json!(1);
+            let (source, written) =
+                evaluations(vec![piece(0.0), region], vec![joined()], 2).unwrap();
+            let checks = evidence::measurements(&source, &written);
+            assert_eq!(
+                checks["bodies"][0]["checks"]["merged_faces"]["status"],
+                "not_checked"
+            );
+            assert_eq!(
+                checks["bodies"][0]["checks"]["analytic_faces"]["status"],
+                if kind == "mesh" {
+                    "not_checked"
+                } else {
+                    "pass"
+                }
+            );
+        }
     }
 
     #[test]

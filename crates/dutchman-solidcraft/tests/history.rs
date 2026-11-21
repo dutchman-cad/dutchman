@@ -20145,6 +20145,12 @@ fn multi_region_history_and_import_verify_in_solidcraft() {
         matches!(report.outcome().unwrap().check, Check::Verified),
         "{report:?}"
     );
+    let checks = &report.verification_checks()[0]["geometry"]["bodies"][0]["checks"];
+    for name in ["merged_faces", "analytic_faces"] {
+        assert_eq!(checks[name]["status"], "pass", "{checks}");
+    }
+    assert_eq!(checks["merged_faces"]["source"], 12);
+    assert_eq!(checks["analytic_faces"]["source"]["plane"], 12);
     let replayed = volumes(&cli, &bytes);
     assert_eq!(replayed.len(), 1, "{replayed:?}");
     assert!((replayed[0] - 2000.0).abs() < 1e-6);

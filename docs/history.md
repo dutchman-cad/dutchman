@@ -87,7 +87,10 @@ those regions as separate solids. If history retains them in one body, verificat
 requires every source region to import with positive volume, area and complete bounds,
 then compares their summed volume and area and combined bounding box with the replayed
 body. Available centroids are combined by volume; closure requires every region to
-be closed. Missing regions still fail. If replay also splits the regions, the usual
+be closed. Merged face and edge counts and surface-kind counts are summed when
+all regions report the corresponding measurement. Missing or overflowing counts
+remain unavailable. The combined face evidence still rejects a small missing hole
+even when volume and area fall within their allowances. Missing regions still fail. If replay also splits the regions, the usual
 per-piece checks apply. Single-region bodies and designs with multiple source bodies
 keep their existing one-to-one comparisons.
 

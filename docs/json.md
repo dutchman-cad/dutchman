@@ -896,8 +896,14 @@ records top-level `edges` counts as informational: `info` when equal, `differs` 
 unequal, or `not_checked` when unavailable. Mirror and full-turn revolve operations
 can split edge chains differently across SolidCraft releases without changing the shape. If either body has `other`
 or `mesh` surface kinds, merged totals are `not_checked`: separate free-form surface
-records can split equivalent geometry differently. `analytic_faces` compares the merged
-`face_types` counts for `plane`, `cylinder`, `cone` and `sphere`, recording source and
+records can split equivalent geometry differently.
+
+For a single body with disconnected regions, merged topology counts and surface-kind
+counts are summed across regions only when every region supplies them. Missing,
+malformed or overflowing counts remain absent and the corresponding check is
+`not_checked`.
+
+`analytic_faces` compares the merged `face_types` counts for `plane`, `cylinder`, `cone` and `sphere`, recording source and
 written count objects and `pass`, `fail` or `not_checked`. Absent kinds in an available
 map count as zero; absent maps or a mesh body are `not_checked`. Thus a body with
 free-form faces still cannot lose cylindrical hole faces silently. A mismatch rejects
