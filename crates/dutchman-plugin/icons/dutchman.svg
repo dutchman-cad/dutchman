@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Dutchman</title>
+  <path d="M32 11L32 45" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M27 16L13 16Q16 27 13 38L27 38Z" fill="#236ead"/>
+  <path d="M37 16L51 16Q48 27 51 38L37 38Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M37 16L49.5 27L37 38" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M7 45L57 45L49.5 55L14.5 55Z" fill="currentColor"/>
+  <circle cx="32" cy="6" r="3" fill="#c06f00"/>
+</svg>
