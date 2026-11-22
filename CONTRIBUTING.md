@@ -53,7 +53,22 @@ Follow AGENTS.md and docs/agents/solid-edge.md
 Open a pull request when the issue's "How to verify" passes
 ```
 
-**Everything else** (Fusion, Onshape, Inventor, FreeCAD, CATIA, NX, Creo, Rhino): no parent issue
+**Onshape** (`.onshape-bundle`): [dutchman#891](https://github.com/dutchman-cad/dutchman/issues/891).
+Dutchman fetches a Part Studio with your own API keys and converts it offline. Reading moves to
+[cadmpeg#1572](https://github.com/cadmpeg/cadmpeg/pull/1572) first; the fetch and docs items are
+open now.
+
+```
+Read https://github.com/dutchman-cad/dutchman/issues/891
+Pick one unchecked sub-issue that is not labelled blocked or claimed; if all are blocked, take the
+  open cadmpeg pull request or issue one of them depends on instead
+Comment /claim on that issue, then work on it
+Clone https://github.com/dutchman-cad/dutchman
+Follow AGENTS.md and docs/agents/onshape.md
+Open a pull request when the issue's "How to verify" passes
+```
+
+**Everything else** (Fusion, Inventor, FreeCAD, CATIA, NX, Creo, Rhino): no parent issue
 yet. Start from a [file that didn't convert](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3Aneeds-fixture)
 or the [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 list, or ask in the [Discord](https://discord.gg/yTcseBEdeu) which program is next.
