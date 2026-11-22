@@ -40,6 +40,9 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   part positions also apply inside external assemblies.
 - Large plugin reports show dropped and degraded losses first and say explicitly when details
   are shortened.
+- A Fusion design whose only bodies are meshes that could not be read now says that it holds
+  only mesh bodies and that Dutchman does not convert meshes yet, instead of "no geometry could
+  be read". Convert the meshes to solids in Fusion and save a new copy.
 
 ### History
 
@@ -136,11 +139,42 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   which face takes the distance. Each body's cut is checked in SolidCraft.
 - Designs with surface bodies are checked against the original again on SolidCraft 0.23 and
   newer, instead of being reported as unverified.
+- Explain when a closed-edge chamfer cannot map because its historical curve geometry is missing.
+- Keep face extrusions on imported bases editable only when their result matches the source;
+  otherwise, preserve the original shape and explain the missing proof.
+- Keep holes attached to their location sketches when editable history moves into a component.
+- Convert through-all holes with drill points, including counterbores and countersinks, on every supported SolidCraft target.
+- Keep countersunk holes ending at a proven face editable with their drill points,
+  allowing later features to rebuild.
+- The final check that a written design opens in SolidCraft gets its own time (at least 15 minutes) instead of what earlier checks left over, so large assemblies are checked fully. When SolidCraft still does not finish, the design is marked not verified and the report says how long it was given.
+- Keep the final source shape or usable editable prefix when SolidCraft refuses to rebuild
+  a feature, and name the feature and reason in the report.
+- Keep self-touching surface bodies when their STEP imports can be repaired, preserving
+  their faces and placement. Clearly mark any body still MISSING after available repairs.
+- Keep writing designs when verification is unavailable without named failed features,
+  and mark them unverified with the reason.
+- Remove edited bodies that fail a measured replay check and preserve the imported final shape,
+  with the failed check and measured difference in the report.
+- SolidWorks extrudes and resolved revolves keep editable profiles when their source explicitly
+  names an earlier resolved planar sketch feature with decoded profile curves, targeting
+  SolidCraft 0.45 or newer.
+- Keep supported holes at complete parallel spatial locations editable without a source location
+  sketch when targeting SolidCraft 0.44.1 or newer.
+- Explain when a generated blend edge lacks resolved source geometry, preserving the
+  original shape until its selection can be proven.
+- Cosmetic metric threads keep their nominal designation when secondary dimensions are rounded.
+- Conflicting thread dimensions name both values; matching inch sizes report the remaining
+  cosmetic Thread limitation.
+- Report unresolved shared sketch profiles before rebuilding extra bodies or
+  attempting later fillets, while preserving the final shape.
+- Variable fillets report when their radius stations are not bound to a source start vertex,
+  preserving the original geometry and editable prefix.
 
 ### Assemblies
 
 - The SolidCraft plugin refuses oversized referenced parts before reading their bytes.
 - A SolidWorks assembly whose part files cannot be found now says so ("none of the assembly's parts could be found or read") instead of saying its parts have no geometry SolidCraft can import.
+- A Fusion assembly whose linked components are not in the file now says so: the report names them, explains how to include them (export as .f3z, or put the linked designs next to it), counts them as left out, and the design is no longer marked verified.
 
 ### Desktop app
 
@@ -174,6 +208,20 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Keep Discord first, with a small GitHub backup link and anonymous review and file diagnosis reachable under More.
 - Keep insecure share links refused with an error that omits the original link.
 - Check missing-SolidCraft guidance even on machines that find its CLI on PATH.
+- Designs wraps folder paths and shows complete conversion estimates. Folders and multiple
+  files share one summary using peak per-file memory and total time; hover for each file’s
+  estimate and the full folder path. The compact header keeps the default window’s controls
+  in view.
+- Align the link field and buttons, keep consistent gaps when rows wrap, and leave the drop and paste hint fully visible.
+- Use matching control heights for the output folder and result actions.
+- Show plain format support in each input row, without a support-level code, and leave out the folder line when an input has no parent folder.
+- Narrow windows keep a report button above Convert, with one click to the full problem
+  reporting steps.
+- Open larger assemblies such as a 41-part robot arm in the SolidCraft plugin.
+- Refuse designs too large for the plugin immediately and direct them to the Dutchman app.
+- Include a theme-aware Dutchman ship icon in the SolidCraft plugin package.
+- Name partial successes “Partly converted” and geometry-only results “Converted, no history”, keeping their amber colour.
+- Move problem reporting closer under the output folder when one result leaves room.
 
 ### Command line and install
 
@@ -207,6 +255,18 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   `docs/solidcraft-plugin.md`.
 - On Windows, the command line no longer crashes with a stack overflow (exit 0xC0000409),
   for example when refusing an IGES file: it now runs with the same stack on every platform.
+- Give the source image's Rust build 90 minutes, and its CI step 100: an uncached build can take over 30 minutes without hanging.
+- Check the release image before publishing it, and let CI's Docker job report without blocking a release.
+- Let a release tag skip the cold source-image build when, since the previous release tag or main, only docs, Rust sources or CI configuration changed.
+- Folder conversions keep nested designs, linked companions, and desktop reports together,
+  with separate output paths for same-named designs in different subfolders.
+- Output names that differ only in case receive separate names to avoid overwriting designs
+  on case-insensitive filesystems.
+- Ask `dutchman preflight <file> --json` for a budgeted default-target history forecast before converting, including partial feature counts and the first blocking feature.
+- Identify prefix evidence, planned evidence and exhausted budgets explicitly; unavailable target forecasts remain unknown.
+- Inspection no longer counts history from assembly components whose geometry cannot be written.
+- SolidCraft 0.45 is the newest known target; older targets down to 0.18.2 remain available.
+- Designs keep their compatible format; saving them in SolidCraft 0.45 requires 0.45 or newer to reopen.
 
 ### Reports
 
@@ -223,6 +283,20 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Avoid long pauses when reporting many attributes scoped to placed instances or evaluation states.
 - The README and the history guide now state the exact tolerances Dutchman uses to check a history in SolidCraft.
 - Conversion reports, from the command line, the MCP server and batch runs, carry `verification_tolerances`: the numbers the check used for that run.
+- Save a whole folder's conversion results as Markdown and CSV with Batch report
+  beside the desktop app's completed-run counts, `convert-all --batch-report`,
+  or `batch-report` for saved results.
+- See totals for all four outcomes below the Markdown heading; CSV keeps one row
+  per file. The desktop status keeps the run counts and names the output folder after saving.
+- Keep the desktop problem-report panel close to the output folder after a batch run.
+- Dutchman reports individual source comparisons with measured evidence, unavailable-check
+  reasons and replayed parameter values. Face, edge and shell counts are informational,
+  so equivalent split faces do not reject editable history. Omitted or renamed parameters
+  are reported as not checked.
+- Large designs stop early in the SolidCraft plugin with a link to the Dutchman app.
+- Plugin reports use plain result descriptions and offer Discord help before GitHub.
+- The plugin description explains how to open supported CAD files with File > Open.
+- Parts whose position couldn't be read are now reported as not placed, instead of counted as placed at the origin.
 
 ### cadmpeg
 
@@ -244,7 +318,12 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Pull requests get fast Linux checks; the merge queue checks all platforms and release
   packages together. Run the full matrix on a PR branch by starting CI manually.
 - Dutchman website links now use https://dutchmancad.xyz/, including test-file recipes.
-
+- Clarify that proven circular boss edges, as well as hole rims, can retain editable chamfers.
+- Say which commands stop a design that is stuck: a plain `convert` of one file has no per-design
+  time limit.
+- Bound source Docker image builds and downloads so stalled work fails promptly.
+- Let CI check newer main commits while an earlier run is still running.
+- Say that a STEP exported from Fusion leaves out hidden bodies, which Dutchman keeps marked hidden.
 ## 0.2.10 (2026-11-16)
 
 ### Known issues

@@ -58,14 +58,15 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 
    <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>
 
-## What's new in 0.2.10
+## What's new in 0.3.0
 
-- **SolidCraft 0.43:** designs now target SolidCraft 0.43 and still open back to 0.18.2 with simplified features; Fusion bodies you hid stay hidden in 0.42 and newer.
-- **More Fusion history stays editable:** Combine, Sweep, path pattern, sphere, Emboss, unfold, and body mirror steps are read, and history continues past As-built joints and steps that change no geometry.
-- **More Fusion holes and faces:** a Hole placed on an earlier face and a radial Hole into a whole cylinder convert, and more extrudes, fillets, and chamfers find their faces and edges.
-- **Inventor sheet metal:** flanges with their default height keep their editable history, and a corner that leaves its part unchanged no longer stops it.
-- **FreeCAD output:** parts that end as several bodies get a Body for each new-body feature, and parameter-driven dimensions rebuild with the parameter's value.
-- **Linux AppImage and Arch package:** each release has an AppImage for x86_64 and ARM64 that updates itself, an Arch Linux package, and a Docker image that includes SolidCraft's checker.
+- **Dutchman inside SolidCraft:** Install the Dutchman plugin with Preferences > Plugins > Install plugin… in SolidCraft 0.44 or newer (desktop) and approve its memory request (a plugin copied into the plugins folder by hand isn't approved and is refused for memory), then open Fusion, Inventor, SolidWorks and FreeCAD files directly, with editable history.
+- **Onshape support:** Connect your Onshape account from the app or with `dutchman onshape login`, using your own API keys or an OAuth bearer token, then paste a Part Studio link or use `dutchman onshape fetch`.
+- **SolidCraft 0.44 support:** SolidCraft 0.44 is the newest target.
+- **More Fusion history stays editable:** Chamfers with two different distances, contour flanges, Split Body, Copy/Paste Bodies, mirrored-then-removed bodies, symmetric patterns, Base Features that later steps change, clockwise sketch arcs, narrow profile regions such as belt teeth, surface revolves of open curves, and sweep paths made of connected edges all keep their history.
+- **Tell us when something is wrong:** "Is there a problem?
+- **Batch reports, paste, share links and a look first:** After a folder run, Batch report writes `dutchman-batch-report.md` and `.csv` into the output folder: a totals line, then one row per file with its outcome (full history, partial N of M, geometry only, or failed) and the first reason.
+- **More formats, options and fixes:** Siemens NX parts convert their geometry.
 
 [Release notes](https://github.com/dutchman-cad/dutchman/releases/latest) · [Changelog](CHANGELOG.md)
 
