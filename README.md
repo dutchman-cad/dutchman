@@ -141,7 +141,7 @@ FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimensi
 Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
-Designs open in SolidCraft 0.18.2 to 0.45; 0.45 is the newest known target.
+Designs open in SolidCraft 0.18.2 to 0.46; 0.46 is the newest known target.
 
 A design Dutchman can't finish reading is stopped after 20 minutes with no progress (60 in all); in a Fusion `.f3z` archive it's left out and named, and the rest converts. Set `DUTCHMAN_DESIGN_TIME_LIMIT` to more minutes to give a large design longer.
 

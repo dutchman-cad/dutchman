@@ -17,6 +17,7 @@ None is a real design.
 | `core_design_product.FCStd` | A FreeCAD document: exact geometry (five bodies, 22 faces), persistent names, sketch constraints, design properties, a product link and a spreadsheet. | Copied unchanged from cadmpeg's corpus, `corpus/freecad_fcstd/fixtures/` at `main` `377eb82352dd`: authored in FreeCAD 1.1.1 by the cadmpeg project and dedicated CC0-1.0 (`corpus/manifest.toml`, SHA-256 `69c6aa00…989ba`). |
 | `design_history.FCStd` | A FreeCAD PartDesign Body with constrained sketches, an additive Pad, a subtractive Pocket and an edge Fillet. | As above (SHA-256 `c71da85e…ea0d7`). |
 | `product_assembly.FCStd` | A FreeCAD Assembly with groups, nested, array and external occurrences, grounding, and a limited revolute joint. | As above (SHA-256 `b8e0e92c…d8340`). |
+| `freecad_preexisting_error.FCStd` | A FreeCAD 1.1.4 PartDesign Body with a sketch, a Pad and a Fillet whose 500 mm radius fails to recompute: FreeCAD saved that Fillet (labelled "Edge rounding") as `Invalid="1"` with an `Error` message. | Authored for this project in FreeCAD 1.1.4 with a short script (a rectangle sketch, a 5 mm Pad, a 500 mm Fillet on two edges) and dedicated CC0-1.0 (SHA-256 `639895849738afbaf930972323b3c73151b6a9f265c1ecb4e29f9616d134a1b4`). |
 
 `freecad-1.1.4-A01/` contains unchanged CC0-1.0 CAD Fixture Recipes booklet 1.30 files,
 authored in FreeCAD 1.1.4 (`generated/freecad-1.1.4/manifest.json`):

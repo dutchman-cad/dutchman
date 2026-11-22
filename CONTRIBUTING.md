@@ -6,11 +6,8 @@ synthetic test files and pull requests are all welcome.
 
 ## Where to start
 
-0. Comment `/claim` on the issue first: claim, then a draft pull request within 24 hours,
-   even rough. After that, claims lapse after 5 days without activity from you, except
-   while a ready pull request waits on a maintainer or an open dependency. Maintainer
-   claims never lapse. A maintainer can also assign an issue to you; that counts as claiming it.
-   Comment `/unclaim` to give it up; see [issue claims](docs/claiming.md).
+Comment `/claim` on an issue, then open a draft pull request within 24 hours, even a rough one.
+A claim with no pull request lapses on its own after 24 hours. `/unclaim` gives it up.
 
 Pick a CAD program below, then an unchecked, unclaimed item on its parent issue, and open a pull
 request. Every issue labelled [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)

@@ -589,6 +589,13 @@ pub fn outcome(report: &Value) -> String {
     {
         text.push_str(" Converted on its own after running out of memory alongside other files.");
     }
+    if let Some(message) = report
+        .pointer("/source_errors/message")
+        .and_then(Value::as_str)
+    {
+        text.push(' ');
+        text.push_str(message);
+    }
     if let Some(reason) = report
         .pointer("/history_check_skipped/reason")
         .and_then(Value::as_str)
