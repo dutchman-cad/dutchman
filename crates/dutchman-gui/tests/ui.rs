@@ -4179,6 +4179,59 @@ mod paste_inputs {
         assert!(h.state().rows()[0].report.is_some());
     }
 
+    /// Holds the fetch at 12 of about 51 calls until the screenshot is taken.
+    fn held_fetch(
+        link: String,
+        folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        progress.calls(12, Some(51));
+        let started = Instant::now();
+        while !SHOT_TAKEN.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(started.elapsed() < Duration::from_secs(60), "never shot");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        fetch(link, folder, progress)
+    }
+    static SHOT_TAKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    #[test]
+    #[ignore = "renders real GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+    fn onshape_call_count_screenshots() {
+        let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            SHOT_TAKEN.store(false, std::sync::atomic::Ordering::SeqCst);
+            let output = tempfile::tempdir().unwrap();
+            let mut h = window(true);
+            h.ctx.set_theme(theme);
+            h.state_mut().set_out_dir(output.path().into());
+            h.state_mut().set_verify(false);
+            h.state_mut()
+                .set_link_transport_for_test(Arc::new(MockNetwork::default()), held_fetch);
+            paste(&mut h, LINK);
+            let started = Instant::now();
+            while h
+                .query_by_label("Fetching from Onshape: 12 of about 51 API calls…")
+                .is_none()
+            {
+                assert!(started.elapsed() < Duration::from_secs(30), "no call count");
+                std::thread::sleep(Duration::from_millis(10));
+                h.step();
+            }
+            h.run_steps(3);
+            h.render()
+                .unwrap()
+                .save(dir.join(format!("onshape-call-count-{name}.png")))
+                .unwrap();
+            SHOT_TAKEN.store(true, std::sync::atomic::Ordering::SeqCst);
+            wait_for_conversion(&mut h);
+        }
+    }
+
     #[test]
     fn a_request_limit_stop_offers_continue_fetching_without_command_line_words() {
         let mut h = window(true);
