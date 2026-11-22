@@ -32,7 +32,7 @@
 //! |---|---|---|
 //! | `description` | tool `name` | A tool with none is named from its type and diameter; a name used twice becomes `Name (2)`. |
 //! | `type` | `kind` | See the type table below. |
-//! | `geometry.DC` | `diameter` | Required. Lathe tools also accept `IC`. |
+//! | `geometry.DC` | `diameter` | Required. Turning tools take `INSD` or `IC` when there is no `DC`. |
 //! | `geometry.LCF` | `flute_len` | Falls back to `LB`, then `OAL` (noted). Required. |
 //! | `geometry.LB` / `OAL` | `shank_len` | The longer of the two, minus the flute length (0 when neither is longer). |
 //! | `geometry.SFDM` | `shank_d` | Defaults to the diameter, except undercut cutters, which need a neck. |
@@ -48,6 +48,7 @@
 //! | `vendor` | `vendor` | Cut to 80 characters. |
 //! | `post-process.number`, `product-link`, `post-process.comment` | `notes` | CamCraft's file stores no controller tool number, so it rides in the notes (`Fusion tool number 5`). |
 //! | `holder.segments` | `holder_d`, `holder_len` | One cylinder: the widest segment diameter and the total height. A tool with no holder writes 0 and 0. |
+//! | `start-values.presets[]`, turning | `turning`, `rpm`, `feed` | A preset with `v_c` and `f_n` and no `n` is constant surface speed: `turning.vc` (m/min; inch libraries give feet per minute) and `turning.feed_per_rev` (mm); 1000 rpm is the starting spindle speed. |
 //! | `start-values.presets[]` | `rpm`, `feed`, `cutting_data` | The first preset for all materials (else the first preset) gives `rpm` (`n`) and `feed` (`v_f`, or `f_n` x `n`, or `f_z` x `NOF` x `n`). Other presets whose material category CamCraft has (`aluminum`, `steel`, `stainless steel`, `cast iron`, `brass`, `plastic`) become one cutting row each, with `stepdown` and `stepover` when the preset uses them. A tool with no usable preset gets placeholder 1000 rpm and 100 mm/min, reported as degraded. |
 //!
 //! | Fusion `type` | CamCraft `kind` |

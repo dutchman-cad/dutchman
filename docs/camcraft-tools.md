@@ -31,7 +31,7 @@ would be refused, instead of writing a file CamCraft will not open.
 | Degraded | The tool is written, but not exactly: a face mill written as a flat end mill that does not cut at its centre, a slot mill as a keyseat cutter, a center or spot drill as a drill, a countersink as a chamfer mill, a drill with no point angle (118 degrees), or a tool with no cutting data (placeholder 1000 rpm and 100 mm/min). |
 | Info | Fusion fields with data CamCraft has no place for (plunge, ramp, lead-in, lead-out, retract and transition feeds, coolant, ramp spindle speed, tip diameter, shoulder length, holder gauge length, offsets that differ from the tool number, turret and so on); presets that match no CamCraft material; values derived rather than read; a name made unique; holder entries skipped. |
 
-A Fusion field that is empty, zero, false or `disabled` is not reported. `guid`, `reference_guid`,
+A preset's `v_c` (surface speed) is not reported for a milling tool: it follows from `n` and the diameter. A Fusion field that is empty, zero, false or `disabled` is not reported. `guid`, `reference_guid`,
 `expressions`, `version`, `GRADE` and a preset's `name` and `description` hold no tool data and are
 not reported.
 
@@ -44,7 +44,7 @@ degrees.
 |---|---|---|
 | `description` | `name` | Without one, the name is made from the type and diameter. A name used twice becomes `Name (2)`. |
 | `type` | `kind` | See the next table. |
-| `geometry.DC` | `diameter` | Required. Turning tools also accept `IC`. |
+| `geometry.DC` | `diameter` | Required. Turning tools take `INSD` (inscribed circle) or `IC` when there is no `DC`. |
 | `geometry.LCF` | `flute_len` | Falls back to `LB`, then `OAL`, and says so. |
 | `geometry.LB`, `OAL` | `shank_len` | The longer of the two, minus the flute length. |
 | `geometry.SFDM` | `shank_d` | Defaults to the diameter. T-slot, keyseat, dovetail and lollipop cutters need a neck narrower than the head. |
@@ -53,13 +53,14 @@ degrees.
 | `geometry.TA` | `tip_angle` | Chamfer mill: twice `TA` (CamCraft stores the included angle). Dovetail: 90 minus `TA` (CamCraft stores the angle between flank and bottom face). |
 | `geometry.TP` | `pitch` | Taps and thread mills. A threading insert with no width takes 0.866 x `TP`. |
 | `geometry.thread-profile-angle` | `tip_angle` | Thread mill and threading insert; 60 when absent. |
-| `geometry.W` | `width` | Grooving blade, threading insert, form tool. |
+| `geometry.W`, `tool_grooveWidth`, `tool_insertWidth` | `width` | Grooving blade, threading insert, form tool. Zero is read as not stated. |
 | `geometry.NOF` | `flutes` | 1 to 32. |
 | `BMC` | `tool_material` | `carbide` and `hss`. |
 | `product-id`, `vendor` | `part_number`, `vendor` | |
 | `post-process.number`, `product-link`, `post-process.comment` | `notes` | `.camtools` stores no controller tool number, so it travels in the notes as `Fusion tool number 5`. |
 | `holder.segments` | `holder_d`, `holder_len` | One cylinder: the widest segment and the total height. No holder writes 0 and 0. |
-| `start-values.presets` | `rpm`, `feed`, `cutting_data` | The first preset for all materials (else the first preset) gives `rpm` (`n`) and `feed` (`v_f`; or `f_n` x `n`; or `f_z` x `NOF` x `n`). Other presets for `aluminum`, `steel`, `stainless steel`, `cast iron`, `brass` or `plastic` become one cutting row each, with `stepdown` and `stepover` when the preset uses them. |
+| `start-values.presets` (turning) | `turning`, `rpm`, `feed` | A preset with a surface speed (`v_c`; feet per minute in an inch library) and a feed per revolution (`f_n`) and no spindle speed is constant surface speed: it becomes CamCraft's turning data (`vc` in m/min, `feed_per_rev` in mm), with 1000 rpm as the starting spindle speed (noted). A threading insert feeds one pitch per revolution. |
+| `start-values.presets` | `rpm`, `feed`, `cutting_data` | The feed falls back to the plunge feed for a drill or tap that states none. The first preset for all materials (else the first preset) gives `rpm` (`n`) and `feed` (`v_f`; or `f_n` x `n`; or `f_z` x `NOF` x `n`). Other presets for `aluminum`, `steel`, `stainless steel`, `cast iron`, `brass` or `plastic` become one cutting row each, with `stepdown` and `stepover` when the preset uses them. |
 
 | Fusion `type` | CamCraft `kind` |
 |---|---|
@@ -83,9 +84,12 @@ stepdown or stepover. The version is the oldest CamCraft reader that can take th
 
 ## Limits
 
-- The lathe tool fields (`IC`, `LE`, `W`, `RE`) and the `TA` meaning for dovetails follow the
-  structure of Fusion's exports; a library that disagrees shows up as a tool in the report, not as a
-  wrong number. Send such a library if one fails.
+- A turning tool's cutting length and shank length are taken from `LCF`/`LE` and `OAL` when
+  present, else the insert size; check them against the holder in CamCraft. The `TA` meaning for
+  dovetails is not confirmed against a real dovetail library; a library that disagrees shows up as
+  a tool in the report, not as a wrong number.
+- Fusion lathe holders (`holder` with `W`, `H`, `OAL`, ...) have no segments; the report lists their
+  fields and the tool is written without a holder.
 - CamCraft's tool body (a drawn holder profile or a placed mesh) is not produced; the holder is a
   cylinder.
 

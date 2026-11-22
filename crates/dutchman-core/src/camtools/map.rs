@@ -58,6 +58,10 @@ impl Kind {
         matches!(self, Kind::Keyseat | Kind::Dovetail | Kind::Lollipop)
     }
 
+    fn lathe_or_bore(self) -> bool {
+        self.lathe() || self == Kind::Bore
+    }
+
     fn lathe(self) -> bool {
         matches!(
             self,
@@ -107,6 +111,8 @@ pub(super) struct Def {
     pub vendor: Option<String>,
     pub notes: Option<String>,
     pub rows: Vec<Row>,
+    /// Surface speed (m/min) and feed per revolution (mm) of a constant-surface-speed tool.
+    pub turning: Option<(f64, f64)>,
 }
 
 impl Def {
@@ -148,6 +154,12 @@ impl Def {
             if let Some(v) = value {
                 o.insert(key.into(), json!(v));
             }
+        }
+        if let Some((vc, feed_per_rev)) = self.turning {
+            o.insert(
+                "turning".into(),
+                json!({"vc": vc, "feed_per_rev": feed_per_rev}),
+            );
         }
         if !self.rows.is_empty() {
             let rows: Vec<Value> = self
@@ -260,6 +272,13 @@ impl Def {
         }
         if self.notes.as_ref().is_some_and(|s| s.chars().count() > 500) {
             return Some("notes are longer than 500 characters".into());
+        }
+        if let Some((vc, fpr)) = self.turning {
+            if !(vc > 0.0 && vc <= 2000.0 && fpr > 0.0 && fpr <= 3.0) {
+                return Some(format!(
+                    "turning surface speed {vc} m/min or feed {fpr} mm/rev is outside CamCraft's limits"
+                ));
+            }
         }
         if let Some(why) = self.row_refusal() {
             return Some(why);
@@ -656,12 +675,12 @@ fn build(
     approximations: &mut Vec<String>,
     notes: &mut Vec<String>,
 ) -> Result<Def, String> {
-    let lathe = kind.lathe();
+    let lathe = kind.lathe_or_bore();
     let diameter = src
         .len(
             "geometry",
             if lathe {
-                &["DC", "diameter", "IC"][..]
+                &["DC", "diameter", "INSD", "IC"][..]
             } else {
                 &["DC", "diameter"][..]
             },
@@ -677,7 +696,12 @@ fn build(
     let point = src.raw("geometry", &["SIG", "tip-angle"]);
     let pitch = src.len("geometry", &["TP", "thread-pitch"]);
     let profile = src.raw("geometry", &["thread-profile-angle"]);
-    let width = src.len("geometry", &["W", "width"]);
+    let width = src
+        .len(
+            "geometry",
+            &["W", "width", "tool_grooveWidth", "tool_insertWidth"],
+        )
+        .filter(|w| *w > 0.0);
     let flutes = src
         .raw("geometry", &["NOF", "number-of-flutes"])
         .map(|z| z.round() as i64);
@@ -691,7 +715,7 @@ fn build(
     }
     if flute_len.is_none() && lathe {
         flute_len = Some(diameter);
-        approximations.push("no cutting length: the insert size was used".into());
+        notes.push("no cutting length: the insert size was used".into());
     }
     let flute_len = flute_len.ok_or("it states no flute (cutting) length")?;
 
@@ -738,6 +762,7 @@ fn build(
         vendor: src.text("vendor").map(|s| trim_to(&s, 80)),
         notes: None,
         rows: Vec::new(),
+        turning: None,
     };
 
     match kind {
@@ -785,6 +810,7 @@ fn build(
                 .or_else(|| pitch.map(|p| round6(0.866 * p)))
                 .ok_or("it states no insert width or pitch")?;
             def.tip_angle = profile.unwrap_or(60.0);
+            def.pitch = pitch.unwrap_or(0.0);
         }
         Kind::Form => {
             def.width = width.ok_or("it states no blade width")?;
@@ -911,28 +937,49 @@ fn cutting_data(
     }
     // (name, category, rpm, feed, stepdown, stepover) of every preset that states speed and feed.
     let mut usable: Vec<(String, Option<String>, f64, f64, Option<f64>, Option<f64>)> = Vec::new();
+    let mut turning: Vec<Option<(f64, f64)>> = Vec::new();
     for (i, p) in presets.iter().enumerate() {
         let name = p
             .get("name")
             .and_then(Value::as_str)
             .and_then(clean_text)
             .unwrap_or_else(|| format!("preset {}", i.saturating_add(1)));
-        let rpm = p.get("n").and_then(number).unwrap_or(0.0);
+        let mut rpm = p.get("n").and_then(number).unwrap_or(0.0);
+        let get = |key: &str| p.get(key).and_then(number).unwrap_or(0.0);
+        // Constant surface speed (lathe): the preset names a surface speed and a feed per
+        // revolution, and no spindle speed. Fusion's inch surface speed is feet per minute.
+        let vc = get("v_c") * if src.to_mm > 1.0 { 0.3048 } else { 1.0 };
+        let fpr = get("f_n") * src.to_mm;
+        let css = def.kind.lathe_or_bore() && vc > 0.0 && fpr > 0.0;
         let per_rev = p
             .get("use-feed-per-revolution")
             .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let per_rev = per_rev || (p.get("v_f").is_none() && p.get("f_n").is_some());
-        let mut feed = if per_rev {
-            p.get("f_n").and_then(number).map(|f| f * src.to_mm * rpm)
-        } else {
-            p.get("v_f").and_then(number).map(|f| f * src.to_mm)
+            .unwrap_or(false)
+            || (p.get("v_f").is_none() && p.get("f_n").is_some());
+        if css && rpm <= 0.0 {
+            rpm = 1000.0;
+            notes.push(
+                "the spindle speed is constant surface speed: its surface speed and feed per revolution are written as the tool's turning data, and 1000 rpm as its starting spindle speed"
+                    .into(),
+            );
         }
-        .unwrap_or(0.0);
+        let mut feed = if per_rev {
+            get("f_n") * src.to_mm * rpm
+        } else {
+            get("v_f") * src.to_mm
+        };
         if feed <= 0.0 {
-            if let (Some(fz), Some(z)) = (p.get("f_z").and_then(number), def.flutes) {
-                feed = fz * src.to_mm * f64::from(z) * rpm;
+            if let Some(z) = def.flutes {
+                feed = get("f_z") * src.to_mm * f64::from(z) * rpm;
             }
+        }
+        if feed <= 0.0 {
+            // Drills and taps state their feed as the plunge feed; a thread cut feeds one
+            // pitch per revolution.
+            feed = get("v_f_plunge") * src.to_mm;
+        }
+        if feed <= 0.0 && matches!(def.kind, Kind::Tap | Kind::Thread | Kind::ThreadMill) {
+            feed = def.pitch * rpm;
         }
         let category = p
             .get("material")
@@ -954,6 +1001,7 @@ fn cutting_data(
             step("use-stepover", "stepover"),
         );
         if (rpm > 0.0 && feed > 0.0) || (def.kind.spindleless() && feed > 0.0) {
+            turning.push(css.then(|| (round6(vc), round6(fpr))));
             usable.push((
                 name,
                 category,
@@ -979,6 +1027,7 @@ fn cutting_data(
             def.material_group = category
                 .clone()
                 .map_or_else(|| "all".to_owned(), |c| c.to_ascii_lowercase());
+            def.turning = lead.and_then(|i| turning.get(i).copied().flatten());
         }
         None => {
             approximations.push(
@@ -1001,10 +1050,11 @@ fn cutting_data(
         }
         return Ok(());
     }
+    let mut extra_defaults = 0;
     for (i, (name, category, rpm, feed, stepdown, stepover)) in usable.iter().enumerate() {
         let Some(category) = category else {
             if Some(i) != lead {
-                notes.push(format!("preset \"{name}\" is for all materials and so is a second default; not carried"));
+                extra_defaults += 1;
             }
             continue;
         };
@@ -1025,6 +1075,11 @@ fn cutting_data(
             stepdown: *stepdown,
             stepover: *stepover,
         });
+    }
+    if extra_defaults > 0 {
+        notes.push(format!(
+            "{extra_defaults} further preset(s) for all materials are not carried: CamCraft keeps one default"
+        ));
     }
     Ok(())
 }
@@ -1091,6 +1146,8 @@ fn unread(src: &Src<'_>) -> Vec<String> {
                                 | "stepover"
                                 | "use-stepdown"
                                 | "use-stepover"
+                                | "v_c"
+                                | "use-constant-surface-speed"
                         ) && !QUIET_SECTION.contains(&k.as_str())
                             && meaningful(v)
                         {

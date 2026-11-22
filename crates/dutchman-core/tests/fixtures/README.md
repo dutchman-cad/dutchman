@@ -293,3 +293,9 @@ findings are constructed in code; no archive from a user is used. The
 `unproven_positions_account_for_bodies_without_occurrences` unit test adds one
 synthetic body and an uninstantiated definition to the authored Inventor cube.
 These tests add no fixture files.
+
+## Fusion tool library
+
+| File | What it is | Where it came from |
+|---|---|---|
+| `fusion_tool_library_cc0.json`, `fusion_tool_library_cc0.tools` | One Fusion tool library of 11 tools (mills, drill, tap, thread mill, and four turning tools, millimetres and inches), as a `.json` export and as a `.tools` archive. | Made from scratch in Autodesk Fusion for Dutchman's tests, 2026-11-22; no tool copied from Autodesk's sample libraries; CC0 1.0. |
