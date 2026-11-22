@@ -2326,6 +2326,61 @@ fn volumes(cli: &Path, design: &[u8]) -> Vec<f64> {
         .collect()
 }
 
+/// The bodies of the hidden replay beside a written design's visible original, measured.
+///
+/// The writer leaves the hidden history component's body-building features suppressed, so a
+/// plain evaluation holds only the original. This asks SolidCraft (`timeline.suppress`) to
+/// turn those features back on, then measures: the bodies that come out hidden are the replay
+/// alone, so the replay stays proven correct without a second body in the exported design.
+fn hidden_replay_bodies(cli: &Path, design: &[u8]) -> Vec<Value> {
+    let document: Value = serde_json::from_reader(
+        ZipArchive::new(Cursor::new(design))
+            .unwrap()
+            .by_name("document.json")
+            .unwrap(),
+    )
+    .unwrap();
+    let component = document["components"][0]["id"].clone();
+    let mut script: Vec<Value> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["component"] == component && f["suppressed"] == true)
+        .map(|f| json!({"command": "timeline.suppress", "params": {"feature": f["id"], "suppressed": false}}))
+        .collect();
+    assert!(
+        !script.is_empty(),
+        "no suppressed replay feature: {document}"
+    );
+    script.push(json!({"command": "document.inspect", "params": {"measure": true}}));
+    let dir = tempfile::tempdir().unwrap();
+    let (input, steps, output) = (
+        dir.path().join("replay.solidcraft"),
+        dir.path().join("replay.json"),
+        dir.path().join("replay.out.json"),
+    );
+    std::fs::write(&input, design).unwrap();
+    std::fs::write(&steps, Value::Array(script.clone()).to_string()).unwrap();
+    assert!(std::process::Command::new(cli)
+        .arg("run")
+        .arg(&steps)
+        .arg("--in")
+        .arg(&input)
+        .arg("--results")
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap()
+        .success());
+    let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+    let bodies = results[script.len() - 1]["bodies"].as_array().unwrap();
+    bodies
+        .iter()
+        .filter(|body| body["visible"] == false)
+        .cloned()
+        .collect()
+}
+
 #[test]
 fn a_converted_dimension_drives_the_geometry_in_solidcraft() {
     let Some(cli) = solidcraft() else { return };
@@ -15079,13 +15134,21 @@ fn partial_history_appearance_bindings_reach_the_visible_original() {
                 .success());
             let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
             let bodies = results[0]["bodies"].as_array().unwrap();
-            assert_eq!(bodies.len(), 2, "{results}");
+            assert_eq!(bodies.len(), 1, "{results}");
             assert!(
                 bodies
                     .iter()
                     .any(|b| b["name"] == name && b["visible"] == true),
                 "{results}"
             );
+            // Turned back on, the hidden replay is still one 1000 mm³ cube.
+            let (bytes, _) = written_with(
+                &model,
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            let replay = hidden_replay_bodies(&cli, &bytes);
+            assert_eq!(replay.len(), 1, "{replay:?}");
+            assert_eq!(replay[0]["volume_mm3"], 1000.0);
             assert_eq!(
                 results[1]["body"]["appearance"]["color"], "#ff0000",
                 "{results}"
@@ -15330,9 +15393,18 @@ fn partial_history_replays_beside_the_unchanged_original() {
     let (document, report) = convert(&model, &writer);
     assert_partial(&document, &report, 2);
     assert!(history_line(&report).contains("retained features replay in SolidCraft"));
-    // eval includes hidden bodies: one editable 1000 mm³ cube and the original cube.
+    // The visible model is the original cube alone: the hidden replay's features are suppressed.
     let (bytes, _) = written_with(&model, &writer);
-    assert_eq!(volumes(&cli, &bytes), [1000.0, 1000.0]);
+    assert_eq!(volumes(&cli, &bytes), [1000.0]);
+    // With its features turned back on, the hidden replay is one editable 1000 mm³ cube.
+    let replay = hidden_replay_bodies(&cli, &bytes);
+    assert_eq!(
+        replay
+            .iter()
+            .map(|b| b["volume_mm3"].as_f64().unwrap())
+            .collect::<Vec<_>>(),
+        [1000.0]
+    );
 }
 
 #[test]
@@ -15358,12 +15430,16 @@ fn cc0_freecad_subshape_binder_keeps_the_earlier_pad() {
         let (bytes, _) = written_with(&model, &writer);
         let mut measured = volumes(&cli, &bytes);
         measured.sort_by(f64::total_cmp);
-        // The hidden prefix is 6000 mm³. The visible original is two solids,
-        // 3000 + 6000 mm³, as the recipe's CC0 manifest records.
-        assert_eq!(measured.len(), 3);
-        for (actual, expected) in measured.iter().zip([3000.0, 6000.0, 6000.0]) {
+        // The visible original is two solids, 3000 + 6000 mm³, as the recipe's CC0 manifest
+        // records; the hidden prefix's features are suppressed and add no body.
+        assert_eq!(measured.len(), 2);
+        for (actual, expected) in measured.iter().zip([3000.0, 6000.0]) {
             assert!((actual - expected).abs() < 1e-6, "{measured:?}");
         }
+        // Turned back on, the hidden prefix is one 6000 mm³ body.
+        let replay = hidden_replay_bodies(&cli, &bytes);
+        assert_eq!(replay.len(), 1, "{replay:?}");
+        assert_eq!(replay[0]["volume_mm3"], 6000.0);
         let dir = tempfile::tempdir().unwrap();
         let design = dir.path().join("F16b.solidcraft");
         let script = dir.path().join("visibility.json");
@@ -15391,7 +15467,7 @@ fn cc0_freecad_subshape_binder_keeps_the_earlier_pad() {
         assert!(status.success());
         let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
         let bodies = results[0]["bodies"].as_array().unwrap();
-        assert_eq!(bodies.len(), 3);
+        assert_eq!(bodies.len(), 2);
         let visible: Vec<_> = bodies.iter().filter(|b| b["visible"] == true).collect();
         assert_eq!(visible.len(), 2);
         assert_eq!(
@@ -15404,10 +15480,8 @@ fn cc0_freecad_subshape_binder_keeps_the_earlier_pad() {
         assert!(visible
             .iter()
             .all(|b| b["name"].as_str().unwrap().starts_with("F16b")));
-        let hidden: Vec<_> = bodies.iter().filter(|b| b["visible"] == false).collect();
-        assert_eq!(hidden.len(), 1);
-        assert_eq!(hidden[0]["name"], "Body1");
-        assert_eq!(hidden[0]["volume_mm3"], 6000.0);
+        assert!(bodies.iter().all(|b| b["visible"] == true));
+        assert_eq!(replay[0]["name"], "Body1");
         assert_eq!(results[1]["bodies"], 2);
     }
 }
