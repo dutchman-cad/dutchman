@@ -475,8 +475,9 @@ fn an_inch_library_is_converted_to_millimetres() {
     assert!(near(f(d, "shank_len"), 19.05));
     assert!(near(f(d, "feed"), 1016.0), "40 in/min");
     assert!(near(f(d, "rpm"), 8000.0), "rpm is not a length");
-    assert!(near(f(d, "holder_d"), 50.8));
-    assert!(near(f(d, "holder_len"), 25.4));
+    // Holder segments are millimetres, whatever the tool's unit.
+    assert!(near(f(d, "holder_d"), 2.0));
+    assert!(near(f(d, "holder_len"), 1.0));
 }
 
 #[test]
