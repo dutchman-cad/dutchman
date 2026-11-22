@@ -171,6 +171,13 @@ pub fn is_native_binder(kind: &str) -> bool {
     )
 }
 
+/// Whether a source-native CADIR operation is a coordinate frame the source keeps only as
+/// construction references and expressions (a Fusion Coordinate System whose solved frame
+/// cadmpeg does not state). It builds no geometry; like a binder it is a helper.
+pub fn is_native_coordinate_system(kind: &str) -> bool {
+    kind == "CoordinateSystem"
+}
+
 /// The largest input file Dutchman will open, in bytes. Native CAD files beyond this are
 /// rejected up front rather than read into memory.
 pub const MAX_INPUT_BYTES: u64 = 1 << 30;
