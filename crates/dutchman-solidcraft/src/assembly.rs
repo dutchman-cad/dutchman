@@ -141,9 +141,12 @@ pub(crate) fn write(
             ),
         );
     }
-    let prepared = prepare_parts(writer, assembly, &repeats, report, progress).into_iter();
+    let source_losses = report.losses().to_vec();
+    let prepared =
+        prepare_parts(writer, assembly, &repeats, &source_losses, report, progress).into_iter();
     let mut builder = Builder {
         progress,
+        source_losses,
         writer,
         prepared,
         container: Container::empty(),
@@ -526,7 +529,7 @@ fn plan_parts(
             &mut part_report,
             writer.resolved_version(),
             writer.sketches,
-            &[],
+            &own_losses(&part.name, report.losses()),
             writer.plan_deadline,
         );
         writer.plan_blends(&mut mapping);
@@ -678,14 +681,26 @@ struct PreparedHistory {
     partial_check: Option<Check>,
 }
 
+/// The decode losses the source reported for `part`'s own design. cadmpeg prefixes a loss from
+/// a referenced design with `xref <design name>: `; another design's loss is never evidence here.
+fn own_losses(name: &str, losses: &[dutchman_core::Loss]) -> Vec<dutchman_core::Loss> {
+    let prefix = format!("xref {name}: ");
+    losses
+        .iter()
+        .filter(|loss| loss.detail.starts_with(&prefix))
+        .cloned()
+        .collect()
+}
+
 fn prepare_history(
     writer: &SolidCraftWriter,
     part: &Model,
     step: &str,
+    source_losses: &[dutchman_core::Loss],
     progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<PreparedHistory, Error> {
     let mut part_report = Report::default();
-    let mut mapping = history::map_with_profile_check(
+    let mut mapping = history::map_with_source_profile_check(
         part,
         &mut part_report,
         writer.resolved_version(),
@@ -697,6 +712,7 @@ fn prepare_history(
             progress,
         },
         progress,
+        &own_losses(&part.name, source_losses),
     );
     if let Ok(history) = &mut mapping.result {
         if let Err(why) = history::base::restate(history, part) {
@@ -747,6 +763,7 @@ fn prepare_history(
 fn prepare_part(
     writer: &SolidCraftWriter,
     part: &Model,
+    source_losses: &[dutchman_core::Loss],
     progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<PreparedPart, Error> {
     let _preparing = progress.map(|p| {
@@ -766,7 +783,13 @@ fn prepare_part(
         Some(step::restate(part, &mut report)?)
     };
     let history = match &step {
-        Some(step) if !writer.import_only => Some(prepare_history(writer, part, step, progress)?),
+        Some(step) if !writer.import_only => Some(prepare_history(
+            writer,
+            part,
+            step,
+            source_losses,
+            progress,
+        )?),
         _ => None,
     };
     let references = if step.is_some() && writer.import_only && writer.sketches {
@@ -788,6 +811,7 @@ fn prepare_parts(
     writer: &SolidCraftWriter,
     assembly: &Assembly,
     repeats: &BTreeMap<PartPath, PartPath>,
+    source_losses: &[dutchman_core::Loss],
     report: &mut Report,
     progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Vec<Option<PreparedPart>> {
@@ -854,13 +878,15 @@ fn prepare_parts(
         if let Some(hook) = writer.prepare_hook {
             hook(part);
         }
-        prepare_part(writer, part, progress)
+        prepare_part(writer, part, source_losses, progress)
     })
 }
 
 /// The design's components, occurrences and Import features as they are built.
 struct Builder<'r> {
     progress: Option<&'r dutchman_core::Progress<'r>>,
+    /// The source's decode losses: evidence for each part's history, never written.
+    source_losses: Vec<dutchman_core::Loss>,
     prepared: std::vec::IntoIter<Option<PreparedPart>>,
     writer: &'r SolidCraftWriter,
     container: Container,
@@ -1367,7 +1393,7 @@ impl Builder<'_> {
             partial_check,
         } = match prepared {
             Some(prepared) => prepared,
-            None => prepare_history(self.writer, part, step, self.progress)?,
+            None => prepare_history(self.writer, part, step, &self.source_losses, self.progress)?,
         };
         let outcome_start = self.outcomes.len();
         self.outcomes
@@ -1731,6 +1757,24 @@ fn sketch_owners(model: &Model) -> BTreeMap<String, String> {
         }
     }
     owners
+}
+
+#[cfg(test)]
+#[test]
+fn a_part_keeps_only_the_decode_losses_of_its_own_design() {
+    let mut report = Report::default();
+    for design in ["Panel", "Panel Copy", "Other"] {
+        report.push_coded(
+            Severity::Degraded,
+            "source",
+            "f3d/feature.extrude-profile-sketch-absent",
+            format!("xref {design}: Extrude scope record 950 names an absent Sketch"),
+        );
+    }
+    let own = own_losses("Panel", report.losses());
+    assert_eq!(own.len(), 1);
+    assert!(own[0].detail.starts_with("xref Panel: "));
+    assert!(own_losses("Missing", report.losses()).is_empty());
 }
 
 #[cfg(test)]

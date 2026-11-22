@@ -76,7 +76,7 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
                 }
                 Some("ACTIVE") if poll < 20 => {
                     if self.session.calls >= self.session.max_calls {
-                        return Err(self.session.error(ErrorKind::Budget, "Onshape call budget reached; increase --max-calls to finish the STEP export."));
+                        return Err(self.session.error(ErrorKind::Budget, "Onshape call budget reached; raise it with --max-calls (MCP: max_calls) to finish the STEP export."));
                     }
                     self.session.client.sleep(Duration::from_secs(delay));
                     delay = (delay * 2).min(30);

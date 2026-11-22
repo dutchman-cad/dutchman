@@ -414,7 +414,7 @@ pub fn chosen_cli(chosen: &Path) -> Result<PathBuf, String> {
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
 /// The newest minor known at build time. Patch releases need no constant update.
-pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 46];
+pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 45];
 
 /// The oldest SolidCraft release published in the 14 days before the tag, never below
 /// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
@@ -1227,6 +1227,103 @@ pub(crate) fn replay(
         Ok(Evaluation::Failed(why)) => (Outcome::Unverified(why), None),
         Err(why) => (Outcome::Unverified(why), None),
     }
+}
+
+/// One body's volume and box as SolidCraft measures it, for comparing a retained prefix with
+/// the source's final shape.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Extent {
+    pub(crate) volume: f64,
+    pub(crate) bounds: ([f64; 3], [f64; 3]),
+}
+
+/// Every body of a design that SolidCraft evaluated without error, with its box. `None` when
+/// the design does not evaluate or any body lacks a box: an unmeasured body proves nothing.
+pub(crate) fn extents(
+    cli: &(impl SolidCraftEvaluator + ?Sized),
+    timeout: Duration,
+    label: &str,
+    design: &[u8],
+) -> Option<Vec<Extent>> {
+    let Ok(Evaluation::Done(eval)) = evaluate(cli, timeout, label, design) else {
+        return None;
+    };
+    if !eval.errors.is_empty() {
+        return None;
+    }
+    eval.bodies
+        .iter()
+        .map(|body| {
+            Some(Extent {
+                volume: body.volume,
+                bounds: body.bounds?,
+            })
+        })
+        .collect()
+}
+
+/// Why the replay of a retained prefix cannot be the state before the features the source has
+/// after it, when none of those can build beyond it: the source's final shape reaches past the
+/// prefix's box, or, when they only remove material (`removes`), holds over 5% more material than the
+/// prefix (SolidCraft measures volumes from meshes, which agree to about 1%). Those features would have to build what the prefix lacks, so the prefix is a
+/// different body: a profile region chosen without proof is the usual cause.
+pub(crate) fn prefix_misses_source(
+    prefix: &[Extent],
+    source: &[Extent],
+    removes: bool,
+) -> Option<String> {
+    if prefix.is_empty() || source.is_empty() {
+        return None;
+    }
+    let union = |bodies: &[Extent]| {
+        let mut bounds = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for body in bodies {
+            for ((low, high), (body_low, body_high)) in bounds
+                .0
+                .iter_mut()
+                .zip(bounds.1.iter_mut())
+                .zip(body.bounds.0.iter().zip(body.bounds.1.iter()))
+            {
+                *low = low.min(*body_low);
+                *high = high.max(*body_high);
+            }
+        }
+        bounds
+    };
+    let (kept_low, kept_high) = union(prefix);
+    let (final_low, final_high) = union(source);
+    let diagonal = final_low
+        .iter()
+        .zip(final_high.iter())
+        .map(|(low, high)| (high - low).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    // The larger of half a millimetre and 1% of the final shape's diagonal.
+    let slack = (diagonal * 0.01).max(0.5);
+    let axes = kept_low
+        .iter()
+        .zip(kept_high.iter())
+        .zip(final_low.iter().zip(final_high.iter()));
+    for (((kept_low, kept_high), (final_low, final_high)), name) in axes.zip(["X", "Y", "Z"]) {
+        let short = (kept_low - final_low).max(final_high - kept_high);
+        if short.is_finite() && short > slack {
+            return Some(format!(
+                "the retained features' body ends {short:.1} mm inside the source's final \
+                 shape along {name}, and no feature after them builds material"
+            ));
+        }
+    }
+    if removes {
+        let kept: f64 = prefix.iter().map(|body| body.volume).sum();
+        let wanted: f64 = source.iter().map(|body| body.volume).sum();
+        if wanted.is_finite() && kept.is_finite() && wanted - kept > wanted.abs() * 0.05 {
+            return Some(format!(
+                "the retained features' bodies hold {kept:.0} mm3 where the source's final shape \
+                 holds {wanted:.0} mm3, and no feature after them builds material"
+            ));
+        }
+    }
+    None
 }
 
 /// The source's solid and a candidate's replay compared directly in one SolidCraft session:
@@ -2426,6 +2523,53 @@ fn parse(value: &Value) -> Result<Eval, String> {
 
 #[cfg(test)]
 mod tests {
+    fn cube(side: f64) -> super::Extent {
+        super::Extent {
+            volume: side * side * side,
+            bounds: ([0.0; 3], [side; 3]),
+        }
+    }
+
+    #[test]
+    fn a_prefix_inside_the_final_shape_is_not_a_step_towards_it() {
+        // A 6.5 mm tube centred like the 15 mm block it was taken for: only rounds follow.
+        let tube = super::Extent {
+            volume: 353.0,
+            bounds: ([4.25, 4.25, 0.0], [10.75, 10.75, 15.0]),
+        };
+        let why = super::prefix_misses_source(&[tube], &[cube(15.0)], false).unwrap();
+        assert!(why.contains("inside the source's final shape"), "{why}");
+        // The same prefix is fine when the source's final shape is no bigger than it.
+        assert_eq!(
+            super::prefix_misses_source(&[cube(15.0)], &[cube(15.0)], false),
+            None
+        );
+        // A prefix larger than the final shape is what cuts and rounds leave behind.
+        assert_eq!(
+            super::prefix_misses_source(&[cube(15.0)], &[cube(10.0)], false),
+            None
+        );
+    }
+
+    #[test]
+    fn a_prefix_short_of_material_is_refused_only_when_later_features_remove() {
+        let hollow = super::Extent {
+            volume: 600.0,
+            bounds: ([0.0; 3], [10.0; 3]),
+        };
+        assert!(super::prefix_misses_source(&[hollow], &[cube(10.0)], true)
+            .unwrap()
+            .contains("mm3"));
+        // Rounds can fill concave edges, so volume alone says nothing about them.
+        assert_eq!(
+            super::prefix_misses_source(&[hollow], &[cube(10.0)], false),
+            None
+        );
+        // Nothing measured, nothing proven.
+        assert_eq!(super::prefix_misses_source(&[], &[cube(10.0)], true), None);
+        assert_eq!(super::prefix_misses_source(&[hollow], &[], true), None);
+    }
+
     #[test]
     fn circular_edge_measurements_require_the_plane_and_an_analytic_length() {
         let full = 10.0 * std::f64::consts::PI;
@@ -3287,7 +3431,7 @@ mod cli_tests {
             ),
             (
                 "SolidCraft 2.app",
-                Some("0.46.0"),
+                Some("0.45.0"),
                 "io.tangencylabs.solidcraft",
             ),
             ("SolidCraft old.app", None, "ai.storyteller.solidcraft"),
@@ -3341,14 +3485,14 @@ mod cli_tests {
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("dutchman");
         assert_eq!(beside(&program), None);
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.46.0");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.0");
         assert_eq!(beside(&program), Some(cli));
     }
 
     #[test]
     fn a_chosen_cli_must_answer_as_solidcraft() {
         let dir = tempfile::tempdir().unwrap();
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.46.0");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.0");
         assert_eq!(chosen_cli(&cli), Ok(cli));
         let other = version_script(dir.path(), "other-tool", "other-tool 1.2.3");
         assert!(chosen_cli(&other)
@@ -3381,7 +3525,7 @@ mod cli_tests {
         .unwrap();
         std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(chosen_cli(&app).unwrap_err().contains("portable ZIP"));
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.46.1");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.1");
         assert_eq!(chosen_cli(&app), Ok(cli));
         assert!(!started.exists());
     }
@@ -3701,8 +3845,7 @@ mod cli_tests {
         let dir = tempfile::tempdir().unwrap();
         for version in [
             "0.18.2", "0.20.0", "0.25.1", "0.27.1", "0.40.0", "0.41.0", "0.42.0", "0.43.0",
-            "0.44.0", "0.44.1", "0.44.9", "0.45.0", "0.45.9", "0.46.0", "0.46.9", "0.47.0",
-            "nonsense", "0.17.0",
+            "0.44.0", "0.44.1", "0.44.9", "0.45.0", "0.45.9", "0.46.0", "nonsense", "0.17.0",
         ] {
             let cli = dir.path().join(version);
             std::fs::write(
@@ -3953,27 +4096,6 @@ mod version_tests {
     }
 
     #[test]
-    fn target_046_keeps_045_writer_capabilities() {
-        let target: SolidCraftVersion = "0.46.0".parse().unwrap();
-        let previous: SolidCraftVersion = "0.45.0".parse().unwrap();
-        for gate in [
-            VersionGate::EntryRecessTip,
-            VersionGate::ConePrimitive,
-            VersionGate::SketchProfileCoil,
-            VersionGate::MirrorChain,
-            VersionGate::HistoryBody,
-            VersionGate::SplitFaces,
-            VersionGate::ScopedBodies,
-            VersionGate::ClosedCircleBlend,
-            VersionGate::MoveBody,
-        ] {
-            assert_eq!(gate.supported(target), gate.supported(previous));
-        }
-        assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
-    }
-
-    #[test]
     fn minor_status_preserves_patch_sensitive_writer_rules() {
         for (found, status) in [
             ("0.27.0", "current"),
@@ -3986,9 +4108,7 @@ mod version_tests {
             ("0.44.9", "current"),
             ("0.45.0", "current"),
             ("0.45.9", "current"),
-            ("0.46.0", "current"),
-            ("0.46.9", "current"),
-            ("0.47.0", "newer"),
+            ("0.46.0", "newer"),
             ("0.17.99", "too_old"),
         ] {
             assert_eq!(

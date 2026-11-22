@@ -5,7 +5,7 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`f1338aa2`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`a3e6191d`: `f1338aa2`, after cadmpeg 0.6.12, plus cadmpeg#1646).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
@@ -217,6 +217,9 @@ different end, and CADIR supplies no input face geometry to prove which face exi
 Final-body faces cannot establish that timeline state. Tilted plane ends and native,
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
+A two-sided blind extrude whose second extent is signed and lies on the same side of the
+sketch plane as the first (a negative second distance) is written as a one-sided extrude
+that starts at the nearer end; extents that cancel to zero thickness are refused.
 
 Planar historical face selections also search intervals between trim-loop crossings when
 corner-triangle picks all land in holes. Each new point must lie in the material region,
@@ -390,6 +393,16 @@ surface comparison with both face counts. Every source and replayed body must al
 finite volume, area, complete bounds and derived placement; unavailable comparisons or missing
 measurements keep the refusal. The earlier two-reading comparison stays permissive. A final shape that later differs from the source cuts the timeline
 before the first measured feature, so it never keeps fewer features than without measuring.
+
+A profile region chosen without a final-shape comparison (inferred against the stored body centres
+of an earlier feature, or the single region of a sketch with several loops) is checked once more
+when the history stops. If no source feature after the retained ones can build material (only
+fillets, chamfers, cuts and intersections follow), the rebuilt bodies' box must still reach
+the source's final shape, within the larger of 0.5 mm and 1% of its diagonal; when only cuts and
+intersections follow, they must hold at least 95% of its volume too. Otherwise the retained body is a
+different one (a 6.5 mm tube where the source has a 15 mm block, with the same centre), and the
+timeline is cut before its first body-building feature, as for any other final-shape difference,
+with a `history/body-mismatch` note. Later features stay in the imported final shape.
 
 The same applies to the last fillet or chamfer of a history when its input edges cannot be proven
 on the rebuilt body (a midpoint off every edge, or an edge with other ends or length). For each
@@ -644,6 +657,9 @@ relations remain reported losses. One sketch carries at most 400,000 wire constr
 additional relations are reported and their solved geometry is retained. An unresolved sketch binding cannot be replaced
 by guessed geometry. A nonplanar historical face boundary remains a separate face
 selection blocker. Targets before 0.44 keep their existing output and refusals.
+A face sketch is made only from a flat face: every boundary point must lie on one plane, within
+1e-5 of the face's size. When one does not, the refusal gives the largest distance off the plane
+and names a curved face such as a cylinder wall, whose two end circles face opposite ways.
 
 ## Stored body fallback
 
@@ -654,6 +670,10 @@ must fail first. Unresolved selections within existing sketches, unsupported opt
 and failed measurement checks keep their usual refusal. A missing input is proved
 by its CADIR reference or a missing-profile loss attributed to that feature; an
 unresolved carrier alone does not establish that it belongs to an external design.
+A loss that names the feature only by its scope record (`Extrude scope record N`) is
+attributed to the one feature whose identity carries that record, and to none when no
+feature or several do. In an assembly, each part receives the decode losses of its own
+design (those prefixed `xref <design name>:`).
 It uses the history body produced by that feature first. A final-model body is used
 only when no later active feature changes it. Joins, cuts and intersections never use
 this fallback: replacing them would discard earlier body history. No geometry is

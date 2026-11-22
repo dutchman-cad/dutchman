@@ -92,7 +92,12 @@ longest safe suffix, trying folders nearest the referring assembly first, within
 granted input folder. SolidWorks and FreeCAD prefer a copy beside the referring assembly.
 It never searches outside the granted folder, Inventor project libraries or the saving
 machine's absolute paths. The host must enforce the folder capability and symlink rules;
-unresolved parts are reported by the normal assembly reader. A missing-part message
+unresolved parts are reported by the normal assembly reader. For `.iam` and `.sldasm` the
+adapter first calls `source.resolve` on the opened file's own name; a permission refusal there
+stops the import before any read, with a message naming the `input_folder` grant and what it is
+for (`notice::folder_access`). A refusal on a later part read gets the same message. Fuel and
+memory ceilings are SolidCraft preferences the plugin cannot read or change; a fuel trap is
+raised by the host and cannot be reworded by the guest. A missing-part message
 asks you to keep the part in the input folder with its expected name and relative path.
 
 Case-insensitive lookup must return canonical, case-preserving relative names. The

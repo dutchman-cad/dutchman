@@ -2,6 +2,27 @@
 #[cfg(any(test, target_arch = "wasm32"))]
 use dutchman_core::Error;
 
+/// Formats whose parts are separate files beside the assembly.
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn needs_part_folder(file_name: &str) -> bool {
+    let lower = file_name.to_ascii_lowercase();
+    lower.ends_with(".iam") || lower.ends_with(".sldasm")
+}
+
+/// Said when SolidCraft refuses the plugin's read of the folder beside the opened file. It
+/// names the grant, what it is for, and how to give it; the host's own wording follows.
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn folder_access(file_name: &str, host: &str) -> String {
+    let what = if needs_part_folder(file_name) {
+        "an assembly's part files are separate files in that folder"
+    } else {
+        "the design refers to other files in that folder"
+    };
+    format!(
+        "Dutchman needs read access to the folder that holds {file_name}: {what}. It reads only that folder, never writes, and never looks elsewhere. Give it that access by approving \"read access to the input folder\" when you install Dutchman (Preferences > Plugins > Install plugin...), keep the parts beside the assembly, then open the file again. SolidCraft said: {host}"
+    )
+}
+
 pub(crate) const QUESTION: &str = "Is there a problem? Is something missing?";
 pub(crate) fn help() -> String {
     let policy: serde_json::Value =

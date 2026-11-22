@@ -117,9 +117,28 @@ pub(super) struct Session<'a, C> {
     pub credentials: Auth<'a>,
     pub calls: u32,
     pub max_calls: u32,
+    /// With no `--max-calls`, the limit starts at [`AUTO_BASE_CALLS`] and grows as the
+    /// document's elements and body-detail requests are discovered, up to [`AUTO_CEILING_CALLS`].
+    pub auto: bool,
 }
 
+/// Calls an automatic budget starts with: document name, tab list, microversion checks.
+pub(super) const AUTO_BASE_CALLS: u32 = 50;
+/// Calls added for each Part Studio or assembly found: features, configuration, variables,
+/// sketches, and the STEP export with its polling.
+pub(super) const AUTO_ELEMENT_CALLS: u32 = 30;
+/// An automatic budget never grows past this, whatever the document claims to contain.
+pub(super) const AUTO_CEILING_CALLS: u32 = 2000;
+
 impl<C: HttpClient> Session<'_, C> {
+    /// Grows an automatic budget by `calls` for work just discovered. A fixed `--max-calls`
+    /// never changes.
+    pub fn allow(&mut self, calls: u32) {
+        if self.auto {
+            self.max_calls = self.max_calls.saturating_add(calls).min(AUTO_CEILING_CALLS);
+        }
+    }
+
     pub fn request(
         &mut self,
         method: &str,
@@ -136,7 +155,7 @@ impl<C: HttpClient> Session<'_, C> {
         }
         for attempt in 0..=3 {
             if self.calls >= self.max_calls {
-                return Err(self.error(ErrorKind::Budget, "Onshape call budget reached; increase --max-calls to continue using cached replies."));
+                return Err(self.error(ErrorKind::Budget, "Onshape call budget reached; raise it with --max-calls (MCP: max_calls) to continue using cached replies."));
             }
             let date = httpdate::fmt_http_date(self.client.now());
             let nonce = self.client.nonce()?;
@@ -195,7 +214,7 @@ impl<C: HttpClient> Session<'_, C> {
                 }
                 // Do not sleep if the next attempt cannot fit the user's budget.
                 if self.calls >= self.max_calls {
-                    return Err(self.error(ErrorKind::Budget, "Onshape call budget reached; increase --max-calls to retry the throttled request."));
+                    return Err(self.error(ErrorKind::Budget, "Onshape call budget reached; raise it with --max-calls (MCP: max_calls) to retry the throttled request."));
                 }
                 self.client.sleep(delay);
                 continue;
@@ -226,6 +245,7 @@ impl<C: HttpClient> Session<'_, C> {
             message,
             detail: None,
             calls: self.calls,
+            estimate: None,
         }
     }
 }
@@ -421,6 +441,7 @@ mod bearer_tests {
             credentials: auth.as_auth(),
             calls: 0,
             max_calls: 0,
+            auto: false,
         };
         for (path, query, body) in [
             (format!("/api/{token}"), String::new(), Vec::new()),
