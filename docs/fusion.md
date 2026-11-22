@@ -647,6 +647,9 @@ relations remain reported losses. One sketch carries at most 400,000 wire constr
 additional relations are reported and their solved geometry is retained. An unresolved sketch binding cannot be replaced
 by guessed geometry. A nonplanar historical face boundary remains a separate face
 selection blocker. Targets before 0.44 keep their existing output and refusals.
+A face sketch is made only from a flat face: every boundary point must lie on one plane, within
+1e-5 of the face's size. When one does not, the refusal gives the largest distance off the plane
+and names a curved face such as a cylinder wall, whose two end circles face opposite ways.
 
 ## Stored body fallback
 
