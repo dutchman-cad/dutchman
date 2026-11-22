@@ -127,6 +127,12 @@ a missing or differing result refuses the extrusion and retains the imported fin
 shape. Intermediate face extrusions on imported bases are not supported yet when
 that result cannot be proved.
 
+A component that cadmpeg names no bodies for does not stop the design from being written as
+components, as long as cadmpeg attributes bodies to at least one component. It stays as a
+named, empty component, any bodies of it sit with the design's own bodies at their stored
+position, and a Degraded `components` note names it. When no component has attributed
+bodies, the design still converts as stored.
+
 As-built joints build no geometry and do not stop the part's feature history. Typed
 assembly-joint timeline rows also need no part feature, and neither do rows that copy a
 component or move it into another component (Copy/Paste and Cut/Paste of components): the
