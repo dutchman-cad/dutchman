@@ -15057,6 +15057,244 @@ fn assert_partial(document: &Value, report: &Report, sketches: usize) {
         .all(|id| *id < document["next_id"].as_u64().unwrap()));
 }
 
+/// Answers as `RecordedEvaluator` does, naming each body it holds `name`, as SolidCraft
+/// does: what a replay of a partial history needs to take its bodies away again.
+#[derive(Debug)]
+struct NamingEvaluator {
+    name: Option<&'static str>,
+}
+
+impl dutchman_solidcraft::SolidCraftEvaluator for NamingEvaluator {
+    fn evaluate(
+        &self,
+        design: &[u8],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Value, String> {
+        let mut result = dutchman_solidcraft::SolidCraftEvaluator::evaluate(
+            &RecordedEvaluator::default(),
+            design,
+            timeout,
+            label,
+        )?;
+        if let Some(name) = self.name {
+            for body in result["bodies"].as_array_mut().unwrap() {
+                body["name"] = json!(name);
+            }
+        }
+        Ok(result)
+    }
+
+    fn run(
+        &self,
+        design: &[u8],
+        commands: &[Value],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Vec<Value>, String> {
+        dutchman_solidcraft::SolidCraftEvaluator::run(
+            &RecordedEvaluator::default(),
+            design,
+            commands,
+            timeout,
+            label,
+        )
+    }
+}
+
+fn naming_writer(name: Option<&'static str>) -> SolidCraftWriter {
+    SolidCraftWriter::new().evaluator(std::sync::Arc::new(NamingEvaluator { name }))
+}
+
+/// The name of the first source feature the report says is not converted.
+fn first_blocked(report: &Report) -> String {
+    report
+        .outcome()
+        .unwrap()
+        .features
+        .iter()
+        .find(|f| f.status == dutchman_core::FeatureStatus::Blocked)
+        .and_then(|f| f.name.clone())
+        .unwrap()
+}
+
+#[test]
+fn a_partial_part_keeps_its_features_then_removes_their_bodies_and_imports_the_rest() {
+    let model = partial_history_model();
+    let (document, report) = convert(&model, &naming_writer(Some("Body1")));
+    assert_partial(&document, &report, 2);
+    assert_rest_visible(&document, 2);
+    let features = document["features"].as_array().unwrap();
+    let remove = &features[features.len() - 2];
+    assert_eq!(remove["bodies"], json!(["Body1"]));
+    assert_eq!(
+        features.last().unwrap()["name"],
+        format!("Rest of the design (from {})", first_blocked(&report))
+    );
+    // Nothing is hidden or stood in for the history anywhere.
+    assert!(!document.to_string().contains("Editable history"));
+}
+
+#[test]
+fn a_partial_part_without_named_bodies_keeps_the_hidden_history() {
+    let model = partial_history_model();
+    for writer in [
+        naming_writer(None),
+        naming_writer(None).verification(Verification::Off),
+    ] {
+        let (document, report) = convert(&model, &writer);
+        assert_partial(&document, &report, 2);
+        assert!(hidden_partial_component(&document));
+        assert!(document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["type"] != "remove"));
+    }
+}
+
+#[test]
+fn a_partial_assembly_part_keeps_its_features_then_removes_their_bodies_and_imports_the_rest() {
+    let mut model = assembly_of_histories();
+    let second = &mut model.assembly.as_mut().unwrap().parts[1];
+    second.ir = partial_history_model().ir;
+    let (document, report) = convert(&model, &naming_writer(Some("Body1")));
+    assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
+    assert!(!document.to_string().contains("Editable history"));
+    let components = document["components"].as_array().unwrap();
+    let second = &components.iter().find(|c| c["name"] == "Second").unwrap()["id"];
+    let features = document["features"].as_array().unwrap();
+    let own: Vec<_> = features
+        .iter()
+        .filter(|f| &f["component"] == second)
+        .collect();
+    assert!(own.iter().all(|f| f["suppressed"] == false));
+    let remove = own.iter().position(|f| f["type"] == "remove").unwrap();
+    assert_eq!(own[remove]["bodies"], json!(["Body1"]));
+    assert!(own[..remove].iter().any(|f| f["type"] == "extrude"));
+    assert_eq!(remove + 2, own.len());
+    assert_eq!(own[remove + 1]["type"], "import");
+    assert!(own[remove + 1]["name"]
+        .as_str()
+        .unwrap()
+        .starts_with("Rest of the design (from "));
+    assert!(document["visibility"]["hidden_occurrences"].is_null());
+}
+
+#[test]
+fn a_partial_assembly_part_without_named_bodies_keeps_the_hidden_history() {
+    let mut model = assembly_of_histories();
+    model.assembly.as_mut().unwrap().parts[1].ir = partial_history_model().ir;
+    let (document, _) = convert(&model, &naming_writer(None));
+    assert!(hidden_partial_component(&document));
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["type"] != "remove"));
+}
+
+#[test]
+fn a_partial_history_in_solidcraft_is_exactly_the_imported_final_shape() {
+    let Some(cli) = solidcraft() else { return };
+    let model = partial_history_model();
+    let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
+    let (bytes, report) = written_with(&model, &writer);
+    assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
+    let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    let document: Value =
+        serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+    assert_rest_visible(&document, 2);
+    let (import, import_report) = written_with(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::With(cli.clone()))
+            .import_only(true),
+    );
+    assert_eq!(import_report.outcome().unwrap().mode, Mode::Import);
+    let (written, source) = (evaluated(&cli, &bytes), evaluated(&cli, &import));
+    let (written, source) = (
+        written["bodies"].as_array().unwrap(),
+        source["bodies"].as_array().unwrap(),
+    );
+    assert_eq!(written.len(), source.len(), "one body per source body");
+    for (made, original) in written.iter().zip(source) {
+        for field in ["volume_mm3", "area_mm2"] {
+            let (made, original) = (
+                made[field].as_f64().unwrap(),
+                original[field].as_f64().unwrap(),
+            );
+            assert!(
+                (made - original).abs() <= original.abs() * 1e-4,
+                "{field}: {made} against {original}"
+            );
+        }
+        for end in ["min", "max"] {
+            for axis in 0..3 {
+                let (made, original) = (
+                    made["bbox"][end][axis].as_f64().unwrap(),
+                    original["bbox"][end][axis].as_f64().unwrap(),
+                );
+                assert!(
+                    (made - original).abs() < 1e-3,
+                    "{end}[{axis}]: {made} against {original}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_partial_assembly_part_in_solidcraft_removes_only_its_own_bodies() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = assembly_of_histories();
+    model.assembly.as_mut().unwrap().parts[1].ir = partial_history_model().ir;
+    let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
+    let (bytes, report) = written_with(&model, &writer);
+    assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
+    let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    let document: Value =
+        serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+    assert!(!document.to_string().contains("Editable history"));
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "remove"));
+    let (import, _) = written_with(&model, &writer.clone().import_only(true));
+    // `evaluated` fails on any timeline error, so every removed body was found.
+    let (mut made, mut original) = (volumes(&cli, &bytes), volumes(&cli, &import));
+    made.sort_by(f64::total_cmp);
+    original.sort_by(f64::total_cmp);
+    assert_eq!(made.len(), original.len());
+    for (made, original) in made.iter().zip(&original) {
+        assert!(
+            (made - original).abs() <= original.abs() * 1e-4,
+            "{made} {original}"
+        );
+    }
+}
+
+#[test]
+fn a_partial_history_for_a_solidcraft_without_the_remove_feature_keeps_the_hidden_history() {
+    let model = partial_history_model();
+    for (version, visible) in [("0.30.0", false), ("0.39.0", false), ("0.40.0", true)] {
+        let writer = naming_writer(Some("Body1")).target_version(Some(version.parse().unwrap()));
+        let (document, report) = convert(&model, &writer);
+        assert_partial(&document, &report, 2);
+        assert_eq!(hidden_partial_component(&document), !visible, "{version}");
+        assert_eq!(
+            document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["type"] == "remove"),
+            visible,
+            "{version}"
+        );
+    }
+}
+
 #[test]
 fn partial_history_appearance_bindings_reach_the_visible_original() {
     for named_prefix in [false, true] {
@@ -20982,242 +21220,4 @@ fn a_prefix_that_holds_the_source_shape_stays_when_only_a_blend_follows() {
             .any(|f| f["type"] == "extrude"),
         "{document}"
     );
-}
-
-/// Answers as `RecordedEvaluator` does, naming each body it holds `name`, as SolidCraft
-/// does: what a replay of a partial history needs to take its bodies away again.
-#[derive(Debug)]
-struct NamingEvaluator {
-    name: Option<&'static str>,
-}
-
-impl dutchman_solidcraft::SolidCraftEvaluator for NamingEvaluator {
-    fn evaluate(
-        &self,
-        design: &[u8],
-        timeout: std::time::Duration,
-        label: &str,
-    ) -> Result<Value, String> {
-        let mut result = dutchman_solidcraft::SolidCraftEvaluator::evaluate(
-            &RecordedEvaluator::default(),
-            design,
-            timeout,
-            label,
-        )?;
-        if let Some(name) = self.name {
-            for body in result["bodies"].as_array_mut().unwrap() {
-                body["name"] = json!(name);
-            }
-        }
-        Ok(result)
-    }
-
-    fn run(
-        &self,
-        design: &[u8],
-        commands: &[Value],
-        timeout: std::time::Duration,
-        label: &str,
-    ) -> Result<Vec<Value>, String> {
-        dutchman_solidcraft::SolidCraftEvaluator::run(
-            &RecordedEvaluator::default(),
-            design,
-            commands,
-            timeout,
-            label,
-        )
-    }
-}
-
-fn naming_writer(name: Option<&'static str>) -> SolidCraftWriter {
-    SolidCraftWriter::new().evaluator(std::sync::Arc::new(NamingEvaluator { name }))
-}
-
-/// The name of the first source feature the report says is not converted.
-fn first_blocked(report: &Report) -> String {
-    report
-        .outcome()
-        .unwrap()
-        .features
-        .iter()
-        .find(|f| f.status == dutchman_core::FeatureStatus::Blocked)
-        .and_then(|f| f.name.clone())
-        .unwrap()
-}
-
-#[test]
-fn a_partial_part_keeps_its_features_then_removes_their_bodies_and_imports_the_rest() {
-    let model = partial_history_model();
-    let (document, report) = convert(&model, &naming_writer(Some("Body1")));
-    assert_partial(&document, &report, 2);
-    assert_rest_visible(&document, 2);
-    let features = document["features"].as_array().unwrap();
-    let remove = &features[features.len() - 2];
-    assert_eq!(remove["bodies"], json!(["Body1"]));
-    assert_eq!(
-        features.last().unwrap()["name"],
-        format!("Rest of the design (from {})", first_blocked(&report))
-    );
-    // Nothing is hidden or stood in for the history anywhere.
-    assert!(!document.to_string().contains("Editable history"));
-}
-
-#[test]
-fn a_partial_part_without_named_bodies_keeps_the_hidden_history() {
-    let model = partial_history_model();
-    for writer in [
-        naming_writer(None),
-        naming_writer(None).verification(Verification::Off),
-    ] {
-        let (document, report) = convert(&model, &writer);
-        assert_partial(&document, &report, 2);
-        assert!(hidden_partial_component(&document));
-        assert!(document["features"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|f| f["type"] != "remove"));
-    }
-}
-
-#[test]
-fn a_partial_assembly_part_keeps_its_features_then_removes_their_bodies_and_imports_the_rest() {
-    let mut model = assembly_of_histories();
-    let second = &mut model.assembly.as_mut().unwrap().parts[1];
-    second.ir = partial_history_model().ir;
-    let (document, report) = convert(&model, &naming_writer(Some("Body1")));
-    assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
-    assert!(!document.to_string().contains("Editable history"));
-    let components = document["components"].as_array().unwrap();
-    let second = &components.iter().find(|c| c["name"] == "Second").unwrap()["id"];
-    let features = document["features"].as_array().unwrap();
-    let own: Vec<_> = features
-        .iter()
-        .filter(|f| &f["component"] == second)
-        .collect();
-    assert!(own.iter().all(|f| f["suppressed"] == false));
-    let remove = own.iter().position(|f| f["type"] == "remove").unwrap();
-    assert_eq!(own[remove]["bodies"], json!(["Body1"]));
-    assert!(own[..remove].iter().any(|f| f["type"] == "extrude"));
-    assert_eq!(remove + 2, own.len());
-    assert_eq!(own[remove + 1]["type"], "import");
-    assert!(own[remove + 1]["name"]
-        .as_str()
-        .unwrap()
-        .starts_with("Rest of the design (from "));
-    assert!(document["visibility"]["hidden_occurrences"].is_null());
-}
-
-#[test]
-fn a_partial_assembly_part_without_named_bodies_keeps_the_hidden_history() {
-    let mut model = assembly_of_histories();
-    model.assembly.as_mut().unwrap().parts[1].ir = partial_history_model().ir;
-    let (document, _) = convert(&model, &naming_writer(None));
-    assert!(hidden_partial_component(&document));
-    assert!(document["features"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|f| f["type"] != "remove"));
-}
-
-#[test]
-fn a_partial_history_in_solidcraft_is_exactly_the_imported_final_shape() {
-    let Some(cli) = solidcraft() else { return };
-    let model = partial_history_model();
-    let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
-    let (bytes, report) = written_with(&model, &writer);
-    assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
-    let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
-    let document: Value =
-        serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
-    assert_rest_visible(&document, 2);
-    let (import, import_report) = written_with(
-        &model,
-        &SolidCraftWriter::new()
-            .verification(Verification::With(cli.clone()))
-            .import_only(true),
-    );
-    assert_eq!(import_report.outcome().unwrap().mode, Mode::Import);
-    let (written, source) = (evaluated(&cli, &bytes), evaluated(&cli, &import));
-    let (written, source) = (
-        written["bodies"].as_array().unwrap(),
-        source["bodies"].as_array().unwrap(),
-    );
-    assert_eq!(written.len(), source.len(), "one body per source body");
-    for (made, original) in written.iter().zip(source) {
-        for field in ["volume_mm3", "area_mm2"] {
-            let (made, original) = (
-                made[field].as_f64().unwrap(),
-                original[field].as_f64().unwrap(),
-            );
-            assert!(
-                (made - original).abs() <= original.abs() * 1e-4,
-                "{field}: {made} against {original}"
-            );
-        }
-        for end in ["min", "max"] {
-            for axis in 0..3 {
-                let (made, original) = (
-                    made["bbox"][end][axis].as_f64().unwrap(),
-                    original["bbox"][end][axis].as_f64().unwrap(),
-                );
-                assert!(
-                    (made - original).abs() < 1e-3,
-                    "{end}[{axis}]: {made} against {original}"
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn a_partial_assembly_part_in_solidcraft_removes_only_its_own_bodies() {
-    let Some(cli) = solidcraft() else { return };
-    let mut model = assembly_of_histories();
-    model.assembly.as_mut().unwrap().parts[1].ir = partial_history_model().ir;
-    let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
-    let (bytes, report) = written_with(&model, &writer);
-    assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
-    let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
-    let document: Value =
-        serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
-    assert!(!document.to_string().contains("Editable history"));
-    assert!(document["features"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|f| f["type"] == "remove"));
-    let (import, _) = written_with(&model, &writer.clone().import_only(true));
-    // `evaluated` fails on any timeline error, so every removed body was found.
-    let (mut made, mut original) = (volumes(&cli, &bytes), volumes(&cli, &import));
-    made.sort_by(f64::total_cmp);
-    original.sort_by(f64::total_cmp);
-    assert_eq!(made.len(), original.len());
-    for (made, original) in made.iter().zip(&original) {
-        assert!(
-            (made - original).abs() <= original.abs() * 1e-4,
-            "{made} {original}"
-        );
-    }
-}
-
-#[test]
-fn a_partial_history_for_a_solidcraft_without_the_remove_feature_keeps_the_hidden_history() {
-    let model = partial_history_model();
-    for (version, visible) in [("0.30.0", false), ("0.39.0", false), ("0.40.0", true)] {
-        let writer = naming_writer(Some("Body1")).target_version(Some(version.parse().unwrap()));
-        let (document, report) = convert(&model, &writer);
-        assert_partial(&document, &report, 2);
-        assert_eq!(hidden_partial_component(&document), !visible, "{version}");
-        assert_eq!(
-            document["features"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|f| f["type"] == "remove"),
-            visible,
-            "{version}"
-        );
-    }
 }
