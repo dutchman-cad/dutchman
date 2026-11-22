@@ -661,6 +661,20 @@ A face sketch is made only from a flat face: every boundary point must lie on on
 1e-5 of the face's size. When one does not, the refusal gives the largest distance off the plane
 and names a curved face such as a cylinder wall, whose two end circles face opposite ways.
 
+## Hidden parts with `--import-only`
+
+`--import-only` (stored geometry only) keeps every part the design hides, hidden as in the
+source, so it holds the same parts as the default preset. A hidden occurrence is still placed, its
+component still holds its stored body as an Import, and the design's `visibility.hidden_occurrences`
+lists it. The default preset adds, beside many parts, an "Editable history" component with the
+rebuilt body, named `Body (<part>)` or `Body 1 (<part>)`; those rebuilt copies exist only there, so
+a body-name count is higher in the default result without any stored part being missing. On the
+public RailCore II 300ZL (CC BY-SA 4.0), `--import-only --no-sketches` holds 287 occurrences in 188
+components with 20 hidden occurrences, 270 bodies; the default preset holds the same 287
+occurrences plus 29 "Editable history" occurrences, and 333 bodies. TopPanel, ElectroGuard,
+Right_Panel, Back Panel, X_Endstop_Mount, Front_Motor_Mount, Titan_Mount, 5015BlowerFan,
+Back_X_Carriage, Front_X_Carriage, 300ZL Bed and Belt_Retainer_Clip are bodies in both.
+
 ## Stored body fallback
 
 When a new-body extrude, revolve, sweep or loft requires a profile or path absent
