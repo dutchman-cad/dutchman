@@ -181,7 +181,7 @@ impl Format {
 
     /// Whether Dutchman can read usable geometry for this format.
     pub fn reads_geometry(self) -> bool {
-        !matches!(self, Self::CreoPart | Self::UnclassifiedPart | Self::Iges)
+        !matches!(self, Self::UnclassifiedPart | Self::Iges)
     }
 
     /// Plain words for the reader's current capability.

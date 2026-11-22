@@ -3,7 +3,7 @@
   <img alt="Dutchman Convert" src="assets/logo/dutchman-lockup-night.png#gh-dark-mode-only" width="252">
 </h1>
 
-Converts Fusion, Inventor, SolidWorks, FreeCAD, CATIA, NX, Rhino, Creo View, ACIS, STEP, and offline Onshape bundles into SolidCraft designs, keeping editable features where they map.
+Converts Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo, NX, Rhino, Creo View, ACIS, STEP, and offline Onshape bundles into SolidCraft designs, keeping editable features where they map.
 
 <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=Dutchman%20Convert%20in%20Day%20theme%3A%20a%20CC0%20FreeCAD%20bracket%20converted%2C%20with%20its%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="Dutchman Convert in Day theme: a CC0 FreeCAD bracket converted, with its mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png#gh-light-mode-only" width="100%"></a>
 <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-night.png&alt=Dutchman%20Convert%20in%20Night%20theme%3A%20the%20same%20CC0%20bracket%20conversion%20and%20its%20result%20card"><img alt="Dutchman Convert in Night theme: the same CC0 bracket conversion and its result card" src="docs/images/readme-result-night.png#gh-dark-mode-only" width="100%"></a>
@@ -126,7 +126,7 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 | SolidWorks assembly | `.sldasm` | Reads geometry | L3 | Placed parts and sub-assemblies, read from their files in the project |
 | FreeCAD document | `.FCStd` | Reads geometry | L5 | Geometry and components; feature history and joints when they map |
 | CATIA part | `.CATPart` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
-| Creo part | `.prt`, `.prt.N` | Opens, no geometry yet | L1 | Not yet |
+| Creo part | `.prt`, `.prt.N` | Reads geometry | L1 | Geometry through STEP; solids SolidCraft can import, where a feature resolves to a body |
 | NX part | `.prt` | Reads geometry | L1 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Creo View | `.pvz` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Rhino | `.3dm` | Reads geometry | L2 | Geometry through STEP; solids and surfaces SolidCraft can import |

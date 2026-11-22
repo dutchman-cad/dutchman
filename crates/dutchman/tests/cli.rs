@@ -1840,7 +1840,7 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
     let first = dir.path().join("first.prt");
     let second = dir.path().join("second.prt");
     for path in [&first, &second] {
-        std::fs::write(path, b"#UGC:2").unwrap();
+        std::fs::write(path, b"unclassified").unwrap();
     }
     let output = dir.path().join("out.sc");
     for option in [None, Some("--quiet"), Some("--json")] {
@@ -1852,11 +1852,11 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if option == Some("--json") {
             let report = json_of(&out);
-            assert_eq!(report["input"]["format"], "creo_part");
-            assert_eq!(report["input"]["words"], "opens, no geometry yet");
+            assert_eq!(report["input"]["format"], "unclassified_part");
+            assert_eq!(report["input"]["words"], "recognised, not read yet");
             assert!(!stderr.contains("Want to help"));
         } else {
-            assert!(stdout.starts_with("Creo .prt: opens, no geometry yet\n"));
+            assert!(stdout.starts_with("Creo or NX .prt: recognised, not read yet\n"));
         }
         assert_eq!(
             stdout.matches("Want to help").count(),
@@ -1887,7 +1887,7 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
                 .lines()
                 .find(|l| l.starts_with("Want to help"))
                 .unwrap();
-            assert!(pitch.starts_with("Want to help Dutchman read Creo better?"));
+            assert!(pitch.starts_with("Want to help Dutchman read Creo or NX better?"));
             assert!(pitch.contains("https://dutchmancad.xyz/fixtures/"));
             assert!(!pitch.contains("first") && !pitch.contains("second"));
         }
@@ -1939,7 +1939,7 @@ fn numbered_saves_select_the_newest_and_report_the_older_revision() {
     let outputs = dir.path().join("outputs");
     std::fs::create_dir_all(&inputs).unwrap();
     for name in ["bracket.prt.3", "bracket.prt.7"] {
-        std::fs::write(inputs.join(name), b"#UGC:2").unwrap();
+        std::fs::write(inputs.join(name), b"unclassified").unwrap();
     }
     for json in [false, true] {
         let mut args = vec![
@@ -1952,7 +1952,7 @@ fn numbered_saves_select_the_newest_and_report_the_older_revision() {
             args.push("--json");
         }
         let out = dutchman(&args);
-        // Creo is recognised but does not supply geometry yet; only the newest is attempted.
+        // An unclassified part is recognised but does not supply geometry; only the newest is attempted.
         assert_eq!(out.status.code(), Some(1));
         if json {
             let report = json_of(&out);
@@ -1969,10 +1969,10 @@ fn numbered_saves_select_the_newest_and_report_the_older_revision() {
             );
         } else {
             let text = String::from_utf8(out.stdout).unwrap();
-            assert!(text.contains("Creo .prt.7: opens, no geometry yet"));
+            assert!(text.contains("Creo or NX .prt.7: recognised, not read yet"));
             assert!(text.contains("bracket.prt.3: older revision; using "));
             assert!(text.contains("1 skipped (older revisions)"));
-            assert!(!text.contains("Creo .prt.3:"));
+            assert!(!text.contains("Creo or NX .prt.3:"));
         }
     }
 }

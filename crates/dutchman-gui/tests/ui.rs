@@ -927,7 +927,7 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
     harness.state_mut().set_out_dir(dir.path().join("out"));
     harness.run_steps(8);
     assert!(harness
-        .query_by_label("Creo .prt: opens, no geometry yet")
+        .query_by_label("Creo .prt: reads geometry")
         .is_some());
     assert!(harness.query_by_label("NX .prt: reads geometry").is_some());
     convert(&mut harness);

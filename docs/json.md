@@ -753,7 +753,7 @@ A failure carries `"ok": false`, `input` and `error`, and exits 1:
 ```json
 {"schema": "dutchman.convert/1", "ok": false,
  "input": {"path": "part.prt", "format": "creo_part", "format_name": "Creo part (.prt, .prt.N)"},
- "error": {"message": "Creo part (.prt, .prt.N): reading geometry is not supported yet. …",
+ "error": {"message": "cannot read this design: no geometry could be read from this Creo part (.prt, .prt.N) file; … Export a STEP file from Creo and convert that instead",
            "stage": "decode", "upstream": "cadmpeg"}}
 ```
 
@@ -1031,8 +1031,8 @@ of a particular file. This additive field retains `dutchman.formats/1`.
 `extensions` lists all accepted suffixes without dots (`prt.N` denotes a numbered save);
 the existing `extension` remains the preferred suffix.
 Dutchman attempts conversion when the format reads geometry and its codec is available in
-this build. Creo opens without geometry support; SolidWorks assemblies and
-unclassified `.prt` files are recognised without readers. Reader status does not promise
+this build. SolidWorks assemblies and unclassified `.prt` files are recognised
+without readers. Reader status does not promise
 that a particular file will convert or that every feature will map.
 `--quiet` suppresses only the text volunteer invitation after a conversion run; JSON
 reports contain neither that invitation nor status prose outside the report.
