@@ -74,11 +74,11 @@ jobs:
         env:
           CARGO_BUILD_JOBS: 3
         run: |
-          free -m
+          awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {printf "total %d MB, available %d MB\n", t/1024, a/1024}' /proc/meminfo
           (
             while sleep 60; do
-              echo "heartbeat $(date -u +%H:%M:%S): $(free -m | awk '/^Mem:/ {print "used " $3 " MB, available " $7 " MB"}')"
-              ps -eo rss,comm --sort=-rss | head -4 | awk 'NR>1 {printf "  %d MB %s\n", $1/1024, $2}'
+              echo "heartbeat $(date -u +%H:%M:%S): $(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {printf "total %d MB, available %d MB\n", t/1024, a/1024}' /proc/meminfo)"
+              awk '/^Name:/ {n=$2} /^VmRSS:/ {print $2, n}' /proc/[0-9]*/status 2>/dev/null | sort -rn | head -3 | awk '{printf "  %d MB %s\n", $1/1024, $2}' || true
             done
           ) &
           heartbeat=$!
@@ -86,7 +86,7 @@ jobs:
           cargo build --release --locked -p dutchman -p dutchman-web --bins \
             --config profile.release.lto=false --config profile.release.codegen-units=16 || status=$?
           kill "$heartbeat" 2>/dev/null || true
-          free -m
+          awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {printf "total %d MB, available %d MB\n", t/1024, a/1024}' /proc/meminfo
           exit "$status"
       - run: target/release/dutchman --version
       - uses: actions/upload-artifact@v7
