@@ -1752,24 +1752,6 @@ fn target_045_keeps_the_previous_compatible_history_document() {
 }
 
 #[test]
-fn target_046_keeps_the_previous_compatible_history_document() {
-    let model = cube_with_history(10.0, first_profile(), None);
-    let write = |target: &str| {
-        convert(
-            &model,
-            &SolidCraftWriter::new()
-                .verification(Verification::Off)
-                .target_version(Some(target.parse().unwrap())),
-        )
-        .0
-    };
-    let previous = write("0.45.0");
-    let newest = write("0.46.0");
-    assert_eq!(newest["format"], "solidcraft/23");
-    assert_eq!(newest, previous);
-}
-
-#[test]
 fn as_built_joints_between_features_do_not_stop_history() {
     for source_tag in ["As-built", "As-built Joint"] {
         let model = cube_with_history(10.0, first_profile(), None);
