@@ -215,6 +215,11 @@ jobs:
         run: |
           echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME" >> "$GITHUB_ENV"
           if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
+          # A minimal toolchain has no rustdoc, which the doc-tests need (GitHub's images have it).
+          if ! rustup which rustdoc >/dev/null 2>&1; then
+            rustup toolchain install stable --profile default --no-self-update
+          fi
+          rustup which rustdoc
       - uses: Swatinem/rust-cache@v2
         if: runner.environment == 'github-hosted'
         with:
