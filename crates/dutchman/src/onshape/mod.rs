@@ -535,9 +535,11 @@ pub fn estimate_calls<C: HttpClient>(
             )?;
         }
         elements = elements.saturating_add(external.len());
-        for (document, element, external_mid, configuration, linked_document) in external {
+        for (document, element, external_version, external_mid, configuration, linked_document) in
+            external
+        {
             let cache = scope.join(&document).join(&external_mid);
-            let base = format!("{API}/partstudios/d/{document}/m/{external_mid}/e/{element}");
+            let base = format!("{API}/partstudios/d/{document}/v/{external_version}/e/{element}");
             let features = format!("{base}/features");
             let sketches = format!("{base}/sketches");
             let features_query = part_query(
@@ -1428,9 +1430,17 @@ fn capture<C: HttpClient>(
         }
         elements.push(json!({"id": eid, "name": tab_name, "type": kind, "files": paths}));
     }
-    // External references are pinned to immutable microversions. Capture them under
+    // External references are pinned to immutable versions. Capture them under
     // references/ so the assembly bundle remains self-contained.
-    for (document, element, external_mid, configuration, linked_document) in external.clone() {
+    for (
+        document,
+        element,
+        external_version,
+        external_mid,
+        configuration,
+        linked_document,
+    ) in external.clone()
+    {
         fetcher.session.allow(http::AUTO_ELEMENT_CALLS);
         let identity = (document.clone(), external_mid.clone(), element.clone());
         if ancestry.contains(&identity) || ancestry.len() >= 8 {
@@ -1438,8 +1448,8 @@ fn capture<C: HttpClient>(
         }
         let source = DocumentUrl {
             document: document.clone(),
-            kind: "m".into(),
-            version: external_mid.clone(),
+            kind: "v".into(),
+            version: external_version.clone(),
             element: element.clone(),
         };
         let mut chain = ancestry.clone();
@@ -1471,8 +1481,8 @@ fn capture<C: HttpClient>(
             .as_deref()
             .map(|value| format!("config-{}", &hash(value.as_bytes())[..16]));
         let prefix = match config_segment {
-            Some(config) => format!("references/{document}/{external_mid}/{element}/{config}/"),
-            None => format!("references/{document}/{external_mid}/{element}/"),
+            Some(config) => format!("references/{document}/{external_version}/{element}/{config}/"),
+            None => format!("references/{document}/{external_version}/{element}/"),
         };
         let mut reference_sources = BTreeMap::new();
         for i in 0..archive.len() {
@@ -1516,7 +1526,7 @@ fn capture<C: HttpClient>(
         }
     }
     fetcher.record_source("manifest.json", content_kind);
-    let manifest = json!({"schema": "dutchman.onshape-bundle/1", "fetched_at": timestamp(fetcher.session.client.now()), "fetcher": format!("dutchman {}", crate::BUILD_VERSION), "api_version": "v17", "document": {"id": source.document, "name": name, "workspace_or_version": source.kind, "wvid": source.version, "microversion": mid}, "root_element": source.element, "elements": elements, "external": external.into_iter().map(|(d,e,m,configuration,link_document_id)| json!({"documentId":d,"elementId":e,"microversionId":m,"configuration":configuration,"linkDocumentId":link_document_id})).collect::<Vec<_>>(), "calls": fetcher.session.calls, "consistent": true, "file_sources": fetcher.file_sources});
+    let manifest = json!({"schema": "dutchman.onshape-bundle/1", "fetched_at": timestamp(fetcher.session.client.now()), "fetcher": format!("dutchman {}", crate::BUILD_VERSION), "api_version": "v17", "document": {"id": source.document, "name": name, "workspace_or_version": source.kind, "wvid": source.version, "microversion": mid}, "root_element": source.element, "elements": elements, "external": external.into_iter().map(|(d,e,v,m,configuration,link_document_id)| json!({"documentId":d,"elementId":e,"versionId":v,"microversionId":m,"configuration":configuration,"linkDocumentId":link_document_id})).collect::<Vec<_>>(), "calls": fetcher.session.calls, "consistent": true, "file_sources": fetcher.file_sources});
     privacy(&manifest)?;
     fetcher.add(
         "manifest.json".into(),
@@ -1699,7 +1709,14 @@ fn needs_topology(value: &Value, depth: usize) -> Result<bool> {
     Ok(false)
 }
 
-type ExternalReference = (String, String, String, Option<String>, Option<String>);
+type ExternalReference = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+);
 
 fn references(
     value: &Value,
@@ -1734,6 +1751,15 @@ fn references(
                     }
                     queue.push_back(e);
                 } else {
+                    let version = map
+                        .get("documentVersion")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Unsupported,
+                                "Onshape did not provide a version for an external assembly reference; fetch an assembly with versioned references.",
+                            )
+                        })?;
                     let m = map
                         .get("documentMicroversion")
                         .or_else(|| map.get("microversionId"))
@@ -1759,6 +1785,7 @@ fn references(
                     external.insert((
                         d,
                         e,
+                        id(version).map_err(|_| response_error())?,
                         id(m).map_err(|_| response_error())?,
                         configuration,
                         linked_document,

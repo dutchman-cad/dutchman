@@ -468,8 +468,9 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
   instances, occurrences, transforms, mates, and connectors as returned by Onshape.
   Referenced elements in the same document are fetched too, including Part Studios.
   References to other documents appear in manifest `external` entries with
-  `documentId`, `elementId`, and `microversionId`. Dutchman also captures each referenced
-  Part Studio at that immutable microversion under `references/<document>/<microversion>/<element>/`.
+  `documentId`, `elementId`, `versionId`, and `microversionId`. Dutchman captures each
+  referenced Part Studio through its immutable version under
+  `references/<document>/<version>/<element>/`, preserving the instance's microversion pin.
   Configured references retain their configuration and linked-document context in API requests
   and use a configuration-specific bundle subdirectory.
 

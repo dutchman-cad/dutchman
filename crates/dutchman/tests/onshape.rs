@@ -967,8 +967,9 @@ fn same_document_two_part_revolute_assembly_includes_referenced_partstudio_once(
 #[test]
 fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache() {
     const OTHER: &str = "777777777777777777777777";
-    const OTHER_MID: &str = "888888888888888888888888";
+    const OTHER_VERSION: &str = "888888888888888888888888";
     const OTHER_ELEMENT: &str = "999999999999999999999999";
+    const OTHER_MID: &str = "aaaaaaaaaaaaaaaaaaaaaaaa";
     let dir = tempfile::tempdir().unwrap();
     let mut mock = assembly_mock();
     mock.replies.get_mut(3).unwrap().body = serde_json::to_vec(&json!({
@@ -980,6 +981,7 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
                 "type": "Part",
                 "documentId": OTHER,
                 "elementId": OTHER_ELEMENT,
+                "documentVersion": OTHER_VERSION,
                 "documentMicroversion": OTHER_MID,
                 "configuration": "size=large;length=25mm;",
                 "linkDocumentId": DID
@@ -990,9 +992,13 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
     mock.replies.extend([
         response(200, json!({"name":"Synthetic standard part"})),
         response(200, json!([{"id":OTHER_ELEMENT,"elementType":"PARTSTUDIO","name":"Configured bolt"}])),
-        response(200, json!({"sourceMicroversion":OTHER_MID,"features":[{"featureId":"variable","featureType":"assignVariable","parameters":[]}]})),
-        response(404, json!({})),
-        response(404, json!({})),
+        response(200, json!({"sourceMicroversion":OTHER_MID,"features":[{"featureId":"extrude","featureType":"extrude","parameters":[{"parameterId":"operationType","value":"NEW"}]}]})),
+        response(200, json!({"microversionId":OTHER_MID,"bodies":[]})),
+        response(200, json!({"microversionId":OTHER_MID,"bodies":[{"id":"bolt","type":"SOLID","properties":{"name":"Configured bolt"}}]})),
+        response(200, json!({"sourceMicroversion":OTHER_MID,"configurationParameters":[],"currentConfiguration":[]})),
+        response(200, json!({"variables":[{"name":"length","type":"NUMBER","expression":"25mm","value":"25mm"}]})),
+        response(200, json!({"id":"external-export","requestState":"DONE","documentId":OTHER,"versionId":OTHER_VERSION,"resultDocumentId":OTHER,"requestElementId":OTHER_ELEMENT,"resultExternalDataIds":["external-step"]})),
+        Response { status: 200, headers: BTreeMap::new(), body: b"ISO-10303-21; synthetic external solid".to_vec() },
         response(200, sketch_information(OTHER_MID)),
     ]);
     let report = run(&mut mock, &dir, AS, 100).unwrap();
@@ -1005,10 +1011,21 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
     assert!(feature_request
         .2
         .contains("configuration=size%3Dlarge%3Blength%3D25mm%3B"));
+    assert!(feature_request.1.contains(&format!("/v/{OTHER_VERSION}/")));
     assert!(feature_request.2.contains(&format!("linkDocumentId={DID}")));
+    assert!(mock.sent.iter().any(|(_, path, _)| {
+        path == &format!("/api/v17/variables/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/variables")
+    }));
+    assert!(mock.sent.iter().any(|(method, path, _)| {
+        method == "POST"
+            && path == &format!("/api/v17/partstudios/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/export/step")
+    }));
+    assert!(mock.sent.iter().any(|(_, path, _)| {
+        path == &format!("/api/v17/documents/d/{OTHER}/externaldata/external-step")
+    }));
     assert!(report.calls >= 10);
     let mut archive = open_bundle(&dir);
-    let prefix = format!("references/{OTHER}/{OTHER_MID}/{OTHER_ELEMENT}/config-");
+    let prefix = format!("references/{OTHER}/{OTHER_VERSION}/{OTHER_ELEMENT}/config-");
     assert!(archive
         .file_names()
         .map(|name| name.unwrap().into_owned())
@@ -1019,7 +1036,7 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
             .map(|name| name.unwrap().into_owned())
             .filter(|name| name.starts_with(&prefix))
             .count(),
-        4
+        9
     );
     let external_manifest_path = archive
         .file_names()
@@ -1027,6 +1044,8 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
         .find(|name| name.starts_with(&prefix) && name.ends_with("manifest.json"))
         .unwrap();
     let manifest = zip_value(&mut archive, "manifest.json");
+    assert_eq!(manifest["external"][0]["versionId"], OTHER_VERSION);
+    assert_eq!(manifest["external"][0]["microversionId"], OTHER_MID);
     assert_eq!(
         manifest["external"][0]["configuration"],
         "size=large;length=25mm;"
@@ -1040,6 +1059,11 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
         manifest["file_sources"][sketch_path.as_str()]["microversion"],
         OTHER_MID
     );
+    let variables_path = format!("{prefix}partstudios/{OTHER_ELEMENT}/variables.json");
+    assert_eq!(manifest["file_sources"][variables_path]["path_kind"], "v");
+    assert!(archive
+        .by_name(&format!("{prefix}partstudios/{OTHER_ELEMENT}/export.step"))
+        .is_ok());
     drop(archive);
 
     let mut cached = Mock::default();
@@ -1047,6 +1071,35 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
     assert_eq!(again.calls, 0);
     assert!(cached.sent.is_empty());
 }
+
+#[test]
+fn assembly_fetch_rejects_external_reference_without_document_version() {
+    const OTHER: &str = "777777777777777777777777";
+    const OTHER_MID: &str = "aaaaaaaaaaaaaaaaaaaaaaaa";
+    const OTHER_ELEMENT: &str = "999999999999999999999999";
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = assembly_mock();
+    mock.replies.get_mut(3).unwrap().body = serde_json::to_vec(&json!({
+        "rootAssembly": {
+            "documentId": DID,
+            "elementId": AS,
+            "documentMicroversion": MID,
+            "instances": [{
+                "type": "Part",
+                "documentId": OTHER,
+                "elementId": OTHER_ELEMENT,
+                "documentMicroversion": OTHER_MID
+            }]
+        }
+    }))
+    .unwrap();
+
+    let error = run(&mut mock, &dir, AS, 100).unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Unsupported);
+    assert!(error.to_string().contains("did not provide a version"));
+    assert!(mock.sent.iter().all(|(_, path, _)| !path.contains(OTHER)));
+}
+
 #[test]
 fn workspace_refetch_uses_the_same_total_call_budget() {
     let dir = tempfile::tempdir().unwrap();
