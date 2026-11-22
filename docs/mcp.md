@@ -585,8 +585,9 @@ once. Grounding and supported Assembly-workbench joints map like other assembly 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
 targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
 circle that the feature's input topology stores beside the edge, with centre, axis, radius and a
-full-turn parameter range. A rim that two rebuilt bodies both have is ambiguous and refused.
-A missing carrier and ellipses remain refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+full-turn parameter range. Its input topology must hold a single body that is one earlier named
+body; only that body supplies replay candidates, even when another body has a coincident rim.
+A missing carrier or owner, and ellipses, remain refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
 A missing source carrier reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
