@@ -19,17 +19,15 @@ pub(super) fn is_helper(feature: &Value) -> bool {
             }))
 }
 
-/// A native operation that is a construction binder (its source geometry must resolve), as
-/// opposed to a native coordinate frame, which only places later features.
-fn is_binder_like(definition: &Value) -> bool {
-    match definition.get("definition").and_then(Value::as_str) {
-        Some("binder") => true,
-        Some("native") => !definition
-            .get("kind")
-            .and_then(Value::as_str)
-            .is_some_and(dutchman_core::is_native_coordinate_system),
-        _ => false,
-    }
+/// A binder, or a native operation other than a coordinate frame: its source geometry must
+/// resolve. A native coordinate frame only places later features.
+fn is_binder_like(kind: &str, definition: &Value) -> bool {
+    kind == "binder"
+        || (kind == "native"
+            && !definition
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(dutchman_core::is_native_coordinate_system))
 }
 
 fn contains(value: &Value, ids: &[&str]) -> bool {
@@ -76,7 +74,7 @@ pub(super) fn map(feature: &Value, ctx: &Context, report: &mut Report) -> Result
     }
     let definition = operation(feature);
     let kind = super::operation_kind(feature).unwrap_or_default();
-    if is_binder_like(definition) {
+    if is_binder_like(kind, definition) {
         // A construction plane has one carrier frame, already carried by attached sketches.
         // A native subelement selector on a solid does not prove which source face it means.
         let source = definition
