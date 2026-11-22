@@ -20612,3 +20612,85 @@ fn solidcraft_replays_body_moves_and_later_features_with_source_centroids() {
         );
     }
 }
+
+/// Evaluates every design as a cube of `side` mm at the origin, the live extrude's as `kept`
+/// mm when it is the history's and not the original's, and gives no edges to any blend, so a
+/// blend after the extrude is refused and the history stops there.
+#[derive(Debug)]
+struct PrefixEvaluator {
+    source: f64,
+    kept: f64,
+}
+
+impl dutchman_solidcraft::SolidCraftEvaluator for PrefixEvaluator {
+    fn evaluate(&self, design: &[u8], _: std::time::Duration, _: &str) -> Result<Value, String> {
+        let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
+        let document: Value =
+            serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        let live = document["features"].as_array().unwrap().iter().any(|f| {
+            f["type"] == "extrude" && f.get("suppressed").and_then(Value::as_bool) != Some(true)
+        });
+        let side = if live { self.kept } else { self.source };
+        Ok(json!({"bodies": [{"volume_mm3": side * side * side, "area_mm2": 6.0 * side * side,
+            "faces": 6, "bbox": {"min": [0, 0, 0], "max": [side, side, side]}}],
+            "timeline": [], "total": {"faces": 6}}))
+    }
+
+    fn run(
+        &self,
+        _: &[u8],
+        _: &[Value],
+        _: std::time::Duration,
+        _: &str,
+    ) -> Result<Vec<Value>, String> {
+        Err("no rebuilt edges in this evaluator".to_owned())
+    }
+}
+
+#[test]
+fn a_prefix_inside_the_source_shape_is_not_kept_when_only_a_blend_follows() {
+    let model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    // The rebuilt extrude is a 4 mm cube where the source's final shape is 10 mm: the blend
+    // after it cannot build the rest, so the extrude was a wrong region and must not stay.
+    let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(PrefixEvaluator {
+        source: 10.0,
+        kept: 4.0,
+    }));
+    let (document, report) = convert(&model, &writer);
+    let rows = &report.outcome().unwrap().features;
+    assert_eq!(rows[1].status, dutchman_core::FeatureStatus::Blocked, "{report:?}");
+    let reason = rows[1].reason.as_deref().unwrap();
+    assert!(
+        reason.contains("inside the source's final shape")
+            && reason.contains("no feature after them builds material"),
+        "{reason}"
+    );
+    assert!(
+        !document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "extrude"),
+        "{document}"
+    );
+}
+
+#[test]
+fn a_prefix_that_holds_the_source_shape_stays_when_only_a_blend_follows() {
+    let model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(PrefixEvaluator {
+        source: 10.0,
+        kept: 10.0,
+    }));
+    let (document, report) = convert(&model, &writer);
+    let rows = &report.outcome().unwrap().features;
+    assert_eq!(rows[1].status, dutchman_core::FeatureStatus::Mapped, "{report:?}");
+    assert!(
+        document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "extrude"),
+        "{document}"
+    );
+}

@@ -684,6 +684,7 @@ mod history_tests {
             hidden_bodies: Vec::new(),
             unconfirmed: Default::default(),
             measured: Default::default(),
+            growth: Vec::new(),
             stop: None,
             sources: Default::default(),
         }

@@ -923,10 +923,29 @@ impl SolidCraftWriter {
                     // A whole-sketch profile of several stays only when the source's bodies
                     // at this point are known and the replay holds them.
                     let confirmed = differs.is_none() && stored.is_some() && bodies.is_some();
+                    // The centres the source stores cannot tell a region chosen without proof
+                    // from the right one when both are centred alike. The final shape can,
+                    // where nothing after the prefix builds material.
+                    let conflict = if differs.is_none() {
+                        let budget = self.timeout.saturating_sub(started.elapsed());
+                        self.prefix_conflict(model, history, step, cli.as_ref(), budget)
+                    } else {
+                        None
+                    };
                     if !confirmed && unconfirmed_stop(mapping) {
                         continue;
                     }
                     if let Some(why) = differs {
+                        report.push_coded(
+                            Severity::Degraded,
+                            model.name.as_str(),
+                            "history/body-mismatch",
+                            &why,
+                        );
+                        Self::stop_geometry_difference(mapping, format!("replay differs ({why})"));
+                        continue;
+                    }
+                    if let Some(why) = conflict {
                         report.push_coded(
                             Severity::Degraded,
                             model.name.as_str(),
@@ -955,6 +974,32 @@ impl SolidCraftWriter {
             mapping.result = Err("retained history exceeded the replay repair limit".to_owned());
         }
         Ok(Check::Flattened("no replayable prefix remains".to_owned()))
+    }
+
+    /// Why the replay of the retained `history` cannot be the state before the source features
+    /// after it: its box or material falls short of the source's final shape, though none of
+    /// those features builds material. `None` when they might, or when it cannot be measured.
+    fn prefix_conflict(
+        &self,
+        model: &Model,
+        history: &history::History,
+        step: &str,
+        cli: &(impl SolidCraftEvaluator + ?Sized),
+        budget: Duration,
+    ) -> Option<String> {
+        let removes = history.unreachable_prefix()?;
+        if budget.is_zero() || self.memory_refusal().is_some() {
+            return None;
+        }
+        let source = self
+            .history_design(model, history, step, Live::Original, false)
+            .ok()?;
+        let prefix = self
+            .history_design(model, history, step, Live::History, false)
+            .ok()?;
+        let source = verify::extents(cli, budget, "original", &source)?;
+        let prefix = verify::extents(cli, budget, "prefix", &prefix)?;
+        verify::prefix_misses_source(&prefix, &source, removes)
     }
 
     /// A final-body difference does not identify the operation that introduced it.

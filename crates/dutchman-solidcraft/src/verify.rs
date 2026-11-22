@@ -1229,6 +1229,90 @@ pub(crate) fn replay(
     }
 }
 
+/// One body's volume and box as SolidCraft measures it, for comparing a retained prefix with
+/// the source's final shape.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Extent {
+    pub(crate) volume: f64,
+    pub(crate) bounds: ([f64; 3], [f64; 3]),
+}
+
+/// Every body of a design that SolidCraft evaluated without error, with its box. `None` when
+/// the design does not evaluate or any body lacks a box: an unmeasured body proves nothing.
+pub(crate) fn extents(
+    cli: &(impl SolidCraftEvaluator + ?Sized),
+    timeout: Duration,
+    label: &str,
+    design: &[u8],
+) -> Option<Vec<Extent>> {
+    let Ok(Evaluation::Done(eval)) = evaluate(cli, timeout, label, design) else {
+        return None;
+    };
+    if !eval.errors.is_empty() {
+        return None;
+    }
+    eval.bodies
+        .iter()
+        .map(|body| {
+            Some(Extent {
+                volume: body.volume,
+                bounds: body.bounds?,
+            })
+        })
+        .collect()
+}
+
+/// Why the replay of a retained prefix cannot be the state before the features the source has
+/// after it, when none of those can build beyond it: the source's final shape reaches past the
+/// prefix's box, or, when they only remove material (`removes`), holds over 5% more material than the
+/// prefix (SolidCraft measures volumes from meshes, which agree to about 1%). Those features would have to build what the prefix lacks, so the prefix is a
+/// different body: a profile region chosen without proof is the usual cause.
+pub(crate) fn prefix_misses_source(
+    prefix: &[Extent],
+    source: &[Extent],
+    removes: bool,
+) -> Option<String> {
+    if prefix.is_empty() || source.is_empty() {
+        return None;
+    }
+    let union = |bodies: &[Extent]| {
+        let mut bounds = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for body in bodies {
+            bounds.0 = std::array::from_fn(|axis| bounds.0[axis].min(body.bounds.0[axis]));
+            bounds.1 = std::array::from_fn(|axis| bounds.1[axis].max(body.bounds.1[axis]));
+        }
+        bounds
+    };
+    let (kept_low, kept_high) = union(prefix);
+    let (final_low, final_high) = union(source);
+    let diagonal = (0..3)
+        .map(|axis| (final_high[axis] - final_low[axis]).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    // The larger of half a millimetre and 1% of the final shape's diagonal.
+    let slack = (diagonal * 0.01).max(0.5);
+    for (axis, name) in ["X", "Y", "Z"].into_iter().enumerate() {
+        let short = (kept_low[axis] - final_low[axis]).max(final_high[axis] - kept_high[axis]);
+        if short.is_finite() && short > slack {
+            return Some(format!(
+                "the retained features' body ends {short:.1} mm inside the source's final \
+                 shape along {name}, and no feature after them builds material"
+            ));
+        }
+    }
+    if removes {
+        let kept: f64 = prefix.iter().map(|body| body.volume).sum();
+        let wanted: f64 = source.iter().map(|body| body.volume).sum();
+        if wanted.is_finite() && kept.is_finite() && wanted - kept > wanted.abs() * 0.05 {
+            return Some(format!(
+                "the retained features' bodies hold {kept:.0} mm3 where the source's final shape \
+                 holds {wanted:.0} mm3, and no feature after them builds material"
+            ));
+        }
+    }
+    None
+}
+
 /// The source's solid and a candidate's replay compared directly in one SolidCraft session:
 /// the largest distance between their surfaces and each one's face count.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2426,6 +2510,53 @@ fn parse(value: &Value) -> Result<Eval, String> {
 
 #[cfg(test)]
 mod tests {
+    fn cube(side: f64) -> super::Extent {
+        super::Extent {
+            volume: side * side * side,
+            bounds: ([0.0; 3], [side; 3]),
+        }
+    }
+
+    #[test]
+    fn a_prefix_inside_the_final_shape_is_not_a_step_towards_it() {
+        // A 6.5 mm tube centred like the 15 mm block it was taken for: only rounds follow.
+        let tube = super::Extent {
+            volume: 353.0,
+            bounds: ([4.25, 4.25, 0.0], [10.75, 10.75, 15.0]),
+        };
+        let why = super::prefix_misses_source(&[tube], &[cube(15.0)], false).unwrap();
+        assert!(why.contains("inside the source's final shape"), "{why}");
+        // The same prefix is fine when the source's final shape is no bigger than it.
+        assert_eq!(
+            super::prefix_misses_source(&[cube(15.0)], &[cube(15.0)], false),
+            None
+        );
+        // A prefix larger than the final shape is what cuts and rounds leave behind.
+        assert_eq!(
+            super::prefix_misses_source(&[cube(15.0)], &[cube(10.0)], false),
+            None
+        );
+    }
+
+    #[test]
+    fn a_prefix_short_of_material_is_refused_only_when_later_features_remove() {
+        let hollow = super::Extent {
+            volume: 600.0,
+            bounds: ([0.0; 3], [10.0; 3]),
+        };
+        assert!(super::prefix_misses_source(&[hollow], &[cube(10.0)], true)
+            .unwrap()
+            .contains("mm3"));
+        // Rounds can fill concave edges, so volume alone says nothing about them.
+        assert_eq!(
+            super::prefix_misses_source(&[hollow], &[cube(10.0)], false),
+            None
+        );
+        // Nothing measured, nothing proven.
+        assert_eq!(super::prefix_misses_source(&[], &[cube(10.0)], true), None);
+        assert_eq!(super::prefix_misses_source(&[hollow], &[], true), None);
+    }
+
     #[test]
     fn circular_edge_measurements_require_the_plane_and_an_analytic_length() {
         let full = 10.0 * std::f64::consts::PI;

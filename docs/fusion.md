@@ -391,6 +391,16 @@ finite volume, area, complete bounds and derived placement; unavailable comparis
 measurements keep the refusal. The earlier two-reading comparison stays permissive. A final shape that later differs from the source cuts the timeline
 before the first measured feature, so it never keeps fewer features than without measuring.
 
+A profile region chosen without a final-shape comparison (inferred against the stored body centres
+of an earlier feature, or the single region of a sketch with several loops) is checked once more
+when the history stops. If no source feature after the retained ones can build material (only
+fillets, chamfers, cuts and intersections follow), the rebuilt bodies' box must still reach
+the source's final shape, within the larger of 0.5 mm and 1% of its diagonal; when only cuts and
+intersections follow, they must hold at least 95% of its volume too. Otherwise the retained body is a
+different one (a 6.5 mm tube where the source has a 15 mm block, with the same centre), and the
+timeline is cut before its first body-building feature, as for any other final-shape difference,
+with a `history/body-mismatch` note. Later features stay in the imported final shape.
+
 The same applies to the last fillet or chamfer of a history when its input edges cannot be proven
 on the rebuilt body (a midpoint off every edge, or an edge with other ends or length). For each
 source edge the candidates are the up to three nearest rebuilt edges of its kind (straight or
