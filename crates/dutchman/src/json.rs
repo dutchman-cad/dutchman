@@ -466,6 +466,21 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
             }),
         );
     }
+    if let Some(message) = report.source_errors_message() {
+        out.insert(
+            "source_errors".to_owned(),
+            json!({
+                "program": "FreeCAD",
+                "count": report.source_error_total(),
+                "features": report.source_errors().iter().map(|error| json!({
+                    "name": error.name,
+                    "label": error.label,
+                    "error": error.message,
+                })).collect::<Vec<_>>(),
+                "message": message,
+            }),
+        );
+    }
     if let Some(completeness) = report.completeness() {
         out.insert("completeness".to_owned(), completeness_json(completeness));
     }

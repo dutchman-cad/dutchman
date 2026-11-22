@@ -1333,6 +1333,41 @@ fn a_freecad_document_converts() {
     assert_eq!(freecad["status"], "converts");
 }
 
+#[cfg(feature = "freecad")]
+#[test]
+fn a_freecad_file_with_errors_of_its_own_says_so_apart_from_conversion_notes() {
+    let out_dir = tempfile::tempdir().unwrap();
+    let output = out_dir.path().join("broken.solidcraft");
+    let out = dutchman(&[
+        "convert",
+        "--json",
+        "--no-verify",
+        &fixture("freecad_preexisting_error.FCStd"),
+        output.to_str().unwrap(),
+    ]);
+    let report = json_of(&out);
+    let errors = &report["source_errors"];
+    assert_eq!(errors["program"], "FreeCAD", "{report}");
+    assert_eq!(errors["count"], 1);
+    assert_eq!(errors["features"][0]["name"], "Fillet");
+    assert_eq!(errors["features"][0]["label"], "Edge rounding");
+    assert_eq!(errors["features"][0]["error"], "BRep_API: command not done");
+    assert_eq!(
+        errors["message"],
+        "This file already had errors in FreeCAD before converting: Edge rounding (fix them in \
+         FreeCAD for a full conversion)."
+    );
+    // A file without them has no such field.
+    let clean = json_of(&dutchman(&[
+        "convert",
+        "--json",
+        "--no-verify",
+        &fixture("core_design_product.FCStd"),
+        out_dir.path().join("clean.solidcraft").to_str().unwrap(),
+    ]));
+    assert!(clean.get("source_errors").is_none(), "{clean}");
+}
+
 #[cfg(not(feature = "freecad"))]
 #[test]
 fn a_build_without_freecad_says_where_freecad_files_convert() {
