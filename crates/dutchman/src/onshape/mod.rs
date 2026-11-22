@@ -1483,7 +1483,7 @@ fn capture<C: HttpClient>(
                 .take(MAX_TOTAL as u64 + 1)
                 .read_to_end(&mut data)
                 .map_err(io_error)?;
-            let name = member.name().map_err(io_error)?.to_owned();
+            let name = member.name().map_err(io_error)?.into_owned();
             if name == "manifest.json" {
                 let manifest: Value =
                     serde_json::from_slice(&data).map_err(|_| response_error())?;
@@ -1699,12 +1699,14 @@ fn needs_topology(value: &Value, depth: usize) -> Result<bool> {
     Ok(false)
 }
 
+type ExternalReference = (String, String, String, Option<String>, Option<String>);
+
 fn references(
     value: &Value,
     did: &str,
     mid: &str,
     queue: &mut VecDeque<String>,
-    external: &mut BTreeSet<(String, String, String, Option<String>, Option<String>)>,
+    external: &mut BTreeSet<ExternalReference>,
     depth: usize,
 ) -> Result<()> {
     if depth > 100 {

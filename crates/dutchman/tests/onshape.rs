@@ -1011,19 +1011,21 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
     let prefix = format!("references/{OTHER}/{OTHER_MID}/{OTHER_ELEMENT}/config-");
     assert!(archive
         .file_names()
+        .map(|name| name.unwrap().into_owned())
         .any(|name| name.starts_with(&prefix) && name.ends_with("features.json")));
     assert_eq!(
         archive
             .file_names()
+            .map(|name| name.unwrap().into_owned())
             .filter(|name| name.starts_with(&prefix))
             .count(),
         4
     );
     let external_manifest_path = archive
         .file_names()
+        .map(|name| name.unwrap().into_owned())
         .find(|name| name.starts_with(&prefix) && name.ends_with("manifest.json"))
-        .unwrap()
-        .to_owned();
+        .unwrap();
     let manifest = zip_value(&mut archive, "manifest.json");
     assert_eq!(
         manifest["external"][0]["configuration"],
