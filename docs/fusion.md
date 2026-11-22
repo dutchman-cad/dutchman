@@ -20,6 +20,9 @@ An unreadable sketch point no longer discards otherwise readable design history.
 component occurrence frames and inserted-component placements resolve, and construction-plane
 mirrors read their selected work plane. Known simple and clearance hole forms no longer
 report an assumed diameter; tapped holes still report how their stored bore is interpreted.
+A Fusion coordinate system that cadmpeg keeps only as construction references builds no geometry,
+so the history continues past it; a later feature that needs its placement is refused with a reason
+that names it.
 
 Bodies now follow the component that stored them, and component placements read from saved
 local occurrence paths, so more designs open as placed parts with their own history. A local
