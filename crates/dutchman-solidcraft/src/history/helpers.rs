@@ -229,7 +229,9 @@ mod tests {
         let wire =
             json!({"features": [frame.clone(), user(json!({"kind": "combine", "value": {}}))]});
         let ctx = Context::testing(&wire);
-        let refused = map(&wire["features"][0], &ctx, &mut Report::default()).unwrap_err();
+        let refused = map(&wire["features"][0], &ctx, &mut Report::default())
+            .err()
+            .unwrap();
         assert!(
             refused.contains("does not carry its resolved placement"),
             "{refused}"
