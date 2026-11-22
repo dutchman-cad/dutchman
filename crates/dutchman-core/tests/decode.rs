@@ -504,7 +504,7 @@ fn a_step_file_with_a_product_and_no_shapes_says_it_is_an_empty_export() {
 }
 
 #[test]
-fn a_step_file_with_a_curve_keeps_the_reader_message() {
+fn a_step_file_with_only_a_curve_reads_and_is_not_an_empty_export() {
     let text = std::fs::read_to_string(fixture("empty_export.step"))
         .unwrap()
         .replace(
@@ -512,8 +512,8 @@ fn a_step_file_with_a_curve_keeps_the_reader_message() {
             "#26 = CARTESIAN_POINT('',(0.,0.,0.));\n#27 = DIRECTION('',(1.,0.,0.));\n#28 = VECTOR('',#27,1.);\n#29 = LINE('',#26,#28);\n#25 = COLOUR_RGB",
         );
     let path = scratch("with_curve.step", text.as_bytes());
-    // A curve is geometry: the file reads (or fails for its own reason), never as an empty export.
+    // A curve is geometry, so the file is read; it is never reported as an empty export.
     if let Err(err) = read(Format::Step, &path, &mut Report::default()) {
-        assert!(!matches!(err, Error::EmptyExport(_)), "{err}");
+        panic!("a STEP file holding a curve must read, got: {err}");
     }
 }
