@@ -38,6 +38,7 @@ pub enum ErrorKind {
     Unsupported,
     Changed,
     Export,
+    Stopped,
 }
 impl ErrorKind {
     pub fn code(self) -> &'static str {
@@ -56,6 +57,7 @@ impl ErrorKind {
             Self::Unsupported => "onshape/not-supported",
             Self::Changed => "onshape/changed",
             Self::Export => "onshape/export",
+            Self::Stopped => "onshape/stopped",
         }
     }
 }

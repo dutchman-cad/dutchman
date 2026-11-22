@@ -547,11 +547,13 @@ pub(crate) fn fetch_with_budget(
 
 /// The text the Results card shows for a failed fetch.
 fn failure_message(report: &serde_json::Value) -> String {
-    if report
-        .pointer("/error/code")
-        .and_then(serde_json::Value::as_str)
-        == Some("onshape/budget")
-    {
+    // A fetch the user stopped is shown like a stop at the request limit: resumable.
+    if matches!(
+        report
+            .pointer("/error/code")
+            .and_then(serde_json::Value::as_str),
+        Some("onshape/budget" | "onshape/stopped")
+    ) {
         let calls = report
             .get("calls")
             .and_then(serde_json::Value::as_u64)

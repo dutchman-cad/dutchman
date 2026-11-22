@@ -3054,19 +3054,27 @@ impl App {
         let p = *theme::palette(ui);
         ui.horizontal(|ui| {
             if self.running() {
-                let stopping = self.diagnostic_stopped;
+                let fetching = self.run.is_none() && self.intake.active && self.intake.stop_onshape;
+                let fetch_stopping = self.intake.stop.load(std::sync::atomic::Ordering::SeqCst);
+                let stopping = self.diagnostic_stopped || (fetching && fetch_stopping);
                 let label = if stopping {
                     report_panel::STOPPING_BUTTON
                 } else {
                     "Stop"
                 };
                 if ui
-                    .add_enabled(self.run.is_some() && !stopping, egui::Button::new(label))
+                    .add_enabled(
+                        (self.run.is_some() || fetching) && !stopping,
+                        egui::Button::new(label),
+                    )
                     .clicked()
                 {
                     if let Some(run) = &self.run {
                         run.stop();
                         self.diagnostic_stopped = true;
+                    } else if fetching {
+                        // The fetch ends before its next call and keeps what it fetched.
+                        self.intake.stop.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                 }
             } else {

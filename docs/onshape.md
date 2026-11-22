@@ -467,7 +467,9 @@ cannot afford its final check writes no bundle.
 Every reply is saved to the cache as it arrives. A fetch that stops before it finishes,
 at the call limit, on a network failure, or when the app or computer restarts, keeps
 what it fetched. Run the same link again, the same day or later, and Dutchman sends only
-the calls it is missing: a fetch stopped one call short finishes with one call.
+the calls it is missing: a fetch stopped one call short finishes with one call. Stop in
+the app ends a running fetch before its next call and keeps what it fetched; Continue
+fetching then sends only the missing calls.
 
 A stopped workspace fetch continues at the microversion it started from, so it does not
 read the current microversion again. Its final check proves that the workspace has not

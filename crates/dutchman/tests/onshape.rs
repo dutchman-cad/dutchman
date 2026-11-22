@@ -2417,6 +2417,54 @@ fn progress_counts_each_call_and_estimates_after_the_feature_list() {
     assert!(counted.0[4..].iter().all(|(_, needed)| *needed == Some(11)));
 }
 
+/// Asks to stop once `after` calls have been sent.
+struct StopAfter {
+    after: u32,
+    sent: u32,
+}
+impl FetchProgress for StopAfter {
+    fn calls(&mut self, sent: u32, _: Option<u32>) {
+        self.sent = sent;
+    }
+    fn stop_requested(&mut self) -> bool {
+        self.sent >= self.after
+    }
+}
+#[test]
+fn a_requested_stop_ends_the_fetch_and_the_next_fetch_sends_only_the_missing_calls() {
+    let whole = workspace_replies();
+    let total = u32::try_from(whole.len()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = Mock {
+        replies: whole.clone().into(),
+        ..Mock::default()
+    };
+    let mut stop = StopAfter { after: 3, sent: 0 };
+    let error = fetch_watched(
+        &mut first,
+        &FetchAuth::ApiKeys(credentials()),
+        &workspace_source(),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut stop),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Stopped);
+    assert_eq!(error.kind.code(), "onshape/stopped");
+    assert_eq!(error.calls, 3);
+    assert_eq!(first.sent.len(), 3);
+    assert!(!dir.path().join("test.onshape-bundle").exists());
+    let mut again = Mock {
+        replies: whole[3..].to_vec().into(),
+        ..Mock::default()
+    };
+    let report = workspace_run(&mut again, &dir, 50).unwrap();
+    assert_eq!(report.calls, total - 3);
+    assert!(dir.path().join("test.onshape-bundle").exists());
+}
+
 fn bundle_files(dir: &tempfile::TempDir) -> BTreeMap<String, Vec<u8>> {
     let mut zip = open_bundle(dir);
     let names: Vec<String> = zip.file_names().map(|n| n.unwrap().into_owned()).collect();
