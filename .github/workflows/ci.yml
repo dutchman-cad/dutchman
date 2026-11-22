@@ -154,7 +154,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+      # Self-hosted runners use the toolchain their owner keeps current (checked, never installed).
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment == 'github-hosted'
         with:
           components: clippy
       # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
@@ -163,6 +165,7 @@ jobs:
         run: |
           echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME-clippy" >> "$GITHUB_ENV"
           if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
+          bash scripts/ci-runner-toolchain.sh clippy
       - uses: Swatinem/rust-cache@v2
         if: runner.environment == 'github-hosted'
         with:
@@ -176,21 +179,16 @@ jobs:
   wasm:
     needs: changes
     if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
-    runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
+    # Stays on GitHub-hosted runners: it needs the wasm32-wasip2 target, which the shared runners do not carry,
+    # and a job must not install targets on a shared box.
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip2,wasm32-unknown-unknown
-      # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
-      - name: Keep the build on the self-hosted runner
-        if: runner.environment == 'self-hosted'
-        run: |
-          echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME-wasm" >> "$GITHUB_ENV"
-          if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
       - uses: Swatinem/rust-cache@v2
-        if: runner.environment == 'github-hosted'
         with:
           shared-key: wasm32-wasip2
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -237,17 +235,7 @@ jobs:
           echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME" >> "$GITHUB_ENV"
           if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
           # Check, never install: the doc-tests need rustdoc and the default link needs rust-lld.
-          missing=""
-          for tool in rustc cargo rustdoc; do
-            rustup which "$tool" >/dev/null 2>&1 || missing="$missing $tool"
-          done
-          lld="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/rust-lld"
-          [ -x "$lld" ] || missing="$missing rust-lld"
-          if [ -n "$missing" ]; then
-            echo "::error title=Runner toolchain::$RUNNER_NAME lacks$missing; install the default profile of stable on the runner (rustup toolchain install stable --profile default)."
-            exit 1
-          fi
-          rustc -V
+          bash scripts/ci-runner-toolchain.sh
       - uses: Swatinem/rust-cache@v2
         if: runner.environment == 'github-hosted'
         with:
@@ -387,12 +375,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment == 'github-hosted'
       # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
       - name: Keep the build on the self-hosted runner
         if: runner.environment == 'self-hosted'
         run: |
           echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME" >> "$GITHUB_ENV"
           if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
+          bash scripts/ci-runner-toolchain.sh
       - uses: Swatinem/rust-cache@v2
         if: runner.environment == 'github-hosted'
         with:
@@ -517,19 +507,14 @@ jobs:
   msrv:
     needs: changes
     if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
-    runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
+    # Stays on GitHub-hosted runners: it needs the pinned older toolchain (1.88), and a job must not
+    # install a toolchain on a shared box.
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.88
-      # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
-      - name: Keep the build on the self-hosted runner
-        if: runner.environment == 'self-hosted'
-        run: |
-          echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME-msrv" >> "$GITHUB_ENV"
-          if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
       - uses: Swatinem/rust-cache@v2
-        if: runner.environment == 'github-hosted'
         with:
           shared-key: msrv-linux-check
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -562,12 +547,14 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: bash scripts/ci-disk-space.sh
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment == 'github-hosted'
       # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
       - name: Keep the build on the self-hosted runner
         if: runner.environment == 'self-hosted'
         run: |
           echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME-roundtrip" >> "$GITHUB_ENV"
           if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
+          bash scripts/ci-runner-toolchain.sh
       # The Linux test job's build covers this one: restoring its cache keeps a second copy of the
       # same dependencies out of the repository's cache storage.
       - uses: Swatinem/rust-cache@v2
