@@ -654,6 +654,10 @@ must fail first. Unresolved selections within existing sketches, unsupported opt
 and failed measurement checks keep their usual refusal. A missing input is proved
 by its CADIR reference or a missing-profile loss attributed to that feature; an
 unresolved carrier alone does not establish that it belongs to an external design.
+A loss that names the feature only by its scope record (`Extrude scope record N`) is
+attributed to the one feature whose identity carries that record, and to none when no
+feature or several do. In an assembly, each part receives the decode losses of its own
+design (those prefixed `xref <design name>:`).
 It uses the history body produced by that feature first. A final-model body is used
 only when no later active feature changes it. Joins, cuts and intersections never use
 this fallback: replacing them would discard earlier body history. No geometry is

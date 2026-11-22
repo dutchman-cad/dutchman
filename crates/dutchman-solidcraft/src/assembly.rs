@@ -783,7 +783,13 @@ fn prepare_part(
         Some(step::restate(part, &mut report)?)
     };
     let history = match &step {
-        Some(step) if !writer.import_only => Some(prepare_history(writer, part, step, source_losses, progress)?),
+        Some(step) if !writer.import_only => Some(prepare_history(
+            writer,
+            part,
+            step,
+            source_losses,
+            progress,
+        )?),
         _ => None,
     };
     let references = if step.is_some() && writer.import_only && writer.sketches {
