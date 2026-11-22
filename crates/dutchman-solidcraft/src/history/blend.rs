@@ -178,8 +178,9 @@ pub(super) struct Input {
     /// Its length: the chord of a line, the arc's, or the circumference.
     length: f64,
     straight: bool,
-    /// Authoritative closed source circle, from its input edge's own carrier.
-    circle: Option<Circle>,
+    /// Authoritative closed source circle, from its input edge's own carrier, and its owning
+    /// replay body when the input topology holds exactly one body that is a unique earlier name.
+    circle: Option<(Circle, Option<String>)>,
 }
 
 impl Input {
@@ -481,6 +482,17 @@ pub(super) fn historical(
     if members.len() > 10_000 || geometry.len() > 10_000 {
         return Err("its input topology exceeds the blend resolution limit".to_owned());
     }
+    // An input edge id names no body. Ownership is known only when the input topology
+    // holds a single body and that body is a unique earlier named one.
+    let owner = state
+        .get("bodies")
+        .and_then(Value::as_array)
+        .filter(|bodies| bodies.len() == 1)
+        .and_then(|bodies| bodies[0].as_str())
+        .and_then(|body| ctx.named_bodies.iter().find(|(known, _)| known == body))
+        .map(|(_, name)| name)
+        .filter(|name| ctx.named_bodies.iter().filter(|(_, n)| n == *name).count() == 1)
+        .cloned();
     let mut inputs = Vec::new();
     let mut points = Vec::new();
     for edge in ids {
@@ -535,7 +547,7 @@ pub(super) fn historical(
                 tangent,
                 length: std::f64::consts::TAU * circle.radius,
                 straight: false,
-                circle: Some(circle),
+                circle: Some((circle, owner.clone())),
             }
         } else if on_segment(point, ends) {
             if !parallel(sub(ends.1, ends.0), tangent) {
@@ -797,8 +809,8 @@ pub(crate) fn prove(
             return Err("its rebuilt edge path exceeds the blend limit".to_owned());
         }
         if near(input.ends.0, input.ends.1) {
-            let circle = input.circle.as_ref().ok_or(INPUT_SOURCE)?;
-            for (b, e, point) in circle.prove(bodies, None)? {
+            let (circle, body) = input.circle.as_ref().ok_or(INPUT_SOURCE)?;
+            for (b, e, point) in circle.prove(bodies, body.as_deref())? {
                 if chosen.len() >= LIMIT {
                     return Err("its rebuilt edge path exceeds the blend limit".to_owned());
                 }
@@ -942,7 +954,7 @@ pub(crate) fn cuts(
     faces: &[Vec<ReplayedFace>],
 ) -> Result<Vec<Cut>, String> {
     let through = |input: &Input, edge: &ReplayedEdge| match &input.circle {
-        Some(circle) => circle.interval(edge).is_some(),
+        Some((circle, _)) => circle.interval(edge).is_some(),
         None => straight(edge) && on_segment(input.point, (edge.start, edge.end)),
     };
     inputs
@@ -952,12 +964,19 @@ pub(crate) fn cuts(
                 .iter()
                 .enumerate()
                 .find_map(|(index, (body, edges))| {
+                    if input
+                        .circle
+                        .as_ref()
+                        .is_some_and(|(_, owner)| owner.as_ref().is_some_and(|o| o != body))
+                    {
+                        return None;
+                    }
                     let edge = edges.iter().find(|edge| through(input, edge))?;
                     Some((index, body, edge, edges.as_slice()))
                 })
                 .ok_or(INPUT)?;
             let [a, b] = match &input.circle {
-                Some(circle) => {
+                Some((circle, _)) => {
                     let circle = CutCircle::from(circle);
                     let faces = faces.get(index).map_or(&[][..], Vec::as_slice);
                     circle_sides(circle, input.point, edge, faces).ok_or(RING_SIDES)?
@@ -1098,7 +1117,7 @@ impl Unequal {
                 at
             }
         };
-        let around = input.circle.as_ref().and_then(|circle| {
+        let around = input.circle.as_ref().and_then(|(circle, _)| {
             let circle = CutCircle::from(circle);
             Some((circle, circle.outward(point)?))
         });
@@ -1854,13 +1873,16 @@ mod tests {
             tangent: [0.0, -1.0, 0.0],
             length: 10.0 * std::f64::consts::PI,
             straight: false,
-            circle: Some(super::Circle {
-                center: [0.0, 0.0, 10.0],
-                radius: 5.0,
-                x: [1.0, 0.0, 0.0],
-                y: [0.0, 1.0, 0.0],
-                normal: [0.0, 0.0, 1.0],
-            }),
+            circle: Some((
+                super::Circle {
+                    center: [0.0, 0.0, 10.0],
+                    radius: 5.0,
+                    x: [1.0, 0.0, 0.0],
+                    y: [0.0, 1.0, 0.0],
+                    normal: [0.0, 0.0, 1.0],
+                },
+                Some("Rim".to_owned()),
+            )),
         }
     }
 
@@ -1981,10 +2003,10 @@ mod tests {
     }
 
     #[test]
-    fn closed_circles_refuse_coincident_rims_on_two_bodies() {
+    fn closed_circles_select_only_a_known_source_body_and_refuse_ambiguous_rims() {
         let edges = circle_pieces(3);
         let bodies = vec![
-            ("Other".to_owned(), vec![]),
+            ("Other".to_owned(), edges.clone()),
             ("Rim".to_owned(), edges.clone()),
         ];
         let selected = super::prove(&proof(vec![circle_input()]), &bodies, &[]).unwrap();
@@ -1994,13 +2016,19 @@ mod tests {
             selected[0].points,
             edges.iter().map(|e| e.mid).collect::<Vec<_>>()
         );
-        // A history edge id names no source body, so a rim that two bodies both have
-        // does not say which one the selection means.
-        let both = vec![
-            ("Other".to_owned(), edges.clone()),
-            ("Rim".to_owned(), edges),
-        ];
-        assert!(super::prove(&proof(vec![circle_input()]), &both, &[]).is_err());
+        // A circle on another body cannot stand in for the selected body's missing rim.
+        assert!(super::prove(
+            &proof(vec![circle_input()]),
+            &vec![("Other".to_owned(), edges.clone())],
+            &[]
+        )
+        .is_err());
+        // Without a known owner (the input topology holds several bodies), a rim that two
+        // bodies both have does not say which one the selection means.
+        let mut unowned = circle_input();
+        unowned.circle.as_mut().unwrap().1 = None;
+        assert!(super::prove(&proof(vec![unowned.clone()]), &bodies, &[]).is_err());
+        assert!(super::prove(&proof(vec![unowned]), &vec![bodies[1].clone()], &[]).is_ok());
     }
 
     #[test]
@@ -2037,7 +2065,7 @@ mod tests {
     fn an_ellipse_selection_cannot_choose_another_bodys_circle_after_seams_move() {
         let model = |curve: Value| {
             json!({
-                "feature_input_topologies": [{"id": "state", "input_of": "blend", "edges": ["ellipse"],
+                "feature_input_topologies": [{"id": "state", "input_of": "blend", "edges": ["ellipse"], "bodies": ["a"],
                     "edge_geometry": [{"edge": "ellipse", "start": {"x": 5, "y": 0, "z": 10},
                         "end": {"x": 5, "y": 0, "z": 10}, "interior": {"x": -5, "y": 0, "z": 10},
                         "tangent": {"x": 0, "y": -1, "z": 0},
@@ -2068,7 +2096,11 @@ mod tests {
         circular_ctx.named_bodies = ctx.named_bodies.clone();
         let (inputs, _) =
             super::historical(&json!({"id": "blend"}), &selection, &circular_ctx, false).unwrap();
-        assert!(inputs[0].circle.is_some());
+        // The state's one body is the unique earlier named owner.
+        assert_eq!(
+            inputs[0].circle.as_ref().unwrap().1.as_deref(),
+            Some("Ellipse")
+        );
         let mut ellipse = rebuilt(&circle_input());
         ellipse.start = [0.0, 3.0, 10.0];
         ellipse.mid = [0.0, -3.0, 10.0];
@@ -2142,7 +2174,7 @@ mod tests {
         input.point = point(input.point);
         input.ends = (point(input.ends.0), point(input.ends.1));
         input.tangent = vector(input.tangent);
-        let circle = &mut input.circle.as_mut().unwrap();
+        let circle = &mut input.circle.as_mut().unwrap().0;
         circle.center = point(circle.center);
         circle.x = vector(circle.x);
         circle.y = vector(circle.y);
@@ -2823,13 +2855,16 @@ mod tests {
             tangent,
             length: TAU * 2.5,
             straight: false,
-            circle: Some(super::Circle {
-                center: circle.centre,
-                normal: circle.axis,
-                radius: circle.radius,
-                x: [1.0, 0.0, 0.0],
-                y: [0.0, 1.0, 0.0],
-            }),
+            circle: Some((
+                super::Circle {
+                    center: circle.centre,
+                    normal: circle.axis,
+                    radius: circle.radius,
+                    x: [1.0, 0.0, 0.0],
+                    y: [0.0, 1.0, 0.0],
+                },
+                Some("A".to_owned()),
+            )),
         }
     }
 
@@ -2898,7 +2933,7 @@ mod tests {
     #[test]
     fn a_closed_edge_is_a_full_circle_only_with_its_midpoint_opposite_and_tangent_across() {
         let input = hole_top();
-        let circle = super::CutCircle::from(&input.circle.unwrap());
+        let circle = super::CutCircle::from(&input.circle.unwrap().0);
         assert!(super::near(circle.centre, [5.0, 5.0, 10.0]));
         assert!((circle.radius - 2.5).abs() < 1e-12);
         assert!(super::parallel(circle.axis, [0.0, 0.0, 1.0]));
