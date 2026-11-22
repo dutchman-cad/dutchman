@@ -503,11 +503,13 @@ success or failure. This conservative local limit differs from Onshape's yearly 
 which may exclude unsuccessful requests. The MCP tool never prompts: above 50 estimated
 calls it returns error `onshape/approval` with `estimated_calls`, and the calling agent asks
 its user and calls again with an explicit `max_calls`. In the desktop app, a fetch above 50
-estimated calls asks "This document needs about N of your yearly Onshape API calls (2500 on
+estimated calls asks "This document needs about N of your yearly Onshape API calls (2,500 on
 Free plans). Continue?" with Continue and Cancel before it fetches anything. If a fetch
-stops at the call limit, the Results card says so and offers Continue fetching; it says it
-may use up to 2000 more calls, asks the same way, and carries on over the cached replies
-(which cost nothing). `--json`
+stops at the call limit, the Results card is titled Stopped (not Failed), says how many
+calls were made and about how many more are needed, and offers only Continue fetching; the
+footer reads "0 converted, 1 stopped". Continue fetching asks the same way with that number
+(or says it may use up to 2,000 more calls when it is unknown) and carries on over the
+cached replies (which cost nothing). `--json`
 returns the same `dutchman.onshape-fetch/1` report as MCP.
 
 Responses are cached privately under `${XDG_CACHE_HOME:-~/.cache}/dutchman/onshape`,

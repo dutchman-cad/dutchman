@@ -4114,7 +4114,7 @@ mod paste_inputs {
     fn budget_then_ok_fetch(link: String, folder: &Path) -> Result<PathBuf, String> {
         static CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-            return Err(App::budget_stop_message_for_test().to_owned());
+            return Err(App::budget_stop_message_for_test());
         }
         fetch(link, folder)
     }
@@ -4134,14 +4134,35 @@ mod paste_inputs {
             std::thread::sleep(Duration::from_millis(20));
             h.step();
         }
+        h.run_steps(3);
         let report = h.state().rows()[0].report.as_ref().unwrap();
-        let message = report["error"]["message"].as_str().unwrap();
+        let message = report["error"]["message"].as_str().unwrap().to_owned();
         assert!(!message.contains("--"), "{message}");
+        // The numbers are stated, with a thousands separator.
+        assert_eq!(
+            message,
+            "Stopped after 50 Onshape API calls. About 1,500 more are needed; Continue fetching uses them from your yearly allowance. What's fetched so far is kept."
+        );
+        // It is resumable, so it does not look like a failure.
+        assert_eq!(h.state().rows()[0].status, Status::Stopped);
+        h.get_by_label("Stopped");
+        assert!(h.query_by_label("Failed").is_none());
+        assert!(h.query_by_label_contains(&message).is_some());
+        assert!(h.query_by_label("Add matching STEP").is_none());
+        assert!(h.query_by_label_contains("Report this file").is_none());
+        // The problem panel is not about it, and the footer does not count a failure.
+        assert!(h.query_by_label("Report this design…").is_none());
+        assert!(h
+            .query_by_label_contains("0 converted, 1 stopped")
+            .is_some());
+        assert!(h.query_by_label_contains("1 failed").is_none());
         h.get_by_label("Continue fetching").click_accesskit();
         h.run_steps(3);
-        // It asks before using more of the yearly calls, and says how many it may use.
+        // It asks before using more of the yearly calls, and says how many it needs.
         assert!(h
-            .query_by_label_contains("up to 2000 more of your yearly Onshape API calls")
+            .query_by_label_contains(
+                "needs about 1,500 more of your yearly Onshape API calls (2,500 on Free plans)"
+            )
             .is_some());
         h.get_by_label("Continue").click_accesskit();
         h.step();
@@ -4191,13 +4212,22 @@ mod paste_inputs {
         let (mut h, _output) = estimating_window(big_estimate, cancelled_fetch);
         let started = Instant::now();
         while h
-            .query_by_label_contains("This document needs about 120 of your yearly Onshape API calls (2500 on Free plans). Continue?")
+            .query_by_label_contains("This document needs about 120 of your yearly Onshape API calls (2,500 on Free plans). Continue?")
             .is_none()
         {
             assert!(started.elapsed() < Duration::from_secs(20), "no question");
             std::thread::sleep(Duration::from_millis(20));
             h.step();
         }
+        // The window is centred on the app window.
+        let at = h
+            .get_by_label_contains("This document needs about 120")
+            .rect()
+            .center();
+        assert!(
+            (at.x - 590.0).abs() < 150.0 && (at.y - 500.0).abs() < 150.0,
+            "{at:?}"
+        );
         // Nothing is fetched while it waits.
         assert_eq!(
             CANCELLED_FETCHES.load(std::sync::atomic::Ordering::SeqCst),

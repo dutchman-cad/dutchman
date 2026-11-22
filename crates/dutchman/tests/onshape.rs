@@ -2248,7 +2248,7 @@ fn the_estimate_counts_the_listing_calls_and_the_elements_and_skips_cached_repli
     assert_eq!(estimate.calls, 93);
     assert!(estimate.needs_approval());
     assert!(estimate.question().contains("about 93"));
-    assert!(estimate.question().contains("2500"));
+    assert!(estimate.question().contains("2,500"));
     // The listing is cached, so a second estimate makes no request and counts none.
     let mut idle = Mock::default();
     let again = estimate_calls(&mut idle, &auth, &source(AS), &cache).unwrap();
@@ -2399,4 +2399,14 @@ fn cached_replies_cost_no_calls_and_do_not_count_against_the_limit() {
     let second = fetched(&mut router, 0).unwrap();
     assert_eq!((second.calls, router.sent), (0, sent));
     assert!(second.cache_hits > 0);
+}
+
+#[test]
+fn call_counts_group_thousands_from_one_thousand() {
+    use dutchman::onshape::calls_text;
+    assert_eq!(calls_text(0), "0");
+    assert_eq!(calls_text(999), "999");
+    assert_eq!(calls_text(1000), "1,000");
+    assert_eq!(calls_text(2500), "2,500");
+    assert_eq!(calls_text(1234567), "1,234,567");
 }

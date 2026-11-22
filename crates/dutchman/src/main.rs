@@ -1959,7 +1959,8 @@ fn onshape_fetch_report(options: &dutchman::onshape::FetchOptions) -> Value {
     if !options.json {
         eprintln!(
             "Estimated Onshape API calls: about {} ({} already used to list the document; replies already cached cost none).",
-            estimate.calls, estimate.listing_calls
+            onshape_api::calls_text(estimate.calls),
+            onshape_api::calls_text(estimate.listing_calls)
         );
     }
     let interactive =

@@ -664,8 +664,8 @@ impl App {
 
     /// The message a fetch that stopped at the request limit ends with, for UI tests.
     #[doc(hidden)]
-    pub fn budget_stop_message_for_test() -> &'static str {
-        crate::onshape::BUDGET_STOP
+    pub fn budget_stop_message_for_test() -> String {
+        crate::onshape::budget_stop_text(50, Some(1500))
     }
 
     fn accept_paste(&mut self, files: Vec<PathBuf>, text: &str, ctx: &egui::Context) {
@@ -815,6 +815,7 @@ impl App {
                     self.intake.approval = Some(crate::paste::Approval {
                         link,
                         estimate: Some(calls),
+                        resume: false,
                     });
                 }
                 Message::Finished(result) => {
@@ -829,16 +830,31 @@ impl App {
                             self.start(ctx);
                         }
                         Err(why) => {
-                            if why == crate::onshape::BUDGET_STOP {
+                            // A stop at the request limit can be continued, so it is not a
+                            // failure: no red, no problem report, no notice line.
+                            let stop = crate::onshape::parse_budget_stop(&why);
+                            if let Some((_, remaining)) = stop {
                                 self.intake.resumable = self.intake.last_onshape.clone();
+                                self.intake.stop_remaining = remaining;
                             }
                             if let Some(row) = row.and_then(|index| self.rows.get_mut(index)) {
-                                row.status = Status::Failed;
+                                row.status = if stop.is_some() {
+                                    Status::Stopped
+                                } else {
+                                    Status::Failed
+                                };
                                 row.progress = None;
+                                let code = if stop.is_some() {
+                                    "onshape/budget"
+                                } else {
+                                    "desktop/download"
+                                };
                                 row.report = Some(serde_json::json!({ "ok": false,
-                                    "error": { "code": "desktop/download", "message": why } }));
+                                    "error": { "code": code, "message": why } }));
                             }
-                            self.notice = Some(why);
+                            if stop.is_none() {
+                                self.notice = Some(why);
+                            }
                         }
                     }
                 }
@@ -854,11 +870,24 @@ impl App {
         };
         let mut go = false;
         let mut cancel = false;
+        // Centred on the app window and fixed there, like a dialog.
         egui::Window::new("Onshape API calls")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
+            .movable(false)
             .show(ctx, |ui| {
-                ui.label(crate::onshape::approval_question(approval.estimate));
+                let (before, number, after) =
+                    crate::onshape::approval_parts(approval.estimate, approval.resume);
+                let mut text = egui::text::LayoutJob::default();
+                let plain = egui::TextStyle::Body.resolve(ui.style());
+                let bold =
+                    egui::FontId::new(plain.size, egui::FontFamily::Name(theme::SEMIBOLD.into()));
+                let colour = ui.visuals().text_color();
+                for (part, font) in [(before, &plain), (number, &bold), (after, &plain)] {
+                    text.append(&part, 0.0, egui::TextFormat::simple(font.clone(), colour));
+                }
+                ui.label(text);
                 ui.horizontal(|ui| {
                     go = ui.button("Continue").clicked();
                     cancel = ui.button("Cancel").clicked();
@@ -866,14 +895,14 @@ impl App {
             });
         if cancel {
             self.intake.approval = None;
-            if approval.estimate.is_some() {
+            if !approval.resume {
                 self.notice =
                     Some("Fetch cancelled. No more Onshape API calls were used.".to_owned());
             }
         }
         if go {
             self.intake.approval = None;
-            if approval.estimate.is_some() {
+            if !approval.resume {
                 self.intake.approved = true;
             } else {
                 self.intake.resumable = None;
@@ -3222,7 +3251,8 @@ impl App {
                 if let Some(link) = self.intake.resumable.clone() {
                     self.intake.approval = Some(crate::paste::Approval {
                         link,
-                        estimate: None,
+                        estimate: self.intake.stop_remaining,
+                        resume: true,
                     });
                 }
                 Ok(())
@@ -3319,9 +3349,15 @@ impl App {
 
     /// The row the report panel is about: the one chosen, else the first that needs attention.
     fn report_index(&self, view: &present::RunView) -> Option<usize> {
+        // A stop at the request limit is resumable, not a problem to report.
+        let reportable = |index: &usize| {
+            self.rows
+                .get(*index)
+                .is_some_and(|row| row.status != Status::Stopped)
+        };
         self.report_row
-            .filter(|index| *index < self.rows.len())
-            .or_else(|| (!self.rows.is_empty()).then_some(view.first_to_show))
+            .filter(reportable)
+            .or_else(|| Some(view.first_to_show).filter(reportable))
     }
 
     /// The full report panel in the narrow page, reached by scrolling or the pinned bar.
@@ -3589,6 +3625,7 @@ fn result_colour(p: &Palette, report: Option<&Value>, view: &FileView) -> egui::
             p.lantern_text
         }
         present::Status::Converted | present::Status::ConvertedWithLosses => p.spectre,
+        present::Status::Stopped => p.lantern_text,
         present::Status::Failed => p.danger,
         _ => p.tide,
     }
@@ -3626,7 +3663,8 @@ fn row_ui(
         ui.add(egui::Label::new(RichText::new(&view.name).heading()).wrap())
             .on_hover_text(display(&row.input));
     });
-    let step_button = !running && row.report.is_some();
+    let stopped = row.status == Status::Stopped;
+    let step_button = !running && row.report.is_some() && !stopped;
     let bundle =
         crate::onshape::is_bundle(&row.input) && row.input.is_file() && row.report.is_some();
     if output.is_some() || step_button || bundle {
@@ -3739,6 +3777,11 @@ fn row_ui(
                 }
             });
         });
+    }
+    if let Some(message) = view.error.as_ref().filter(|_| stopped) {
+        // Resumable, so only the plain explanation: no log, no problem report.
+        text_with_links(ui, message, p.lantern_text);
+        return action;
     }
     if let Some(message) = &view.error {
         text_with_links(ui, message, p.danger);

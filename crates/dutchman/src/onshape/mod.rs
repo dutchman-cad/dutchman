@@ -266,6 +266,19 @@ pub const ASK_ABOVE_CALLS: u32 = 50;
 /// Calls a year on Onshape's Free plan, named wherever Dutchman asks.
 pub const FREE_PLAN_YEARLY_CALLS: u32 = 2500;
 
+/// A call count with a thousands separator from 1,000 up: 2500 reads "2,500".
+pub fn calls_text(calls: u32) -> String {
+    let digits = calls.to_string();
+    let mut text = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            text.push(',');
+        }
+        text.push(digit);
+    }
+    text
+}
+
 /// What a fetch is expected to cost, worked out from the document's own listing.
 #[derive(Debug, Clone)]
 pub struct Estimate {
@@ -287,7 +300,8 @@ impl Estimate {
     pub fn question(&self) -> String {
         format!(
             "This document needs about {} of your yearly Onshape API calls ({} on Free plans). Continue?",
-            self.calls, FREE_PLAN_YEARLY_CALLS
+            calls_text(self.calls),
+            calls_text(FREE_PLAN_YEARLY_CALLS)
         )
     }
 

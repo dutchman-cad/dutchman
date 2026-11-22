@@ -295,8 +295,10 @@ pub(crate) enum Message {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Approval {
     pub(crate) link: String,
-    /// The estimate, or `None` when asking to continue a fetch that hit its limit.
+    /// The calls needed; `None` for a continued fetch whose remaining calls are unknown.
     pub(crate) estimate: Option<u32>,
+    /// Asking to continue a fetch that stopped at its request limit.
+    pub(crate) resume: bool,
 }
 
 pub(crate) struct Inbox {
@@ -315,6 +317,8 @@ pub(crate) struct Inbox {
     pub(crate) approval: Option<Approval>,
     /// The Onshape link whose fetch stopped at the request limit, while it can be continued.
     pub(crate) resumable: Option<String>,
+    /// About how many more calls that stopped fetch needs, when known.
+    pub(crate) stop_remaining: Option<u32>,
     pub(crate) last_onshape: Option<String>,
     pub(crate) bearer_token_file: Option<PathBuf>,
     pub(crate) active: bool,
@@ -342,6 +346,7 @@ impl Inbox {
             estimate: crate::onshape::estimate_calls,
             approval: None,
             resumable: None,
+            stop_remaining: None,
             last_onshape: None,
             bearer_token_file: None,
             active: false,
@@ -406,6 +411,7 @@ impl Inbox {
                                 return Ok(None);
                             }
                         }
+                        let (again, token) = (link.clone(), bearer_token_file.clone());
                         let result = if bearer_token_file.is_some() {
                             crate::onshape::fetch_with_budget(
                                 link,
@@ -416,7 +422,20 @@ impl Inbox {
                         } else {
                             fetch(link, &output)
                         };
-                        return result.map(|path| Some((path, None)));
+                        return match result {
+                            // The replies fetched so far are cached, so estimating again
+                            // costs no call and gives what is left.
+                            Err(why) => match crate::onshape::parse_budget_stop(&why) {
+                                Some((made, None)) => Err(match estimate(again, token) {
+                                    Ok(more) if more > 0 => {
+                                        crate::onshape::budget_stop_text(made, Some(more))
+                                    }
+                                    _ => why,
+                                }),
+                                _ => Err(why),
+                            },
+                            Ok(path) => Ok(Some((path, None))),
+                        };
                     }
                     Source::Download(link) => link,
                 };
