@@ -4138,9 +4138,109 @@ mod paste_inputs {
         let message = report["error"]["message"].as_str().unwrap();
         assert!(!message.contains("--"), "{message}");
         h.get_by_label("Continue fetching").click_accesskit();
+        h.run_steps(3);
+        // It asks before using more of the yearly calls, and says how many it may use.
+        assert!(h
+            .query_by_label_contains("up to 2000 more of your yearly Onshape API calls")
+            .is_some());
+        h.get_by_label("Continue").click_accesskit();
         h.step();
         wait_for_conversion(&mut h);
         assert!(h.query_by_label("Continue fetching").is_none());
+        assert_eq!(h.state().rows()[0].status, Status::Converted);
+    }
+
+    fn big_estimate(_link: String, _token: Option<PathBuf>) -> Result<u32, String> {
+        Ok(120)
+    }
+
+    fn small_estimate(_link: String, _token: Option<PathBuf>) -> Result<u32, String> {
+        Ok(50)
+    }
+
+    static COUNTED_FETCHES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    fn counted_fetch(link: String, folder: &Path) -> Result<PathBuf, String> {
+        COUNTED_FETCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        fetch(link, folder)
+    }
+    static CANCELLED_FETCHES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    fn cancelled_fetch(link: String, folder: &Path) -> Result<PathBuf, String> {
+        CANCELLED_FETCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        fetch(link, folder)
+    }
+
+    fn estimating_window(
+        estimate: fn(String, Option<PathBuf>) -> Result<u32, String>,
+        fetch: fn(String, &Path) -> Result<PathBuf, String>,
+    ) -> (Harness<'static, App>, tempfile::TempDir) {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(true);
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), fetch);
+        h.state_mut().set_estimate_for_test(estimate);
+        output_picker(&mut h, output.path());
+        paste(&mut h, LINK);
+        h.run_steps(3);
+        (h, output)
+    }
+
+    #[test]
+    fn a_fetch_above_fifty_calls_asks_and_only_cancel_or_continue_decides() {
+        let before = CANCELLED_FETCHES.load(std::sync::atomic::Ordering::SeqCst);
+        let (mut h, _output) = estimating_window(big_estimate, cancelled_fetch);
+        let started = Instant::now();
+        while h
+            .query_by_label_contains("This document needs about 120 of your yearly Onshape API calls (2500 on Free plans). Continue?")
+            .is_none()
+        {
+            assert!(started.elapsed() < Duration::from_secs(20), "no question");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        // Nothing is fetched while it waits.
+        assert_eq!(
+            CANCELLED_FETCHES.load(std::sync::atomic::Ordering::SeqCst),
+            before
+        );
+        assert!(!h.state().running());
+        h.get_by_label("Cancel").click_accesskit();
+        h.run_steps(3);
+        assert_eq!(
+            CANCELLED_FETCHES.load(std::sync::atomic::Ordering::SeqCst),
+            before
+        );
+        assert!(h.query_by_label("Continue").is_none());
+        assert!(h.state().rows().is_empty());
+    }
+
+    #[test]
+    fn continuing_past_the_question_fetches_without_asking_again() {
+        let before = COUNTED_FETCHES.load(std::sync::atomic::Ordering::SeqCst);
+        let (mut h, _output) = estimating_window(big_estimate, counted_fetch);
+        let started = Instant::now();
+        while h.query_by_label("Continue").is_none() {
+            assert!(started.elapsed() < Duration::from_secs(20), "no question");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        h.get_by_label("Continue").click_accesskit();
+        h.step();
+        wait_for_conversion(&mut h);
+        assert_eq!(
+            COUNTED_FETCHES.load(std::sync::atomic::Ordering::SeqCst),
+            before + 1
+        );
+        assert_eq!(h.state().rows()[0].status, Status::Converted);
+    }
+
+    #[test]
+    fn a_fetch_of_fifty_calls_or_fewer_starts_without_asking() {
+        let (mut h, _output) = estimating_window(small_estimate, fetch);
+        wait_for_conversion(&mut h);
+        assert!(h
+            .query_by_label_contains("yearly Onshape API calls")
+            .is_none());
         assert_eq!(h.state().rows()[0].status, Status::Converted);
     }
 

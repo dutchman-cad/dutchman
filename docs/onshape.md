@@ -477,16 +477,37 @@ All endpoints use API v17.
 
 ### Calls and cache
 
-Without `--max-calls`, the call limit fits the document. It starts at 50 and grows as
-Dutchman finds work to do: 30 more for each Part Studio or assembly, and one more for
-each body-detail request a Part Studio needs, up to a ceiling of 2000 calls that no
-document can raise. A document with dozens of parts therefore finishes, and a runaway
-one still stops. `--max-calls N` sets a fixed limit instead and nothing raises it. Calls
-count every HTTP attempt, including metadata, consistency checks, export creation,
-polling, download, retries, and a refetch. Dutchman stops **before** the attempt over
-the limit and prints the count on success or failure. This conservative local limit
-differs from Onshape's yearly billing, which may exclude unsuccessful requests.
-`--max-calls 0` permits cache reads only. The desktop app uses the automatic limit; if a fetch stops at it, the Results card says so and offers Continue fetching, which carries on with a larger limit and the replies already cached. `--json`
+Onshape's Free and Standard plans allow 2,500 API calls a year, so Dutchman tells you
+what a fetch will cost before it spends it. First it lists the document, which costs at
+most three calls (microversion, name, tab list) and is cached. From that listing it
+estimates the whole fetch: 30 calls for each Part Studio or assembly it will read (an
+assembly may use every Part Studio of the document; a Part Studio is read alone), plus the
+listing calls already made. Replies already in the cache cost no call and are not counted,
+in the estimate or in any limit.
+
+- **Up to 50 estimated calls:** it prints the estimate and fetches.
+- **Above 50:** it asks first. On a terminal the command line prints the estimate and asks
+  `y/N`. Off a terminal (a script, a pipe, `--json`) it stops before fetching and says to
+  pass `--yes`; nothing beyond the listing is spent. `--yes` allows the fetch.
+- **`--max-calls N`** is a hard ceiling that nothing goes past, and it is also your go: with
+  it the fetch runs without an estimate or a question and stops before call N+1.
+  `--max-calls 0` permits cache reads only.
+- **Without `--max-calls`** (after the go) the limit starts at 50 and grows as Dutchman
+  finds work: 30 more for each Part Studio or assembly and one more for each body-detail
+  request, up to an automatic ceiling of 2000 calls that no document can raise.
+
+Calls count every HTTP attempt, including metadata, consistency checks, export creation,
+polling, download, retries, and a refetch; the calls that listed the document count against
+the same limit. Dutchman stops **before** the attempt over the limit and prints the count on
+success or failure. This conservative local limit differs from Onshape's yearly billing,
+which may exclude unsuccessful requests. The MCP tool never prompts: above 50 estimated
+calls it returns error `onshape/approval` with `estimated_calls`, and the calling agent asks
+its user and calls again with an explicit `max_calls`. In the desktop app, a fetch above 50
+estimated calls asks "This document needs about N of your yearly Onshape API calls (2500 on
+Free plans). Continue?" with Continue and Cancel before it fetches anything. If a fetch
+stops at the call limit, the Results card says so and offers Continue fetching; it says it
+may use up to 2000 more calls, asks the same way, and carries on over the cached replies
+(which cost nothing). `--json`
 returns the same `dutchman.onshape-fetch/1` report as MCP.
 
 Responses are cached privately under `${XDG_CACHE_HOME:-~/.cache}/dutchman/onshape`,

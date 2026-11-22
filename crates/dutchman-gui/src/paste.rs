@@ -287,6 +287,16 @@ pub(crate) enum Message {
     Probed(Link, Result<Option<u64>, String>),
     Progress(u64, Option<u64>),
     Finished(Result<(PathBuf, Option<tempfile::TempDir>), String>),
+    /// The Onshape link needs about this many calls, more than the app spends unasked.
+    NeedsApproval(String, u32),
+}
+
+/// A question about Onshape API calls waiting for Continue or Cancel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Approval {
+    pub(crate) link: String,
+    /// The estimate, or `None` when asking to continue a fetch that hit its limit.
+    pub(crate) estimate: Option<u32>,
 }
 
 pub(crate) struct Inbox {
@@ -298,6 +308,11 @@ pub(crate) struct Inbox {
     pub(crate) continue_fetch: fn(String, &Path) -> Result<PathBuf, String>,
     /// Set for the next `start`; it clears itself.
     pub(crate) continuing: bool,
+    /// Set for the next `start` once the user allowed the estimated calls; it clears itself.
+    pub(crate) approved: bool,
+    /// Estimates the calls a link needs before any are spent.
+    pub(crate) estimate: fn(String, Option<PathBuf>) -> Result<u32, String>,
+    pub(crate) approval: Option<Approval>,
     /// The Onshape link whose fetch stopped at the request limit, while it can be continued.
     pub(crate) resumable: Option<String>,
     pub(crate) last_onshape: Option<String>,
@@ -323,6 +338,9 @@ impl Inbox {
             fetch: crate::onshape::fetch,
             continue_fetch: crate::onshape::fetch_continuing,
             continuing: false,
+            approved: false,
+            estimate: crate::onshape::estimate_calls,
+            approval: None,
             resumable: None,
             last_onshape: None,
             bearer_token_file: None,
@@ -361,6 +379,8 @@ impl Inbox {
         let sender = self.sender.clone();
         let transport = self.transport.clone();
         let continuing = std::mem::take(&mut self.continuing);
+        let approved = std::mem::take(&mut self.approved) || continuing;
+        let estimate = self.estimate;
         let fetch = if continuing {
             self.continue_fetch
         } else {
@@ -378,6 +398,14 @@ impl Inbox {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let link = match source {
                     Source::Onshape(link) => {
+                        if !approved {
+                            let calls = estimate(link.clone(), bearer_token_file.clone())?;
+                            if calls > dutchman::onshape::ASK_ABOVE_CALLS {
+                                let _ = sender.send(Message::NeedsApproval(link, calls));
+                                ctx.request_repaint();
+                                return Ok(None);
+                            }
+                        }
                         let result = if bearer_token_file.is_some() {
                             crate::onshape::fetch_with_budget(
                                 link,
@@ -388,7 +416,7 @@ impl Inbox {
                         } else {
                             fetch(link, &output)
                         };
-                        return result.map(|path| (path, None));
+                        return result.map(|path| Some((path, None)));
                     }
                     Source::Download(link) => link,
                 };
@@ -403,12 +431,20 @@ impl Inbox {
                     let _ = sender.send(Message::Progress(bytes, size));
                     ctx.request_repaint();
                 })?;
-                Ok((path, Some(folder)))
+                Ok(Some((path, Some(folder))))
             }))
             .unwrap_or_else(|_| {
                 Err("Dutchman stopped unexpectedly while fetching. Retry; if it happens again, report it with the link's type (Part Studio or assembly).".to_owned())
             });
-            let _ = sender.send(Message::Finished(result));
+            match result {
+                Ok(None) => {}
+                Ok(Some(done)) => {
+                    let _ = sender.send(Message::Finished(Ok(done)));
+                }
+                Err(why) => {
+                    let _ = sender.send(Message::Finished(Err(why)));
+                }
+            }
             ctx.request_repaint();
         });
     }

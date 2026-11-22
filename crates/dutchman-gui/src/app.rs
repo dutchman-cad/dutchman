@@ -649,6 +649,17 @@ impl App {
         self.intake.transport = transport;
         self.intake.fetch = fetch;
         self.intake.continue_fetch = fetch;
+        // No estimate, so no question: the fetch runs as before.
+        self.intake.estimate = |_, _| Ok(0);
+    }
+
+    /// Replaces the call estimate for headless UI tests.
+    #[doc(hidden)]
+    pub fn set_estimate_for_test(
+        &mut self,
+        estimate: fn(String, Option<PathBuf>) -> Result<u32, String>,
+    ) {
+        self.intake.estimate = estimate;
     }
 
     /// The message a fetch that stopped at the request limit ends with, for UI tests.
@@ -695,6 +706,7 @@ impl App {
     fn next_link(&mut self, ctx: &egui::Context) {
         if self.running()
             || self.intake.prompt.is_some()
+            || self.intake.approval.is_some()
             || self.intake.choosing_output.is_some()
             || self.updater.blocks_conversions()
         {
@@ -795,6 +807,16 @@ impl App {
                         bytes as f64 / 1_000_000.0
                     ));
                 }
+                Message::NeedsApproval(link, calls) => {
+                    // Nothing was fetched: take the placeholder row back and ask first.
+                    self.intake.active = false;
+                    self.intake.row = None;
+                    self.rows.clear();
+                    self.intake.approval = Some(crate::paste::Approval {
+                        link,
+                        estimate: Some(calls),
+                    });
+                }
                 Message::Finished(result) => {
                     self.intake.active = false;
                     let row = self.intake.row.take();
@@ -823,6 +845,42 @@ impl App {
             }
         }
         self.next_link(ctx);
+    }
+
+    /// Asks before a fetch spends a share of the account's yearly Onshape API calls.
+    fn approval_window(&mut self, ctx: &egui::Context) {
+        let Some(approval) = self.intake.approval.clone() else {
+            return;
+        };
+        let mut go = false;
+        let mut cancel = false;
+        egui::Window::new("Onshape API calls")
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(crate::onshape::approval_question(approval.estimate));
+                ui.horizontal(|ui| {
+                    go = ui.button("Continue").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+        if cancel {
+            self.intake.approval = None;
+            if approval.estimate.is_some() {
+                self.notice =
+                    Some("Fetch cancelled. No more Onshape API calls were used.".to_owned());
+            }
+        }
+        if go {
+            self.intake.approval = None;
+            if approval.estimate.is_some() {
+                self.intake.approved = true;
+            } else {
+                self.intake.resumable = None;
+                self.intake.continuing = true;
+            }
+            self.open_source(crate::paste::Source::Onshape(approval.link), ctx);
+        }
     }
 
     fn download_window(&mut self, ctx: &egui::Context) {
@@ -2065,6 +2123,7 @@ impl App {
             self.queue_link(crate::paste::Source::Onshape(link), ctx);
         }
         self.download_window(ctx);
+        self.approval_window(ctx);
         let can_restart =
             !self.running() && (!self.updater.windows_package() || self.diagnosis.is_none());
         self.updater.windows(ctx, can_restart, self.header_bottom);
@@ -3093,6 +3152,7 @@ impl App {
                     if index == 0
                         && !running
                         && self.intake.resumable.is_some()
+                        && self.intake.approval.is_none()
                         && ui.button("Continue fetching").clicked()
                     {
                         action = Some(Action::ContinueFetch);
@@ -3158,9 +3218,12 @@ impl App {
                 Ok(())
             }
             Action::ContinueFetch => {
-                if let Some(link) = self.intake.resumable.take() {
-                    self.intake.continuing = true;
-                    self.open_source(crate::paste::Source::Onshape(link), ctx);
+                // Ask first: it may spend a large share of the yearly calls.
+                if let Some(link) = self.intake.resumable.clone() {
+                    self.intake.approval = Some(crate::paste::Approval {
+                        link,
+                        estimate: None,
+                    });
                 }
                 Ok(())
             }

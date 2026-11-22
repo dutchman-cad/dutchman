@@ -1031,7 +1031,7 @@ losses for meshes it could not decode.
 
 `dutchman onshape fetch <document-url> --out snapshot.onshape-bundle`
 uses the keys saved by `dutchman onshape login` (or Connect Onshape in the app), or `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` for scripts, and prints the HTTP
-attempt count. `--version VERSION_ID` selects an immutable version; `--json` prints
+attempt count. It first estimates the calls the fetch needs and prints the estimate; above 50 (Onshape's Free plan allows 2,500 a year) it asks `y/N` on a terminal, and elsewhere stops unless you pass `--yes` or an explicit `--max-calls N`, which is a hard ceiling. In the app, a fetch above 50 estimated calls asks Continue or Cancel first. `--version VERSION_ID` selects an immutable version; `--json` prints
 `dutchman.onshape-fetch/1`. This fetcher saves API responses without converting CAD.
 To use OAuth instead, pass `--bearer-token-file PATH` (a private UTF-8 file, mode 600 on
 Unix), or set `DUTCHMAN_ONSHAPE_BEARER_TOKEN` in the process environment. The file wins

@@ -1267,7 +1267,7 @@ containment and closed-form line/conic intersections, never area or finite sampl
 
 `onshape_fetch` accepts `document_url` (required), `out` (optional file path),
 `version` (optional immutable Onshape version ID), `bearer_token_file` (optional private
-local OAuth token file path), and `max_calls` (optional fixed HTTP attempt limit; omitted, the limit grows with the document up to 2000). It advertises input and output JSON schemas and returns
+local OAuth token file path), and `max_calls` (optional hard ceiling on real HTTP calls, which also allows the fetch; cached replies cost none). The tool never prompts. Omit `max_calls` and it first lists the document and estimates the calls the fetch needs; at 50 or fewer it fetches (the limit grows with the document up to 2000), and above 50 it stops before fetching with error `onshape/approval` and `estimated_calls` in the result. Onshape's Free plan allows 2,500 calls a year, so the calling agent should ask its user, then call again with `max_calls` set. It advertises input and output JSON schemas and returns
 `dutchman.onshape-fetch/1` in text and structured content, with `isError` on failure.
 API keys remain the default and come from the server's local environment or saved
 connection. Alternatively, use `bearer_token_file` or the server process environment's

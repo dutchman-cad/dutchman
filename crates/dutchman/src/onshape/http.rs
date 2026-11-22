@@ -245,6 +245,7 @@ impl<C: HttpClient> Session<'_, C> {
             message,
             detail: None,
             calls: self.calls,
+            estimate: None,
         }
     }
 }

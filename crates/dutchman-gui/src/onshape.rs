@@ -397,9 +397,42 @@ pub(crate) fn link_ui(
             && ui.input(|i| i.key_pressed(egui::Key::Enter)))
 }
 
-/// Calls a continued fetch may use. The replies already fetched are reused, so this only
-/// pays for what is left.
-pub(crate) const CONTINUE_CALLS: u32 = 6000;
+/// Calls a continued fetch may use, at most. The replies already fetched are reused and
+/// cost none, so this only covers what is left.
+pub(crate) const CONTINUE_CALLS: u32 = 2000;
+
+/// What the confirmation asks. `estimate` is the calls the fetch needs; `None` is a
+/// continued fetch, which says how many more calls it may use.
+pub(crate) fn approval_question(estimate: Option<u32>) -> String {
+    let yearly = dutchman::onshape::FREE_PLAN_YEARLY_CALLS;
+    match estimate {
+        Some(calls) => format!(
+            "This document needs about {calls} of your yearly Onshape API calls ({yearly} on Free plans). Continue?"
+        ),
+        None => format!(
+            "Fetching the rest may use up to {CONTINUE_CALLS} more of your yearly Onshape API calls ({yearly} on Free plans); replies already fetched cost none. Continue?"
+        ),
+    }
+}
+
+/// The calls a fetch is estimated to need, worked out from the document listing, which costs
+/// at most three calls. Nothing else is spent.
+pub(crate) fn estimate_calls(
+    link: String,
+    bearer_token_file: Option<std::path::PathBuf>,
+) -> Result<u32, String> {
+    dutchman::onshape::estimate(&dutchman::onshape::FetchOptions {
+        document_url: link,
+        out: None,
+        version: None,
+        bearer_token_file,
+        max_calls: None,
+        yes: false,
+        json: false,
+    })
+    .map(|estimate| estimate.calls)
+    .map_err(|why| why.message.to_owned())
+}
 
 /// Shown when the fetch stops at Dutchman's limit on Onshape requests. The Results card
 /// offers "Continue fetching" under it, so it names no command-line option.
@@ -441,6 +474,8 @@ pub(crate) fn fetch_with_budget(
         version: None,
         bearer_token_file,
         max_calls,
+        // The app asks before this point whenever the estimate is above 50 calls.
+        yes: true,
         json: false,
     });
     if report.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {

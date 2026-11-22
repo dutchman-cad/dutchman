@@ -2213,3 +2213,190 @@ fn an_explicit_budget_is_never_raised_by_the_document() {
     assert_eq!(error.kind, ErrorKind::Budget);
     assert_eq!(router.sent, 50);
 }
+
+fn listing_mock(tabs: Value) -> Mock {
+    Mock {
+        replies: VecDeque::from([
+            response(200, json!({"microversion": MID})),
+            response(200, json!({"name": "Synthetic mechanism"})),
+            response(200, tabs),
+        ]),
+        ..Mock::default()
+    }
+}
+
+fn big_assembly_tabs() -> Value {
+    json!([
+        {"id": AS, "elementType": "ASSEMBLY", "name": "Assembly"},
+        {"id": PS, "elementType": "PARTSTUDIO", "name": "First"},
+        {"id": "666666666666666666666666", "elementType": "PARTSTUDIO", "name": "Second"},
+        {"id": "777777777777777777777777", "elementType": "BLOB", "name": "Drawing"},
+    ])
+}
+
+#[test]
+fn the_estimate_counts_the_listing_calls_and_the_elements_and_skips_cached_replies() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache");
+    let auth = FetchAuth::ApiKeys(credentials());
+    let mut mock = listing_mock(big_assembly_tabs());
+    let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
+    // Three listing calls, then 30 for each of the assembly and its two studios.
+    assert_eq!(mock.sent.len(), 3);
+    assert_eq!(estimate.listing_calls, 3);
+    assert_eq!(estimate.elements, 3);
+    assert_eq!(estimate.calls, 93);
+    assert!(estimate.needs_approval());
+    assert!(estimate.question().contains("about 93"));
+    assert!(estimate.question().contains("2500"));
+    // The listing is cached, so a second estimate makes no request and counts none.
+    let mut idle = Mock::default();
+    let again = estimate_calls(&mut idle, &auth, &source(AS), &cache).unwrap();
+    assert!(idle.sent.is_empty());
+    assert_eq!(again.listing_calls, 0);
+    assert_eq!(again.calls, 90);
+}
+
+#[test]
+fn a_part_studio_is_estimated_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let estimate = estimate_calls(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("cache"),
+    )
+    .unwrap();
+    assert_eq!((estimate.elements, estimate.calls), (1, 33));
+    assert!(!estimate.needs_approval());
+}
+
+#[test]
+fn a_large_fetch_without_a_go_stops_with_the_estimate_and_spends_only_the_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let error = fetch_gated(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(AS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        false,
+    )
+    .err()
+    .unwrap();
+    // The mock panics on a fourth request, so the listing was all it spent.
+    assert_eq!(mock.sent.len(), 3);
+    assert_eq!(error.kind, ErrorKind::Approval);
+    assert_eq!((error.calls, error.estimate), (3, Some(93)));
+    assert!(!dir.path().join("test.onshape-bundle").exists());
+    let report = dutchman::json::onshape_fetch(&Err(error));
+    assert_eq!(report["error"]["code"], "onshape/approval");
+    assert_eq!(report["estimated_calls"], 93);
+    assert_eq!(report["calls"], 3);
+    let message = report["error"]["message"].as_str().unwrap();
+    assert!(message.contains("--yes") && message.contains("max_calls"));
+}
+
+#[test]
+fn the_command_line_asks_on_a_terminal_and_stops_off_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let big = estimate_calls(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(AS),
+        &dir.path().join("cache"),
+    )
+    .unwrap();
+    let off_terminal = approval(&big, false, false, |_| panic!("must not ask")).unwrap_err();
+    assert_eq!(off_terminal.kind, ErrorKind::Approval);
+    assert!(off_terminal.message.contains("--yes"));
+    assert!(off_terminal.message.contains("--max-calls"));
+    assert!(approval(&big, true, false, |_| panic!("must not ask")).is_ok());
+    assert!(approval(&big, false, true, |_| true).is_ok());
+    let declined = approval(&big, false, true, |_| false).unwrap_err();
+    assert_eq!(declined.message, APPROVAL_DECLINED);
+    let small_dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let small = estimate_calls(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &small_dir.path().join("cache"),
+    )
+    .unwrap();
+    assert!(approval(&small, false, false, |_| panic!("must not ask")).is_ok());
+}
+
+#[test]
+fn a_gated_fetch_under_the_limit_counts_the_listing_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 60,
+        sent: 0,
+    };
+    let report = fetch_gated(
+        &mut router,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        false,
+    )
+    .unwrap();
+    assert!(report.calls > 50);
+    assert_eq!(report.calls, router.sent);
+}
+
+#[test]
+fn an_explicit_max_calls_is_the_ceiling_and_the_consent_with_no_estimate() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 60,
+        sent: 0,
+    };
+    let error = fetch_gated(
+        &mut router,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        Some(40),
+        false,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(router.sent, 40);
+}
+
+#[test]
+fn cached_replies_cost_no_calls_and_do_not_count_against_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 3,
+        sent: 0,
+    };
+    let fetched = |router: &mut Router, max: u32| {
+        fetch_gated(
+            router,
+            &FetchAuth::ApiKeys(credentials()),
+            &source(PS),
+            &dir.path().join("test.onshape-bundle"),
+            &dir.path().join("cache"),
+            Some(max),
+            false,
+        )
+    };
+    let first = fetched(&mut router, 500).unwrap();
+    assert!(first.calls > 0);
+    let sent = router.sent;
+    // Everything is cached now, so even a limit of zero fetches it again.
+    let second = fetched(&mut router, 0).unwrap();
+    assert_eq!((second.calls, router.sent), (0, sent));
+    assert!(second.cache_hits > 0);
+}
