@@ -6,6 +6,25 @@ use sha2::{Digest, Sha256};
 use super::{name, Context};
 use crate::{SolidCraftWriter, Verification, VersionGate};
 
+/// The referenced neutral design, parsed from its JSON.
+#[cfg(any(test, feature = "onshape"))]
+fn neutral_design(reference: &Value) -> Result<cadmpeg_ir::CadIr, String> {
+    serde_json::from_value(
+        reference
+            .get("ir")
+            .cloned()
+            .ok_or("the referenced neutral design is missing")?,
+    )
+    .map_err(|e| format!("the referenced neutral design cannot be read: {e}"))
+}
+
+/// Only Onshape input writes a design reference, and a build without it (the SolidCraft
+/// plugin) does not link the parser for one.
+#[cfg(not(any(test, feature = "onshape")))]
+fn neutral_design(_reference: &Value) -> Result<cadmpeg_ir::CadIr, String> {
+    Err("the referenced neutral design cannot be read in this build".into())
+}
+
 pub(super) fn map(
     feature: &Value,
     reference: &Value,
@@ -14,13 +33,7 @@ pub(super) fn map(
 ) -> Result<Value, String> {
     let reference = payload(reference)?;
     let source = Model {
-        ir: serde_json::from_value(
-            reference
-                .get("ir")
-                .cloned()
-                .ok_or("the referenced neutral design is missing")?,
-        )
-        .map_err(|e| format!("the referenced neutral design cannot be read: {e}"))?,
+        ir: neutral_design(&reference)?,
         source_step: Some(
             reference
                 .get("step")

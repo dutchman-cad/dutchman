@@ -864,6 +864,8 @@ fn local_components_with_threads(
         external_built: BTreeMap::new(),
         left_out: Vec::new(),
         all_owned: loose.is_empty(),
+        some_owned: !owned.is_empty(),
+        unattributed: Vec::new(),
         model,
         slices: &slices,
         definitions,
@@ -901,6 +903,28 @@ fn local_components_with_threads(
     if tree.placed != occurrences.len() {
         return Err(
             "some components are placed inside components the design does not place".to_owned(),
+        );
+    }
+    if !tree.unattributed.is_empty() {
+        let mut names = tree.unattributed.clone();
+        names.sort();
+        names.dedup();
+        let shown: Vec<&str> = names.iter().take(5).map(String::as_str).collect();
+        report.push(
+            Severity::Degraded,
+            "components",
+            format!(
+                "cadmpeg does not say which bodies belong to {} component(s) ({}{}); they stay \
+                 as named empty components and any bodies of theirs are placed with the \
+                 design's own, at their stored position",
+                names.len(),
+                shown.join(", "),
+                if names.len() > shown.len() {
+                    ", ..."
+                } else {
+                    ""
+                }
+            ),
         );
     }
     let mut parts = std::mem::take(&mut tree.parts);
@@ -2655,6 +2679,12 @@ struct Tree<'a> {
     /// Whether every body of the design belongs to a component, so that a component naming
     /// no bodies and holding none is empty rather than one cadmpeg could not attribute.
     all_owned: bool,
+    /// Whether cadmpeg attributes bodies to at least one component. When it does, a component
+    /// it names no bodies for stays a named, empty component (its bodies, if any, are among
+    /// the design's loose ones) instead of the whole design converting as stored.
+    some_owned: bool,
+    /// The components kept empty because cadmpeg does not say which bodies they own.
+    unattributed: Vec<String>,
 }
 
 impl<'a> Tree<'a> {
@@ -2846,6 +2876,9 @@ impl<'a> Tree<'a> {
         };
         let model = if inner.is_empty() {
             if bodies.is_empty() && self.all_owned {
+                self.sliced(Slice::Empty, &[], name)?
+            } else if bodies.is_empty() && self.some_owned {
+                self.unattributed.push(name.clone());
                 self.sliced(Slice::Empty, &[], name)?
             } else if bodies.is_empty() {
                 return Err(format!(
@@ -4463,6 +4496,67 @@ mod tests {
         assert_eq!(assembly.parts[1].ir.geometry.bodies.len(), 1);
         assert_eq!(assembly.placements[2].part, 1);
         assert_eq!(assembly.placements[2].transform, IDENTITY);
+    }
+
+    #[test]
+    fn a_component_cadmpeg_cannot_attribute_bodies_to_stays_beside_those_that_have_them() {
+        let model = with_components(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut loose = wire["geometry"]["bodies"][0].clone();
+        loose["id"] = json!("synthetic:cube:body#loose");
+        wire["geometry"]["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(loose);
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "f3d:model:component#bare", "kind": "part", "label": "Bare", "bodies": [], "bom_properties": {}, "sketches": []}));
+        wire["model"]["occurrences"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "f3d:model:occurrence#2",
+                "prototype": {"kind": "local", "definition": "f3d:model:component#bare"},
+                "parent": root(),
+                "ordinal": 2,
+                "transform": [[1.0, 0.0, 0.0, 60.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+                "scale": [1.0, 1.0, 1.0],
+            }));
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let mut report = Report::default();
+        let (assembly, _) = local_components_with_threads(
+            &model,
+            &BTreeMap::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut report,
+        )
+        .unwrap()
+        .unwrap();
+        let bare = assembly
+            .placements
+            .iter()
+            .find(|placement| assembly.parts[placement.part].name == "Bare")
+            .unwrap();
+        assert_eq!(bare.transform[0][3], 60.0);
+        assert!(assembly.parts[bare.part].ir.geometry.bodies.is_empty());
+        assert_eq!(
+            assembly
+                .own_part
+                .map(|at| assembly.parts[at].ir.geometry.bodies.len()),
+            Some(1)
+        );
+        let loss = report
+            .losses()
+            .iter()
+            .find(|loss| loss.subject == "components")
+            .unwrap();
+        assert_eq!(loss.severity, Severity::Degraded);
+        assert!(loss.detail.contains("Bare"), "{}", loss.detail);
     }
 
     #[test]

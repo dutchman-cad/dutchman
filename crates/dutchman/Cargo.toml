@@ -43,7 +43,7 @@ dutchman-core = { workspace = true, features = ["formats"] }
 dutchman-dxf.workspace = true
 dutchman-freecad.workspace = true
 dutchman-pilot = { workspace = true, optional = true }
-dutchman-solidcraft.workspace = true
+dutchman-solidcraft = { workspace = true, features = ["onshape"] }
 getrandom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
