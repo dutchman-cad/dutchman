@@ -15198,7 +15198,10 @@ fn a_partial_assembly_part_without_named_bodies_keeps_the_hidden_history() {
 fn a_partial_history_in_solidcraft_is_exactly_the_imported_final_shape() {
     let Some(cli) = solidcraft() else { return };
     let model = partial_history_model();
-    let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
+    // Remove is written from SolidCraft 0.40, the oldest release of the support window.
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::With(cli.clone()))
+        .target_version(Some("0.40.0".parse().unwrap()));
     let (bytes, report) = written_with(&model, &writer);
     assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
     let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
@@ -15249,7 +15252,10 @@ fn a_partial_assembly_part_in_solidcraft_removes_only_its_own_bodies() {
     let Some(cli) = solidcraft() else { return };
     let mut model = assembly_of_histories();
     model.assembly.as_mut().unwrap().parts[1].ir = partial_history_model().ir;
-    let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
+    // Remove is written from SolidCraft 0.40, the oldest release of the support window.
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::With(cli.clone()))
+        .target_version(Some("0.40.0".parse().unwrap()));
     let (bytes, report) = written_with(&model, &writer);
     assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
     let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
