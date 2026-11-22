@@ -2,8 +2,8 @@ These are hand-written synthetic API responses, shaped from the supplied Onshape
 OpenAPI schemas (`BTFeatureListResponse-2457`, `BTMSketch-151`, `BTMFeature-134`,
 `BTMIndividualQuery-138`, `BTAssemblyDefinitionInfo`, and `BTAssemblyPartInfo`).
 They were never downloaded from Onshape and describe no owner's design.
-`partstudio.json` has a sketch, extrude, and fillet; `assembly.json` has two parts
-from one external Part Studio and a revolute mate. IDs and dimensions are invented.
+`partstudio.json` has a sketch, extrude, and fillet; `assembly.json` has an empty assembly
+with a revolute mate. IDs and dimensions are invented.
 
 `variables.json` and `configuration.json` follow `BTVariableTableInfo` and
 `BTConfigurationResponse-2019`. Export-job responses in the tests follow

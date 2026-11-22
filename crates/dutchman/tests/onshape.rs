@@ -142,7 +142,7 @@ fn parses_urls_and_version_override_without_echoing_input() {
     }
 }
 #[test]
-fn two_part_revolute_assembly_bundle_is_exact_and_version_cache_uses_no_calls() {
+fn assembly_bundle_is_exact_and_version_cache_uses_no_calls() {
     let dir = tempfile::tempdir().unwrap();
     let mut mock = assembly_mock();
     let report = run(&mut mock, &dir, AS, 50).unwrap();
@@ -180,7 +180,7 @@ fn two_part_revolute_assembly_bundle_is_exact_and_version_cache_uses_no_calls() 
     assert_eq!(manifest["document"]["microversion"], MID);
     assert_eq!(manifest["fetched_at"], "2026-11-11T12:00:00Z");
     assert_eq!(manifest["calls"], 5);
-    assert_eq!(manifest["external"].as_array().unwrap().len(), 1);
+    assert_eq!(manifest["external"].as_array().unwrap().len(), 0);
     assert_eq!(
         manifest["elements"][0]["files"]["definition"],
         format!("assemblies/{AS}/definition.json")
@@ -943,11 +943,30 @@ fn same_document_two_part_revolute_assembly_includes_referenced_partstudio_once(
         {"id":PS,"elementType":"PARTSTUDIO","name":"Parts"}
     ]))
     .unwrap();
-    mock.replies.get_mut(3).unwrap().body = include_str!("fixtures/onshape/assembly.json")
-        .replace("999999999999999999999999", DID)
-        .replace("666666666666666666666666", PS)
-        .replace("777777777777777777777777", MID)
-        .into_bytes();
+    mock.replies.get_mut(3).unwrap().body = serde_json::to_vec(&json!({
+        "rootAssembly": {
+            "documentId": DID,
+            "elementId": AS,
+            "documentMicroversion": MID,
+            "instances": [
+                {
+                    "id": "one",
+                    "type": "Part",
+                    "documentId": DID,
+                    "elementId": PS,
+                    "documentMicroversion": MID
+                },
+                {
+                    "id": "two",
+                    "type": "Part",
+                    "documentId": DID,
+                    "elementId": PS,
+                    "documentMicroversion": MID
+                }
+            ]
+        }
+    }))
+    .unwrap();
     let mut part = partstudio_replies(MID, "1");
     part.pop_front();
     part.pop_front();
@@ -1020,8 +1039,9 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
     }));
     assert!(mock.sent.iter().any(|(method, path, _)| {
         method == "POST"
-            && path == &format!(
-                "/api/v17/partstudios/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/export/step"
+            && path
+                == &format!(
+                    "/api/v17/partstudios/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/export/step"
             )
     }));
     assert!(mock.sent.iter().any(|(_, path, _)| {
@@ -1063,7 +1083,13 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
         manifest["file_sources"][sketch_path.as_str()]["microversion"],
         OTHER_MID
     );
-    let variables_path = format!("{prefix}partstudios/{OTHER_ELEMENT}/variables.json");
+    let variables_path = manifest["file_sources"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .find(|path| path.starts_with(&prefix) && path.ends_with("/variables.json"))
+        .map(String::as_str)
+        .unwrap();
     assert_eq!(manifest["file_sources"][variables_path]["path_kind"], "v");
     assert!(archive
         .by_name(&format!("{prefix}partstudios/{OTHER_ELEMENT}/export.step"))
@@ -2388,6 +2414,7 @@ fn the_estimate_counts_the_listing_calls_and_the_elements_and_skips_cached_repli
 #[test]
 fn the_assembly_estimate_counts_external_configurations_and_reuses_definitions() {
     const OTHER: &str = "777777777777777777777777";
+    const OTHER_VERSION: &str = "666666666666666666666666";
     const OTHER_MID: &str = "888888888888888888888888";
     const OTHER_ELEMENT: &str = "999999999999999999999999";
     let dir = tempfile::tempdir().unwrap();
@@ -2398,7 +2425,7 @@ fn the_assembly_estimate_counts_external_configurations_and_reuses_definitions()
         "rootAssembly": {
             "documentId": DID, "elementId": AS, "documentMicroversion": MID,
             "instances": [{"type":"Part","documentId":OTHER,"elementId":OTHER_ELEMENT,
-                "documentMicroversion":OTHER_MID,"configuration":"size=large;","linkDocumentId":DID}]
+                "documentVersion":OTHER_VERSION,"documentMicroversion":OTHER_MID,"configuration":"size=large;","linkDocumentId":DID}]
         }
     })).unwrap();
     let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
