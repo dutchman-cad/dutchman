@@ -4550,7 +4550,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
             let mut app = App::new(cc);
             app.options.no_verify = true;
-            app.found_version = Some("0.45.2".into());
+            app.found_version = Some("0.46.2".into());
             app.rows.push(Row {
                 input: PathBuf::from("synthetic.f3d"),
                 output: Some(PathBuf::from("synthetic.sc")),

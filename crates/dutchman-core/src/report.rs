@@ -125,6 +125,18 @@ impl AppearanceLoss {
     }
 }
 
+/// A feature the source program already flagged as failed in the file itself, before
+/// Dutchman read it. These are kept apart from [`Loss`]es, which are Dutchman's own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceError {
+    /// The object's internal name in the source document.
+    pub name: String,
+    /// The name its program shows for it (the label); the internal name when it has none.
+    pub label: String,
+    /// The program's own message, when it saved one.
+    pub message: Option<String>,
+}
+
 /// One thing that did not survive the conversion intact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Loss {
@@ -257,6 +269,8 @@ pub struct Report {
     verification_tolerances: Option<serde_json::Value>,
     verification_checks: Vec<serde_json::Value>,
     losses: Vec<Loss>,
+    source_errors: Vec<SourceError>,
+    source_error_total: u64,
     outcome: Option<Outcome>,
     parts: Vec<PartHistory>,
     completeness: Option<Completeness>,
@@ -498,6 +512,51 @@ pub enum FeatureStatus {
 }
 
 impl Report {
+    /// Features the source file already had flagged as failed in FreeCAD, before converting.
+    pub fn source_errors(&self) -> &[SourceError] {
+        &self.source_errors
+    }
+
+    /// How many features the source file had flagged as failed, which can exceed the rows kept.
+    pub fn source_error_total(&self) -> u64 {
+        self.source_error_total.max(self.source_errors.len() as u64)
+    }
+
+    /// Records features the source file already had flagged as failed in FreeCAD. `total`
+    /// counts them all; `errors` holds the ones kept.
+    pub fn record_source_errors(&mut self, errors: Vec<SourceError>, total: u64) {
+        self.source_error_total += total.max(errors.len() as u64);
+        self.source_errors.extend(errors);
+    }
+
+    /// The plain sentence for a file that already had errors in FreeCAD, or `None`.
+    pub fn source_errors_message(&self) -> Option<String> {
+        const SHOWN: usize = 10;
+        if self.source_errors.is_empty() {
+            return None;
+        }
+        let mut names: Vec<&str> = Vec::new();
+        for error in &self.source_errors {
+            if !names.contains(&error.label.as_str()) {
+                names.push(&error.label);
+            }
+        }
+        let total = names.len().max(self.source_error_total() as usize);
+        let mut list = names
+            .iter()
+            .take(SHOWN)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if total > SHOWN {
+            list.push_str(&format!(" and {} more", total - SHOWN));
+        }
+        Some(format!(
+            "This file already had errors in FreeCAD before converting: {list} (fix them in \
+             FreeCAD for a full conversion)."
+        ))
+    }
+
     /// Memory needed and available, in bytes, when a writer skipped the history check.
     pub fn history_check_skipped(&self) -> Option<(u64, u64)> {
         self.history_check_skipped
@@ -750,6 +809,8 @@ impl Report {
         if self.verification_tolerances.is_none() {
             self.verification_tolerances = other.verification_tolerances;
         }
+        self.source_error_total += other.source_error_total;
+        self.source_errors.extend(other.source_errors);
         self.losses.extend(other.losses);
         self.names.extend(other.names);
     }
@@ -769,6 +830,12 @@ impl Report {
         if self.verification_tolerances.is_none() {
             self.verification_tolerances = other.verification_tolerances;
         }
+        self.source_error_total += other.source_error_total;
+        self.source_errors
+            .extend(other.source_errors.into_iter().map(|error| SourceError {
+                label: format!("{prefix}: {}", error.label),
+                ..error
+            }));
         self.losses
             .extend(other.losses.into_iter().map(|loss| Loss {
                 subject: format!("{prefix}: {}", loss.subject),

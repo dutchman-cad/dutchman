@@ -81,11 +81,11 @@ jobs:
         with:
           name: public-score-build
           path: build
-      - name: Fetch SolidCraft 0.45 and verify its checksum
+      - name: Fetch SolidCraft 0.46 and verify its checksum
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          version=$(scripts/solidcraft-window.sh --fetch 0.45 "")
+          version=$(scripts/solidcraft-window.sh --fetch 0.46 "")
           echo "SOLIDCRAFT_VERSION=$version" >> "$GITHUB_ENV"
           echo "SOLIDCRAFT_CLI=$PWD/solidcraft-${version}-linux-x86_64/bin/solidcraft-cli" >> "$GITHUB_ENV"
           chmod +x build/source/target/release/dutchman

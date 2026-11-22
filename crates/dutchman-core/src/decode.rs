@@ -440,6 +440,9 @@ fn decode_unguarded(
         )));
     }
     report.extend_from_cadmpeg(&decode_report.losses);
+    if format == Format::FreeCadDocument {
+        crate::source_errors::record(&ir, report);
+    }
 
     if let Some(progress) = progress {
         progress.stage(Stage::Project);

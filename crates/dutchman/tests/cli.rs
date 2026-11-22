@@ -1333,6 +1333,41 @@ fn a_freecad_document_converts() {
     assert_eq!(freecad["status"], "converts");
 }
 
+#[cfg(feature = "freecad")]
+#[test]
+fn a_freecad_file_with_errors_of_its_own_says_so_apart_from_conversion_notes() {
+    let out_dir = tempfile::tempdir().unwrap();
+    let output = out_dir.path().join("broken.solidcraft");
+    let out = dutchman(&[
+        "convert",
+        "--json",
+        "--no-verify",
+        &fixture("freecad_preexisting_error.FCStd"),
+        output.to_str().unwrap(),
+    ]);
+    let report = json_of(&out);
+    let errors = &report["source_errors"];
+    assert_eq!(errors["program"], "FreeCAD", "{report}");
+    assert_eq!(errors["count"], 1);
+    assert_eq!(errors["features"][0]["name"], "Fillet");
+    assert_eq!(errors["features"][0]["label"], "Edge rounding");
+    assert_eq!(errors["features"][0]["error"], "BRep_API: command not done");
+    assert_eq!(
+        errors["message"],
+        "This file already had errors in FreeCAD before converting: Edge rounding (fix them in \
+         FreeCAD for a full conversion)."
+    );
+    // A file without them has no such field.
+    let clean = json_of(&dutchman(&[
+        "convert",
+        "--json",
+        "--no-verify",
+        &fixture("core_design_product.FCStd"),
+        out_dir.path().join("clean.solidcraft").to_str().unwrap(),
+    ]));
+    assert!(clean.get("source_errors").is_none(), "{clean}");
+}
+
 #[cfg(not(feature = "freecad"))]
 #[test]
 fn a_build_without_freecad_says_where_freecad_files_convert() {
@@ -1442,7 +1477,7 @@ mod external_tools {
             file.write_all(
                 br#"#!/bin/sh
 if [ "$1" = "--version" ]; then
-    printf 'solidcraft-cli 0.45.0\n'
+    printf 'solidcraft-cli 0.46.2\n'
     exit 0
 fi
 printf 'replay\n' >> "$DUTCHMAN_TEST_REPLAY_MARKER"
@@ -1460,7 +1495,7 @@ exit 1
             "-o",
             output.to_str().unwrap(),
             "--solidcraft-version",
-            "0.45.0",
+            "0.46.2",
             "--json",
         ];
         // Preflight fits while the calibrated check does not.
@@ -2443,7 +2478,7 @@ fn a_check_stopped_for_memory_keeps_the_design_unverified() {
     let cli = dir.path().join("solidcraft-cli");
     std::fs::write(
         &cli,
-        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.45.1'; exit 0; fi\nsleep 30\n",
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.46.1'; exit 0; fi\nsleep 30\n",
     )
     .unwrap();
     std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -3647,7 +3682,7 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
         "-o",
         output.to_str().unwrap(),
         "--solidcraft-version",
-        "0.45.0",
+        "0.46.2",
         "--json",
     ];
     let out = dutchman_with(&args, &env);
@@ -3693,7 +3728,7 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
             "--out-dir",
             dir.path().to_str().unwrap(),
             "--solidcraft-version",
-            "0.45.0",
+            "0.46.2",
             "--json",
         ],
         &env,
@@ -3720,7 +3755,7 @@ fn low_memory_keeps_editable_history_unverified_and_the_original_shape_visible()
             "-o",
             output.to_str().unwrap(),
             "--solidcraft-version",
-            "0.45.0",
+            "0.46.2",
             "--part",
             "1",
             "--stop-at-feature",
@@ -3768,7 +3803,7 @@ fn automatic_assembly_workers_use_the_synthetic_free_memory_budget() {
             output.to_str().unwrap(),
             "--no-verify",
             "--solidcraft-version",
-            "0.45.0",
+            "0.46.2",
             "--json",
         ],
         &[("DUTCHMAN_TEST_MEMORY", "100000000,500000000")],
