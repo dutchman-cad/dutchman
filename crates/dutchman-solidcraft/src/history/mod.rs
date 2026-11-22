@@ -1296,6 +1296,34 @@ fn discard_reference_sketches(mapping: &mut Mapping) {
         .count();
 }
 
+/// The reason cadmpeg gave when the design's timeline was in the file but its feature history
+/// did not decode, in plain words; `None` when the decoder reported no such failure, so the
+/// design really has no timeline.
+fn undecoded_history(source_losses: &[dutchman_core::Loss]) -> Option<String> {
+    let loss = source_losses.iter().find(|loss| {
+        loss.code.as_deref().is_some_and(|code| {
+            [
+                "/design.intent-undecoded",
+                "/feature.timeline-undecoded",
+                "/design.primary-record-undecoded",
+            ]
+            .iter()
+            .any(|suffix| code.ends_with(suffix))
+        })
+    })?;
+    // The decoder's text ends with what failed, after the last ": ".
+    let cause = loss
+        .detail
+        .rsplit_once(": ")
+        .map_or(loss.detail.as_str(), |(_, cause)| cause)
+        .trim()
+        .trim_end_matches('.');
+    let cause = cause.strip_prefix("F3D ").unwrap_or(cause);
+    Some(format!(
+        "the design's feature timeline is in the file, but cadmpeg could not decode it ({cause})"
+    ))
+}
+
 /// Whether a mapped feature cuts from or intersects the bodies before it.
 fn cuts_a_body(feature: &Value) -> bool {
     matches!(
@@ -1704,7 +1732,8 @@ fn map_into(
     if !ctx.builds && !complete_sketches {
         return Err(blocked.unwrap_or_else(|| {
             if no_timeline {
-                "the design carries no feature history".to_owned()
+                undecoded_history(source_losses)
+                    .unwrap_or_else(|| "the design carries no feature history".to_owned())
             } else {
                 "no feature in the history builds geometry".to_owned()
             }
@@ -3177,6 +3206,59 @@ mod tests {
         .result
         .unwrap_err();
         assert_eq!(err, "the design carries no feature history");
+    }
+
+    fn no_history_reason(losses: &[(&str, &str)]) -> String {
+        let mut notes = Report::default();
+        for (code, detail) in losses {
+            notes.push_coded(Severity::Degraded, *code, code, *detail);
+        }
+        map_until(
+            &cube(),
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+            false,
+            notes.losses(),
+            None,
+        )
+        .result
+        .unwrap_err()
+    }
+
+    #[test]
+    fn a_timeline_cadmpeg_could_not_decode_is_named_instead_of_no_history() {
+        let reason = no_history_reason(&[
+            ("f3d/geometry.nurbs-surface-carrier", "8 spline surfaces were decoded."),
+            (
+                "f3d/design.intent-undecoded",
+                "Design intent was dropped because its decoding failed, so the dimension-companion and configuration reports were not produced: F3D sheet-metal settings frame or typed link is invalid",
+            ),
+        ]);
+        assert_eq!(
+            reason,
+            "the design's feature timeline is in the file, but cadmpeg could not decode it (sheet-metal settings frame or typed link is invalid)"
+        );
+        let reason = no_history_reason(&[(
+            "f3d/feature.timeline-undecoded",
+            "the timeline record is damaged",
+        )]);
+        assert!(
+            reason.contains("cadmpeg could not decode it (the timeline record is damaged)"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn a_design_with_no_timeline_and_no_decoder_failure_keeps_the_plain_reason() {
+        let reason = no_history_reason(&[(
+            "f3d/geometry.nurbs-surface-carrier",
+            "8 spline surfaces were decoded.",
+        )]);
+        assert_eq!(reason, "the design carries no feature history");
+        assert_eq!(
+            no_history_reason(&[]),
+            "the design carries no feature history"
+        );
     }
 
     #[test]

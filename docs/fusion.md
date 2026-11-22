@@ -340,6 +340,13 @@ Fusion keeps some sketches with no Sketch step in the timeline; cadmpeg then lis
 alone. A feature whose profile uses such a sketch gets it written just before itself, so the
 feature finds it; any other such sketch is kept for reference after the timeline, as before.
 
+## A design whose timeline did not decode
+
+A design that carries no feature history converts as an import, and the report says "the design
+carries no feature history". When the file does hold a timeline but cadmpeg could not decode it (for
+example a sheet-metal settings record it found invalid), the report says so instead: the feature
+timeline is in the file, but cadmpeg could not decode it, followed by what it could not read.
+
 ## Trimmed and unresolved profile regions
 
 One stored sketch loop does not prove a native profile selection when other solid
