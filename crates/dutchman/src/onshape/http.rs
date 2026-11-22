@@ -13,6 +13,7 @@ pub struct Request {
     pub body: Vec<u8>,
 }
 
+#[derive(Clone)]
 pub struct Response {
     pub status: u16,
     pub headers: BTreeMap<String, String>,
