@@ -179,6 +179,8 @@ including countersunk entries. Fusion measures Extents To to the cylindrical sho
 the conical point extends beyond the selected face. Dutchman resolves that distance
 along the drilling direction and keeps the countersink at the entry. Unresolved,
 offset, tilted, or unproven terminating faces retain a specific history blocker.
+A terminating face with arcs, circles or inner loops in its outline is mapped when SolidCraft's
+replay before the hole contains exactly that face.
 Later features rebuild when the hole maps. A refused hole still stops body-building
 history; independently resolved reference sketches remain available.
 
