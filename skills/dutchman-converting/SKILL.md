@@ -173,9 +173,7 @@ selecting among several input bodies is not supported yet. The original geometry
 Older targets keep the previous point-only representation.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and
-resolved sketches are kept in a hidden **Editable history (partial)** component. The
-original final shape remains visible as an Import after the kept history. Show the
-hidden component to continue editing it. The report names the blocker and counts
+resolved sketches are kept live in the part's own timeline, followed by a **Remove** feature that takes away the bodies they make and one **Import** named "Rest of the design (from <first feature not converted>)" that holds the source's final shape. The visible result is exactly the original shape, with one body per source body. Roll the timeline marker back before **Remove** to see and edit the body the converted features build; to keep modelling from them, delete or suppress the last two features. SolidCraft needs the CLI to name the bodies the features make; without it the kept features stay in a hidden **Editable history (partial)** component beside the visible Import, as before. The report names the blocker and counts
 retained source features; `mode: partial_history` and verification `partial` distinguish
 this from full verified history. The reason says whether retained features replayed or
 remain unverified. Later sketches with unresolved planes or external geometry are
@@ -591,7 +589,7 @@ Never remove or change the quarantine attribute.
   `unverified`: written
   without that check (the reason says why, usually no `solidcraft-cli` was found); mention
   that the history has not been checked. `partial`: an editable prefix and resolved
-  sketches are hidden beside the visible imported shape; the reason says whether retained
+  sketches stay live, then a Remove of their bodies and one Import of the rest of the design; the reason says whether retained
   features replayed. `flattened`: no body-building prefix could be retained, so the design
   keeps the imported shape and any
   mapped sketches with resolved planes, hidden for reference with no features built on them.

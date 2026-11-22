@@ -51,8 +51,8 @@ history, with no flattened-history warning.
     tangency weight of exactly 1 maps as a circular fillet.
 
   The sections below have the detail, and what stops a history.
-- A blocker keeps the editable prefix and resolved sketches hidden beside the visible
-  original shape. Without a body-building prefix, the design keeps imported geometry and
+- A blocker keeps the editable prefix and resolved sketches live in the part's timeline, then
+  a Remove of the bodies they make and one Import of the rest of the design. Without a body-building prefix, the design keeps imported geometry and
   hidden reference sketches.
 - Assemblies keep their components and placements. Fusion and FreeCAD assemblies keep their
   joints too (revolute, slider, and rigid), with their grounded parts held where they are.
@@ -81,7 +81,7 @@ centre, with volume breaking ties. When the evaluator gives no box for a pair, t
 |---|---|
 | `verified` | The history replays in SolidCraft and matches the original. |
 | `unverified` | The history was written without the check: no `solidcraft-cli` was found, it timed out, or `--no-verify`. The reason is given. |
-| `partial` | An editable prefix and resolved sketches are retained in a hidden component. The imported final shape is visible. The reason names the blocker, counts kept features, and says whether retained features replayed; this does not verify the full history. |
+| `partial` | An editable prefix and resolved sketches stay live in the part's timeline, then a Remove feature takes away the bodies they make and one Import named "Rest of the design (from <first feature not converted>)" holds the imported final shape. The reason names the blocker, counts kept features, and says whether retained features replayed; this does not verify the full history. |
 | `flattened` | No body-building prefix could be retained. The design keeps the imported geometry and mapped sketches with resolved planes, hidden for reference. |
 | `not_applicable` | There was no history to write, or `--import-only`. |
 
@@ -253,7 +253,7 @@ Replacing the thread with a cosmetic feature on the earlier body would lose the 
 Attaching a cosmetic feature to the imported final body also needs a proven cylindrical
 band between circular rims; a helical face does not meet that condition. Dutchman keeps
 the designation in the loss report rather than guessing a face for an annotation. Later
-features remain blocked, and the imported final shape stays visible.
+features remain blocked, and they stay in the imported final shape.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain
@@ -533,12 +533,10 @@ is still converted.
 
 ## Partial history
 
-Show **Editable history (partial)** in the browser to keep editing its body, and hide the imported final shape while you work on it.
+Roll the timeline marker back before **Remove** to see and edit the body the converted features build.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and
-resolved sketches are kept in a hidden **Editable history (partial)** component. The
-original final shape remains visible as an Import after the kept history. Show the
-hidden component to continue editing it. The report names the blocker and counts
+resolved sketches are kept live in the part's own timeline, followed by a **Remove** feature that takes away the bodies they make and one **Import** named "Rest of the design (from <first feature not converted>)" that holds the source's final shape. The visible result is exactly the original shape, with one body per source body. Roll the timeline marker back before **Remove** to see and edit the body the converted features build; to keep modelling from them, delete or suppress the last two features. SolidCraft needs the CLI to name the bodies the features make; without it the kept features stay in a hidden **Editable history (partial)** component beside the visible Import, as before. The report names the blocker and counts
 retained source features; `mode: partial_history` and verification `partial` distinguish
 this from full verified history. The reason says whether retained features replayed or
 remain unverified. Later sketches with unresolved planes or external geometry are

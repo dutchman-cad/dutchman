@@ -448,7 +448,7 @@ pub fn line(result: &Value) -> String {
                 .and_then(Value::as_str),
         ) {
             (Some("partial_history"), _) => {
-                "partial editable history; imported final shape visible"
+                "partial editable history; the rest is one imported body"
             }
             (Some("history"), Some("verified")) => "editable history, verified in SolidCraft",
             (Some("history"), _) => "editable history, unverified",

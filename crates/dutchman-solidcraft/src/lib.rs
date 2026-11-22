@@ -376,6 +376,14 @@ impl SolidCraftWriter {
         self.hide_unverified || self.memory_skip.get().is_some()
     }
 
+    /// Whether a partial history is written as its features, a Remove of the bodies they
+    /// make, and the Import of the rest: when SolidCraft has the Remove feature and a replay
+    /// of the features gave the bodies' names.
+    fn writes_rest_visibly(&self, history: &history::History) -> bool {
+        history.replayed_bodies.is_some()
+            && VersionGate::RemoveBody.supported(self.resolved_version())
+    }
+
     fn keep_unverified_history_hidden(&self, history: &history::History) -> bool {
         self.keep_unverified_hidden() || history.topological_replay_required
     }
@@ -628,17 +636,25 @@ impl SolidCraftWriter {
             self.resolved_version(),
             stand_up,
         );
-        if matches!(live, Live::Partial | Live::Unverified) {
+        if matches!(live, Live::Partial | Live::PartialHidden | Live::Unverified) {
             let mut looks = history::imported(model, step, report, false)?;
-            let mut taken: history::BodyNames = history
-                .features
-                .iter()
-                .filter_map(|feature| feature.get("body_names").and_then(Value::as_array))
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect();
-            taken.add_defaults(history.default_bodies.keys().cloned());
+            // The bodies of a partial history are removed before the import, so the import
+            // may keep every name; beside hidden history, its names must stay apart.
+            let mut taken: history::BodyNames = if live == Live::Partial {
+                history::BodyNames::default()
+            } else {
+                history
+                    .features
+                    .iter()
+                    .filter_map(|feature| feature.get("body_names").and_then(Value::as_array))
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            };
+            if live != Live::Partial {
+                taken.add_defaults(history.default_bodies.keys().cloned());
+            }
             looks.rename_bodies("Original geometry", &mut taken);
             document::original_looks(&mut doc, &looks);
         }
@@ -915,7 +931,7 @@ impl SolidCraftWriter {
             if let Some(why) = self.memory_refusal() {
                 return Ok(Check::Partial(format!("{summary}; {why}")));
             }
-            let (outcome, bodies) = verify::replay(cli.as_ref(), remaining, &design);
+            let (outcome, bodies, names) = verify::replay_named(cli.as_ref(), remaining, &design);
             match outcome {
                 verify::Outcome::Matches => {
                     let stored = history.stored_bodies_at_end();
@@ -954,6 +970,15 @@ impl SolidCraftWriter {
                         );
                         Self::stop_geometry_difference(mapping, format!("replay differs ({why})"));
                         continue;
+                    }
+                    let rest = mapping
+                        .features
+                        .iter()
+                        .find(|feature| feature.status == dutchman_core::FeatureStatus::Blocked)
+                        .and_then(|feature| feature.name.clone());
+                    if let Ok(history) = &mut mapping.result {
+                        history.replayed_bodies = names;
+                        history.rest_from = rest;
                     }
                     return Ok(Check::Partial(format!("{summary}; retained features replay in SolidCraft; the full history is not verified")));
                 }
@@ -1915,11 +1940,16 @@ impl Writer for SolidCraftWriter {
                     if let Check::Partial(message) = &check {
                         report.push(Severity::Degraded, HISTORY, message);
                     }
+                    let live = if self.writes_rest_visibly(history) {
+                        Live::Partial
+                    } else {
+                        Live::PartialHidden
+                    };
                     let written = self.history_design_report(
                         model,
                         history,
                         &step,
-                        Live::Partial,
+                        live,
                         self.should_stand_up(),
                         report,
                     )?;

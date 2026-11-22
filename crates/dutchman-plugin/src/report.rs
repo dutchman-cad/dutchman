@@ -159,6 +159,7 @@ pub(crate) fn readable(report: &Report) -> Value {
         "result": status(report),
         "help": crate::notice::help(),
         "shape_check": report.outcome().map(|o| verification(&o.check)),
+        "editable_part": report.outcome().filter(|o| o.mode == Mode::PartialHistory).and_then(|o| dutchman_core::RestImported::of(&o.features)).map(|rest| crate::notice::plain(&rest.sentence())),
         "features": report.outcome().map(|o| o.features.iter().map(|f| json!({
             "name": f.name.as_deref().map(crate::notice::plain),
             "feature": crate::notice::plain(&f.kind.replace('_', " ")),

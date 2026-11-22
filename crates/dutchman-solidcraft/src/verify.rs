@@ -1209,9 +1209,20 @@ pub(crate) fn replay(
     timeout: Duration,
     design: &[u8],
 ) -> (Outcome, Option<Vec<Placed>>) {
+    let (outcome, placed, _) = replay_named(cli, timeout, design);
+    (outcome, placed)
+}
+
+/// As [`replay`], also giving the names of the bodies the replay holds, in the order of the
+/// placed bodies; `None` when SolidCraft did not replay, or did not name every body.
+pub(crate) fn replay_named(
+    cli: &(impl SolidCraftEvaluator + ?Sized),
+    timeout: Duration,
+    design: &[u8],
+) -> (Outcome, Option<Vec<Placed>>, Option<Vec<String>>) {
     match evaluate(cli, timeout, "prefix", design) {
         Ok(Evaluation::Done(eval)) => match timeline_outcome(&eval) {
-            Some(outcome) => (outcome, None),
+            Some(outcome) => (outcome, None, None),
             None => {
                 let placed = eval
                     .bodies
@@ -1221,11 +1232,26 @@ pub(crate) fn replay(
                         size: body.size,
                     })
                     .collect();
-                (Outcome::Matches, Some(placed))
+                let names = eval
+                    .raw
+                    .get("bodies")
+                    .and_then(Value::as_array)
+                    .and_then(|bodies| {
+                        bodies
+                            .iter()
+                            .map(|body| {
+                                body.get("name")
+                                    .and_then(Value::as_str)
+                                    .filter(|name| !name.is_empty())
+                                    .map(str::to_owned)
+                            })
+                            .collect::<Option<Vec<String>>>()
+                    });
+                (Outcome::Matches, Some(placed), names)
             }
         },
-        Ok(Evaluation::Failed(why)) => (Outcome::Unverified(why), None),
-        Err(why) => (Outcome::Unverified(why), None),
+        Ok(Evaluation::Failed(why)) => (Outcome::Unverified(why), None, None),
+        Err(why) => (Outcome::Unverified(why), None, None),
     }
 }
 

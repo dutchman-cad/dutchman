@@ -1813,7 +1813,9 @@ fn inspect(
         match (&inspection.conversion, &outcome.mode, &outcome.check) {
             (Err(reason), _, _) => println!("would write: nothing; converting it fails: {reason}"),
             (Ok(()), Mode::PartialHistory, _) => {
-                println!("would write: partial editable history and the imported final shape")
+                println!(
+                    "would write: partial editable history, then the rest as one imported body"
+                )
             }
             (Ok(()), Mode::History, _) => println!("would write: editable history"),
             (Ok(()), Mode::Import, Check::Flattened(reason) | Check::NotApplicable(reason)) => {

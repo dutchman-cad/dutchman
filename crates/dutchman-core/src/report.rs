@@ -462,6 +462,96 @@ pub struct FeatureOutcome {
     pub inferred: Option<Inferred>,
 }
 
+/// Where a partial history hands over to the imported rest of the design: the converted
+/// features come first, then one imported body holds the source's final shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestImported {
+    /// The part the history belongs to, when the rows of several parts are given together.
+    pub part: Option<String>,
+    /// How many features, from the first, are editable.
+    pub converted: usize,
+    /// The first feature that is not converted.
+    pub from: String,
+    /// Why it is not converted.
+    pub reason: Option<String>,
+}
+
+impl RestImported {
+    /// The first feature not converted in a design's rows, given as each row's status, name
+    /// and reason in timeline order; `None` when every feature converted. Rows of an
+    /// assembly are named "part: feature"; the first part to stop is the one reported.
+    pub fn find<'a>(
+        rows: impl IntoIterator<Item = (FeatureStatus, Option<&'a str>, Option<&'a str>)>,
+    ) -> Option<Self> {
+        let rows: Vec<_> = rows.into_iter().collect();
+        let split = |name: &'a str| name.split_once(": ");
+        let of_parts = !rows.is_empty()
+            && rows
+                .iter()
+                .all(|(_, name, _)| name.is_some_and(|name| split(name).is_some()));
+        let blocked = rows
+            .iter()
+            .position(|(status, _, _)| *status == FeatureStatus::Blocked)?;
+        let (_, name, reason) = rows.get(blocked)?;
+        let name = name.unwrap_or("the next feature");
+        let (part, from) = match split(name) {
+            Some((part, from)) if of_parts => (Some(part), from),
+            _ => (None, name),
+        };
+        let converted = rows
+            .iter()
+            .take(blocked)
+            .filter(|(status, row, _)| {
+                *status == FeatureStatus::Mapped
+                    && (!of_parts || row.and_then(split).map(|(of, _)| of) == part)
+            })
+            .count();
+        Some(Self {
+            part: part.map(str::to_owned),
+            converted,
+            from: from.to_owned(),
+            reason: reason
+                .map(|reason| reason.trim().trim_end_matches('.').to_owned())
+                .filter(|reason| !reason.is_empty()),
+        })
+    }
+
+    /// The same, from a report's feature rows.
+    pub fn of(features: &[FeatureOutcome]) -> Option<Self> {
+        Self::find(
+            features
+                .iter()
+                .map(|f| (f.status, f.name.as_deref(), f.reason.as_deref())),
+        )
+    }
+
+    /// The sentence every report gives: "Features 1-7 are editable; from Hole 1 on, the
+    /// part is one imported body.", then why the first feature did not convert.
+    pub fn sentence(&self) -> String {
+        let editable = match self.converted {
+            0 => "no feature is editable".to_owned(),
+            1 => "feature 1 is editable".to_owned(),
+            n => format!("features 1\u{2013}{n} are editable"),
+        };
+        let mut text = format!(
+            "{editable}; from {} on, the part is one imported body.",
+            self.from
+        );
+        match &self.part {
+            Some(part) => text.insert_str(0, &format!("{part}: ")),
+            None => {
+                if let Some(first) = text.get_mut(..1) {
+                    first.make_ascii_uppercase();
+                }
+            }
+        }
+        if let Some(reason) = &self.reason {
+            text.push_str(&format!(" {}: {reason}.", self.from));
+        }
+        text
+    }
+}
+
 /// How a selection the source does not record was inferred: candidates rebuilt in the target
 /// and measured against the source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1149,5 +1239,61 @@ mod worker_report_tests {
         let mut outer = Report::default();
         outer.append_prefixed(report, "assembly.f3z");
         assert_eq!(outer.threads(), Some((0, 6)));
+    }
+}
+
+#[cfg(test)]
+mod rest_imported_tests {
+    use super::*;
+
+    fn rows<'a>(
+        rows: &'a [(FeatureStatus, &'a str, Option<&'a str>)],
+    ) -> impl Iterator<Item = (FeatureStatus, Option<&'a str>, Option<&'a str>)> + 'a {
+        rows.iter()
+            .map(|(status, name, reason)| (*status, Some(*name), *reason))
+    }
+
+    #[test]
+    fn a_part_says_where_its_editable_features_end() {
+        use FeatureStatus::{Blocked, Mapped, NotNeeded};
+        let table = [
+            (Mapped, "Sketch 1", None),
+            (NotNeeded, "Plane 1", None),
+            (Mapped, "Extrude 1", None),
+            (Blocked, "Hole 1", Some("hole is not mapped yet.")),
+            (Blocked, "Hole 2", Some("after the first blocking feature")),
+        ];
+        let rest = RestImported::find(rows(&table)).unwrap();
+        assert_eq!((rest.converted, rest.from.as_str()), (2, "Hole 1"));
+        assert_eq!(
+            rest.sentence(),
+            "Features 1\u{2013}2 are editable; from Hole 1 on, the part is one imported body. \
+             Hole 1: hole is not mapped yet."
+        );
+        let one = [(Mapped, "Sketch 1", None), (Blocked, "Loft 1", None)];
+        assert_eq!(
+            RestImported::find(rows(&one)).unwrap().sentence(),
+            "Feature 1 is editable; from Loft 1 on, the part is one imported body."
+        );
+        let all = [(Mapped, "Sketch 1", None)];
+        assert_eq!(RestImported::find(rows(&all)), None);
+    }
+
+    #[test]
+    fn an_assembly_names_the_first_part_to_stop() {
+        use FeatureStatus::{Blocked, Mapped};
+        let table = [
+            (Mapped, "a.ipt: Sketch 1", None),
+            (Mapped, "a.ipt: Extrude 1", None),
+            (Mapped, "b.ipt: Sketch 1", None),
+            (Blocked, "b.ipt: Loft 1", Some("lofts are not mapped")),
+        ];
+        let rest = RestImported::find(rows(&table)).unwrap();
+        assert_eq!(rest.part.as_deref(), Some("b.ipt"));
+        assert_eq!(
+            rest.sentence(),
+            "b.ipt: feature 1 is editable; from Loft 1 on, the part is one imported body. \
+             Loft 1: lofts are not mapped."
+        );
     }
 }

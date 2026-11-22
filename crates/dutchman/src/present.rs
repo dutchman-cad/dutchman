@@ -765,6 +765,27 @@ fn identity_note(report: &Value) -> Option<String> {
     }
 }
 
+/// Where the editable features of a partial history end and the imported body begins, from the
+/// report's feature rows.
+fn rest_imported(report: &Value) -> Option<dutchman_core::RestImported> {
+    use dutchman_core::FeatureStatus;
+    let rows = report.pointer("/history/features")?.as_array()?;
+    dutchman_core::RestImported::find(rows.iter().filter_map(|row| {
+        let status = match row.get("status")?.as_str()? {
+            "mapped" => FeatureStatus::Mapped,
+            "not_needed" => FeatureStatus::NotNeeded,
+            "left_out" => FeatureStatus::LeftOut,
+            "blocked" => FeatureStatus::Blocked,
+            _ => return None,
+        };
+        Some((
+            status,
+            row.get("name").and_then(Value::as_str),
+            row.get("reason").and_then(Value::as_str),
+        ))
+    }))
+}
+
 fn outcome_without_memory_note(report: &Value) -> String {
     let field = |pointer: &str| report.pointer(pointer).and_then(Value::as_str);
     // Features kept but re-applied to a base body as the design ends are not rebuilt.
@@ -789,12 +810,13 @@ fn outcome_without_memory_note(report: &Value) -> String {
         count("/history/needing", "/history/total"),
     );
     match field("/mode") {
-        Some("partial_history") => match counts {
-            (Some(m), Some(t)) => format!(
-                "Partial editable history, {}; imported final shape visible.",
+        Some("partial_history") => match (rest_imported(report), counts) {
+            (Some(rest), _) => rest.sentence(),
+            (None, (Some(m), Some(t))) => format!(
+                "Partial editable history, {}; the rest is one imported body.",
                 history(m, t)
             ),
-            _ => "Partial editable history; imported final shape visible.".to_owned(),
+            _ => "Partial editable history; the rest is one imported body.".to_owned(),
         },
         Some("history") => {
             let check = match (field("/verification/status"), field("/verification/reason")) {
@@ -914,13 +936,31 @@ mod tests {
             {"name": "part.f3d: Extrude 1", "kind": "extrude", "status": "mapped", "reapplied": true}
         ]}});
         let text = outcome(&report);
-        assert!(text.starts_with("Partial editable history, 43 of 235 features rebuilt, 76 kept and re-applied to the final body; imported final shape visible."), "{text}");
+        assert!(text.starts_with("Partial editable history, 43 of 235 features rebuilt, 76 kept and re-applied to the final body; the rest is one imported body."), "{text}");
         assert!(text.ends_with("Base Feature 1 holds the body as the design ends. The features after it are kept but re-apply to that body, so editing them may not change the shape."), "{text}");
         let plain = serde_json::json!({"ok": true, "mode": "partial_history",
             "history": {"rebuilt": 3, "needing": 4, "reapplied": 0, "features": []}});
         assert_eq!(
             outcome(&plain),
-            "Partial editable history, 3 of 4 features rebuilt; imported final shape visible."
+            "Partial editable history, 3 of 4 features rebuilt; the rest is one imported body."
+        );
+    }
+
+    #[test]
+    fn the_card_says_which_features_are_editable_and_where_the_imported_body_starts() {
+        let report = serde_json::json!({"ok": true, "mode": "partial_history",
+        "history": {"rebuilt": 2, "needing": 4, "rest_imported_from": "Hole 1", "features": [
+            {"name": "Sketch 1", "kind": "sketch", "status": "mapped"},
+            {"name": "Extrude 1", "kind": "extrude", "status": "mapped"},
+            {"name": "Hole 1", "kind": "hole", "status": "blocked",
+                "reason": "its entry is not resolved"},
+            {"name": "Hole 2", "kind": "hole", "status": "blocked",
+                "reason": "after the first blocking feature"}
+        ]}});
+        assert_eq!(
+            outcome(&report),
+            "Features 1\u{2013}2 are editable; from Hole 1 on, the part is one imported body. \
+             Hole 1: its entry is not resolved."
         );
     }
 
