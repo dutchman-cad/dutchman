@@ -113,7 +113,9 @@ fn read_archive(path: &Path, into: &mut Contents) -> Result<(), String> {
         let member = zip
             .by_index(index)
             .map_err(|e| format!("the .tools archive is damaged: {e}"))?;
-        let name = member.name().to_owned();
+        let name = member
+            .name()
+            .map_or_else(|_| String::new(), |n| n.into_owned());
         if member.is_file() && name.to_ascii_lowercase().ends_with(".json") {
             names.push((index, name));
         }
