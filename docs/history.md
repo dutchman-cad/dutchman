@@ -237,6 +237,8 @@ and unresolved extents or face geometry remain reported losses. When the source 
 resolve whether the thread is modeled, the annotation is kept with a Degraded note; helical
 geometry is not reconstructed. Cosmetic annotations do not change the body's geometry.
 
+Fusion may store a cosmetic thread's face at the thread class's diameter (Ø9.85 for an M10 thread) while the sketch that made the cylinder keeps the nominal size (Ø10). A SolidCraft cosmetic thread cannot make that change, so such a thread is reported as not rebuilt and the stored shape is kept; the sketch and extrude keep their history. Only a face within 3 % of the nominal radius, along the axis of a sketch circle of the nominal size, counts.
+
 Modeled threads retain their original helical geometry and stop the editable history.
 The Degraded loss `history/modeled-thread-retained` keeps the source designation when
 available and names the missing construction data. SolidCraft 0.45 can cut a modeled
@@ -553,14 +555,14 @@ When a partial history is checked against the source's stored bodies, each kept 
 sit where the source has it: within the larger of 1 mm and 2% of its box diagonal when the
 source's position is approximate, or 0.5 mm and 1% when it is exact.
 
-Dutchman targets SolidCraft 0.45 by default with the writer capabilities available in 0.44.1 and
-keeps design format 23, as for earlier targets. SolidCraft 0.45 opens every earlier
-design format. Saving in SolidCraft 0.45 upgrades a design to format 63 (drawing format 2);
-SolidCraft 0.44 asks to update before opening that saved design. Dutchman does not write
-drawings or require format 63. Explicit older targets keep their existing output.
+Dutchman targets SolidCraft 0.46 by default with the writer capabilities available in 0.45 and
+keeps design format 23, as for earlier targets. SolidCraft 0.46 opens every earlier
+design format. Saving in SolidCraft 0.46 upgrades a design to format 64 (drawing format 3);
+SolidCraft 0.45 asks to update before opening that saved design. Dutchman does not write
+drawings or require format 64. Explicit older targets keep their existing output.
 
 Converted assemblies embed their parts and STEP blobs in the design container; they do
-not link back to the source part files. SolidCraft 0.45's requirement to use Update Links
+not link back to the source part files. SolidCraft's requirement (since 0.45) to use Update Links
 for changed files outside the design's folder therefore does not affect converted assemblies.
 
 For targets of SolidCraft 0.30 or newer, partial and unverified editable-history copies

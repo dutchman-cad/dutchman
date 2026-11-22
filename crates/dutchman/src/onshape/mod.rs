@@ -8,7 +8,7 @@ mod store;
 use auth::Auth;
 pub use auth::{BearerToken, Credentials, FetchAuth};
 use http::Session;
-pub use http::{HttpClient, NetworkClient, Request, Response};
+pub use http::{FetchProgress, HttpClient, NetworkClient, Request, Response};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -27,6 +27,7 @@ pub enum ErrorKind {
     Url,
     Auth,
     Budget,
+    Approval,
     YearlyLimit,
     Throttle,
     Transport,
@@ -44,6 +45,7 @@ impl ErrorKind {
             Self::Url => "onshape/url",
             Self::Auth => "onshape/auth",
             Self::Budget => "onshape/budget",
+            Self::Approval => "onshape/approval",
             Self::YearlyLimit => "onshape/yearly-limit",
             Self::Throttle => "onshape/throttle",
             Self::Transport => "onshape/transport",
@@ -64,6 +66,8 @@ pub struct Error {
     /// The system's own reason, when there is one (an I/O error's text; std's io errors carry no paths).
     pub detail: Option<String>,
     pub calls: u32,
+    /// For [`ErrorKind::Approval`]: the calls the whole fetch is estimated to need.
+    pub estimate: Option<u32>,
 }
 impl Error {
     pub(crate) fn new(kind: ErrorKind, message: &'static str) -> Self {
@@ -72,6 +76,7 @@ impl Error {
             message,
             detail: None,
             calls: 0,
+            estimate: None,
         }
     }
 }
@@ -169,38 +174,353 @@ pub struct FetchOptions {
     /// Read an OAuth bearer token from a private file (or set DUTCHMAN_ONSHAPE_BEARER_TOKEN).
     #[arg(long)]
     pub bearer_token_file: Option<PathBuf>,
-    /// Maximum HTTP attempts, including metadata, polling, retries and downloads.
-    #[arg(long, default_value_t = 50)]
-    pub max_calls: u32,
+    /// Maximum HTTP attempts, including metadata, polling, retries and downloads. Without it
+    /// the limit grows with the document's elements and parts, up to a fixed ceiling.
+    #[arg(long)]
+    pub max_calls: Option<u32>,
+    /// Fetch without asking when the estimate is above 50 calls. Onshape's Free plan
+    /// allows 2,500 API calls a year.
+    #[arg(long)]
+    pub yes: bool,
     /// Print the same structured report as the MCP tool.
     #[arg(long)]
     pub json: bool,
 }
 
+/// Everything a fetch needs that does not come from Onshape.
+struct Setup {
+    source: DocumentUrl,
+    credentials: FetchAuth,
+    cache: PathBuf,
+    output: PathBuf,
+}
+
+fn setup(options: &FetchOptions) -> Result<Setup> {
+    let source = DocumentUrl::parse(&options.document_url, options.version.as_deref())?;
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or_else(|| Error::new(ErrorKind::Io, "Set HOME or USERPROFILE so Dutchman can find its private Onshape config and cache."))?;
+    let credentials = FetchAuth::find(&Store::system(), options.bearer_token_file.as_deref())?
+        .ok_or_else(|| Error::new(ErrorKind::Auth, NOT_CONNECTED))?;
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".cache"))
+        .join("dutchman/onshape");
+    let output = options
+        .out
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(format!("{}.onshape-bundle", source.element)));
+    Ok(Setup {
+        source,
+        credentials,
+        cache,
+        output,
+    })
+}
+
+/// Fetches, and asks nothing: the MCP tool and scripts get the same stop with the estimate
+/// when the fetch is above [`ASK_ABOVE_CALLS`] and not allowed (see [`fetch_gated`]).
 pub fn run(options: &FetchOptions) -> Value {
-    let result = (|| {
-        let parsed = DocumentUrl::parse(&options.document_url, options.version.as_deref())?;
-        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or_else(|| Error::new(ErrorKind::Io, "Set HOME or USERPROFILE so Dutchman can find its private Onshape config and cache."))?;
-        let credentials = FetchAuth::find(&Store::system(), options.bearer_token_file.as_deref())?
-            .ok_or_else(|| Error::new(ErrorKind::Auth, NOT_CONNECTED))?;
-        let cache = std::env::var_os("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".cache"))
-            .join("dutchman/onshape");
-        let output = options
-            .out
-            .clone()
-            .unwrap_or_else(|| PathBuf::from(format!("{}.onshape-bundle", parsed.element)));
-        fetch_authenticated(
+    run_with_progress(options, None)
+}
+
+/// [`run`], telling `progress` after each call.
+pub fn run_with_progress(
+    options: &FetchOptions,
+    mut progress: Option<&mut dyn FetchProgress>,
+) -> Value {
+    let result = setup(options).and_then(|setup| {
+        // Reborrow for this fetch alone; the caller's progress outlives it.
+        let progress = progress
+            .as_mut()
+            .map(|progress| &mut **progress as &mut dyn FetchProgress);
+        fetch_gated_watched(
             &mut NetworkClient::default(),
-            &credentials,
-            &parsed,
-            &output,
-            &cache,
+            &setup.credentials,
+            &setup.source,
+            &setup.output,
+            &setup.cache,
             options.max_calls,
+            options.yes,
+            progress,
         )
-    })();
+    });
     crate::json::onshape_fetch(&result)
+}
+
+/// Estimates the calls a fetch will need, for the command line and the app to show before
+/// anything is spent. Spends only the few calls that list the document.
+pub fn estimate(options: &FetchOptions) -> Result<Estimate> {
+    let setup = setup(options)?;
+    estimate_calls(
+        &mut NetworkClient::default(),
+        &setup.credentials,
+        &setup.source,
+        &setup.cache,
+    )
+}
+
+/// Fetches after the estimate was shown and, if it was above [`ASK_ABOVE_CALLS`], allowed.
+pub fn run_after(options: &FetchOptions, estimate: &Estimate) -> Value {
+    let result = setup(options).and_then(|setup| {
+        fetch_approved(
+            &mut NetworkClient::default(),
+            &setup.credentials,
+            &setup.source,
+            &setup.output,
+            &setup.cache,
+            estimate,
+        )
+    });
+    crate::json::onshape_fetch(&result)
+}
+
+/// A fetch above this many estimated calls needs the user's go. Onshape's Free and Standard
+/// plans allow 2,500 API calls a year, so a large fetch is a real share of it.
+pub const ASK_ABOVE_CALLS: u32 = 50;
+/// Calls a year on Onshape's Free plan, named wherever Dutchman asks.
+pub const FREE_PLAN_YEARLY_CALLS: u32 = 2500;
+
+/// A call count with a thousands separator from 1,000 up: 2500 reads "2,500".
+pub fn calls_text(calls: u32) -> String {
+    let digits = calls.to_string();
+    let mut text = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            text.push(',');
+        }
+        text.push(digit);
+    }
+    text
+}
+
+/// What a fetch is expected to cost, worked out from the document's own listing.
+#[derive(Debug, Clone)]
+pub struct Estimate {
+    /// Calls the whole fetch is expected to use, including the listing already made. An
+    /// estimate: bodies and referenced studios are only known once the fetch reads them.
+    pub calls: u32,
+    /// Real requests the estimate itself made. Cached replies are not counted.
+    pub listing_calls: u32,
+    /// Part Studios and assemblies the fetch is expected to read.
+    pub elements: u32,
+    mid: String,
+}
+impl Estimate {
+    pub fn needs_approval(&self) -> bool {
+        self.calls > ASK_ABOVE_CALLS
+    }
+
+    /// The text that asks for the user's go, without naming a command-line option.
+    pub fn question(&self) -> String {
+        format!(
+            "This document needs about {} of your yearly Onshape API calls ({} on Free plans). Continue?",
+            calls_text(self.calls),
+            calls_text(FREE_PLAN_YEARLY_CALLS)
+        )
+    }
+
+    /// The stop for a fetch that needs a go it did not get.
+    pub fn approval_error(&self) -> Error {
+        let mut error = Error::new(ErrorKind::Approval, APPROVAL_NEEDED);
+        error.calls = self.listing_calls;
+        error.estimate = Some(self.calls);
+        error
+    }
+}
+
+pub const APPROVAL_NEEDED: &str = "This Onshape document needs more of your yearly API calls than Dutchman spends without asking (Onshape's Free plan allows 2,500 a year), so it stopped before fetching. Ask the user, then allow it with --yes on the command line, or with an explicit --max-calls (MCP: max_calls) that caps the calls it may use.";
+pub const APPROVAL_DECLINED: &str = "Fetch cancelled. No more Onshape API calls were used.";
+
+/// Lists the document, which costs at most three calls and is cached, and counts what the
+/// fetch will read.
+pub fn estimate_calls<C: HttpClient>(
+    client: &mut C,
+    credentials: &FetchAuth,
+    source: &DocumentUrl,
+    cache: &Path,
+) -> Result<Estimate> {
+    let credentials = credentials.as_auth();
+    check_source(&credentials, source)?;
+    let mut session = Session {
+        client,
+        credentials,
+        calls: 0,
+        max_calls: http::AUTO_CEILING_CALLS,
+        auto: false,
+        progress: None,
+        needed: None,
+    };
+    let (scope, mid) = resolve(&mut session, source, cache)?;
+    let content_kind = if source.kind == "v" { "v" } else { "m" };
+    let content_id = if source.kind == "v" {
+        source.version.clone()
+    } else {
+        mid.clone()
+    };
+    let mut fetcher = Fetcher::new(&mut session, &scope, source, &mid, content_kind);
+    document_name(&mut fetcher, source)?;
+    let tabs = fetcher.json(
+        &format!(
+            "{API}/documents/d/{}/{content_kind}/{content_id}/elements",
+            source.document
+        ),
+        "",
+    )?;
+    let tabs = tabs.as_array().ok_or_else(response_error)?;
+    let kind_of = |tab: &Value| {
+        tab.get("elementType")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let linked = tabs
+        .iter()
+        .find(|tab| tab.get("id").and_then(Value::as_str) == Some(&source.element))
+        .ok_or_else(response_error)?;
+    let studios = |tabs: &[Value]| {
+        tabs.iter()
+            .filter(|tab| matches!(kind_of(tab).as_deref(), Some("PARTSTUDIO" | "ASSEMBLY")))
+            .count()
+    };
+    // An assembly may use any studio of the document; a studio is read alone.
+    let elements = if kind_of(linked).as_deref() == Some("ASSEMBLY") {
+        studios(tabs)
+    } else {
+        1
+    };
+    let mut remaining = u32::try_from(elements)
+        .unwrap_or(u32::MAX)
+        .saturating_mul(http::AUTO_ELEMENT_CALLS);
+    if kind_of(linked).as_deref() == Some("PARTSTUDIO") {
+        // Replies already cached cost nothing.
+        let base = format!(
+            "{API}/partstudios/d/{}/{content_kind}/{content_id}/e/{}",
+            source.document, source.element
+        );
+        let features = format!("{base}/features");
+        let cached = [
+            fetcher.is_cached(
+                &features,
+                "rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false",
+            ),
+            fetcher.is_cached(&format!("{base}/sketches"), ""),
+        ];
+        remaining = remaining.saturating_sub(u32::from(cached[0]) + u32::from(cached[1]));
+    }
+    let listing_calls = session.calls;
+    Ok(Estimate {
+        calls: listing_calls.saturating_add(remaining),
+        listing_calls,
+        elements: u32::try_from(elements).unwrap_or(u32::MAX),
+        mid,
+    })
+}
+
+/// Fetches once the estimate was shown and any needed go was given. The call limit is the
+/// automatic one, and the calls the estimate made count against it.
+pub fn fetch_approved<C: HttpClient>(
+    client: &mut C,
+    credentials: &FetchAuth,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+    estimate: &Estimate,
+) -> Result<FetchReport> {
+    fetch_auth(
+        client,
+        credentials.as_auth(),
+        source,
+        output,
+        cache,
+        http::AUTO_BASE_CALLS.max(estimate.listing_calls),
+        true,
+        Some(estimate),
+        None,
+    )
+}
+
+/// What a command line decides about an estimate. `answer` is asked only when `interactive`
+/// and the estimate is above [`ASK_ABOVE_CALLS`] without `yes`.
+pub fn approval(
+    estimate: &Estimate,
+    yes: bool,
+    interactive: bool,
+    answer: impl FnOnce(&Estimate) -> bool,
+) -> Result<()> {
+    if !estimate.needs_approval() || yes {
+        return Ok(());
+    }
+    if !interactive {
+        return Err(estimate.approval_error());
+    }
+    if answer(estimate) {
+        Ok(())
+    } else {
+        let mut error = estimate.approval_error();
+        error.message = APPROVAL_DECLINED;
+        Err(error)
+    }
+}
+
+/// The whole gated fetch. An explicit `max_calls` is the user's own ceiling and the consent
+/// to spend up to it, so nothing is estimated or asked. Otherwise the document is estimated
+/// first; above [`ASK_ABOVE_CALLS`] and without `yes` it stops with the estimate and spends
+/// no more than the listing.
+pub fn fetch_gated<C: HttpClient>(
+    client: &mut C,
+    credentials: &FetchAuth,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+    max_calls: Option<u32>,
+    yes: bool,
+) -> Result<FetchReport> {
+    fetch_gated_watched(
+        client,
+        credentials,
+        source,
+        output,
+        cache,
+        max_calls,
+        yes,
+        None,
+    )
+}
+
+/// [`fetch_gated`], telling `progress` after each call.
+#[allow(clippy::too_many_arguments)]
+fn fetch_gated_watched<'a, C: HttpClient>(
+    client: &'a mut C,
+    credentials: &'a FetchAuth,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+    max_calls: Option<u32>,
+    yes: bool,
+    progress: Option<&'a mut dyn FetchProgress>,
+) -> Result<FetchReport> {
+    if max_calls.is_some() || yes {
+        return fetch_watched(
+            client,
+            credentials,
+            source,
+            output,
+            cache,
+            max_calls,
+            progress,
+        );
+    }
+    let estimate = estimate_calls(client, credentials, source, cache)?;
+    approval(&estimate, false, false, |_| false)?;
+    fetch_auth(
+        client,
+        credentials.as_auth(),
+        source,
+        output,
+        cache,
+        http::AUTO_BASE_CALLS.max(estimate.listing_calls),
+        true,
+        Some(&estimate),
+        progress,
+    )
 }
 
 /// The name of the account the keys belong to, from one cheap authenticated call. Nothing
@@ -211,6 +531,9 @@ pub fn session_user<C: HttpClient>(client: &mut C, credentials: &Credentials) ->
         credentials: Auth::ApiKeys(credentials),
         calls: 0,
         max_calls: 1,
+        auto: false,
+        progress: None,
+        needed: None,
     };
     let response = session
         .request("GET", &format!("{API}/users/sessioninfo"), "", b"")
@@ -302,6 +625,9 @@ pub fn fetch<C: HttpClient>(
         output,
         cache,
         max_calls,
+        false,
+        None,
+        None,
     )
 }
 
@@ -321,37 +647,91 @@ pub fn fetch_authenticated<C: HttpClient>(
         output,
         cache,
         max_calls,
+        false,
+        None,
+        None,
     )
 }
 
-fn fetch_auth<C: HttpClient>(
+/// Fetch with no fixed call limit. The limit starts at 50 and grows as the document's
+/// elements and body-detail requests are found, so an ordinary document finishes, and it
+/// stops at 2000 calls however large the document claims to be. Retries, polling and
+/// refetches draw on the same limit and never raise it.
+pub fn fetch_with_document_budget<C: HttpClient>(
     client: &mut C,
-    credentials: Auth<'_>,
+    credentials: &FetchAuth,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+) -> Result<FetchReport> {
+    fetch_auth(
+        client,
+        credentials.as_auth(),
+        source,
+        output,
+        cache,
+        http::AUTO_BASE_CALLS,
+        true,
+        None,
+        None,
+    )
+}
+
+/// [`fetch_authenticated`] with `Some(max_calls)`, else [`fetch_with_document_budget`],
+/// telling `progress` after each call.
+pub fn fetch_watched<'a, C: HttpClient>(
+    client: &'a mut C,
+    credentials: &'a FetchAuth,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+    max_calls: Option<u32>,
+    progress: Option<&'a mut dyn FetchProgress>,
+) -> Result<FetchReport> {
+    fetch_auth(
+        client,
+        credentials.as_auth(),
+        source,
+        output,
+        cache,
+        max_calls.unwrap_or(http::AUTO_BASE_CALLS),
+        max_calls.is_none(),
+        None,
+        progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fetch_auth<'a, C: HttpClient>(
+    client: &'a mut C,
+    credentials: Auth<'a>,
     source: &DocumentUrl,
     output: &Path,
     cache: &Path,
     max_calls: u32,
+    auto: bool,
+    after: Option<&Estimate>,
+    progress: Option<&'a mut dyn FetchProgress>,
 ) -> Result<FetchReport> {
-    id(&source.document)?;
-    id(&source.version)?;
-    id(&source.element)?;
-    for identifier in [&source.document, &source.version, &source.element] {
-        credentials.check_bytes(identifier.as_bytes())?;
-    }
-    if !matches!(source.kind.as_str(), "w" | "v") {
-        return Err(Error::new(
-            ErrorKind::Url,
-            "Choose an Onshape workspace or version URL.",
-        ));
-    }
+    check_source(&credentials, source)?;
     credentials.check_bytes(output.as_os_str().to_string_lossy().as_bytes())?;
     let mut session = Session {
         client,
         credentials,
-        calls: 0,
+        // Calls the estimate already made count against the same limit.
+        calls: after.map_or(0, |estimate| estimate.listing_calls),
         max_calls,
+        auto,
+        progress,
+        needed: None,
     };
-    let result = fetch_inner(&mut session, source, output, cache);
+    let result = fetch_inner(
+        &mut session,
+        source,
+        output,
+        cache,
+        after.map(|estimate| estimate.mid.as_str()),
+    );
     result.map_err(|mut error| {
         error.calls = session.calls;
         error
@@ -482,14 +862,30 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
     }
 }
 
-fn fetch_inner<C: HttpClient>(
+fn check_source(credentials: &Auth<'_>, source: &DocumentUrl) -> Result<()> {
+    id(&source.document)?;
+    id(&source.version)?;
+    id(&source.element)?;
+    for identifier in [&source.document, &source.version, &source.element] {
+        credentials.check_bytes(identifier.as_bytes())?;
+    }
+    if !matches!(source.kind.as_str(), "w" | "v") {
+        return Err(Error::new(
+            ErrorKind::Url,
+            "Choose an Onshape workspace or version URL.",
+        ));
+    }
+    Ok(())
+}
+
+/// The microversion to fetch, and the private folder for this account's cache. A workspace
+/// must be resolved again: caching its mutable head would return stale geometry. Versions are
+/// immutable, so their resolution may safely be reused without any API call.
+fn resolve<C: HttpClient>(
     session: &mut Session<'_, C>,
     source: &DocumentUrl,
-    output: &Path,
     cache: &Path,
-) -> Result<FetchReport> {
-    // A workspace must be resolved again: caching its mutable head would return stale geometry.
-    // Versions are immutable, so their resolution may safely be reused without any API call.
+) -> Result<(PathBuf, String)> {
     let scope = cache.join(session.credentials.scope());
     private_dir(&scope)?;
     let resolution = scope.join(format!(
@@ -505,7 +901,25 @@ fn fetch_inner<C: HttpClient>(
         }
         mid
     };
-    let mut mid = id(&mid).map_err(|_| response_error())?;
+    Ok((scope, id(&mid).map_err(|_| response_error())?))
+}
+
+fn fetch_inner<C: HttpClient>(
+    session: &mut Session<'_, C>,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+    known: Option<&str>,
+) -> Result<FetchReport> {
+    let (scope, mid) = match known {
+        Some(mid) => {
+            let scope = cache.join(session.credentials.scope());
+            private_dir(&scope)?;
+            (scope, mid.to_owned())
+        }
+        None => resolve(session, source, cache)?,
+    };
+    let mut mid = mid;
     let mut hits = 0;
     for attempt in 0..2 {
         match capture(
@@ -577,46 +991,8 @@ fn capture<C: HttpClient>(
     } else {
         mid
     };
-    let mut fetcher = Fetcher {
-        session,
-        cache: scope.join(&source.document).join(mid),
-        microversion: mid.into(),
-        content_kind,
-        file_sources: BTreeMap::new(),
-        pending_cache: BTreeMap::new(),
-        pending_bytes: 0,
-        skew: false,
-        hits: 0,
-        files: BTreeMap::new(),
-        total: 0,
-    };
-    private_dir(&fetcher.cache)?;
-    let document_path = fetcher.cache.join("document-name.json");
-    let name: String = if document_path.exists() {
-        serde_json::from_slice(&read_bounded(&document_path, MAX_RESPONSE)?)
-            .map_err(|_| response_error())?
-    } else {
-        let response = fetcher.session.request(
-            "GET",
-            &format!("{API}/documents/{}", source.document),
-            "",
-            &[],
-        )?;
-        if response.status != 200 {
-            return Err(response_error());
-        }
-        let value: Value = serde_json::from_slice(&response.body).map_err(|_| response_error())?;
-        let name = value
-            .get("name")
-            .and_then(Value::as_str)
-            .ok_or_else(response_error)?
-            .to_owned();
-        fetcher.session.credentials.check_bytes(name.as_bytes())?;
-        let bytes = serde_json::to_vec(&name).map_err(|_| response_error())?;
-        fetcher.session.credentials.check_bytes(&bytes)?;
-        private_write(&document_path, &bytes)?;
-        name
-    };
+    let mut fetcher = Fetcher::new(session, scope, source, mid, content_kind);
+    let name = document_name(&mut fetcher, source)?;
     let tabs = fetcher.json(
         &format!(
             "{API}/documents/d/{}/{content_kind}/{content_id}/elements",
@@ -653,6 +1029,7 @@ fn capture<C: HttpClient>(
             .get("elementType")
             .and_then(Value::as_str)
             .ok_or_else(response_error)?;
+        fetcher.session.allow(http::AUTO_ELEMENT_CALLS);
         let tab_name = tab
             .get("name")
             .and_then(Value::as_str)
@@ -704,6 +1081,17 @@ fn capture<C: HttpClient>(
                 // proves the name when the referenced studio has exactly one solid.
                 if ancestry.len() > 1 {
                     wanted.insert(list.len());
+                }
+                fetcher
+                    .session
+                    .allow(u32::try_from(wanted.len()).unwrap_or(u32::MAX));
+                if ancestry.len() == 1 && elements.is_empty() {
+                    fetcher.session.needed = Some(whole_fetch_calls(
+                        fetcher.session.calls,
+                        source,
+                        wanted.len(),
+                        sketch_only(list),
+                    ));
                 }
                 let mut indices = Vec::new();
                 for i in wanted {
@@ -818,6 +1206,89 @@ fn capture<C: HttpClient>(
         calls: fetcher.session.calls,
         cache_hits: *hits,
     }))
+}
+
+impl<'a, 'b, C: HttpClient> Fetcher<'a, 'b, C> {
+    fn new(
+        session: &'a mut Session<'b, C>,
+        scope: &Path,
+        source: &DocumentUrl,
+        mid: &str,
+        content_kind: &'static str,
+    ) -> Self {
+        Self {
+            session,
+            cache: scope.join(&source.document).join(mid),
+            microversion: mid.into(),
+            content_kind,
+            file_sources: BTreeMap::new(),
+            pending_cache: BTreeMap::new(),
+            pending_bytes: 0,
+            skew: false,
+            hits: 0,
+            files: BTreeMap::new(),
+            total: 0,
+        }
+    }
+
+    /// Whether a reply is already cached, so reading it costs no call.
+    fn is_cached(&self, path: &str, query: &str) -> bool {
+        self.cache
+            .join(hash(format!("{path}?{query}").as_bytes()))
+            .exists()
+    }
+}
+
+/// The document's name, from the cache when it is there and otherwise from one call.
+fn document_name<C: HttpClient>(
+    fetcher: &mut Fetcher<'_, '_, C>,
+    source: &DocumentUrl,
+) -> Result<String> {
+    private_dir(&fetcher.cache)?;
+    let document_path = fetcher.cache.join("document-name.json");
+    if document_path.exists() {
+        return serde_json::from_slice(&read_bounded(&document_path, MAX_RESPONSE)?)
+            .map_err(|_| response_error());
+    }
+    let response = fetcher.session.request(
+        "GET",
+        &format!("{API}/documents/{}", source.document),
+        "",
+        &[],
+    )?;
+    if response.status != 200 {
+        return Err(response_error());
+    }
+    let value: Value = serde_json::from_slice(&response.body).map_err(|_| response_error())?;
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(response_error)?
+        .to_owned();
+    fetcher.session.credentials.check_bytes(name.as_bytes())?;
+    let bytes = serde_json::to_vec(&name).map_err(|_| response_error())?;
+    fetcher.session.credentials.check_bytes(&bytes)?;
+    private_write(&document_path, &bytes)?;
+    Ok(name)
+}
+
+/// Calls a STEP export usually takes: the request, one poll, and the download.
+const STEP_CALLS: u32 = 3;
+
+/// The total calls a fetch of the root Part Studio needs, from its feature list: one per
+/// body-detail state, configuration, variables and sketches, the STEP export, and the final
+/// microversion check of a workspace. It does not foresee slow polls or retries.
+fn whole_fetch_calls(sent: u32, source: &DocumentUrl, snapshots: usize, sketch_only: bool) -> u32 {
+    let mut rest = u32::try_from(snapshots)
+        .unwrap_or(u32::MAX)
+        .saturating_add(3);
+    if !sketch_only {
+        rest = rest.saturating_add(STEP_CALLS);
+    }
+    if source.kind == "w" {
+        rest = rest.saturating_add(1);
+    }
+    sent.saturating_add(rest)
 }
 
 fn check_microversion(value: &Value, expected: &str) -> Result<()> {

@@ -410,9 +410,12 @@ pub(super) fn install_scope(
         &mut ir.design.containers,
         json!({"kind":"ordered","value":{"id":container,"kind":"timeline","members":members,"folders":[],"rollback":{"kind":"end"}}}),
     )?;
+    // Every body of a Part Studio comes from one of its features, so no body
+    // of the scope goes unproduced.
     push(
         &mut ir.design.scopes,
         json!({"definition":definition,"roots":[container],"active_arrangements":[],"occurrences":{},
+        "unproduced":[],
         "current":[{"at":{"kind":"after","value":{"kind":"feature","value":last}},"bodies":bodies,"poses":[],"status":"current"}]}),
     )?;
     Ok(())

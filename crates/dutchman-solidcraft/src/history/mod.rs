@@ -918,6 +918,24 @@ impl<'a> Context<'a> {
         })
     }
 
+    /// The SolidCraft name of the parameter the source feature names under the
+    /// `source_properties` key `key`, when that parameter holds `magnitude` (mm or radians)
+    /// as its own value. The name is inside `abs()` when the source signs it.
+    fn bound_parameter(&self, feature: &Value, key: &str, magnitude: f64) -> Option<String> {
+        let id = feature.pointer("/source_properties")?.get(key)?.as_str()?;
+        let row = self.row("parameters", id)?;
+        let value = row.pointer("/value/value")?.as_f64()?;
+        if (value.abs() - magnitude).abs() > 1e-6 * magnitude.max(1.0) {
+            return None;
+        }
+        let name = self.params.get(id)?;
+        Some(if value < 0.0 {
+            format!("abs({name})")
+        } else {
+            name.clone()
+        })
+    }
+
     fn id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
@@ -2511,7 +2529,10 @@ fn map_feature(
                 Some("thread" | "detailed_thread")
             ) =>
         {
-            Err("threads whose construction is unresolved are not supported yet".to_owned())
+            // The decoder found the thread but admitted none of its record layouts, so the
+            // design carries no designation, nominal size, pitch, faces or modeled flag:
+            // nothing says whether it is a cosmetic annotation or a modeled groove.
+            Err("threads whose construction is unresolved are not supported yet: the source's thread record was not decoded, so its designation, size, faces and whether it is cosmetic or modeled are unknown".to_owned())
         }
         Some("cosmetic_thread") => thread::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("pattern")

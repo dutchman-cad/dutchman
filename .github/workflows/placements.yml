@@ -32,6 +32,10 @@ jobs:
     outputs:
       run: ${{ steps.diff.outputs.run }}
       voron: ${{ steps.diff.outputs.voron }}
+      # Self-hosted 'flyer' runners: merge queue, main, and pull requests from this repository by
+      # people (never forks, never bots). FLYER=off sends everything to GitHub. A direct dispatch
+      # stays on GitHub. The caller's event decides when this runs as part of ci.yml.
+      flyer: ${{ vars.FLYER != 'off' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot')) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -62,9 +66,28 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Bookworm matches the Docker runtime; host Ubuntu binaries may need a newer glibc.
       - name: Build Dutchman
-        run: >
-          cargo build --release --locked -p dutchman -p dutchman-web --bins
-          --config profile.release.lto=false --config profile.release.codegen-units=16
+        # Three compile jobs, not the runner's four: a cold build (new cadmpeg source or a
+        # version bump) twice lost the runner after ~49 min with no log (jobs 137216756243 and
+        # 137251151767), which points at memory. The profile overrides stay (no LTO, 16 codegen
+        # units); neither changes what the converter computes. The heartbeat prints memory and
+        # the biggest processes each minute, so a lost runner leaves its last reading in the log.
+        env:
+          CARGO_BUILD_JOBS: 3
+        run: |
+          awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {printf "total %d MB, available %d MB\n", t/1024, a/1024}' /proc/meminfo
+          (
+            while sleep 60; do
+              echo "heartbeat $(date -u +%H:%M:%S): $(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {printf "total %d MB, available %d MB\n", t/1024, a/1024}' /proc/meminfo)"
+              awk '/^Name:/ {n=$2} /^VmRSS:/ {print $2, n}' /proc/[0-9]*/status 2>/dev/null | sort -rn | head -3 | awk '{printf "  %d MB %s\n", $1/1024, $2}' || true
+            done
+          ) &
+          heartbeat=$!
+          status=0
+          cargo build --release --locked -p dutchman -p dutchman-web --bins \
+            --config profile.release.lto=false --config profile.release.codegen-units=16 || status=$?
+          kill "$heartbeat" 2>/dev/null || true
+          awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {printf "total %d MB, available %d MB\n", t/1024, a/1024}' /proc/meminfo
+          exit "$status"
       - run: target/release/dutchman --version
       - uses: actions/upload-artifact@v7
         with:
@@ -78,8 +101,9 @@ jobs:
 
   placements:
     name: placements (${{ matrix.name }})
-    needs: build
-    runs-on: ubuntu-latest
+    needs: [changes, build]
+    # The two small checks need only python3 and curl, no root: they run on 'flyer' under the rule above.
+    runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     strategy:
       fail-fast: false

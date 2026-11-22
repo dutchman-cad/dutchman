@@ -15,6 +15,8 @@ pub enum Progress {
     Converting,
     Converted,
     Failed,
+    /// Stopped at a limit and resumable: not a failure.
+    Stopped,
     NotStarted,
     Skipped,
 }
@@ -29,6 +31,8 @@ pub enum Status {
     Flattened,
     Incomplete,
     Failed,
+    /// Stopped at a limit and resumable: not a failure.
+    Stopped,
     NotStarted,
     Skipped,
 }
@@ -285,6 +289,7 @@ impl FileView {
             Progress::Waiting => Status::Waiting,
             Progress::Converting => Status::Converting,
             Progress::Failed => Status::Failed,
+            Progress::Stopped => Status::Stopped,
             Progress::NotStarted => Status::NotStarted,
             Progress::Skipped => Status::Skipped,
             Progress::Converted if incomplete => Status::Incomplete,
@@ -304,6 +309,7 @@ impl FileView {
                 };
                 (word, if status == Status::Converted { 2 } else { 1 })
             }
+            Status::Stopped => ("Stopped", 3),
             Status::Waiting => ("Waiting", 3),
             Status::Converting => ("Converting", 3),
             Status::NotStarted => ("Not started", 3),
@@ -353,7 +359,7 @@ impl FileView {
             None
         } else if progress == Progress::Converted && report.is_some() {
             Some(ReportCase::Converted)
-        } else if error.is_some() {
+        } else if error.is_some() && progress != Progress::Stopped {
             Some(ReportCase::Failed)
         } else {
             None
@@ -402,6 +408,7 @@ pub struct Counts {
     pub converted: usize,
     pub incomplete: usize,
     pub failed: usize,
+    pub stopped: usize,
     pub not_started: usize,
     pub skipped: usize,
 }
@@ -435,6 +442,7 @@ impl RunView {
                 | Status::Flattened
                 | Status::Incomplete => counts.converted += 1,
                 Status::Failed => counts.failed += 1,
+                Status::Stopped => counts.stopped += 1,
                 Status::NotStarted => counts.not_started += 1,
                 Status::Skipped => counts.skipped += 1,
                 _ => {}
@@ -449,17 +457,25 @@ impl RunView {
             if running {
                 return format!(
                     "{} of {} done",
-                    counts.converted + counts.failed,
+                    counts.converted + counts.failed + counts.stopped,
                     files.len()
                 );
             }
+            // A stop is resumable, so it is not counted as a failure.
+            let failed_or_stopped = if counts.stopped > 0 && counts.failed == 0 {
+                format!("{} stopped", counts.stopped)
+            } else if counts.stopped > 0 {
+                format!("{} failed, {} stopped", counts.failed, counts.stopped)
+            } else {
+                format!("{} failed", counts.failed)
+            };
             let mut text = if counts.incomplete > 0 {
                 format!(
-                    "{} converted ({} incomplete), {} failed",
-                    counts.converted, counts.incomplete, counts.failed
+                    "{} converted ({} incomplete), {failed_or_stopped}",
+                    counts.converted, counts.incomplete
                 )
             } else {
-                format!("{} converted, {} failed", counts.converted, counts.failed)
+                format!("{} converted, {failed_or_stopped}", counts.converted)
             };
             if counts.not_started > 0 {
                 text.push_str(&format!(", {} not started", counts.not_started));
@@ -572,6 +588,13 @@ pub fn outcome(report: &Value) -> String {
         && report.get("ok") == Some(&Value::Bool(true))
     {
         text.push_str(" Converted on its own after running out of memory alongside other files.");
+    }
+    if let Some(message) = report
+        .pointer("/source_errors/message")
+        .and_then(Value::as_str)
+    {
+        text.push(' ');
+        text.push_str(message);
     }
     if let Some(reason) = report
         .pointer("/history_check_skipped/reason")
@@ -1071,6 +1094,7 @@ mod tests {
         for (progress, status, word) in [
             (Progress::Waiting, Status::Waiting, "Waiting"),
             (Progress::Converting, Status::Converting, "Converting"),
+            (Progress::Stopped, Status::Stopped, "Stopped"),
             (Progress::NotStarted, Status::NotStarted, "Not started"),
             (Progress::Skipped, Status::Skipped, "Skipped"),
         ] {
@@ -1103,6 +1127,7 @@ mod tests {
         for progress in [
             Progress::Waiting,
             Progress::Converting,
+            Progress::Stopped,
             Progress::NotStarted,
             Progress::Skipped,
             Progress::Converted,
@@ -1133,6 +1158,7 @@ mod tests {
                 converted: 3,
                 incomplete: 1,
                 failed: 2,
+                stopped: 0,
                 skipped: 4,
                 not_started: 0
             }
@@ -1141,6 +1167,19 @@ mod tests {
             run.summary.as_deref(),
             Some("3 converted (1 incomplete), 2 failed")
         );
+        let stopped = vec![FileView::new(
+            Path::new("a"),
+            None,
+            Progress::Stopped,
+            Some(
+                &json!({"ok": false, "error": {"message": "Stopped after 50 Onshape API calls."}}),
+            ),
+        )];
+        let run = RunView::new(stopped, None, false);
+        assert_eq!(run.summary.as_deref(), Some("0 converted, 1 stopped"));
+        assert_eq!(run.first_to_show, 0);
+        assert!(!run.files[0].1.can_report);
+        assert_eq!(run.files[0].1.status_word, "Stopped");
         let files = vec![FileView::new(
             Path::new("a"),
             None,

@@ -1,3 +1,6 @@
+> **Paused (2026-11-22).** Dutchman doesn't use issue claims for now: open a pull request when
+> you're ready. The claim bot is switched off; this page describes how it worked, for if it returns.
+
 # Claiming an issue
 
 Comment `/claim` on an open issue before starting. The command must start the comment

@@ -2093,3 +2093,350 @@ fn assert_face_sketch_refused(model: &dutchman_core::Model, report: &dutchman_co
         && loss.code.as_deref() == Some("onshape/history.not-supported")
         && loss.detail.contains("kept the final STEP geometry")));
 }
+
+/// Answers each endpoint from the fixtures, so a document of any size can be fetched.
+struct Router {
+    creators: usize,
+    sent: u32,
+}
+impl HttpClient for Router {
+    fn send(&mut self, request: &Request) -> Result<Response> {
+        self.sent += 1;
+        let path = request.path.as_str();
+        let fixture = |text: &str| response(200, serde_json::from_str(text).unwrap());
+        Ok(if path.ends_with("/currentmicroversion") {
+            response(200, json!({"microversion": MID}))
+        } else if path.ends_with(&format!("/documents/{DID}")) {
+            response(200, json!({"name": "Synthetic document"}))
+        } else if path.ends_with("/elements") {
+            response(
+                200,
+                json!([{"id": PS, "elementType": "PARTSTUDIO", "name": "Synthetic tab"}]),
+            )
+        } else if path.ends_with("/features") {
+            let mut features: Value =
+                serde_json::from_str(include_str!("fixtures/onshape/partstudio.json")).unwrap();
+            let list = features["features"].as_array_mut().unwrap();
+            let mut extrude = list
+                .iter()
+                .find(|f| f["featureType"] == "extrude")
+                .unwrap()
+                .clone();
+            extrude["parameters"].as_array_mut().unwrap().push(
+                json!({"btType":"BTMParameterEnum-145","parameterId":"operationType","value":"NEW"}),
+            );
+            for i in 0..self.creators {
+                extrude["featureId"] = json!(format!("part-{i}"));
+                list.push(extrude.clone());
+            }
+            response(200, features)
+        } else if path.ends_with("/bodydetails") {
+            fixture(include_str!("fixtures/onshape/bodydetails.json"))
+        } else if path.ends_with("/configuration") {
+            fixture(include_str!("fixtures/onshape/configuration.json"))
+        } else if path.ends_with("/variables") {
+            fixture(include_str!("fixtures/onshape/variables.json"))
+        } else if path.ends_with("/sketches") {
+            response(200, sketch_information(MID))
+        } else if request.method == "POST" && path.ends_with("/export/step") {
+            response(
+                200,
+                json!({"id":"export-job","requestState":"DONE","documentId":DID,"resultDocumentId":DID,"requestElementId":PS,"resultExternalDataIds":["step-file"]}),
+            )
+        } else if path.contains("/externaldata/") {
+            Response {
+                status: 200,
+                headers: BTreeMap::new(),
+                body: include_bytes!("fixtures/onshape/export.step").to_vec(),
+            }
+        } else {
+            panic!("unexpected request {path}");
+        })
+    }
+    fn now(&self) -> SystemTime {
+        httpdate::parse_http_date("Wed, 11 Nov 2026 12:00:00 GMT").unwrap()
+    }
+    fn nonce(&self) -> Result<String> {
+        Ok("fixedNONCE".into())
+    }
+    fn sleep(&mut self, _delay: Duration) {}
+}
+
+fn fetch_by_default(creators: usize) -> (Result<FetchReport>, u32) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router { creators, sent: 0 };
+    let result = fetch_with_document_budget(
+        &mut router,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+    );
+    (result, router.sent)
+}
+
+#[test]
+fn a_document_needing_more_than_fifty_calls_fetches_with_the_default_budget() {
+    let (result, sent) = fetch_by_default(60);
+    let report = result.unwrap();
+    assert!(report.calls > 50, "{}", report.calls);
+    assert_eq!(report.calls, sent);
+}
+
+#[test]
+fn the_default_budget_still_stops_a_runaway_document() {
+    // Thousands of part-making features would need thousands of calls.
+    let (result, sent) = fetch_by_default(3000);
+    let error = result.err().unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(error.calls, 2000);
+    assert_eq!(sent, 2000);
+}
+
+#[test]
+fn an_explicit_budget_is_never_raised_by_the_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 60,
+        sent: 0,
+    };
+    let error = fetch(
+        &mut router,
+        &credentials(),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        50,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(router.sent, 50);
+}
+
+fn listing_mock(tabs: Value) -> Mock {
+    Mock {
+        replies: VecDeque::from([
+            response(200, json!({"microversion": MID})),
+            response(200, json!({"name": "Synthetic mechanism"})),
+            response(200, tabs),
+        ]),
+        ..Mock::default()
+    }
+}
+
+fn big_assembly_tabs() -> Value {
+    json!([
+        {"id": AS, "elementType": "ASSEMBLY", "name": "Assembly"},
+        {"id": PS, "elementType": "PARTSTUDIO", "name": "First"},
+        {"id": "666666666666666666666666", "elementType": "PARTSTUDIO", "name": "Second"},
+        {"id": "777777777777777777777777", "elementType": "BLOB", "name": "Drawing"},
+    ])
+}
+
+#[test]
+fn the_estimate_counts_the_listing_calls_and_the_elements_and_skips_cached_replies() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache");
+    let auth = FetchAuth::ApiKeys(credentials());
+    let mut mock = listing_mock(big_assembly_tabs());
+    let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
+    // Three listing calls, then 30 for each of the assembly and its two studios.
+    assert_eq!(mock.sent.len(), 3);
+    assert_eq!(estimate.listing_calls, 3);
+    assert_eq!(estimate.elements, 3);
+    assert_eq!(estimate.calls, 93);
+    assert!(estimate.needs_approval());
+    assert!(estimate.question().contains("about 93"));
+    assert!(estimate.question().contains("2,500"));
+    // The listing is cached, so a second estimate makes no request and counts none.
+    let mut idle = Mock::default();
+    let again = estimate_calls(&mut idle, &auth, &source(AS), &cache).unwrap();
+    assert!(idle.sent.is_empty());
+    assert_eq!(again.listing_calls, 0);
+    assert_eq!(again.calls, 90);
+}
+
+#[test]
+fn a_part_studio_is_estimated_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let estimate = estimate_calls(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("cache"),
+    )
+    .unwrap();
+    assert_eq!((estimate.elements, estimate.calls), (1, 33));
+    assert!(!estimate.needs_approval());
+}
+
+#[test]
+fn a_large_fetch_without_a_go_stops_with_the_estimate_and_spends_only_the_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let error = fetch_gated(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(AS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        false,
+    )
+    .err()
+    .unwrap();
+    // The mock panics on a fourth request, so the listing was all it spent.
+    assert_eq!(mock.sent.len(), 3);
+    assert_eq!(error.kind, ErrorKind::Approval);
+    assert_eq!((error.calls, error.estimate), (3, Some(93)));
+    assert!(!dir.path().join("test.onshape-bundle").exists());
+    let report = dutchman::json::onshape_fetch(&Err(error));
+    assert_eq!(report["error"]["code"], "onshape/approval");
+    assert_eq!(report["estimated_calls"], 93);
+    assert_eq!(report["calls"], 3);
+    let message = report["error"]["message"].as_str().unwrap();
+    assert!(message.contains("--yes") && message.contains("max_calls"));
+}
+
+#[test]
+fn the_command_line_asks_on_a_terminal_and_stops_off_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let big = estimate_calls(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(AS),
+        &dir.path().join("cache"),
+    )
+    .unwrap();
+    let off_terminal = approval(&big, false, false, |_| panic!("must not ask")).unwrap_err();
+    assert_eq!(off_terminal.kind, ErrorKind::Approval);
+    assert!(off_terminal.message.contains("--yes"));
+    assert!(off_terminal.message.contains("--max-calls"));
+    assert!(approval(&big, true, false, |_| panic!("must not ask")).is_ok());
+    assert!(approval(&big, false, true, |_| true).is_ok());
+    let declined = approval(&big, false, true, |_| false).unwrap_err();
+    assert_eq!(declined.message, APPROVAL_DECLINED);
+    let small_dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let small = estimate_calls(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &small_dir.path().join("cache"),
+    )
+    .unwrap();
+    assert!(approval(&small, false, false, |_| panic!("must not ask")).is_ok());
+}
+
+#[test]
+fn a_gated_fetch_under_the_limit_counts_the_listing_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 60,
+        sent: 0,
+    };
+    let report = fetch_gated(
+        &mut router,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        false,
+    )
+    .unwrap();
+    assert!(report.calls > 50);
+    assert_eq!(report.calls, router.sent);
+}
+
+#[test]
+fn an_explicit_max_calls_is_the_ceiling_and_the_consent_with_no_estimate() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 60,
+        sent: 0,
+    };
+    let error = fetch_gated(
+        &mut router,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        Some(40),
+        false,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(router.sent, 40);
+}
+
+#[test]
+fn cached_replies_cost_no_calls_and_do_not_count_against_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 3,
+        sent: 0,
+    };
+    let fetched = |router: &mut Router, max: u32| {
+        fetch_gated(
+            router,
+            &FetchAuth::ApiKeys(credentials()),
+            &source(PS),
+            &dir.path().join("test.onshape-bundle"),
+            &dir.path().join("cache"),
+            Some(max),
+            false,
+        )
+    };
+    let first = fetched(&mut router, 500).unwrap();
+    assert!(first.calls > 0);
+    let sent = router.sent;
+    // Everything is cached now, so even a limit of zero fetches it again.
+    let second = fetched(&mut router, 0).unwrap();
+    assert_eq!((second.calls, router.sent), (0, sent));
+    assert!(second.cache_hits > 0);
+}
+
+#[test]
+fn call_counts_group_thousands_from_one_thousand() {
+    use dutchman::onshape::calls_text;
+    assert_eq!(calls_text(0), "0");
+    assert_eq!(calls_text(999), "999");
+    assert_eq!(calls_text(1000), "1,000");
+    assert_eq!(calls_text(2500), "2,500");
+    assert_eq!(calls_text(1234567), "1,234,567");
+}
+
+#[derive(Default)]
+struct Counted(Vec<(u32, Option<u32>)>);
+impl FetchProgress for Counted {
+    fn calls(&mut self, sent: u32, needed: Option<u32>) {
+        self.0.push((sent, needed));
+    }
+}
+#[test]
+fn progress_counts_each_call_and_estimates_after_the_feature_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = partstudio_mock(MID, "1");
+    let mut counted = Counted::default();
+    let report = fetch_watched(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut counted),
+    )
+    .unwrap();
+    assert_eq!(report.calls, 11);
+    let sent: Vec<u32> = counted.0.iter().map(|(sent, _)| *sent).collect();
+    assert_eq!(sent, (1..=11).collect::<Vec<_>>());
+    // Microversion, document, tabs and features come before the estimate.
+    assert!(counted.0[..4].iter().all(|(_, needed)| needed.is_none()));
+    assert!(counted.0[4..].iter().all(|(_, needed)| *needed == Some(11)));
+}

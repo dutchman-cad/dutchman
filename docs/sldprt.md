@@ -6,7 +6,7 @@ decoding land in cadmpeg and reach Dutchman when the pin is bumped. This page sa
 Dutchman makes of what that codec gives, and which upstream gaps keep SolidWorks history from
 replaying. It drives what is asked of cadmpeg next.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`bb8c69a7`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`12ade170`, after cadmpeg 0.6.12).
 Assembly decoding completes the document root after projecting the component tree,
 so assemblies retain one root definition and project conversion can group their referenced parts.
 

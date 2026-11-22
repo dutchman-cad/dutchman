@@ -446,3 +446,49 @@ fn solidworks_assembly_resolves_parts_and_keeps_reader_losses() {
         );
     }
 }
+
+/// FreeCAD saves a feature that failed its last recompute as `Invalid="1"` with its message
+/// on the object. The fixture's Fillet (labelled "Edge rounding") has that; its Body is only
+/// touched, which is not an error.
+#[cfg(feature = "freecad")]
+#[test]
+fn errors_a_freecad_file_already_had_are_reported_apart_from_losses() {
+    let mut report = Report::default();
+    read(
+        Format::FreeCadDocument,
+        &fixture("freecad_preexisting_error.FCStd"),
+        &mut report,
+    )
+    .unwrap();
+    let errors = report.source_errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].name, "Fillet");
+    assert_eq!(errors[0].label, "Edge rounding");
+    assert_eq!(
+        errors[0].message.as_deref(),
+        Some("BRep_API: command not done")
+    );
+    assert_eq!(
+        report.source_errors_message().unwrap(),
+        "This file already had errors in FreeCAD before converting: Edge rounding (fix them in \
+         FreeCAD for a full conversion)."
+    );
+    assert!(
+        report
+            .losses()
+            .iter()
+            .all(|loss| !loss.detail.contains("already had errors")),
+        "{report:?}"
+    );
+
+    // A file with no failed feature says nothing.
+    let mut clean = Report::default();
+    read(
+        Format::FreeCadDocument,
+        &fixture("design_history.FCStd"),
+        &mut clean,
+    )
+    .unwrap();
+    assert!(clean.source_errors().is_empty());
+    assert_eq!(clean.source_errors_message(), None);
+}

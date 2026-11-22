@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 dutchman-core.workspace = true
-dutchman-solidcraft.workspace = true
+dutchman-solidcraft = { workspace = true, features = ["onshape"] }
 serde_json.workspace = true
 tempfile.workspace = true
 

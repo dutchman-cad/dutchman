@@ -148,10 +148,24 @@ pub(crate) fn map(
         written.insert(parameter.id.as_str().to_owned(), name.clone());
         out.push(json!({"name": name, "expr": expr,
             "unit": display_unit(parameter).unwrap_or_else(|| units.get(name).map_or("", String::as_str)),
-            "model": parameter.owner.is_some() && !cells.contains_key(parameter.id.as_str()),
+            "model": parameter.owner.is_some() && !cells.contains_key(parameter.id.as_str())
+                || inventor_model_parameter(parameter),
         }));
     }
     (out, written)
+}
+
+/// Inventor names the parameters its features and sketch dimensions create `d0`, `d1`, ...;
+/// the parameters a user adds carry the names the user gave them.
+fn inventor_model_parameter(parameter: &DesignParameter) -> bool {
+    parameter
+        .id
+        .as_str()
+        .starts_with("inventor:design:parameter#")
+        && parameter
+            .name
+            .strip_prefix('d')
+            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// A neutral parameter may retain a preferred display unit independently of its
@@ -508,6 +522,14 @@ impl<'a> Bindings<'a> {
                     return Err(format!("unsupported function {word}"));
                 }
                 append(&mut out, word)?;
+            } else if matches!(word, "ul" | "grad")
+                && follows_number(expression, start)
+                && !names_dependency(self, p, word)
+            {
+                if word == "grad" {
+                    return Err("unit grad (gradians) has no SolidCraft unit".to_owned());
+                }
+                out.truncate(out.trim_end().len());
             } else if reserved(word)
                 && !p.dependencies.iter().any(|id| {
                     self.parameters
@@ -528,6 +550,25 @@ impl<'a> Bindings<'a> {
         validate(&out, &self.names)?;
         Ok(out)
     }
+}
+
+/// Whether a unit word at `start` follows a number or a closing parenthesis, as in `2 ul`.
+fn follows_number(expression: &str, start: usize) -> bool {
+    expression
+        .get(..start)
+        .map(str::trim_end)
+        .and_then(|before| before.chars().next_back())
+        .is_some_and(|c| c.is_ascii_digit() || c == '.' || c == ')')
+}
+
+/// Whether `word` is the name of a parameter `p` depends on.
+fn names_dependency(bindings: &Bindings<'_>, p: &DesignParameter, word: &str) -> bool {
+    p.dependencies.iter().any(|id| {
+        bindings
+            .parameters
+            .get(id.as_str())
+            .is_some_and(|(dependency, _)| dependency.name == word)
+    })
 }
 
 /// Whole identifiers, including qualified properties and label references. Numeric
@@ -902,6 +943,73 @@ mod map_tests {
             ]
         );
         assert!(report.losses().is_empty(), "{:?}", report.losses());
+    }
+
+    fn inventor(mut row: Value) -> Value {
+        let key = row["ordinal"].as_u64().unwrap();
+        row["id"] = json!(format!("inventor:design:parameter#{key}"));
+        row["dependencies"] = json!(row["dependencies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_str().unwrap().replace("f3d:model", "inventor:design"))
+            .collect::<Vec<_>>());
+        row
+    }
+
+    #[test]
+    fn inventor_expressions_keep_their_graph_with_user_and_model_parameters() {
+        let length = |v: f64| json!({"kind": "length", "value": v});
+        let parameters = json!([
+            inventor(parameter(1, "Width", "40 mm", length(40.0), false)),
+            inventor(depending(
+                parameter(2, "Height", "(Width) / (2 ul)", length(20.0), false),
+                &[1]
+            )),
+            inventor(depending(
+                parameter(3, "d0", "((Width) / (2 ul)) + (5 mm)", length(25.0), false),
+                &[1]
+            )),
+            inventor(depending(
+                parameter(4, "d1", "(Height) * (1.5 ul)", length(30.0), false),
+                &[2]
+            )),
+            inventor(depending(
+                parameter(5, "d2", "-(d1)", length(-30.0), false),
+                &[4]
+            )),
+            inventor(depending(
+                parameter(6, "d3", "(10 grad) + (d1)", length(30.0), false),
+                &[4]
+            )),
+        ]);
+        let model = with(cube(), json!([]), parameters);
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        let expr = |name: &str| {
+            params
+                .iter()
+                .find(|p| p["name"] == name)
+                .map(|p| (p["expr"].as_str().unwrap().to_owned(), p["model"].clone()))
+        };
+        assert_eq!(expr("Width"), Some(("40 mm".to_owned(), json!(false))));
+        assert_eq!(
+            expr("Height"),
+            Some(("(Width) / (2)".to_owned(), json!(false)))
+        );
+        assert_eq!(
+            expr("d0"),
+            Some(("((Width) / (2)) + (5 mm)".to_owned(), json!(true)))
+        );
+        assert_eq!(
+            expr("d1"),
+            Some(("(Height) * (1.5)".to_owned(), json!(true)))
+        );
+        assert_eq!(expr("d2"), Some(("-(d1)".to_owned(), json!(true))));
+        assert_eq!(expr("d3"), Some(("30 mm".to_owned(), json!(true))));
+        let losses = report.losses();
+        assert_eq!(losses.len(), 1, "{losses:?}");
+        assert!(losses[0].detail.contains("gradians"), "{losses:?}");
     }
 
     fn depending(row: Value, on: &[u32]) -> Value {

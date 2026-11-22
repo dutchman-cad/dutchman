@@ -644,10 +644,28 @@ impl App {
     pub fn set_link_transport_for_test(
         &mut self,
         transport: std::sync::Arc<dyn crate::paste::Transport>,
-        fetch: fn(String, &Path) -> Result<PathBuf, String>,
+        fetch: crate::paste::Fetch,
     ) {
         self.intake.transport = transport;
         self.intake.fetch = fetch;
+        self.intake.continue_fetch = fetch;
+        // No estimate, so no question: the fetch runs as before.
+        self.intake.estimate = |_, _| Ok(0);
+    }
+
+    /// Replaces the call estimate for headless UI tests.
+    #[doc(hidden)]
+    pub fn set_estimate_for_test(
+        &mut self,
+        estimate: fn(String, Option<PathBuf>) -> Result<u32, String>,
+    ) {
+        self.intake.estimate = estimate;
+    }
+
+    /// The message a fetch that stopped at the request limit ends with, for UI tests.
+    #[doc(hidden)]
+    pub fn budget_stop_message_for_test() -> String {
+        crate::onshape::budget_stop_text(50, Some(1500))
     }
 
     fn accept_paste(&mut self, files: Vec<PathBuf>, text: &str, ctx: &egui::Context) {
@@ -688,6 +706,7 @@ impl App {
     fn next_link(&mut self, ctx: &egui::Context) {
         if self.running()
             || self.intake.prompt.is_some()
+            || self.intake.approval.is_some()
             || self.intake.choosing_output.is_some()
             || self.updater.blocks_conversions()
         {
@@ -777,6 +796,14 @@ impl App {
                         Err(why) => self.notice = Some(why),
                     }
                 }
+                Message::Calls(sent, needed) => {
+                    self.set_transfer_caption(match needed {
+                        Some(needed) if needed >= sent => {
+                            format!("Fetching from Onshape: {sent} of about {needed} API calls…")
+                        }
+                        _ => format!("Fetching from Onshape: {sent} API calls…"),
+                    });
+                }
                 Message::Progress(bytes, size) => {
                     self.intake.progress = Some((bytes, size));
                     let total = size.map_or_else(
@@ -787,6 +814,17 @@ impl App {
                         "Downloading: {:.1} MB of {total}",
                         bytes as f64 / 1_000_000.0
                     ));
+                }
+                Message::NeedsApproval(link, calls) => {
+                    // Nothing was fetched: take the placeholder row back and ask first.
+                    self.intake.active = false;
+                    self.intake.row = None;
+                    self.rows.clear();
+                    self.intake.approval = Some(crate::paste::Approval {
+                        link,
+                        estimate: Some(calls),
+                        resume: false,
+                    });
                 }
                 Message::Finished(result) => {
                     self.intake.active = false;
@@ -800,19 +838,86 @@ impl App {
                             self.start(ctx);
                         }
                         Err(why) => {
-                            if let Some(row) = row.and_then(|index| self.rows.get_mut(index)) {
-                                row.status = Status::Failed;
-                                row.progress = None;
-                                row.report = Some(serde_json::json!({ "ok": false,
-                                    "error": { "code": "desktop/download", "message": why } }));
+                            // A stop at the request limit can be continued, so it is not a
+                            // failure: no red, no problem report, no notice line.
+                            let stop = crate::onshape::parse_budget_stop(&why);
+                            if let Some((_, remaining)) = stop {
+                                self.intake.resumable = self.intake.last_onshape.clone();
+                                self.intake.stop_remaining = remaining;
                             }
-                            self.notice = Some(why);
+                            if let Some(row) = row.and_then(|index| self.rows.get_mut(index)) {
+                                row.status = if stop.is_some() {
+                                    Status::Stopped
+                                } else {
+                                    Status::Failed
+                                };
+                                row.progress = None;
+                                let code = if stop.is_some() {
+                                    "onshape/budget"
+                                } else {
+                                    "desktop/download"
+                                };
+                                row.report = Some(serde_json::json!({ "ok": false,
+                                    "error": { "code": code, "message": why } }));
+                            }
+                            if stop.is_none() {
+                                self.notice = Some(why);
+                            }
                         }
                     }
                 }
             }
         }
         self.next_link(ctx);
+    }
+
+    /// Asks before a fetch spends a share of the account's yearly Onshape API calls.
+    fn approval_window(&mut self, ctx: &egui::Context) {
+        let Some(approval) = self.intake.approval.clone() else {
+            return;
+        };
+        let mut go = false;
+        let mut cancel = false;
+        // Centred on the app window and fixed there, like a dialog.
+        egui::Window::new("Onshape API calls")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                let (before, number, after) =
+                    crate::onshape::approval_parts(approval.estimate, approval.resume);
+                let mut text = egui::text::LayoutJob::default();
+                let plain = egui::TextStyle::Body.resolve(ui.style());
+                let bold =
+                    egui::FontId::new(plain.size, egui::FontFamily::Name(theme::SEMIBOLD.into()));
+                let colour = ui.visuals().text_color();
+                for (part, font) in [(before, &plain), (number, &bold), (after, &plain)] {
+                    text.append(&part, 0.0, egui::TextFormat::simple(font.clone(), colour));
+                }
+                ui.label(text);
+                ui.horizontal(|ui| {
+                    go = ui.button("Continue").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+        if cancel {
+            self.intake.approval = None;
+            if !approval.resume {
+                self.notice =
+                    Some("Fetch cancelled. No more Onshape API calls were used.".to_owned());
+            }
+        }
+        if go {
+            self.intake.approval = None;
+            if !approval.resume {
+                self.intake.approved = true;
+            } else {
+                self.intake.resumable = None;
+                self.intake.continuing = true;
+            }
+            self.open_source(crate::paste::Source::Onshape(approval.link), ctx);
+        }
     }
 
     fn download_window(&mut self, ctx: &egui::Context) {
@@ -2055,6 +2160,7 @@ impl App {
             self.queue_link(crate::paste::Source::Onshape(link), ctx);
         }
         self.download_window(ctx);
+        self.approval_window(ctx);
         let can_restart =
             !self.running() && (!self.updater.windows_package() || self.diagnosis.is_none());
         self.updater.windows(ctx, can_restart, self.header_bottom);
@@ -3080,6 +3186,14 @@ impl App {
                     if let Some(chosen) = chosen {
                         action = Some(chosen);
                     }
+                    if index == 0
+                        && !running
+                        && self.intake.resumable.is_some()
+                        && self.intake.approval.is_none()
+                        && ui.button("Continue fetching").clicked()
+                    {
+                        action = Some(Action::ContinueFetch);
+                    }
                 });
                 if first == Some(index) {
                     shown.scroll_to_me(Some(Align::Min));
@@ -3138,6 +3252,17 @@ impl App {
             }
             Action::Notice(message) => {
                 self.notice = Some(message);
+                Ok(())
+            }
+            Action::ContinueFetch => {
+                // Ask first: it may spend a large share of the yearly calls.
+                if let Some(link) = self.intake.resumable.clone() {
+                    self.intake.approval = Some(crate::paste::Approval {
+                        link,
+                        estimate: self.intake.stop_remaining,
+                        resume: true,
+                    });
+                }
                 Ok(())
             }
             Action::Pick(pick) => {
@@ -3232,9 +3357,15 @@ impl App {
 
     /// The row the report panel is about: the one chosen, else the first that needs attention.
     fn report_index(&self, view: &present::RunView) -> Option<usize> {
+        // A stop at the request limit is resumable, not a problem to report.
+        let reportable = |index: &usize| {
+            self.rows
+                .get(*index)
+                .is_some_and(|row| row.status != Status::Stopped)
+        };
         self.report_row
-            .filter(|index| *index < self.rows.len())
-            .or_else(|| (!self.rows.is_empty()).then_some(view.first_to_show))
+            .filter(reportable)
+            .or_else(|| Some(view.first_to_show).filter(reportable))
     }
 
     /// The full report panel in the narrow page, reached by scrolling or the pinned bar.
@@ -3480,6 +3611,8 @@ enum Action {
     OpenReport(usize),
     /// Choose the row's file in the report panel.
     SelectReport(usize),
+    /// Carry on an Onshape fetch that stopped at the request limit.
+    ContinueFetch,
 }
 
 /// Completed designs with missing history or degraded content need review.
@@ -3500,6 +3633,7 @@ fn result_colour(p: &Palette, report: Option<&Value>, view: &FileView) -> egui::
             p.lantern_text
         }
         present::Status::Converted | present::Status::ConvertedWithLosses => p.spectre,
+        present::Status::Stopped => p.lantern_text,
         present::Status::Failed => p.danger,
         _ => p.tide,
     }
@@ -3537,7 +3671,8 @@ fn row_ui(
         ui.add(egui::Label::new(RichText::new(&view.name).heading()).wrap())
             .on_hover_text(display(&row.input));
     });
-    let step_button = !running && row.report.is_some();
+    let stopped = row.status == Status::Stopped;
+    let step_button = !running && row.report.is_some() && !stopped;
     let bundle =
         crate::onshape::is_bundle(&row.input) && row.input.is_file() && row.report.is_some();
     if output.is_some() || step_button || bundle {
@@ -3650,6 +3785,11 @@ fn row_ui(
                 }
             });
         });
+    }
+    if let Some(message) = view.error.as_ref().filter(|_| stopped) {
+        // Resumable, so only the plain explanation: no log, no problem report.
+        text_with_links(ui, message, p.lantern_text);
+        return action;
     }
     if let Some(message) = &view.error {
         text_with_links(ui, message, p.danger);
@@ -4418,7 +4558,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
             let mut app = App::new(cc);
             app.options.no_verify = true;
-            app.found_version = Some("0.45.2".into());
+            app.found_version = Some("0.46.2".into());
             app.rows.push(Row {
                 input: PathBuf::from("synthetic.f3d"),
                 output: Some(PathBuf::from("synthetic.sc")),

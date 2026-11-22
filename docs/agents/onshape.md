@@ -6,8 +6,8 @@ pull-request rules. This page adds what is specific to Onshape.
 
 ## Where the work splits
 
-First, comment `/claim` on the issue. Comment `/unclaim` to release it; see the
-[24-hour draft deadline, five-day activity rule and exceptions](../claiming.md).
+Open a pull request when you're ready; for a bigger change, a short comment on the issue first
+helps avoid duplicate work (it isn't a reservation).
 
 Onshape is a web application, so Dutchman works from a `.onshape-bundle`: a ZIP of the Onshape
 REST responses for one Part Studio at one pinned microversion ([docs/onshape.md](../onshape.md)).
@@ -45,6 +45,5 @@ docs work (#897) are Dutchman's.
 
 ```text
 Work on <URL>
-Comment /claim on the issue first
 Read AGENTS.md and docs/agents/onshape.md, then follow the issue brief.
 ```

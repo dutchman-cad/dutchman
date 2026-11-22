@@ -307,11 +307,13 @@ fn onshape_fetch(args: &Map<String, Value>) -> Result<Value, String> {
             }
         };
         let max_calls = match args.get("max_calls") {
-            None => 50,
-            Some(value) => value
-                .as_u64()
-                .and_then(|v| u32::try_from(v).ok())
-                .ok_or("max_calls must be a whole number from 0 to 4294967295")?,
+            None => None,
+            Some(value) => Some(
+                value
+                    .as_u64()
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or("max_calls must be a whole number from 0 to 4294967295")?,
+            ),
         };
         Ok(crate::onshape::FetchOptions {
             document_url: document_url.into(),
@@ -319,6 +321,7 @@ fn onshape_fetch(args: &Map<String, Value>) -> Result<Value, String> {
             version: text("version")?,
             bearer_token_file: text("bearer_token_file")?.map(std::path::PathBuf::from),
             max_calls,
+            yes: false,
             json: true,
         })
     })();
@@ -426,12 +429,13 @@ fn tools() -> Value {
                 "document_url": {"type": "string"}, "out": {"type": "string", "description": "Bundle file path. An existing file is replaced only after a successful fetch."},
                 "version": {"type": "string", "description": "Immutable Onshape version ID overriding the URL."},
                 "bearer_token_file": {"type": "string", "description": "Private local token file path. Alternatively set DUTCHMAN_ONSHAPE_BEARER_TOKEN in the server environment. Never pass a token value."},
-                "max_calls": {"type": "integer", "minimum": 0, "maximum": 4294967295u64, "default": 50}
+                "max_calls": {"type": "integer", "minimum": 0, "maximum": 4294967295u64, "description": "Optional hard ceiling on real Onshape API calls (cached replies cost none), and the go-ahead to spend up to it. Omitted, the tool estimates first and, if the fetch is above 50 calls, stops before fetching with error code onshape/approval and estimated_calls; ask the user (Onshape Free plans allow 2,500 calls a year), then call again with max_calls set. The tool never asks anyone itself."}
             }, "required": ["document_url"], "additionalProperties": false},
             "outputSchema": {"type": "object", "properties": {
                 "schema": {"const": "dutchman.onshape-fetch/1"}, "ok": {"type": "boolean"},
                 "calls": {"type": "integer", "minimum": 0}, "cache_hits": {"type": "integer", "minimum": 0},
                 "output": {"type": "string"}, "microversion": {"type": "string"},
+                "estimated_calls": {"type": "integer", "minimum": 0, "description": "With error onshape/approval: the calls the fetch is estimated to need, including the calls already made to list the document."},
                 "error": {"type": "object", "properties": {"code": {"type": "string"}, "message": {"type": "string"}}, "required": ["code", "message"]}
             }, "required": ["schema", "ok", "calls"]},
             "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true}

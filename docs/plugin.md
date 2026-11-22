@@ -92,7 +92,12 @@ longest safe suffix, trying folders nearest the referring assembly first, within
 granted input folder. SolidWorks and FreeCAD prefer a copy beside the referring assembly.
 It never searches outside the granted folder, Inventor project libraries or the saving
 machine's absolute paths. The host must enforce the folder capability and symlink rules;
-unresolved parts are reported by the normal assembly reader. A missing-part message
+unresolved parts are reported by the normal assembly reader. For `.iam` and `.sldasm` the
+adapter first calls `source.resolve` on the opened file's own name; a permission refusal there
+stops the import before any read, with a message naming the `input_folder` grant and what it is
+for (`notice::folder_access`). A refusal on a later part read gets the same message. Fuel and
+memory ceilings are SolidCraft preferences the plugin cannot read or change; a fuel trap is
+raised by the host and cannot be reworded by the guest. A missing-part message
 asks you to keep the part in the input folder with its expected name and relative path.
 
 Case-insensitive lookup must return canonical, case-preserving relative names. The
@@ -120,7 +125,18 @@ names another binary). Release builds pin that exact version; update it delibera
 check the `wasm-tools print` import parsing in `scripts/package-plugin.sh` when upgrading.
 The script writes `dutchman.wasm` (the manifest's `runtime.module`),
 `plugin.json` and `dutchman-plugin.zip` with both files at its top, and fails unless the
-component imports `craft:plugin` interfaces only.
+component imports `craft:plugin` interfaces only, or if `dutchman.wasm` is over 67,000,000
+bytes (`PLUGIN_WASM_MAX_BYTES`; 1.2x the 55.7 MB of 0.3.0). SolidCraft compiles the module
+when a file is first opened, so it must not grow unnoticed.
+
+Where the bytes are (0.3.0 core module, 55.8 MB: 54.0 MB code in 78,950 functions, 1.7 MB
+data, no debug or name sections): cadmpeg_ir 19.2 MB (serde `Deserialize` code over
+`serde_json`), cadmpeg_codec_f3d 7.3 MB, `core` 6.2 MB, serde_json 4.3 MB, the SolidWorks
+codec 3.3 MB, Inventor 2.7 MB, serde 2.7 MB. `wasm-opt -Oz` (binaryen, installable with
+`cargo install wasm-opt`; limited to the features rustc emits, since `-all` adds GC types
+the host may not accept) takes it to 48.4 MB, but first open stayed within noise
+(46.2 s to 44.6 s, 5.0 to 6.2 GB peak), so release builds do not run it. A real cut needs less
+code in cadmpeg_ir's serde impls.
 
 `zip` turns on getrandom's JavaScript backend for every wasm32 target, so the core module
 also imports a few wasm-bindgen functions: randomness for archive extraction and

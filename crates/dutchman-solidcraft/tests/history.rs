@@ -1752,6 +1752,24 @@ fn target_045_keeps_the_previous_compatible_history_document() {
 }
 
 #[test]
+fn target_046_keeps_the_previous_compatible_history_document() {
+    let model = cube_with_history(10.0, first_profile(), None);
+    let write = |target: &str| {
+        convert(
+            &model,
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(target.parse().unwrap())),
+        )
+        .0
+    };
+    let previous = write("0.45.0");
+    let newest = write("0.46.2");
+    assert_eq!(newest["format"], "solidcraft/23");
+    assert_eq!(newest, previous);
+}
+
+#[test]
 fn as_built_joints_between_features_do_not_stop_history() {
     for source_tag in ["As-built", "As-built Joint"] {
         let model = cube_with_history(10.0, first_profile(), None);
@@ -12621,7 +12639,7 @@ fn unsupported_modify_options_explain_what_stops_history() {
     for family in ["thread", "detailed_thread"] {
         cases.push((
             json!({"kind": "unresolved", "value": {"family": family}}),
-            "threads whose construction is unresolved are not supported yet",
+            "threads whose construction is unresolved are not supported yet: the source's thread record was not decoded, so its designation, size, faces and whether it is cosmetic or modeled are unknown",
         ));
     }
     cases.push((
@@ -16518,6 +16536,127 @@ fn an_extrude_distance_follows_the_parameter_that_sets_it() {
             assert!((edited[0] - 2000.0).abs() < 0.01, "{edited:?}");
         }
     }
+}
+
+/// The extrude's distance as an Inventor file states it: a document parameter `d1` of the
+/// form `Height / 2 ul` that no feature owns, bound to the extrude by the feature's
+/// `source_properties`, with the user parameter `Height` (20 mm) behind it.
+fn cube_with_bound_distance_parameter() -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let parameters = wire["model"]["parameters"].as_array_mut().unwrap();
+    parameters[0].as_object_mut().unwrap().remove("owner");
+    parameters[0]["expression"] = json!("(Height) / (2 ul)");
+    parameters[0]["dependencies"] = json!(["f3d:model:parameter#3"]);
+    parameters.push(json!({"id": "f3d:model:parameter#3", "name": "Height", "expression": "20 mm", "value": {"kind": "length", "value": 20.0}, "ordinal": 0, "dependencies": [], "properties": {}}));
+    wire["model"]["features"][1]["source_properties"] =
+        json!({"extent_distance_parameter": "f3d:model:parameter#1"});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn an_inventor_extrude_distance_keeps_its_expression_and_follows_the_user_parameter() {
+    let model = cube_with_bound_distance_parameter();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let params = document["params"].as_array().unwrap();
+    let find = |name: &str| params.iter().find(|p| p["name"] == name).unwrap();
+    assert_eq!(find("Height")["expr"], "20 mm");
+    assert_eq!(find("d1")["expr"], "(Height) / (2)");
+    assert_eq!(document["features"][1]["extent"]["distance"], "d1");
+    if let Some(cli) = solidcraft() {
+        let bytes = written(&model).0;
+        let edited = volumes(&cli, &with_param(&bytes, "Height", "40 mm"));
+        assert!((edited[0] - 2000.0).abs() < 0.01, "{edited:?}");
+    }
+}
+
+#[test]
+fn an_inventor_extrude_distance_keeps_its_value_when_the_bound_parameter_differs() {
+    let mut model = cube_with_bound_distance_parameter();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["parameters"][0]["value"]["value"] = json!(7.0);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(document["features"][1]["extent"]["distance"], "10 mm");
+}
+
+/// The Inventor block with user parameters Width = 40 mm, Height = Width / 2 and Hole = 6 mm,
+/// sketch dimensions Width, Width / 2 + 5 mm and Height, an extrude of Height * 1.5 and
+/// d2 = d1 * 2.
+// TODO: the fixture is filled in when the file is added to dutchman-core/tests/fixtures.
+const INVENTOR_EXPRESSIONS_FIXTURE: &str = "inventor_parameter_expressions.ipt";
+
+#[test]
+fn an_inventor_part_keeps_its_parameter_expressions() {
+    let input = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures")
+        .join(INVENTOR_EXPRESSIONS_FIXTURE);
+    if !input.exists() {
+        eprintln!("{INVENTOR_EXPRESSIONS_FIXTURE} is not in the fixtures yet");
+        return;
+    }
+    let model = dutchman_core::read(
+        dutchman_core::Format::InventorPart,
+        &input,
+        &mut Report::default(),
+    )
+    .unwrap();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let params = document["params"].as_array().unwrap();
+    let find = |name: &str| params.iter().find(|p| p["name"] == name);
+    let width = find("Width").expect("Width is a parameter");
+    assert_eq!(width["expr"], "40 mm");
+    assert_eq!(width["model"], false);
+    assert_eq!(find("Hole").expect("Hole is a parameter")["expr"], "6 mm");
+    let height = find("Height").expect("Height is a parameter");
+    assert!(
+        height["expr"].as_str().unwrap().contains("Width"),
+        "{height}"
+    );
+    // d2 = d1 * 2 keeps its reference to d1.
+    let d2 = find("d2").expect("d2 is a parameter");
+    assert!(d2["expr"].as_str().unwrap().contains("d1"), "{d2}");
+    assert_eq!(d2["model"], true);
+    // The sketch dimensions (40, 25 and 20 mm) and the extrude distance (30 mm) are driven by
+    // parameters; the dimensions read Width and Height.
+    let driven: Vec<&str> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|f| {
+            f["sketch"]["constraints"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c["param"].as_str())
+        })
+        .collect();
+    for expected in ["Width", "Height"] {
+        assert!(
+            driven
+                .iter()
+                .any(|name| find(name)
+                    .is_some_and(|p| p["expr"].as_str().unwrap().contains(expected))),
+            "no sketch dimension is driven by a parameter reading {expected}: {driven:?}"
+        );
+    }
+    let extrude = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|f| f["extent"]["distance"].as_str())
+        .expect("the extrude has a distance");
+    assert!(find(extrude).is_some(), "{extrude} is a parameter");
 }
 
 #[test]

@@ -6,8 +6,8 @@ This page adds what is specific to SolidWorks.
 
 ## Where the work splits
 
-First, comment `/claim` on the issue. Comment `/unclaim` to release it; see the
-[24-hour draft deadline, five-day activity rule and exceptions](../claiming.md).
+Open a pull request when you're ready; for a bigger change, a short comment on the issue first
+helps avoid duplicate work (it isn't a reservation).
 
 cadmpeg reads the file; Dutchman maps what cadmpeg read onto SolidCraft. Dutchman already
 converts SolidWorks parts and assemblies: the geometry and placed parts come through, and the
@@ -80,6 +80,5 @@ and the rules in cadmpeg's [AGENTS.md](https://github.com/cadmpeg/cadmpeg/blob/m
 
 ```text
 Work on <URL>
-Comment /claim on the issue first
 Read AGENTS.md and docs/agents/solidworks.md, then follow the issue brief.
 ```

@@ -118,11 +118,13 @@ pub(crate) fn map(
             .and_then(Value::as_str)
             == Some("total");
         if let Some(expression) = first.and_then(|length| {
-            ctx.owned_parameter(feature, kind, length).or_else(|| {
-                (symmetric && total_parameter)
-                    .then(|| ctx.owned_parameter(feature, "AlongDistance", length))
-                    .flatten()
-            })
+            ctx.bound_parameter(feature, "extent_distance_parameter", length)
+                .or_else(|| ctx.owned_parameter(feature, kind, length))
+                .or_else(|| {
+                    (symmetric && total_parameter)
+                        .then(|| ctx.owned_parameter(feature, "AlongDistance", length))
+                        .flatten()
+                })
         }) {
             extent.insert("distance".to_owned(), json!(expression));
         }

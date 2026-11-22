@@ -91,7 +91,7 @@ fn header_harness(width: f32, theme: ThemePreference, update: bool) -> Harness<'
         .with_size(egui::vec2(width, 680.0))
         .build_eframe(|cc| test_app(cc));
     h.ctx.set_theme(theme);
-    h.state_mut().preview_solidcraft(Some("0.45.9"));
+    h.state_mut().preview_solidcraft(Some("0.46.9"));
     if update {
         h.state_mut()
             .updater
@@ -122,11 +122,11 @@ fn assert_header_fits(h: &Harness<'_, App>, width: f32, update: bool, theme: &st
     let narrow = width - 64.0 < 850.0;
     let mut labels = vec!["Settings", "Report a problem"];
     let found = h
-        .query_by_label(if narrow { "0.45" } else { "SolidCraft 0.45" })
+        .query_by_label(if narrow { "0.46" } else { "SolidCraft 0.46" })
         .is_some();
     labels.push(match (narrow, found) {
-        (true, true) => "0.45",
-        (false, true) => "SolidCraft 0.45",
+        (true, true) => "0.46",
+        (false, true) => "SolidCraft 0.46",
         (true, false) => "not found",
         (false, false) => "SolidCraft not found",
     });
@@ -584,13 +584,13 @@ fn screenshots() {
             "A newer release is available: the Update pill in the header.",
         );
         for (found, case, update, width) in [
-            (Some("0.45.9"), "current", false, 1120.0),
-            (Some("0.46.0"), "newer", false, 1120.0),
-            (Some("0.46.0"), "newer-update", true, 1120.0),
+            (Some("0.46.9"), "current", false, 1120.0),
+            (Some("0.47.0"), "newer", false, 1120.0),
+            (Some("0.47.0"), "newer-update", true, 1120.0),
             (Some("0.17.9"), "too-old", false, 1120.0),
             (Some("0.24.0"), "older-history", false, 1120.0),
             (None, "none-found", false, 1120.0),
-            (Some("0.46.0"), "narrow", true, 760.0),
+            (Some("0.47.0"), "narrow", true, 760.0),
         ] {
             let mut preview = Harness::builder()
                 .with_size(egui::vec2(width, 680.0))
@@ -634,7 +634,7 @@ fn screenshots() {
                     "too-old" => "is too old to open Dutchman's designs",
                     "older-history" => "A newer SolidCraft keeps more of their history.",
                     "none-found" => "SolidCraft not found. Install SolidCraft",
-                    _ => "SolidCraft 0.45 is installed.",
+                    _ => "SolidCraft 0.46 is installed.",
                 })
                 .is_some());
             let file = format!("00-solidcraft-{case}-{name}.png");
@@ -1028,13 +1028,13 @@ fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
         return;
     }
     for (found, expected) in [
-        (Some("0.46.0"), "is newer than this Dutchman knows"),
+        (Some("0.47.0"), "is newer than this Dutchman knows"),
         (Some("0.17.9"), "is too old to open Dutchman's designs"),
         (
             Some("0.24.0"),
             "A newer SolidCraft keeps more of their history.",
         ),
-        (Some("0.45.0"), "SolidCraft 0.45 is installed."),
+        (Some("0.46.2"), "SolidCraft 0.46 is installed."),
         (None, "SolidCraft not found. Install SolidCraft"),
     ] {
         let mut harness = Harness::builder()
@@ -1101,10 +1101,10 @@ fn solidcraft_panel_takes_a_chosen_cli_and_explains_the_app_alone() {
         .query_by_label_contains("Found the SolidCraft app")
         .is_none());
 
-    script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.45.0");
+    script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.46.2");
     harness.state_mut().choose_solidcraft_cli(&app);
     harness.run_steps(8);
-    assert!(harness.query_by_label("SolidCraft 0.45").is_some());
+    assert!(harness.query_by_label("SolidCraft 0.46").is_some());
     assert!(harness.query_by_label("Find automatically").is_some());
     assert!(harness
         .query_by_label_contains("the portable ZIP and the MSI")
@@ -3173,7 +3173,7 @@ fn fit_harness_for(
         .with_size(egui::vec2(size[0], size[1]))
         .build_eframe(|cc| test_app(cc));
     harness.ctx.set_theme(theme);
-    harness.state_mut().preview_solidcraft(Some("0.45.9"));
+    harness.state_mut().preview_solidcraft(Some("0.46.9"));
     // A fixed checker, so no path of the machine running the test is shown.
     #[cfg(feature = "test-support")]
     harness.state_mut().set_checker_for_test(true);
@@ -3623,7 +3623,7 @@ fn solidcraft_window_screenshots() {
             "{window:?} outside {viewport:?}"
         );
         let texts: &[&str] = if found {
-            &["SolidCraft 0.45 is installed."]
+            &["SolidCraft 0.46 is installed."]
         } else {
             &[
                 "SolidCraft not found.",
@@ -3775,7 +3775,7 @@ fn running_step_screenshots() {
     ] {
         for seconds in [0, 61, 120, 121] {
             let mut harness = screenshot_harness(theme);
-            harness.state_mut().preview_solidcraft(Some("0.45.0"));
+            harness.state_mut().preview_solidcraft(Some("0.46.2"));
             harness.state_mut().set_checker_for_test(true);
             harness
                 .state_mut()
@@ -3840,7 +3840,7 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
             .with_size(egui::vec2(width, 800.0))
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
-        harness.state_mut().preview_solidcraft(Some("0.45.0"));
+        harness.state_mut().preview_solidcraft(Some("0.46.2"));
         harness.state_mut().set_checker_for_test(true);
         let rows = (0..1293)
             .map(|index| {
@@ -3989,7 +3989,11 @@ mod paste_inputs {
         assert!(!h.get_by_label("Open").accesskit_node().is_disabled());
     }
 
-    fn fetch(_link: String, folder: &Path) -> Result<PathBuf, String> {
+    fn fetch(
+        _link: String,
+        folder: &Path,
+        _progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
         std::thread::sleep(Duration::from_millis(100));
         let out = folder.join("part.onshape-bundle");
         std::fs::copy(fixture("onshape-revolve.onshape-bundle"), &out)
@@ -4063,6 +4067,341 @@ mod paste_inputs {
             .starts_with(output.path()));
         assert!(h.state().rows()[0].report.is_some());
         assert_bundle_survives_exit(h, output.path());
+    }
+
+    fn failing_fetch(
+        _link: String,
+        _folder: &Path,
+        _progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        std::thread::sleep(Duration::from_millis(50));
+        Err("The Onshape fetch stopped after 50 calls at the safety limit.".to_owned())
+    }
+
+    fn panicking_fetch(
+        _link: String,
+        _folder: &Path,
+        _progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        panic!("synthetic fetch failure");
+    }
+
+    fn fetch_error_message(fetch: dutchman_gui::paste::Fetch) -> String {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(true);
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), fetch);
+        output_picker(&mut h, output.path());
+        paste(&mut h, LINK);
+        let started = Instant::now();
+        while h.state().running() || h.state().rows().is_empty() {
+            assert!(started.elapsed() < Duration::from_secs(20), "fetch hung");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        h.run_steps(8);
+        assert_eq!(h.state().rows().len(), 1);
+        assert_eq!(h.state().rows()[0].status, Status::Failed);
+        assert!(h.query_by_label_contains("Fetching from Onshape").is_none());
+        let message = h.state().rows()[0].report.as_ref().unwrap()["error"]["message"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            h.query_all_by_label_contains(&message).next().is_some(),
+            "{message}"
+        );
+        message
+    }
+
+    #[test]
+    fn a_failed_onshape_fetch_ends_the_job_with_its_message() {
+        assert_eq!(
+            fetch_error_message(failing_fetch),
+            "The Onshape fetch stopped after 50 calls at the safety limit."
+        );
+    }
+
+    fn budget_then_ok_fetch(
+        link: String,
+        folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        static CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            return Err(App::budget_stop_message_for_test());
+        }
+        fetch(link, folder, progress)
+    }
+
+    /// Reports 12 of about 51 calls and holds the fetch open until the test has looked.
+    fn counting_fetch(
+        link: String,
+        folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        progress.calls(12, Some(51));
+        let started = Instant::now();
+        while !COUNT_SEEN.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "caption never read"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        progress.calls(53, Some(51));
+        fetch(link, folder, progress)
+    }
+    static COUNT_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    #[test]
+    fn an_onshape_fetch_counts_its_calls_on_the_result_card() {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(true);
+        h.state_mut().set_out_dir(output.path().into());
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), counting_fetch);
+        paste(&mut h, LINK);
+        let started = Instant::now();
+        while h
+            .query_by_label("Fetching from Onshape: 12 of about 51 API calls…")
+            .is_none()
+        {
+            assert!(started.elapsed() < Duration::from_secs(30), "no call count");
+            std::thread::sleep(Duration::from_millis(10));
+            h.step();
+        }
+        COUNT_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
+        wait_for_conversion(&mut h);
+        assert!(h.query_by_label_contains("API calls").is_none());
+        assert!(h.state().rows()[0].report.is_some());
+    }
+
+    /// Holds the fetch at 12 of about 51 calls until the screenshot is taken.
+    fn held_fetch(
+        link: String,
+        folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        progress.calls(12, Some(51));
+        let started = Instant::now();
+        while !SHOT_TAKEN.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(started.elapsed() < Duration::from_secs(60), "never shot");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        fetch(link, folder, progress)
+    }
+    static SHOT_TAKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    #[test]
+    #[ignore = "renders real GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+    fn onshape_call_count_screenshots() {
+        let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            SHOT_TAKEN.store(false, std::sync::atomic::Ordering::SeqCst);
+            let output = tempfile::tempdir().unwrap();
+            let mut h = window(true);
+            h.ctx.set_theme(theme);
+            h.state_mut().set_out_dir(output.path().into());
+            h.state_mut().set_verify(false);
+            h.state_mut()
+                .set_link_transport_for_test(Arc::new(MockNetwork::default()), held_fetch);
+            paste(&mut h, LINK);
+            let started = Instant::now();
+            while h
+                .query_by_label("Fetching from Onshape: 12 of about 51 API calls…")
+                .is_none()
+            {
+                assert!(started.elapsed() < Duration::from_secs(30), "no call count");
+                std::thread::sleep(Duration::from_millis(10));
+                h.step();
+            }
+            h.run_steps(3);
+            h.render()
+                .unwrap()
+                .save(dir.join(format!("onshape-call-count-{name}.png")))
+                .unwrap();
+            SHOT_TAKEN.store(true, std::sync::atomic::Ordering::SeqCst);
+            wait_for_conversion(&mut h);
+        }
+    }
+
+    #[test]
+    fn a_request_limit_stop_offers_continue_fetching_without_command_line_words() {
+        let mut h = window(true);
+        let output = tempfile::tempdir().unwrap();
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), budget_then_ok_fetch);
+        output_picker(&mut h, output.path());
+        paste(&mut h, LINK);
+        let started = Instant::now();
+        while h.query_by_label("Continue fetching").is_none() {
+            assert!(started.elapsed() < Duration::from_secs(20), "no button");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        h.run_steps(3);
+        let report = h.state().rows()[0].report.as_ref().unwrap();
+        let message = report["error"]["message"].as_str().unwrap().to_owned();
+        assert!(!message.contains("--"), "{message}");
+        // The numbers are stated, with a thousands separator.
+        assert_eq!(
+            message,
+            "Stopped after 50 Onshape API calls. About 1,500 more are needed; Continue fetching uses them from your yearly allowance. What's fetched so far is kept."
+        );
+        // It is resumable, so it does not look like a failure.
+        assert_eq!(h.state().rows()[0].status, Status::Stopped);
+        h.get_by_label("Stopped");
+        assert!(h.query_by_label("Failed").is_none());
+        assert!(h.query_by_label_contains(&message).is_some());
+        assert!(h.query_by_label("Add matching STEP").is_none());
+        assert!(h.query_by_label_contains("Report this file").is_none());
+        // The problem panel is not about it, and the footer does not count a failure.
+        assert!(h.query_by_label("Report this design…").is_none());
+        assert!(h
+            .query_by_label_contains("0 converted, 1 stopped")
+            .is_some());
+        assert!(h.query_by_label_contains("1 failed").is_none());
+        h.get_by_label("Continue fetching").click_accesskit();
+        h.run_steps(3);
+        // It asks before using more of the yearly calls, and says how many it needs.
+        assert!(h
+            .query_by_label_contains(
+                "needs about 1,500 more of your yearly Onshape API calls (2,500 on Free plans)"
+            )
+            .is_some());
+        h.get_by_label("Continue").click_accesskit();
+        h.step();
+        wait_for_conversion(&mut h);
+        assert!(h.query_by_label("Continue fetching").is_none());
+        assert_eq!(h.state().rows()[0].status, Status::Converted);
+    }
+
+    fn big_estimate(_link: String, _token: Option<PathBuf>) -> Result<u32, String> {
+        Ok(120)
+    }
+
+    fn small_estimate(_link: String, _token: Option<PathBuf>) -> Result<u32, String> {
+        Ok(50)
+    }
+
+    static COUNTED_FETCHES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    fn counted_fetch(
+        link: String,
+        folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        COUNTED_FETCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        fetch(link, folder, progress)
+    }
+    static CANCELLED_FETCHES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    fn cancelled_fetch(
+        link: String,
+        folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        CANCELLED_FETCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        fetch(link, folder, progress)
+    }
+
+    fn estimating_window(
+        estimate: fn(String, Option<PathBuf>) -> Result<u32, String>,
+        fetch: fn(
+            String,
+            &Path,
+            &mut dyn dutchman::onshape::FetchProgress,
+        ) -> Result<PathBuf, String>,
+    ) -> (Harness<'static, App>, tempfile::TempDir) {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(true);
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), fetch);
+        h.state_mut().set_estimate_for_test(estimate);
+        output_picker(&mut h, output.path());
+        paste(&mut h, LINK);
+        h.run_steps(3);
+        (h, output)
+    }
+
+    #[test]
+    fn a_fetch_above_fifty_calls_asks_and_only_cancel_or_continue_decides() {
+        let before = CANCELLED_FETCHES.load(std::sync::atomic::Ordering::SeqCst);
+        let (mut h, _output) = estimating_window(big_estimate, cancelled_fetch);
+        let started = Instant::now();
+        while h
+            .query_by_label_contains("This document needs about 120 of your yearly Onshape API calls (2,500 on Free plans). Continue?")
+            .is_none()
+        {
+            assert!(started.elapsed() < Duration::from_secs(20), "no question");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        // The window is centred on the app window.
+        let at = h
+            .get_by_label_contains("This document needs about 120")
+            .rect()
+            .center();
+        assert!(
+            (at.x - 590.0).abs() < 150.0 && (at.y - 500.0).abs() < 150.0,
+            "{at:?}"
+        );
+        // Nothing is fetched while it waits.
+        assert_eq!(
+            CANCELLED_FETCHES.load(std::sync::atomic::Ordering::SeqCst),
+            before
+        );
+        assert!(!h.state().running());
+        h.get_by_label("Cancel").click_accesskit();
+        h.run_steps(3);
+        assert_eq!(
+            CANCELLED_FETCHES.load(std::sync::atomic::Ordering::SeqCst),
+            before
+        );
+        assert!(h.query_by_label("Continue").is_none());
+        assert!(h.state().rows().is_empty());
+    }
+
+    #[test]
+    fn continuing_past_the_question_fetches_without_asking_again() {
+        let before = COUNTED_FETCHES.load(std::sync::atomic::Ordering::SeqCst);
+        let (mut h, _output) = estimating_window(big_estimate, counted_fetch);
+        let started = Instant::now();
+        while h.query_by_label("Continue").is_none() {
+            assert!(started.elapsed() < Duration::from_secs(20), "no question");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        h.get_by_label("Continue").click_accesskit();
+        h.step();
+        wait_for_conversion(&mut h);
+        assert_eq!(
+            COUNTED_FETCHES.load(std::sync::atomic::Ordering::SeqCst),
+            before + 1
+        );
+        assert_eq!(h.state().rows()[0].status, Status::Converted);
+    }
+
+    #[test]
+    fn a_fetch_of_fifty_calls_or_fewer_starts_without_asking() {
+        let (mut h, _output) = estimating_window(small_estimate, fetch);
+        wait_for_conversion(&mut h);
+        assert!(h
+            .query_by_label_contains("yearly Onshape API calls")
+            .is_none());
+        assert_eq!(h.state().rows()[0].status, Status::Converted);
+    }
+
+    #[test]
+    fn a_panicking_onshape_fetch_still_ends_the_job() {
+        assert!(fetch_error_message(panicking_fetch).contains("stopped unexpectedly"));
     }
 
     #[test]
@@ -4242,7 +4581,7 @@ fn a_running_card_shows_the_feature_and_the_measured_note() {
     ] {
         for measured in [false, true] {
             let mut harness = screenshot_harness(theme);
-            harness.state_mut().preview_solidcraft(Some("0.45.1"));
+            harness.state_mut().preview_solidcraft(Some("0.46.1"));
             harness.state_mut().set_checker_for_test(true);
             harness
                 .state_mut()
@@ -4416,7 +4755,7 @@ fn report_flow_case_screenshots() {
             .with_size(size)
             .build_eframe(|cc| test_app(cc));
         h.ctx.set_theme(ThemePreference::Light);
-        h.state_mut().preview_solidcraft(Some("0.45.1"));
+        h.state_mut().preview_solidcraft(Some("0.46.1"));
         h.state_mut().set_checker_for_test(true);
         h.state_mut().set_file_manager(|_| Ok(()));
         h.state_mut().set_out_dir(work.path().join("converted"));

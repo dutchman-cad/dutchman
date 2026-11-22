@@ -10,9 +10,9 @@ merge queue runs the full matrix once per group. Pushes to `main` keep their exi
 1. Refresh the SolidCraft window alongside the cadmpeg pin. `WINDOW_OLDEST` records the
    exact oldest release from the rolling 14-day window, never below the internal
    `OLDEST_SOLIDCRAFT` floor (0.18.2). `NEWEST_SOLIDCRAFT` names only the newest known
-   minor, currently `[0, 45]`; a patch release requires no Dutchman constant or docs update.
+   minor, currently `[0, 46]`; a patch release requires no Dutchman constant or docs update.
    Choose the oldest release and newest minor from SolidCraft's release dates, then run
-   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.40.0 0.45` with a read-only GitHub token.
+   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.40.0 0.46` with a read-only GitHub token.
    The script reads the authenticated GitHub releases list, selects the highest published
    stable patch of that minor, and checks its checksum metadata. It prints the constants,
    the oldest checksum, and the newest minor's dynamic CI matrix entry. Copy the constants
@@ -232,8 +232,13 @@ still mounts, retains all three items and passes `hdiutil verify`.
 
 Every binary that is published (release archives, the AppImage, the Windows installer, the
 plugin zip, the container image) is built on GitHub's hosted runners, which start clean for
-each job. The self-hosted `flyer` runners run CI tests only, for the merge queue and pushes to
-`main` (`ci.yml`), never for pull requests and never for anything that ships. Moving a release
+each job. The self-hosted `flyer` runners run CI checks only (`ci.yml`: clippy, wasm, msrv,
+docs, the Linux tests and the SolidCraft round-trip; `placements.yml`: the two small placement
+checks), never anything that ships. A job uses them only when the run is a merge queue group, a
+push to `main`, or a pull request from this repository (not a fork) whose author is not a bot
+(Dependabot stays on GitHub, because it runs new dependencies' build scripts); everything else,
+and every run while the repository variable `FLYER` is `off`, uses GitHub's runners. ARM, Windows,
+macOS, Docker and root-needing jobs stay on GitHub. Moving a release
 build to a self-hosted runner needs a GitHub build and a self-hosted build of the same commit
 to match bit for bit first.
 

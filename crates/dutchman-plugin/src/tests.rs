@@ -331,3 +331,22 @@ fn failures_keep_a_readable_part_name_without_its_folders() {
     assert!(text.contains("Fillet1"));
     assert!(!text.contains("Parts/"));
 }
+
+#[test]
+fn folder_refusal_names_the_grant_and_its_purpose() {
+    assert!(crate::notice::needs_part_folder("Frame.IAM"));
+    assert!(crate::notice::needs_part_folder("rig.sldasm"));
+    assert!(!crate::notice::needs_part_folder("bracket.ipt"));
+    assert!(!crate::notice::needs_part_folder("arm.f3z"));
+    let text = crate::notice::folder_access("rig.sldasm", "Input folder only");
+    for needle in [
+        "rig.sldasm",
+        "part files",
+        "read access to the input folder",
+        "never writes",
+        "Preferences > Plugins",
+        "Input folder only",
+    ] {
+        assert!(text.contains(needle), "{needle}: {text}");
+    }
+}

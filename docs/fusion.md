@@ -5,7 +5,7 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`bb8c69a7`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`12ade170`, after cadmpeg 0.6.12).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
@@ -134,6 +134,12 @@ a missing or differing result refuses the extrusion and retains the imported fin
 shape. Intermediate face extrusions on imported bases are not supported yet when
 that result cannot be proved.
 
+A component that cadmpeg names no bodies for does not stop the design from being written as
+components, as long as cadmpeg attributes bodies to at least one component. It stays as a
+named, empty component, any bodies of it sit with the design's own bodies at their stored
+position, and a Degraded `components` note names it. When no component has attributed
+bodies, the design still converts as stored.
+
 As-built joints build no geometry and do not stop the part's feature history. Typed
 assembly-joint timeline rows also need no part feature, and neither do rows that copy a
 component or move it into another component (Copy/Paste and Cut/Paste of components): the
@@ -155,7 +161,7 @@ Fusion's own STEP export leaves hidden bodies out, so a STEP you export from Fus
 | A mesh body whose container cadmpeg cannot decode. | Leaves it out and reports it as an undecoded mesh body. |
 | Parameters, planar sketches with typed and native constraints. | Mapped, including point-on-curve coincidences, point-to-line distances, resolved finite-endpoint distances, and parallel-line spacing. Dimensions keep their parameter expressions, so user parameters drive the editable geometry. Native constraints without neutral operands are reported as not carried. |
 | Spatial (3D) sketches. | Mapped as SolidCraft 3D sketches at their solved positions (lines, arcs, circles, splines, points). On targets 0.44 and newer, neutral point joins, point distances, line lengths (including repeated lengths), principal-axis directions and line-to-line and line-to-arc endpoint tangencies carry across; dimensions keep their parameters. Meeting endpoints alone do not create relations. Sweep paths and rails follow their selected curves. Other constraints and links to model edges are reported as not carried. |
-| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. The designation supplies the nominal size; secondary diameter and pitch may agree at their stated decimal precision. An absent designation is derived exactly from diameter and pitch. Contradictions name both sizes; UNC/UNF cosmetic Thread output, modeled threads, and unresolved faces remain reported losses. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
+| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. The designation supplies the nominal size; secondary diameter and pitch may agree at their stated decimal precision. An absent designation is derived exactly from diameter and pitch. Contradictions name both sizes; UNC/UNF cosmetic Thread output, modeled threads, and unresolved faces remain reported losses. A thread whose stored face is slightly smaller than the nominal-size sketch circle that made it (the thread class's diameter, such as Ø9.85 for M10) is reported, not rebuilt: a SolidCraft cosmetic thread cannot change the size. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
 | Body Mirror and Remove steps. | A Mirror of bodies maps when its bodies are named by earlier features, are a body the final model leaves out that cadmpeg names by the extrude that made it, or are the only body in the Mirror's own input; it joins its copy to the body when Fusion did. A Remove of such bodies maps as a SolidCraft Remove on SolidCraft 0.40 and newer. |
 | Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map, on a face of the extrusion or box made just before them; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, including on full circles such as a boss's top edge or a hole's rim, and unequal chamfers on straight edges and full circles with the face their distance runs along proven on the source's final body, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
 
@@ -665,6 +671,20 @@ additional relations are reported and their solved geometry is retained. An unre
 by guessed geometry. A nonplanar historical face boundary remains a separate face
 selection blocker. Targets before 0.44 keep their existing output and refusals.
 
+## Hidden parts with `--import-only`
+
+`--import-only` (stored geometry only) keeps every part the design hides, hidden as in the
+source, so it holds the same parts as the default preset. A hidden occurrence is still placed, its
+component still holds its stored body as an Import, and the design's `visibility.hidden_occurrences`
+lists it. The default preset adds, beside many parts, an "Editable history" component with the
+rebuilt body, named `Body (<part>)` or `Body 1 (<part>)`; those rebuilt copies exist only there, so
+a body-name count is higher in the default result without any stored part being missing. On the
+public RailCore II 300ZL (CC BY-SA 4.0), `--import-only --no-sketches` holds 287 occurrences in 188
+components with 20 hidden occurrences, 270 bodies; the default preset holds the same 287
+occurrences plus 29 "Editable history" occurrences, and 333 bodies. TopPanel, ElectroGuard,
+Right_Panel, Back Panel, X_Endstop_Mount, Front_Motor_Mount, Titan_Mount, 5015BlowerFan,
+Back_X_Carriage, Front_X_Carriage, 300ZL Bed and Belt_Retainer_Clip are bodies in both.
+
 ## Stored body fallback
 
 When a new-body extrude, revolve, sweep or loft requires a profile or path absent
@@ -701,6 +721,12 @@ Modeled thread history remains blocked even on SolidCraft 0.45: the available no
 thread data cannot prove an exact helical reconstruction. The final modeled geometry is
 retained, with the source designation in a Degraded `history/modeled-thread-retained`
 loss. See [modeled threads](history.md) for the profile and face-selection limits.
+
+A Fusion Thread whose record the decoder does not decode (no designation, nominal size or
+faces) arrives as an unresolved Thread. The history stops there with "threads whose
+construction is unresolved are not supported yet", now followed by what is missing: the
+source does not say whether the thread is cosmetic or modeled, so Dutchman cannot map it.
+The fix is in the decoder, which has to recognise that thread's record layout.
 
 Unreadable local and xref positions, including local stored-frame fallbacks and
 positions assumed to be the identity, count

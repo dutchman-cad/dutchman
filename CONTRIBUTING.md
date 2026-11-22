@@ -6,13 +6,10 @@ synthetic test files and pull requests are all welcome.
 
 ## Where to start
 
-0. Comment `/claim` on the issue first: claim, then a draft pull request within 24 hours,
-   even rough. After that, claims lapse after 5 days without activity from you, except
-   while a ready pull request waits on a maintainer or an open dependency. Maintainer
-   claims never lapse. A maintainer can also assign an issue to you; that counts as claiming it.
-   Comment `/unclaim` to give it up; see [issue claims](docs/claiming.md).
+Open a pull request when you're ready. For a bigger change, a short comment on the issue first
+helps avoid two people building the same thing; it isn't a reservation.
 
-Pick a CAD program below, then an unchecked, unclaimed item on its parent issue, and open a pull
+Pick a CAD program below, then an unchecked item on its parent issue, and open a pull
 request. Every issue labelled [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 or [good first issue](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 is open to anyone. Each issue states what is known, what is unknown, and how to verify the change
@@ -24,7 +21,7 @@ with [AGENTS.md](AGENTS.md). Reading a native file belongs in
 ### Pick a CAD program
 
 Each program has one parent issue. Paste its block into your AI agent: it picks a sub-issue,
-claims it, and works it to a pull request.
+and works it to a pull request.
 
 **SolidWorks** (`.sldprt`, `.sldasm`): [dutchman#866](https://github.com/dutchman-cad/dutchman/issues/866).
 cadmpeg already reads the geometry and the parts of an assembly; this is about feature history,
@@ -32,8 +29,7 @@ holes, fillets, sweeps, lofts, sheet metal and mates.
 
 ```
 Read https://github.com/dutchman-cad/dutchman/issues/866
-Pick one unchecked sub-issue that is not labelled blocked or claimed
-Comment /claim on that sub-issue, then work on it
+Pick one unchecked sub-issue that is not labelled blocked
 Clone https://github.com/dutchman-cad/dutchman
 Follow AGENTS.md and docs/agents/solidworks.md
 Open a pull request when the sub-issue's "How to verify" passes
@@ -45,9 +41,8 @@ on cadmpeg, so the cadmpeg side is the place to start.
 
 ```
 Read https://github.com/dutchman-cad/dutchman/issues/840
-Pick one unchecked sub-issue that is not labelled blocked or claimed; if all are blocked, take the
+Pick one unchecked sub-issue that is not labelled blocked; if all are blocked, take the
   open cadmpeg issue one of them depends on instead (its own block is at its top)
-Comment /claim on that issue, then work on it
 Clone https://github.com/dutchman-cad/dutchman
 Follow AGENTS.md and docs/agents/solid-edge.md
 Open a pull request when the issue's "How to verify" passes
@@ -60,9 +55,8 @@ open now.
 
 ```
 Read https://github.com/dutchman-cad/dutchman/issues/891
-Pick one unchecked sub-issue that is not labelled blocked or claimed; if all are blocked, take the
+Pick one unchecked sub-issue that is not labelled blocked; if all are blocked, take the
   open cadmpeg pull request or issue one of them depends on instead
-Comment /claim on that issue, then work on it
 Clone https://github.com/dutchman-cad/dutchman
 Follow AGENTS.md and docs/agents/onshape.md
 Open a pull request when the issue's "How to verify" passes

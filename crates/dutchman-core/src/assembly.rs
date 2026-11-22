@@ -888,6 +888,8 @@ fn local_components_in_document(
         external_built: BTreeMap::new(),
         left_out: Vec::new(),
         all_owned: loose.is_empty(),
+        some_owned: !owned.is_empty(),
+        unattributed: Vec::new(),
         model,
         slices: &slices,
         definitions,
@@ -925,6 +927,28 @@ fn local_components_in_document(
     if tree.placed != occurrences.len() {
         return Err(
             "some components are placed inside components the design does not place".to_owned(),
+        );
+    }
+    if !tree.unattributed.is_empty() {
+        let mut names = tree.unattributed.clone();
+        names.sort();
+        names.dedup();
+        let shown: Vec<&str> = names.iter().take(5).map(String::as_str).collect();
+        report.push(
+            Severity::Degraded,
+            "components",
+            format!(
+                "cadmpeg does not say which bodies belong to {} component(s) ({}{}); they stay \
+                 as named empty components and any bodies of theirs are placed with the \
+                 design's own, at their stored position",
+                names.len(),
+                shown.join(", "),
+                if names.len() > shown.len() {
+                    ", ..."
+                } else {
+                    ""
+                }
+            ),
         );
     }
     let mut parts = std::mem::take(&mut tree.parts);
@@ -1203,15 +1227,9 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
         else {
             continue;
         };
-        // An explicit current pose places the inserted occurrence itself. Its
-        // contained records do not independently pose the children; their own
-        // current poses, if present, were collected above.
-        if reference
-            .get("current_pose")
-            .is_some_and(|pose| !pose.is_null())
-        {
-            continue;
-        }
+        // The reference's own current pose does not stop its contained poses from naming
+        // children: cadmpeg places each of them from its contained pose, so a joint must not
+        // solve it again.
         // A component-path pose applies only in the owner chain it names, from
         // the innermost owner outwards. Missing owner indices mean every instance.
         let mut owners = Vec::new();
@@ -2781,6 +2799,12 @@ struct Tree<'a> {
     /// Whether every body of the design belongs to a component, so that a component naming
     /// no bodies and holding none is empty rather than one cadmpeg could not attribute.
     all_owned: bool,
+    /// Whether cadmpeg attributes bodies to at least one component. When it does, a component
+    /// it names no bodies for stays a named, empty component (its bodies, if any, are among
+    /// the design's loose ones) instead of the whole design converting as stored.
+    some_owned: bool,
+    /// The components kept empty because cadmpeg does not say which bodies they own.
+    unattributed: Vec<String>,
 }
 
 impl<'a> Tree<'a> {
@@ -2972,6 +2996,9 @@ impl<'a> Tree<'a> {
         };
         let model = if inner.is_empty() {
             if bodies.is_empty() && self.all_owned {
+                self.sliced(Slice::Empty, &[], name)?
+            } else if bodies.is_empty() && self.some_owned {
+                self.unattributed.push(name.clone());
                 self.sliced(Slice::Empty, &[], name)?
             } else if bodies.is_empty() {
                 return Err(format!(
@@ -4648,6 +4675,67 @@ mod tests {
         assert_eq!(assembly.parts[1].ir.geometry.bodies.len(), 1);
         assert_eq!(assembly.placements[2].part, 1);
         assert_eq!(assembly.placements[2].transform, IDENTITY);
+    }
+
+    #[test]
+    fn a_component_cadmpeg_cannot_attribute_bodies_to_stays_beside_those_that_have_them() {
+        let model = with_components(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut loose = wire["geometry"]["bodies"][0].clone();
+        loose["id"] = json!("synthetic:cube:body#loose");
+        wire["geometry"]["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(loose);
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "f3d:model:component#bare", "kind": "part", "label": "Bare", "bodies": [], "bom_properties": {}, "sketches": []}));
+        wire["model"]["occurrences"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "f3d:model:occurrence#2",
+                "prototype": {"kind": "local", "definition": "f3d:model:component#bare"},
+                "parent": root(),
+                "ordinal": 2,
+                "transform": [[1.0, 0.0, 0.0, 60.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+                "scale": [1.0, 1.0, 1.0],
+            }));
+        let model = Model {
+            ir: crate::test_products::read(&wire),
+            ..model
+        };
+        let mut report = Report::default();
+        let (assembly, _) = local_components_with_threads(
+            &model,
+            &BTreeMap::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut report,
+        )
+        .unwrap()
+        .unwrap();
+        let bare = assembly
+            .placements
+            .iter()
+            .find(|placement| assembly.parts[placement.part].name == "Bare")
+            .unwrap();
+        assert_eq!(bare.transform[0][3], 60.0);
+        assert!(assembly.parts[bare.part].ir.geometry.bodies.is_empty());
+        assert_eq!(
+            assembly
+                .own_part
+                .map(|at| assembly.parts[at].ir.geometry.bodies.len()),
+            Some(1)
+        );
+        let loss = report
+            .losses()
+            .iter()
+            .find(|loss| loss.subject == "components")
+            .unwrap();
+        assert_eq!(loss.severity, Severity::Degraded);
+        assert!(loss.detail.contains("Bare"), "{}", loss.detail);
     }
 
     #[test]
@@ -6888,8 +6976,8 @@ mod tests {
         ));
         assert!(!assembly.joints[1].suppressed);
 
-        // A reference's own current pose holds the reference, while its children
-        // still need their joints unless they carry current poses of their own.
+        // A reference's own current pose holds the reference, and its contained poses still
+        // hold the children they name, while an unposed sibling still needs its joint.
         wire["native"]["f3d"]["xref_references"][0]["current_pose"] =
             json!({"carrier_record_index": 21, "transform": at([10.0, 0.0, 0.0], 0.0)});
         let own_pose = Model {
@@ -6897,12 +6985,9 @@ mod tests {
             ..model
         };
         let (assembly, notes) = local_components(&own_pose).unwrap().unwrap();
-        assert!(near(
-            &world_at(&assembly, &[0, 0]).unwrap(),
-            &at([120.0, 0.0, 0.0], 0.0)
-        ));
-        assert!(!assembly.joints[0].suppressed);
-        assert!(notes.is_empty(), "{notes:?}");
+        assert!(assembly.joints[0].suppressed);
+        assert!(!assembly.joints[1].suppressed);
+        assert_eq!(notes.len(), 1, "{notes:?}");
     }
 
     #[test]
