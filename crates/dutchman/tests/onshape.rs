@@ -1014,11 +1014,15 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
     assert!(feature_request.1.contains(&format!("/v/{OTHER_VERSION}/")));
     assert!(feature_request.2.contains(&format!("linkDocumentId={DID}")));
     assert!(mock.sent.iter().any(|(_, path, _)| {
-        path == &format!("/api/v17/variables/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/variables")
+        path == &format!(
+            "/api/v17/variables/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/variables"
+        )
     }));
     assert!(mock.sent.iter().any(|(method, path, _)| {
         method == "POST"
-            && path == &format!("/api/v17/partstudios/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/export/step")
+            && path == &format!(
+                "/api/v17/partstudios/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/export/step"
+            )
     }));
     assert!(mock.sent.iter().any(|(_, path, _)| {
         path == &format!("/api/v17/documents/d/{OTHER}/externaldata/external-step")
@@ -1094,7 +1098,9 @@ fn assembly_fetch_rejects_external_reference_without_document_version() {
     }))
     .unwrap();
 
-    let error = run(&mut mock, &dir, AS, 100).unwrap_err();
+    let error = run(&mut mock, &dir, AS, 100)
+        .err()
+        .expect("missing version should fail");
     assert_eq!(error.kind, ErrorKind::Unsupported);
     assert!(error.to_string().contains("did not provide a version"));
     assert!(mock.sent.iter().all(|(_, path, _)| !path.contains(OTHER)));

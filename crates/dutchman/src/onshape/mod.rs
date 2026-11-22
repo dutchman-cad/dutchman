@@ -1432,14 +1432,8 @@ fn capture<C: HttpClient>(
     }
     // External references are pinned to immutable versions. Capture them under
     // references/ so the assembly bundle remains self-contained.
-    for (
-        document,
-        element,
-        external_version,
-        external_mid,
-        configuration,
-        linked_document,
-    ) in external.clone()
+    for (document, element, external_version, external_mid, configuration, linked_document) in
+        external.clone()
     {
         fetcher.session.allow(http::AUTO_ELEMENT_CALLS);
         let identity = (document.clone(), external_mid.clone(), element.clone());
