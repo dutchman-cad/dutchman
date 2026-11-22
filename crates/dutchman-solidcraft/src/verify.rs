@@ -1278,21 +1278,34 @@ pub(crate) fn prefix_misses_source(
     let union = |bodies: &[Extent]| {
         let mut bounds = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
         for body in bodies {
-            bounds.0 = std::array::from_fn(|axis| bounds.0[axis].min(body.bounds.0[axis]));
-            bounds.1 = std::array::from_fn(|axis| bounds.1[axis].max(body.bounds.1[axis]));
+            for ((low, high), (body_low, body_high)) in bounds
+                .0
+                .iter_mut()
+                .zip(bounds.1.iter_mut())
+                .zip(body.bounds.0.iter().zip(body.bounds.1.iter()))
+            {
+                *low = low.min(*body_low);
+                *high = high.max(*body_high);
+            }
         }
         bounds
     };
     let (kept_low, kept_high) = union(prefix);
     let (final_low, final_high) = union(source);
-    let diagonal = (0..3)
-        .map(|axis| (final_high[axis] - final_low[axis]).powi(2))
+    let diagonal = final_low
+        .iter()
+        .zip(final_high.iter())
+        .map(|(low, high)| (high - low).powi(2))
         .sum::<f64>()
         .sqrt();
     // The larger of half a millimetre and 1% of the final shape's diagonal.
     let slack = (diagonal * 0.01).max(0.5);
-    for (axis, name) in ["X", "Y", "Z"].into_iter().enumerate() {
-        let short = (kept_low[axis] - final_low[axis]).max(final_high[axis] - kept_high[axis]);
+    let axes = kept_low
+        .iter()
+        .zip(kept_high.iter())
+        .zip(final_low.iter().zip(final_high.iter()));
+    for (((kept_low, kept_high), (final_low, final_high)), name) in axes.zip(["X", "Y", "Z"]) {
+        let short = (kept_low - final_low).max(final_high - kept_high);
         if short.is_finite() && short > slack {
             return Some(format!(
                 "the retained features' body ends {short:.1} mm inside the source's final \
