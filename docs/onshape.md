@@ -477,11 +477,16 @@ All endpoints use API v17.
 
 ### Calls and cache
 
-`--max-calls` defaults to 50 and counts every HTTP attempt, including metadata,
-consistency checks, export creation, polling, download, retries, and a refetch.
-Dutchman stops **before** attempt 51 and prints the count on success or failure.
-This conservative local budget differs from Onshape's yearly billing, which may
-exclude unsuccessful requests. `--max-calls 0` permits cache reads only. `--json`
+Without `--max-calls`, the call limit fits the document. It starts at 50 and grows as
+Dutchman finds work to do: 30 more for each Part Studio or assembly, and one more for
+each body-detail request a Part Studio needs, up to a ceiling of 2000 calls that no
+document can raise. A document with dozens of parts therefore finishes, and a runaway
+one still stops. `--max-calls N` sets a fixed limit instead and nothing raises it. Calls
+count every HTTP attempt, including metadata, consistency checks, export creation,
+polling, download, retries, and a refetch. Dutchman stops **before** the attempt over
+the limit and prints the count on success or failure. This conservative local limit
+differs from Onshape's yearly billing, which may exclude unsuccessful requests.
+`--max-calls 0` permits cache reads only. The desktop app uses the automatic limit; if a fetch stops at it, the Results card says so and offers Continue fetching, which carries on with a larger limit and the replies already cached. `--json`
 returns the same `dutchman.onshape-fetch/1` report as MCP.
 
 Responses are cached privately under `${XDG_CACHE_HOME:-~/.cache}/dutchman/onshape`,

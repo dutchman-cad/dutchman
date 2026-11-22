@@ -1267,7 +1267,7 @@ containment and closed-form line/conic intersections, never area or finite sampl
 
 `onshape_fetch` accepts `document_url` (required), `out` (optional file path),
 `version` (optional immutable Onshape version ID), `bearer_token_file` (optional private
-local OAuth token file path), and `max_calls` (optional HTTP attempt budget, default 50). It advertises input and output JSON schemas and returns
+local OAuth token file path), and `max_calls` (optional fixed HTTP attempt limit; omitted, the limit grows with the document up to 2000). It advertises input and output JSON schemas and returns
 `dutchman.onshape-fetch/1` in text and structured content, with `isError` on failure.
 API keys remain the default and come from the server's local environment or saved
 connection. Alternatively, use `bearer_token_file` or the server process environment's

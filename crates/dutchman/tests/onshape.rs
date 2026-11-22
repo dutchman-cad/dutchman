@@ -2093,3 +2093,123 @@ fn assert_face_sketch_refused(model: &dutchman_core::Model, report: &dutchman_co
         && loss.code.as_deref() == Some("onshape/history.not-supported")
         && loss.detail.contains("kept the final STEP geometry")));
 }
+
+/// Answers each endpoint from the fixtures, so a document of any size can be fetched.
+struct Router {
+    creators: usize,
+    sent: u32,
+}
+impl HttpClient for Router {
+    fn send(&mut self, request: &Request) -> Result<Response> {
+        self.sent += 1;
+        let path = request.path.as_str();
+        let fixture = |text: &str| response(200, serde_json::from_str(text).unwrap());
+        Ok(if path.ends_with("/currentmicroversion") {
+            response(200, json!({"microversion": MID}))
+        } else if path.ends_with(&format!("/documents/{DID}")) {
+            response(200, json!({"name": "Synthetic document"}))
+        } else if path.ends_with("/elements") {
+            response(
+                200,
+                json!([{"id": PS, "elementType": "PARTSTUDIO", "name": "Synthetic tab"}]),
+            )
+        } else if path.ends_with("/features") {
+            let mut features: Value =
+                serde_json::from_str(include_str!("fixtures/onshape/partstudio.json")).unwrap();
+            let list = features["features"].as_array_mut().unwrap();
+            let mut extrude = list
+                .iter()
+                .find(|f| f["featureType"] == "extrude")
+                .unwrap()
+                .clone();
+            extrude["parameters"].as_array_mut().unwrap().push(
+                json!({"btType":"BTMParameterEnum-145","parameterId":"operationType","value":"NEW"}),
+            );
+            for i in 0..self.creators {
+                extrude["featureId"] = json!(format!("part-{i}"));
+                list.push(extrude.clone());
+            }
+            response(200, features)
+        } else if path.ends_with("/bodydetails") {
+            fixture(include_str!("fixtures/onshape/bodydetails.json"))
+        } else if path.ends_with("/configuration") {
+            fixture(include_str!("fixtures/onshape/configuration.json"))
+        } else if path.ends_with("/variables") {
+            fixture(include_str!("fixtures/onshape/variables.json"))
+        } else if path.ends_with("/sketches") {
+            response(200, sketch_information(MID))
+        } else if request.method == "POST" && path.ends_with("/export/step") {
+            response(
+                200,
+                json!({"id":"export-job","requestState":"DONE","documentId":DID,"resultDocumentId":DID,"requestElementId":PS,"resultExternalDataIds":["step-file"]}),
+            )
+        } else if path.contains("/externaldata/") {
+            Response {
+                status: 200,
+                headers: BTreeMap::new(),
+                body: include_bytes!("fixtures/onshape/export.step").to_vec(),
+            }
+        } else {
+            panic!("unexpected request {path}");
+        })
+    }
+    fn now(&self) -> SystemTime {
+        httpdate::parse_http_date("Wed, 11 Nov 2026 12:00:00 GMT").unwrap()
+    }
+    fn nonce(&self) -> Result<String> {
+        Ok("fixedNONCE".into())
+    }
+    fn sleep(&mut self, _delay: Duration) {}
+}
+
+fn fetch_by_default(creators: usize) -> (Result<FetchReport>, u32) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router { creators, sent: 0 };
+    let result = fetch_with_document_budget(
+        &mut router,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+    );
+    (result, router.sent)
+}
+
+#[test]
+fn a_document_needing_more_than_fifty_calls_fetches_with_the_default_budget() {
+    let (result, sent) = fetch_by_default(60);
+    let report = result.unwrap();
+    assert!(report.calls > 50, "{}", report.calls);
+    assert_eq!(report.calls, sent);
+}
+
+#[test]
+fn the_default_budget_still_stops_a_runaway_document() {
+    // Thousands of part-making features would need thousands of calls.
+    let (result, sent) = fetch_by_default(3000);
+    let error = result.err().unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(error.calls, 2000);
+    assert_eq!(sent, 2000);
+}
+
+#[test]
+fn an_explicit_budget_is_never_raised_by_the_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 60,
+        sent: 0,
+    };
+    let error = fetch(
+        &mut router,
+        &credentials(),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        50,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(router.sent, 50);
+}

@@ -648,6 +648,13 @@ impl App {
     ) {
         self.intake.transport = transport;
         self.intake.fetch = fetch;
+        self.intake.continue_fetch = fetch;
+    }
+
+    /// The message a fetch that stopped at the request limit ends with, for UI tests.
+    #[doc(hidden)]
+    pub fn budget_stop_message_for_test() -> &'static str {
+        crate::onshape::BUDGET_STOP
     }
 
     fn accept_paste(&mut self, files: Vec<PathBuf>, text: &str, ctx: &egui::Context) {
@@ -800,6 +807,9 @@ impl App {
                             self.start(ctx);
                         }
                         Err(why) => {
+                            if why == crate::onshape::BUDGET_STOP {
+                                self.intake.resumable = self.intake.last_onshape.clone();
+                            }
                             if let Some(row) = row.and_then(|index| self.rows.get_mut(index)) {
                                 row.status = Status::Failed;
                                 row.progress = None;
@@ -3080,6 +3090,13 @@ impl App {
                     if let Some(chosen) = chosen {
                         action = Some(chosen);
                     }
+                    if index == 0
+                        && !running
+                        && self.intake.resumable.is_some()
+                        && ui.button("Continue fetching").clicked()
+                    {
+                        action = Some(Action::ContinueFetch);
+                    }
                 });
                 if first == Some(index) {
                     shown.scroll_to_me(Some(Align::Min));
@@ -3138,6 +3155,13 @@ impl App {
             }
             Action::Notice(message) => {
                 self.notice = Some(message);
+                Ok(())
+            }
+            Action::ContinueFetch => {
+                if let Some(link) = self.intake.resumable.take() {
+                    self.intake.continuing = true;
+                    self.open_source(crate::paste::Source::Onshape(link), ctx);
+                }
                 Ok(())
             }
             Action::Pick(pick) => {
@@ -3480,6 +3504,8 @@ enum Action {
     OpenReport(usize),
     /// Choose the row's file in the report panel.
     SelectReport(usize),
+    /// Carry on an Onshape fetch that stopped at the request limit.
+    ContinueFetch,
 }
 
 /// Completed designs with missing history or degraded content need review.

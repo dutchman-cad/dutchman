@@ -4065,6 +4065,90 @@ mod paste_inputs {
         assert_bundle_survives_exit(h, output.path());
     }
 
+    fn failing_fetch(_link: String, _folder: &Path) -> Result<PathBuf, String> {
+        std::thread::sleep(Duration::from_millis(50));
+        Err("The Onshape fetch stopped after 50 calls at the safety limit.".to_owned())
+    }
+
+    fn panicking_fetch(_link: String, _folder: &Path) -> Result<PathBuf, String> {
+        panic!("synthetic fetch failure");
+    }
+
+    fn fetch_error_message(fetch: fn(String, &Path) -> Result<PathBuf, String>) -> String {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(true);
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), fetch);
+        output_picker(&mut h, output.path());
+        paste(&mut h, LINK);
+        let started = Instant::now();
+        while h.state().running() || h.state().rows().is_empty() {
+            assert!(started.elapsed() < Duration::from_secs(20), "fetch hung");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        h.run_steps(8);
+        assert_eq!(h.state().rows().len(), 1);
+        assert_eq!(h.state().rows()[0].status, Status::Failed);
+        assert!(h.query_by_label_contains("Fetching from Onshape").is_none());
+        let message = h.state().rows()[0].report.as_ref().unwrap()["error"]["message"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            h.query_all_by_label_contains(&message).next().is_some(),
+            "{message}"
+        );
+        message
+    }
+
+    #[test]
+    fn a_failed_onshape_fetch_ends_the_job_with_its_message() {
+        assert_eq!(
+            fetch_error_message(failing_fetch),
+            "The Onshape fetch stopped after 50 calls at the safety limit."
+        );
+    }
+
+    fn budget_then_ok_fetch(link: String, folder: &Path) -> Result<PathBuf, String> {
+        static CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            return Err(App::budget_stop_message_for_test().to_owned());
+        }
+        fetch(link, folder)
+    }
+
+    #[test]
+    fn a_request_limit_stop_offers_continue_fetching_without_command_line_words() {
+        let mut h = window(true);
+        let output = tempfile::tempdir().unwrap();
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), budget_then_ok_fetch);
+        output_picker(&mut h, output.path());
+        paste(&mut h, LINK);
+        let started = Instant::now();
+        while h.query_by_label("Continue fetching").is_none() {
+            assert!(started.elapsed() < Duration::from_secs(20), "no button");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        let report = h.state().rows()[0].report.as_ref().unwrap();
+        let message = report["error"]["message"].as_str().unwrap();
+        assert!(!message.contains("--"), "{message}");
+        h.get_by_label("Continue fetching").click_accesskit();
+        h.step();
+        wait_for_conversion(&mut h);
+        assert!(h.query_by_label("Continue fetching").is_none());
+        assert_eq!(h.state().rows()[0].status, Status::Converted);
+    }
+
+    #[test]
+    fn a_panicking_onshape_fetch_still_ends_the_job() {
+        assert!(fetch_error_message(panicking_fetch).contains("stopped unexpectedly"));
+    }
+
     #[test]
     fn saving_without_a_pending_link_focuses_the_account_link_field() {
         let mut h = window(false);

@@ -307,11 +307,13 @@ fn onshape_fetch(args: &Map<String, Value>) -> Result<Value, String> {
             }
         };
         let max_calls = match args.get("max_calls") {
-            None => 50,
-            Some(value) => value
-                .as_u64()
-                .and_then(|v| u32::try_from(v).ok())
-                .ok_or("max_calls must be a whole number from 0 to 4294967295")?,
+            None => None,
+            Some(value) => Some(
+                value
+                    .as_u64()
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or("max_calls must be a whole number from 0 to 4294967295")?,
+            ),
         };
         Ok(crate::onshape::FetchOptions {
             document_url: document_url.into(),
@@ -426,7 +428,7 @@ fn tools() -> Value {
                 "document_url": {"type": "string"}, "out": {"type": "string", "description": "Bundle file path. An existing file is replaced only after a successful fetch."},
                 "version": {"type": "string", "description": "Immutable Onshape version ID overriding the URL."},
                 "bearer_token_file": {"type": "string", "description": "Private local token file path. Alternatively set DUTCHMAN_ONSHAPE_BEARER_TOKEN in the server environment. Never pass a token value."},
-                "max_calls": {"type": "integer", "minimum": 0, "maximum": 4294967295u64, "default": 50}
+                "max_calls": {"type": "integer", "minimum": 0, "maximum": 4294967295u64, "description": "Optional HTTP attempt limit. Omit it and the limit grows with the document, up to a fixed ceiling."}
             }, "required": ["document_url"], "additionalProperties": false},
             "outputSchema": {"type": "object", "properties": {
                 "schema": {"const": "dutchman.onshape-fetch/1"}, "ok": {"type": "boolean"},

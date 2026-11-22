@@ -169,9 +169,10 @@ pub struct FetchOptions {
     /// Read an OAuth bearer token from a private file (or set DUTCHMAN_ONSHAPE_BEARER_TOKEN).
     #[arg(long)]
     pub bearer_token_file: Option<PathBuf>,
-    /// Maximum HTTP attempts, including metadata, polling, retries and downloads.
-    #[arg(long, default_value_t = 50)]
-    pub max_calls: u32,
+    /// Maximum HTTP attempts, including metadata, polling, retries and downloads. Without it
+    /// the limit grows with the document's elements and parts, up to a fixed ceiling.
+    #[arg(long)]
+    pub max_calls: Option<u32>,
     /// Print the same structured report as the MCP tool.
     #[arg(long)]
     pub json: bool,
@@ -191,14 +192,11 @@ pub fn run(options: &FetchOptions) -> Value {
             .out
             .clone()
             .unwrap_or_else(|| PathBuf::from(format!("{}.onshape-bundle", parsed.element)));
-        fetch_authenticated(
-            &mut NetworkClient::default(),
-            &credentials,
-            &parsed,
-            &output,
-            &cache,
-            options.max_calls,
-        )
+        let client = &mut NetworkClient::default();
+        match options.max_calls {
+            Some(max) => fetch_authenticated(client, &credentials, &parsed, &output, &cache, max),
+            None => fetch_with_document_budget(client, &credentials, &parsed, &output, &cache),
+        }
     })();
     crate::json::onshape_fetch(&result)
 }
@@ -211,6 +209,7 @@ pub fn session_user<C: HttpClient>(client: &mut C, credentials: &Credentials) ->
         credentials: Auth::ApiKeys(credentials),
         calls: 0,
         max_calls: 1,
+        auto: false,
     };
     let response = session
         .request("GET", &format!("{API}/users/sessioninfo"), "", b"")
@@ -302,6 +301,7 @@ pub fn fetch<C: HttpClient>(
         output,
         cache,
         max_calls,
+        false,
     )
 }
 
@@ -321,6 +321,29 @@ pub fn fetch_authenticated<C: HttpClient>(
         output,
         cache,
         max_calls,
+        false,
+    )
+}
+
+/// Fetch with no fixed call limit. The limit starts at 50 and grows as the document's
+/// elements and body-detail requests are found, so an ordinary document finishes, and it
+/// stops at 2000 calls however large the document claims to be. Retries, polling and
+/// refetches draw on the same limit and never raise it.
+pub fn fetch_with_document_budget<C: HttpClient>(
+    client: &mut C,
+    credentials: &FetchAuth,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+) -> Result<FetchReport> {
+    fetch_auth(
+        client,
+        credentials.as_auth(),
+        source,
+        output,
+        cache,
+        http::AUTO_BASE_CALLS,
+        true,
     )
 }
 
@@ -331,6 +354,7 @@ fn fetch_auth<C: HttpClient>(
     output: &Path,
     cache: &Path,
     max_calls: u32,
+    auto: bool,
 ) -> Result<FetchReport> {
     id(&source.document)?;
     id(&source.version)?;
@@ -350,6 +374,7 @@ fn fetch_auth<C: HttpClient>(
         credentials,
         calls: 0,
         max_calls,
+        auto,
     };
     let result = fetch_inner(&mut session, source, output, cache);
     result.map_err(|mut error| {
@@ -653,6 +678,7 @@ fn capture<C: HttpClient>(
             .get("elementType")
             .and_then(Value::as_str)
             .ok_or_else(response_error)?;
+        fetcher.session.allow(http::AUTO_ELEMENT_CALLS);
         let tab_name = tab
             .get("name")
             .and_then(Value::as_str)
@@ -705,6 +731,9 @@ fn capture<C: HttpClient>(
                 if ancestry.len() > 1 {
                     wanted.insert(list.len());
                 }
+                fetcher
+                    .session
+                    .allow(u32::try_from(wanted.len()).unwrap_or(u32::MAX));
                 let mut indices = Vec::new();
                 for i in wanted {
                     let file = format!("{prefix}/bodydetails/{i}.json");

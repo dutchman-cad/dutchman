@@ -397,14 +397,39 @@ pub(crate) fn link_ui(
             && ui.input(|i| i.key_pressed(egui::Key::Enter)))
 }
 
+/// Calls a continued fetch may use. The replies already fetched are reused, so this only
+/// pays for what is left.
+pub(crate) const CONTINUE_CALLS: u32 = 6000;
+
+/// Shown when the fetch stops at Dutchman's limit on Onshape requests. The Results card
+/// offers "Continue fetching" under it, so it names no command-line option.
+pub(crate) const BUDGET_STOP: &str = "This Onshape document needs more requests than Dutchman makes in one go, so it stopped. Choose Continue fetching to carry on from where it stopped; what it already fetched is kept.";
+
 pub(crate) fn fetch(link: String, folder: &std::path::Path) -> Result<std::path::PathBuf, String> {
     fetch_with_token_file(link, folder, None)
+}
+
+/// Carries on after a stop at the request limit, with a larger limit and the cached replies.
+pub(crate) fn fetch_continuing(
+    link: String,
+    folder: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    fetch_with_budget(link, folder, None, Some(CONTINUE_CALLS))
 }
 
 pub(crate) fn fetch_with_token_file(
     link: String,
     folder: &std::path::Path,
     bearer_token_file: Option<std::path::PathBuf>,
+) -> Result<std::path::PathBuf, String> {
+    fetch_with_budget(link, folder, bearer_token_file, None)
+}
+
+pub(crate) fn fetch_with_budget(
+    link: String,
+    folder: &std::path::Path,
+    bearer_token_file: Option<std::path::PathBuf>,
+    max_calls: Option<u32>,
 ) -> Result<std::path::PathBuf, String> {
     let element = dutchman::onshape::DocumentUrl::parse(&link, None)
         .map_err(|why| why.message.to_owned())?
@@ -415,18 +440,30 @@ pub(crate) fn fetch_with_token_file(
         out: Some(out.clone()),
         version: None,
         bearer_token_file,
-        max_calls: 50,
+        max_calls,
         json: false,
     });
     if report.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
         Ok(out)
     } else {
-        Err(report
-            .pointer("/error/message")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("Onshape could not be fetched; check the link and retry.")
-            .to_owned())
+        Err(failure_message(&report))
     }
+}
+
+/// The text the Results card shows for a failed fetch.
+fn failure_message(report: &serde_json::Value) -> String {
+    if report
+        .pointer("/error/code")
+        .and_then(serde_json::Value::as_str)
+        == Some("onshape/budget")
+    {
+        return BUDGET_STOP.to_owned();
+    }
+    report
+        .pointer("/error/message")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Onshape could not be fetched; check the link and retry.")
+        .to_owned()
 }
 
 /// The source archive stays intact; report transport wraps it in its existing gzip envelope.
@@ -531,6 +568,17 @@ mod tests {
         assert!(panel.connected());
         assert!(panel.bearer);
         assert!(!panel.changing_keys);
+    }
+
+    #[test]
+    fn a_call_limit_stop_names_no_command_line_option() {
+        let report = serde_json::json!({"ok": false, "calls": 50,
+            "error": {"code": "onshape/budget", "message": "Onshape call budget reached; raise it with --max-calls"}});
+        let text = failure_message(&report);
+        assert_eq!(text, BUDGET_STOP);
+        assert!(!text.contains("--"));
+        let other = serde_json::json!({"ok": false, "error": {"code": "onshape/auth", "message": "Keys refused"}});
+        assert_eq!(failure_message(&other), "Keys refused");
     }
 
     #[test]

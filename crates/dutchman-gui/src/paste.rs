@@ -294,6 +294,13 @@ pub(crate) struct Inbox {
     pub(crate) receiver: std::sync::mpsc::Receiver<Message>,
     pub(crate) transport: std::sync::Arc<dyn Transport>,
     pub(crate) fetch: fn(String, &Path) -> Result<PathBuf, String>,
+    /// Used instead of `fetch` when carrying on after a stop at the request limit.
+    pub(crate) continue_fetch: fn(String, &Path) -> Result<PathBuf, String>,
+    /// Set for the next `start`; it clears itself.
+    pub(crate) continuing: bool,
+    /// The Onshape link whose fetch stopped at the request limit, while it can be continued.
+    pub(crate) resumable: Option<String>,
+    pub(crate) last_onshape: Option<String>,
     pub(crate) bearer_token_file: Option<PathBuf>,
     pub(crate) active: bool,
     pub(crate) row: Option<usize>,
@@ -314,6 +321,10 @@ impl Inbox {
             receiver,
             transport: std::sync::Arc::new(Network),
             fetch: crate::onshape::fetch,
+            continue_fetch: crate::onshape::fetch_continuing,
+            continuing: false,
+            resumable: None,
+            last_onshape: None,
             bearer_token_file: None,
             active: false,
             row: None,
@@ -349,15 +360,31 @@ impl Inbox {
         self.row = Some(row);
         let sender = self.sender.clone();
         let transport = self.transport.clone();
-        let fetch = self.fetch;
+        let continuing = std::mem::take(&mut self.continuing);
+        let fetch = if continuing {
+            self.continue_fetch
+        } else {
+            self.fetch
+        };
+        self.resumable = None;
+        if let Source::Onshape(link) = &source {
+            self.last_onshape = Some(link.clone());
+        }
         let bearer_token_file = self.bearer_token_file.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = (|| {
+            // A panic must still end the job: without a message the card would show its
+            // fetching caption forever.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let link = match source {
                     Source::Onshape(link) => {
                         let result = if bearer_token_file.is_some() {
-                            crate::onshape::fetch_with_token_file(link, &output, bearer_token_file)
+                            crate::onshape::fetch_with_budget(
+                                link,
+                                &output,
+                                bearer_token_file,
+                                continuing.then_some(crate::onshape::CONTINUE_CALLS),
+                            )
                         } else {
                             fetch(link, &output)
                         };
@@ -377,7 +404,10 @@ impl Inbox {
                     ctx.request_repaint();
                 })?;
                 Ok((path, Some(folder)))
-            })();
+            }))
+            .unwrap_or_else(|_| {
+                Err("Dutchman stopped unexpectedly while fetching. Retry; if it happens again, report it with the link's type (Part Studio or assembly).".to_owned())
+            });
             let _ = sender.send(Message::Finished(result));
             ctx.request_repaint();
         });
