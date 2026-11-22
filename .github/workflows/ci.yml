@@ -208,18 +208,28 @@ jobs:
       - name: Check free disk space
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: bash scripts/ci-disk-space.sh
+      # Self-hosted runners use the toolchain their owner keeps current; a job that installs or
+      # updates it can pull files from under another runner's build.
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment == 'github-hosted'
       # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
       - name: Keep the build on the self-hosted runner
         if: runner.environment == 'self-hosted'
         run: |
           echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME" >> "$GITHUB_ENV"
           if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
-          # A minimal toolchain has no rustdoc, which the doc-tests need (GitHub's images have it).
-          if ! rustup which rustdoc >/dev/null 2>&1; then
-            rustup toolchain install stable --profile default --no-self-update
+          # Check, never install: the doc-tests need rustdoc and the default link needs rust-lld.
+          missing=""
+          for tool in rustc cargo rustdoc; do
+            rustup which "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          lld="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/rust-lld"
+          [ -x "$lld" ] || missing="$missing rust-lld"
+          if [ -n "$missing" ]; then
+            echo "::error title=Runner toolchain::$RUNNER_NAME lacks$missing; install the default profile of stable on the runner (rustup toolchain install stable --profile default)."
+            exit 1
           fi
-          rustup which rustdoc
+          rustc -V
       - uses: Swatinem/rust-cache@v2
         if: runner.environment == 'github-hosted'
         with:
