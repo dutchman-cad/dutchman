@@ -1477,13 +1477,13 @@ fn capture<C: HttpClient>(
         let mut reference_sources = BTreeMap::new();
         for i in 0..archive.len() {
             let mut member = archive.by_index(i).map_err(io_error)?;
-            let name = member.name().map_err(io_error)?.to_owned();
             let mut data = Vec::new();
             member
                 .by_ref()
                 .take(MAX_TOTAL as u64 + 1)
                 .read_to_end(&mut data)
                 .map_err(io_error)?;
+            let name = member.name().map_err(io_error)?.to_owned();
             if name == "manifest.json" {
                 let manifest: Value =
                     serde_json::from_slice(&data).map_err(|_| response_error())?;
