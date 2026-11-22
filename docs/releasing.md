@@ -232,8 +232,13 @@ still mounts, retains all three items and passes `hdiutil verify`.
 
 Every binary that is published (release archives, the AppImage, the Windows installer, the
 plugin zip, the container image) is built on GitHub's hosted runners, which start clean for
-each job. The self-hosted `flyer` runners run CI tests only, for the merge queue and pushes to
-`main` (`ci.yml`), never for pull requests and never for anything that ships. Moving a release
+each job. The self-hosted `flyer` runners run CI checks only (`ci.yml`: clippy, wasm, msrv,
+docs, the Linux tests and the SolidCraft round-trip; `placements.yml`: the two small placement
+checks), never anything that ships. A job uses them only when the run is a merge queue group, a
+push to `main`, or a pull request from this repository (not a fork) whose author is not a bot
+(Dependabot stays on GitHub, because it runs new dependencies' build scripts); everything else,
+and every run while the repository variable `FLYER` is `off`, uses GitHub's runners. ARM, Windows,
+macOS, Docker and root-needing jobs stay on GitHub. Moving a release
 build to a self-hosted runner needs a GitHub build and a self-hosted build of the same commit
 to match bit for bit first.
 

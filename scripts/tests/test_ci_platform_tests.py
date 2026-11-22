@@ -106,6 +106,8 @@ class PlatformTests(unittest.TestCase):
                 self.assertEqual('windows-latest' in evaluate(expression),
                                  event == 'push' or (event == 'pull_request' and selected))
                 roundtrip = workflow.split('  solidcraft-roundtrip:\n', 1)[1].split('  placements:', 1)[0]
-                expression = re.search(r'fromJSON\((.*)\)', roundtrip).group(1)
+                # The runner choice is a fromJSON too; the version matrix is the other one.
+                expression = next(m.group(1) for m in re.finditer(r'fromJSON\((.*)\)', roundtrip)
+                                  if 'self-hosted' not in m.group(1))
                 self.assertIn('0.18.2', evaluate(expression))
                 self.assertEqual('newest' in evaluate(expression), event == 'push')

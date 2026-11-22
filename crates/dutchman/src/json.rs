@@ -1359,8 +1359,14 @@ pub fn onshape_fetch(result: &crate::onshape::Result<crate::onshape::FetchReport
             json!({"schema": crate::onshape::SCHEMA, "ok": true, "output": report.output.display().to_string(),
             "microversion": report.microversion, "calls": report.calls, "cache_hits": report.cache_hits})
         }
-        Err(error) => json!({"schema": crate::onshape::SCHEMA, "ok": false,
-            "calls": error.calls, "error": {"code": error.kind.code(), "message": error.message}}),
+        Err(error) => {
+            let mut report = json!({"schema": crate::onshape::SCHEMA, "ok": false,
+            "calls": error.calls, "error": {"code": error.kind.code(), "message": error.message}});
+            if let (Some(estimate), Some(object)) = (error.estimate, report.as_object_mut()) {
+                object.insert("estimated_calls".into(), estimate.into());
+            }
+            report
+        }
     }
 }
 

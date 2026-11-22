@@ -50,6 +50,9 @@ jobs:
       docker: ${{ steps.diff.outputs.docker }}
       platform: ${{ steps.platform.outputs.platform }}
       floor: ${{ steps.platform.outputs.floor }}
+      # Self-hosted 'flyer' runners: merge queue, main, and pull requests from this repository by
+      # people (never forks, never bots such as Dependabot). FLYER=off sends everything to GitHub.
+      flyer: ${{ vars.FLYER != 'off' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot')) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -147,14 +150,24 @@ jobs:
   clippy:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+      # Self-hosted runners use the toolchain their owner keeps current (checked, never installed).
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment == 'github-hosted'
         with:
           components: clippy
+      # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
+      - name: Keep the build on the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME-clippy" >> "$GITHUB_ENV"
+          if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
+          bash scripts/ci-runner-toolchain.sh clippy
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           shared-key: clippy-linux-debug
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -166,6 +179,8 @@ jobs:
   wasm:
     needs: changes
     if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
+    # Stays on GitHub-hosted runners: it needs the wasm32-wasip2 target, which the shared runners do not carry,
+    # and a job must not install targets on a shared box.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -193,10 +208,11 @@ jobs:
       matrix:
         # ARM64 is test-arm below, which gets a second try when its runner is shut down.
         os: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && needs.changes.outputs.platform != 'true')) && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
-    # The merge queue's and main's Linux run uses the self-hosted 'flyer' runners (warm build:
-    # about 6 min against 12 on GitHub). Pull requests never do, so code from forks never runs
-    # there. Set the repository variable FLYER to 'off' to send these runs back to GitHub.
-    runs-on: ${{ (matrix.os == 'ubuntu-latest' && vars.FLYER != 'off' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))) && fromJSON('["self-hosted", "flyer"]') || matrix.os }}
+    # Linux runs on the self-hosted 'flyer' runners when needs.changes.outputs.flyer is 'true':
+    # the merge queue, main, and pull requests from this repository by people (never forks or
+    # bots). Warm build: about 6 min against 12 on GitHub. Set the repository variable FLYER to
+    # 'off' to send these runs back to GitHub.
+    runs-on: ${{ (matrix.os == 'ubuntu-latest' && needs.changes.outputs.flyer == 'true') && fromJSON('["self-hosted", "flyer"]') || matrix.os }}
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 30 || 25 }}
     env:
       # Debug info is most of a cold Windows build's time and is not needed to run the tests.
@@ -219,17 +235,7 @@ jobs:
           echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME" >> "$GITHUB_ENV"
           if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
           # Check, never install: the doc-tests need rustdoc and the default link needs rust-lld.
-          missing=""
-          for tool in rustc cargo rustdoc; do
-            rustup which "$tool" >/dev/null 2>&1 || missing="$missing $tool"
-          done
-          lld="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/rust-lld"
-          [ -x "$lld" ] || missing="$missing rust-lld"
-          if [ -n "$missing" ]; then
-            echo "::error title=Runner toolchain::$RUNNER_NAME lacks$missing; install the default profile of stable on the runner (rustup toolchain install stable --profile default)."
-            exit 1
-          fi
-          rustc -V
+          bash scripts/ci-runner-toolchain.sh
       - uses: Swatinem/rust-cache@v2
         if: runner.environment == 'github-hosted'
         with:
@@ -361,7 +367,7 @@ jobs:
   docs:
     needs: changes
     if: needs.changes.outputs.code == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
     timeout-minutes: 25
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -369,7 +375,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment == 'github-hosted'
+      # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
+      - name: Keep the build on the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME" >> "$GITHUB_ENV"
+          if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
+          bash scripts/ci-runner-toolchain.sh
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           shared-key: test-ubuntu-latest-debug
           save-if: false
@@ -492,6 +507,8 @@ jobs:
   msrv:
     needs: changes
     if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
+    # Stays on GitHub-hosted runners: it needs the pinned older toolchain (1.88), and a job must not
+    # install a toolchain on a shared box.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -510,7 +527,7 @@ jobs:
     name: solidcraft-roundtrip (${{ matrix.solidcraft.version }})
     needs: changes
     if: (needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true') || (github.event_name == 'pull_request' && needs.changes.outputs.floor == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -527,15 +544,27 @@ jobs:
       # Debug=0 jobs on current images have ample disk; clean only smaller images.
       - uses: actions/checkout@v7
       - name: Check free disk space
+        if: runner.environment == 'github-hosted'
         run: bash scripts/ci-disk-space.sh
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment == 'github-hosted'
+      # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
+      - name: Keep the build on the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME-roundtrip" >> "$GITHUB_ENV"
+          if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
+          bash scripts/ci-runner-toolchain.sh
       # The Linux test job's build covers this one: restoring its cache keeps a second copy of the
       # same dependencies out of the repository's cache storage.
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           shared-key: test-ubuntu-latest-debug
           save-if: false
       - run: cargo build --locked -p dutchman --bin dutchman
+      - name: Name the built program
+        run: echo "DUTCHMAN_BIN=${CARGO_TARGET_DIR:-target}/debug/dutchman" >> "$GITHUB_ENV"
       - run: df -h / .
       # Fetched archives are kept between runs, so a release server outage doesn't fail the
       # check: the script still verifies a cached archive against the release checksum.
@@ -561,7 +590,7 @@ jobs:
         run: |
           cube=1000:6:0,0,0:10,10,10
           fixtures=crates/dutchman-core/tests/fixtures
-          scripts/solidcraft-roundtrip.sh "solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli" target/debug/dutchman \
+          scripts/solidcraft-roundtrip.sh "solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli" "$DUTCHMAN_BIN" \
             "$fixtures/generated_unit_cube.f3d=$cube" \
             "$fixtures/synthetic_cube.ipt=$cube" \
             "$fixtures/solidworks_cube.sldprt=$cube" \

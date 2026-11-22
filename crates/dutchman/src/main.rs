@@ -586,7 +586,7 @@ fn run_cli() -> ExitCode {
         Command::Onshape {
             command: OnshapeCommand::Fetch(options),
         } => {
-            let report = dutchman::onshape::run(&options);
+            let report = onshape_fetch_report(&options);
             if options.json {
                 println!("{report}");
             } else {
@@ -1944,6 +1944,39 @@ fn print_losses(losses: &[Value], verbose: bool) {
 }
 
 /// The error's own words, with the system's reason when it has one. Never the keys.
+/// Estimates, shows the estimate, asks on a terminal when it is above 50 calls and `--yes` was
+/// not given, then fetches. An explicit `--max-calls` is both ceiling and consent.
+fn onshape_fetch_report(options: &dutchman::onshape::FetchOptions) -> Value {
+    use dutchman::onshape as onshape_api;
+    use std::io::IsTerminal;
+    if options.max_calls.is_some() {
+        return onshape_api::run(options);
+    }
+    let estimate = match onshape_api::estimate(options) {
+        Ok(estimate) => estimate,
+        Err(error) => return json::onshape_fetch(&Err(error)),
+    };
+    if !options.json {
+        eprintln!(
+            "Estimated Onshape API calls: about {} ({} already used to list the document; replies already cached cost none).",
+            onshape_api::calls_text(estimate.calls),
+            onshape_api::calls_text(estimate.listing_calls)
+        );
+    }
+    let interactive =
+        !options.json && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    let allowed = onshape_api::approval(&estimate, options.yes, interactive, |estimate| {
+        eprint!("{} [y/N] ", estimate.question());
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).is_ok()
+            && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+    });
+    match allowed {
+        Ok(()) => onshape_api::run_after(options, &estimate),
+        Err(error) => json::onshape_fetch(&Err(error)),
+    }
+}
+
 fn onshape_reason(error: &dutchman::onshape::Error) -> String {
     match &error.detail {
         Some(detail) => format!("{} ({detail})", error.message),

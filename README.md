@@ -58,6 +58,10 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 
    <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>
 
+## In FreeCAD
+
+The [Dutchman add-on for FreeCAD](https://github.com/dutchman-cad/freecad-addon) opens Fusion, Inventor, SolidWorks and the other formats Dutchman reads straight in FreeCAD, with an import report panel that says what came across and what didn't. To install it, open **Tools > Addon Manager > Preferences**, add the custom repository `https://github.com/dutchman-cad/freecad-addon` (branch `main`), reopen the Addon Manager, install **freecad-addon** and restart FreeCAD. The first import offers to download Dutchman itself. See [the FreeCAD add-on](docs/freecad-addon.md).
+
 ## What's new in 0.3.0
 
 - **Dutchman inside SolidCraft:** Install the Dutchman plugin with Preferences > Plugins > Install plugin… in SolidCraft 0.44 or newer (desktop) and approve its memory request (a plugin copied into the plugins folder by hand isn't approved and is refused for memory), then open Fusion, Inventor, SolidWorks and FreeCAD files directly, with editable history.
@@ -207,6 +211,7 @@ For other clients:
 
 - [Getting started](docs/guide.md): install, a first conversion, the loss report, and opening the result.
 - [Install](docs/install.md): Homebrew, Scoop, release archives and checksums, Docker, nightly, and source.
+- [The FreeCAD add-on](docs/freecad-addon.md): open other CAD formats in FreeCAD through Dutchman.
 - [The desktop app](docs/desktop.md): presets, estimates, the SolidCraft version pill, and updates.
 - [The command line](docs/command-line.md): options, `inspect`, `contents`, whole folders, and watching a folder.
 - [Choosing what to keep](docs/presets.md): Fast, Standard, Full, and the memory and time estimate.
