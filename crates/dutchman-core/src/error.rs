@@ -48,6 +48,10 @@ pub enum Error {
     /// Structured, anonymous facts from cadmpeg's model checks.
     #[error("cannot read this design: {message}")]
     Checks { message: String, facts: CheckFacts },
+    /// The file is well formed but its writer exported an empty design: it has a product and
+    /// no solids, surfaces or curves.
+    #[error("{0}")]
+    EmptyExport(String),
     /// The conversion exceeds the selected memory budget.
     #[error("{0}")]
     MemoryBudget(String),
@@ -78,7 +82,9 @@ impl Error {
             | Error::OutputExists { .. }
             | Error::WrongOutputExtension { .. }
             | Error::Assembly(_) => Stage::Input,
-            Error::NotSupportedYet { .. } | Error::Decode(_) => Stage::Decode,
+            Error::NotSupportedYet { .. } | Error::Decode(_) | Error::EmptyExport(_) => {
+                Stage::Decode
+            }
             Error::NoGeometry(_) | Error::Checks { .. } => Stage::Project,
             Error::Encode(_) | Error::Restate(_) => Stage::Write,
         }
@@ -152,13 +158,23 @@ impl Error {
             Self::NotSupportedYet { .. } => "not_supported_yet",
             Self::OutputExists { .. } => "output_exists",
             Self::WrongOutputExtension { .. } => "wrong_output_extension",
-            Self::Decode(_) => "decode",
+            Self::Decode(_) | Self::EmptyExport(_) => "decode",
             Self::Checks { .. } => "cadmpeg_checks",
             Self::MemoryBudget(_) => "memory_budget",
             Self::Encode(_) => "encode",
             Self::Assembly(_) => "assembly",
             Self::NoGeometry(_) => "no_geometry",
             Self::Restate(_) => "restate",
+        }
+    }
+}
+
+impl Error {
+    /// A finer, fixed reason within `kind`, when there is one.
+    pub fn cause(&self) -> Option<&'static str> {
+        match self {
+            Self::EmptyExport(_) => Some("empty_export"),
+            _ => None,
         }
     }
 }

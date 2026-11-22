@@ -397,6 +397,9 @@ pub fn error(schema: &str, input: Value, error: &Error) -> Value {
     );
     if let Some(fields) = report.get_mut("error").and_then(Value::as_object_mut) {
         fields.insert("kind".into(), json!(error.kind()));
+        if let Some(cause) = error.cause() {
+            fields.insert("cause".into(), json!(cause));
+        }
         if let Error::Checks { facts, .. } = error {
             fields.insert("findings".into(), json!(facts.findings));
             fields.insert("curve_kinds".into(), json!(facts.curve_kinds));
