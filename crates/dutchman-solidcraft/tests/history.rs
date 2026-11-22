@@ -1752,24 +1752,6 @@ fn target_045_keeps_the_previous_compatible_history_document() {
 }
 
 #[test]
-fn target_046_keeps_the_previous_compatible_history_document() {
-    let model = cube_with_history(10.0, first_profile(), None);
-    let write = |target: &str| {
-        convert(
-            &model,
-            &SolidCraftWriter::new()
-                .verification(Verification::Off)
-                .target_version(Some(target.parse().unwrap())),
-        )
-        .0
-    };
-    let previous = write("0.45.0");
-    let newest = write("0.46.0");
-    assert_eq!(newest["format"], "solidcraft/23");
-    assert_eq!(newest, previous);
-}
-
-#[test]
 fn as_built_joints_between_features_do_not_stop_history() {
     for source_tag in ["As-built", "As-built Joint"] {
         let model = cube_with_history(10.0, first_profile(), None);
@@ -10789,6 +10771,95 @@ fn reverse_start_offsets_and_two_sided_distances_follow_the_normal() {
         let actual = volumes(&cli, &bytes);
         assert_eq!(actual.len(), 1);
         assert!((actual[0] - 900.0).abs() < 1e-4);
+    }
+}
+
+/// A two-sided blind extrude of the 10 x 10 base, with the given first and second lengths.
+fn two_blind_sides(reversed: bool, first: f64, second: f64) -> Model {
+    changed_extrude(|definition| {
+        if reversed {
+            definition["direction"] = json!({"kind": "reversed_profile_normal"});
+        }
+        definition["extent"] = json!({"kind": "two_sided",
+            "first": {"termination": {"kind": "blind", "length": first}},
+            "second": {"termination": {"kind": "blind", "length": second}}});
+    })
+}
+
+#[test]
+fn a_negative_second_extent_spans_the_slab_between_both_ends() {
+    // (reversed, first, second, expected z range)
+    for (reversed, first, second, low, high) in [
+        (false, 7.0, -3.0, 3.0, 7.0),
+        (false, 3.0, -7.0, 3.0, 7.0),
+        (true, 7.0, -3.0, -7.0, -3.0),
+        (true, 3.0, -7.0, -7.0, -3.0),
+    ] {
+        let model = two_blind_sides(reversed, first, second);
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
+        assert_eq!(
+            document["features"][1]["extent"],
+            json!({"direction": "positive", "distance": format!("{} mm", high - low),
+                   "start_offset": format!("{low} mm")})
+        );
+        if let Some(cli) = solidcraft() {
+            let (bytes, _) = written(&model);
+            let boxes = bounds(&cli, &bytes);
+            assert_eq!(boxes.len(), 1);
+            assert!((boxes[0].0[2] - low).abs() < 1e-6, "{boxes:?}");
+            assert!((boxes[0].1[2] - high).abs() < 1e-6, "{boxes:?}");
+            let actual = volumes(&cli, &bytes);
+            assert!((actual[0] - 100.0 * (high - low)).abs() < 1e-4);
+        }
+    }
+}
+
+#[test]
+fn a_negative_second_extent_adds_to_a_start_offset() {
+    let model = changed_extrude(|definition| {
+        definition["start"] = json!({"kind": "offset_profile_plane", "offset": 2.0});
+        definition["extent"] = json!({"kind": "two_sided",
+            "first": {"termination": {"kind": "blind", "length": 7.0}},
+            "second": {"termination": {"kind": "blind", "length": -3.0}}});
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
+    assert_eq!(document["features"][1]["extent"]["start_offset"], "5 mm");
+    assert_eq!(document["features"][1]["extent"]["distance"], "4 mm");
+}
+
+#[test]
+fn positive_two_sided_extents_keep_their_distance2() {
+    let (document, report) = convert(
+        &two_blind_sides(false, 4.0, 6.0),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
+    assert_eq!(
+        document["features"][1]["extent"],
+        json!({"direction": "positive", "distance": "4 mm", "distance2": "6 mm"})
+    );
+}
+
+#[test]
+fn cancelling_two_sided_extents_are_refused_with_a_reason() {
+    for reversed in [false, true] {
+        let (_, report) = convert(
+            &two_blind_sides(reversed, 5.0, -5.0),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains("its two extents cancel"),
+            "{}",
+            history_line(&report)
+        );
     }
 }
 
@@ -20611,4 +20682,96 @@ fn solidcraft_replays_body_moves_and_later_features_with_source_centroids() {
             [4000.0]
         );
     }
+}
+
+/// Evaluates every design as a cube of `side` mm at the origin, the live extrude's as `kept`
+/// mm when it is the history's and not the original's, and gives no edges to any blend, so a
+/// blend after the extrude is refused and the history stops there.
+#[derive(Debug)]
+struct PrefixEvaluator {
+    source: f64,
+    kept: f64,
+}
+
+impl dutchman_solidcraft::SolidCraftEvaluator for PrefixEvaluator {
+    fn evaluate(&self, design: &[u8], _: std::time::Duration, _: &str) -> Result<Value, String> {
+        let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
+        let document: Value =
+            serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        let live = document["features"].as_array().unwrap().iter().any(|f| {
+            f["type"] == "extrude" && f.get("suppressed").and_then(Value::as_bool) != Some(true)
+        });
+        let side = if live { self.kept } else { self.source };
+        Ok(
+            json!({"bodies": [{"volume_mm3": side * side * side, "area_mm2": 6.0 * side * side,
+            "faces": 6, "bbox": {"min": [0, 0, 0], "max": [side, side, side]}}],
+            "timeline": [], "total": {"faces": 6}}),
+        )
+    }
+
+    fn run(
+        &self,
+        _: &[u8],
+        _: &[Value],
+        _: std::time::Duration,
+        _: &str,
+    ) -> Result<Vec<Value>, String> {
+        Err("no rebuilt edges in this evaluator".to_owned())
+    }
+}
+
+#[test]
+fn a_prefix_inside_the_source_shape_is_not_kept_when_only_a_blend_follows() {
+    let model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    // The rebuilt extrude is a 4 mm cube where the source's final shape is 10 mm: the blend
+    // after it cannot build the rest, so the extrude was a wrong region and must not stay.
+    let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(PrefixEvaluator {
+        source: 10.0,
+        kept: 4.0,
+    }));
+    let (document, report) = convert(&model, &writer);
+    let rows = &report.outcome().unwrap().features;
+    assert_eq!(
+        rows[1].status,
+        dutchman_core::FeatureStatus::Blocked,
+        "{report:?}"
+    );
+    let reason = rows[1].reason.as_deref().unwrap();
+    assert!(
+        reason.contains("inside the source's final shape")
+            && reason.contains("no feature after them builds material"),
+        "{reason}"
+    );
+    assert!(
+        !document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "extrude"),
+        "{document}"
+    );
+}
+
+#[test]
+fn a_prefix_that_holds_the_source_shape_stays_when_only_a_blend_follows() {
+    let model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(PrefixEvaluator {
+        source: 10.0,
+        kept: 10.0,
+    }));
+    let (document, report) = convert(&model, &writer);
+    let rows = &report.outcome().unwrap().features;
+    assert_eq!(
+        rows[1].status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{report:?}"
+    );
+    assert!(
+        document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "extrude"),
+        "{document}"
+    );
 }

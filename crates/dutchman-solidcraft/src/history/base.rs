@@ -143,12 +143,45 @@ pub(super) fn missing_input(
                         // Some decode losses identify no feature by name. With only
                         // one extrude in this model there is no other possible owner.
                         // Count suppressed rows too: their losses remain in the report.
+                        // cadmpeg names an extrude whose sketch is in another design only
+                        // by its scope record; that must resolve to exactly this feature.
+                        || scope_record(&loss.detail).is_some_and(|record| {
+                            owns_scope_record(feature, record, ctx)
+                        })
                         || (!loss.detail.contains("feature \"")
                             && !loss.subject.starts_with("feature \"")
                             && ctx.arena("features").iter().filter(|row| {
                                 super::operation_kind(row) == Some("extrude")
                             }).count() == 1))
             }))
+}
+
+/// The scope record number an "Extrude scope record N" loss detail names.
+fn scope_record(detail: &str) -> Option<u64> {
+    let rest = detail.split("Extrude scope record ").nth(1)?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// The Extrude scope record number a feature is built from. cadmpeg ends a feature's id with
+/// `:<scope kind><ordinal>:<scope record>`, e.g. `...BulkStream.dat7:Extrude2:950`.
+fn feature_scope_record(row: &Value) -> Option<u64> {
+    let mut parts = row.get("id")?.as_str()?.rsplit(':');
+    let record = parts.next()?.parse().ok()?;
+    parts.next()?.starts_with("Extrude").then_some(record)
+}
+
+/// Whether `feature` is the one and only feature of the model built from scope record
+/// `record`. A record several features share (two designs) belongs to none of them.
+fn owns_scope_record(feature: &Value, record: u64, ctx: &Context) -> bool {
+    if feature_scope_record(feature) != Some(record) {
+        return false;
+    }
+    ctx.arena("features")
+        .iter()
+        .filter(|row| feature_scope_record(row) == Some(record))
+        .count()
+        == 1
 }
 
 fn absent_reference(reference: &Value, ctx: &Context) -> bool {
@@ -698,6 +731,42 @@ mod tests {
                 report.losses()
             ));
         }
+    }
+
+    #[test]
+    fn a_scope_record_loss_belongs_to_the_one_feature_built_from_it() {
+        let extrude = |name: &str, record: u32| {
+            json!({"name": name, "id": format!("f3d:model:feature#52:f3d%3ADesign/BulkStream.dat7:Extrude2:{record}"),
+                "definition": {"kind": "operation", "value": {
+                    "kind": "extrude", "value": {"profile": {"kind": "planar", "value": {
+                        "kind": "native", "value": "synthetic:profile#1"}}}}}})
+        };
+        let (first, second) = (extrude("Extrude 1", 900), extrude("Extrude 2", 950));
+        let model = json!({"features": [first, second]});
+        let ctx = Context::testing(&model);
+        let losses = |record: u32| {
+            let mut report = Report::default();
+            report.push_coded(
+                Severity::Degraded,
+                "source",
+                "f3d/feature.extrude-profile-sketch-absent",
+                format!(
+                    "xref Panel: 1 Sketch-profile operand(s) of Extrude scope record {record} \
+                     name a Sketch that the Design stream does not register; the profile stays native."
+                ),
+            );
+            report
+        };
+        let named = losses(950);
+        assert!(missing_input(&second, &ctx, named.losses()));
+        assert!(!missing_input(&first, &ctx, named.losses()));
+        let none = losses(7);
+        assert!(!missing_input(&first, &ctx, none.losses()));
+        assert!(!missing_input(&second, &ctx, none.losses()));
+        // A record two features share cannot name one of them.
+        let model = json!({"features": [second, extrude("Copy", 950)]});
+        let ctx = Context::testing(&model);
+        assert!(!missing_input(&second, &ctx, named.losses()));
     }
 
     #[test]

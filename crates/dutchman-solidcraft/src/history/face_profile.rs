@@ -1082,20 +1082,35 @@ fn plane(faces: &[Boundary], points: &[V3]) -> Result<(V3, V3), String> {
     }
     .ok_or("its face boundary does not span a plane")?;
     let flat = NEAR * size;
-    if points
+    let off = points
         .iter()
-        .any(|p| dot(sub(*p, origin), normal).abs() > flat)
-        || faces
-            .iter()
-            .flat_map(|face| &face.edges)
-            .any(|edge| match edge {
-                Edge::Arc { axis, .. } | Edge::Circle { axis, .. } => {
-                    norm(cross(*axis, normal)) > ANGLE
-                }
-                Edge::Line { .. } => false,
-            })
+        .map(|p| dot(sub(*p, origin), normal).abs())
+        .fold(0.0, f64::max);
+    if off > flat {
+        // Say how far off, so a curved face (a cylinder wall has a boundary circle at each
+        // end, in two planes) is told apart from a boundary only a rounding error off.
+        return Err(format!(
+            "its face boundary is not planar: its edges lie up to {off:.4} mm off the plane \
+             through the first three (tolerance {flat:.5} mm), as on the wall of a cylinder \
+             or another curved face; only a flat face can be sketched"
+        ));
+    }
+    if faces
+        .iter()
+        .flat_map(|face| &face.edges)
+        .any(|edge| match edge {
+            Edge::Arc { axis, .. } | Edge::Circle { axis, .. } => {
+                norm(cross(*axis, normal)) > ANGLE
+            }
+            Edge::Line { .. } => false,
+        })
     {
-        return Err("its face boundary is not planar".to_owned());
+        return Err(
+            "its face boundary is not planar: its circles and arcs are not square to one \
+             plane (the two end circles of a cylinder wall face opposite ways), so it is a \
+             curved face; only a flat face can be sketched"
+                .to_owned(),
+        );
     }
     Ok((origin, normal))
 }
@@ -1546,6 +1561,114 @@ mod tests {
     fn circle(radius: f64) -> Edge {
         let r = row((radius, 0.0), (-radius, 0.0), (radius, 0.0), (0.0, -1.0));
         edge(&r).unwrap()
+    }
+
+    fn ring(at: V3, radius: f64, axis: V3, side: V3) -> Edge {
+        Edge::Circle {
+            start: add(at, scale(side, radius)),
+            mid: add(at, scale(side, -radius)),
+            center: at,
+            radius,
+            axis,
+        }
+    }
+
+    #[test]
+    fn planar_boundaries_far_from_the_origin_pass() {
+        // A circle on X = 240.80785, a circle of radius 3.933 on Y = -150, and a square
+        // at 600 mm: planar however far from the origin.
+        let x = ring(
+            [240.80785, 60.0, 150.0],
+            1.75,
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        );
+        let (_, normal) = plane(
+            &[Boundary {
+                edges: vec![x.clone()],
+                area: 0.0,
+            }],
+            &samples(&Boundary {
+                edges: vec![x],
+                area: 0.0,
+            }),
+        )
+        .unwrap();
+        assert!(normal[0].abs() > 1.0 - 1e-9, "{normal:?}");
+        let y = ring(
+            [140.0, -150.0, 30.0],
+            3.933,
+            [0.0, -1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        );
+        let boundary = Boundary {
+            edges: vec![y],
+            area: 0.0,
+        };
+        let (_, normal) = plane(std::slice::from_ref(&boundary), &samples(&boundary)).unwrap();
+        assert!(normal[1].abs() > 1.0 - 1e-9, "{normal:?}");
+        let corners = [
+            [600.0, 3.0, 1.0],
+            [610.0, 3.0, 1.0],
+            [610.0, 3.0, 9.0],
+            [600.0, 3.0, 9.0],
+        ];
+        let edges = (0..4)
+            .map(|k| Edge::Line {
+                start: corners[k],
+                end: corners[(k + 1) % 4],
+            })
+            .collect();
+        let boundary = Boundary { edges, area: 0.0 };
+        assert!(plane(std::slice::from_ref(&boundary), &samples(&boundary)).is_ok());
+    }
+
+    #[test]
+    fn a_boundary_a_little_off_its_plane_is_still_refused_with_the_distance() {
+        let mut corners = [
+            [0.0, 0.0, 240.0],
+            [10.0, 0.0, 240.0],
+            [10.0, 10.0, 240.0],
+            [0.0, 10.0, 240.0],
+        ];
+        corners[2][2] += 0.01;
+        let edges = (0..4)
+            .map(|k| Edge::Line {
+                start: corners[k],
+                end: corners[(k + 1) % 4],
+            })
+            .collect();
+        let boundary = Boundary { edges, area: 0.0 };
+        let reason = plane(std::slice::from_ref(&boundary), &samples(&boundary)).unwrap_err();
+        assert!(
+            reason.starts_with("its face boundary is not planar: its edges lie up to 0.0"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn a_cylinder_wall_boundary_is_refused_naming_the_curved_face() {
+        // The two end circles of a 398 mm shaft: planes 398 mm apart.
+        let edges = vec![
+            ring(
+                [140.0, 248.0, 30.0],
+                3.933,
+                [0.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ),
+            ring(
+                [140.0, -150.0, 30.0],
+                3.933,
+                [0.0, -1.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ),
+        ];
+        let boundary = Boundary { edges, area: 0.0 };
+        let reason = plane(std::slice::from_ref(&boundary), &samples(&boundary)).unwrap_err();
+        assert!(
+            reason.contains("not planar") && reason.contains("cylinder"),
+            "{reason}"
+        );
     }
 
     #[test]

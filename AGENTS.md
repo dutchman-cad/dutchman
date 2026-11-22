@@ -3,7 +3,7 @@
 A task brief or issue that states its own rule for its work takes precedence over this file.
 [CONTRIBUTING.md](CONTRIBUTING.md) is the full guide; this page is the short version for agents.
 
-Format-specific guides: [Solid Edge](docs/agents/solid-edge.md), [SolidWorks](docs/agents/solidworks.md).
+Format-specific guides: [Onshape](docs/agents/onshape.md), [Solid Edge](docs/agents/solid-edge.md), [SolidWorks](docs/agents/solidworks.md).
 
 ## Build and test
 

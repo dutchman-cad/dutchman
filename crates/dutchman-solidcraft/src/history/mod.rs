@@ -112,6 +112,53 @@ pub(crate) struct History {
     /// ([`infer`]). A final shape that differs from the source suspects them as it suspects
     /// unconfirmed profiles, so the timeline keeps no more than it would without them.
     pub(crate) measured: BTreeSet<u64>,
+    /// What each source row can do to the body's extent, by row, to tell whether the features
+    /// after a stop can still make a retained prefix bigger ([`History::unreachable_prefix`]).
+    pub(crate) growth: Vec<Growth>,
+}
+
+/// What a source feature can do to the extent of the bodies before it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Growth {
+    /// It changes no geometry (a sketch, a datum plane, a suppressed feature).
+    Inert,
+    /// It only removes material: a cut, an intersection.
+    Removes,
+    /// A fillet or chamfer: it rounds or fills edges, and stays inside the box of the body
+    /// it rounds. Its volume change is not bounded here.
+    Rounds,
+    /// It may build material beyond the earlier bodies, or this is not known.
+    Builds,
+}
+
+/// What `feature` can do to the extent of the bodies before it.
+fn growth_of(feature: &Value) -> Growth {
+    if feature.get("suppressed").and_then(Value::as_bool) == Some(true)
+        || unchanged_geometry(feature)
+    {
+        return Growth::Inert;
+    }
+    let kind = kind(feature);
+    if kind.starts_with("datum")
+        || matches!(
+            kind.as_str(),
+            "sketch" | "spatial_sketch" | "tree_node" | "reference_image" | "cosmetic_thread"
+        )
+    {
+        return Growth::Inert;
+    }
+    match kind.as_str() {
+        "fillet" | "chamfer" => Growth::Rounds,
+        "extrude" | "revolve"
+            if matches!(
+                operation(feature).get("op").and_then(Value::as_str),
+                Some("cut" | "intersect")
+            ) =>
+        {
+            Growth::Removes
+        }
+        _ => Growth::Builds,
+    }
 }
 
 /// The bodies the source stores right after `feature`, to compare its replay with. A base
@@ -183,6 +230,25 @@ fn stored_body_centers(feature: &Value) -> Option<Vec<crate::verify::StoredBody>
 }
 
 impl History {
+    /// What the source features after this history's last body-building feature can do to its
+    /// extent, when none of them can build beyond it: `Some(true)` when they only remove
+    /// material, `Some(false)` when some round edges. `None` when a later feature may build,
+    /// when nothing builds a body in this history, or when no feature follows.
+    pub(crate) fn unreachable_prefix(&self) -> Option<bool> {
+        let last = self
+            .features
+            .iter()
+            .filter(|feature| feature.get("type").and_then(Value::as_str) != Some("sketch"))
+            .filter_map(|feature| self.sources.get(&feature.get("id")?.as_u64()?))
+            .max()
+            .copied()?;
+        let after = self.growth.get(last.checked_add(1)?..)?;
+        if after.contains(&Growth::Builds) || after.iter().all(|g| *g == Growth::Inert) {
+            return None;
+        }
+        Some(!after.contains(&Growth::Rounds))
+    }
+
     /// Where the source stores the bodies at the point this history ends, when its last
     /// feature that isn't a sketch says. An earlier feature's count can't speak for a later one.
     pub(crate) fn stored_bodies_at_end(&self) -> Option<&[crate::verify::StoredBody]> {
@@ -1323,6 +1389,7 @@ fn map_into(
         })
         .collect();
     let timeline = progress.map(|p| p.features(features.len() as u64));
+    let growth: Vec<Growth> = features.iter().map(|feature| growth_of(feature)).collect();
     for (position, feature) in features.into_iter().enumerate() {
         if let Some(timeline) = &timeline {
             timeline.at(position as u64 + 1, name(feature));
@@ -1568,6 +1635,7 @@ fn map_into(
             }
         }
     }
+    history.growth = growth;
     history.reapplied = out
         .iter()
         .filter(|f| f.status == FeatureStatus::Mapped && f.reapplied)
@@ -2674,6 +2742,56 @@ mod tests {
 
     use super::*;
     use crate::testing::{cube, feature, with};
+
+    #[test]
+    fn a_stopped_prefix_is_unreachable_only_when_nothing_after_it_builds() {
+        let mut history = History {
+            features: vec![
+                json!({"id": 1, "type": "sketch"}),
+                json!({"id": 2, "type": "extrude"}),
+            ],
+            sources: [(1, 0), (2, 1)].into(),
+            ..History::default()
+        };
+        history.growth = vec![
+            Growth::Inert,
+            Growth::Builds,
+            Growth::Rounds,
+            Growth::Rounds,
+        ];
+        assert_eq!(history.unreachable_prefix(), Some(false));
+        history.growth = vec![
+            Growth::Inert,
+            Growth::Builds,
+            Growth::Removes,
+            Growth::Inert,
+        ];
+        assert_eq!(history.unreachable_prefix(), Some(true));
+        history.growth = vec![
+            Growth::Inert,
+            Growth::Builds,
+            Growth::Rounds,
+            Growth::Builds,
+        ];
+        assert_eq!(history.unreachable_prefix(), None);
+        // Nothing follows the last retained feature: the whole history has its own check.
+        history.growth = vec![Growth::Inert, Growth::Builds, Growth::Inert];
+        assert_eq!(history.unreachable_prefix(), None);
+    }
+
+    #[test]
+    fn source_features_are_classed_by_what_they_can_do_to_the_bodies_before_them() {
+        let with_op = |kind: &str, op: &str| json!({"definition": {"kind": "operation", "value": {"kind": kind, "value": {"op": op}}}});
+        assert_eq!(growth_of(&with_op("fillet", "")), Growth::Rounds);
+        assert_eq!(growth_of(&with_op("extrude", "cut")), Growth::Removes);
+        assert_eq!(growth_of(&with_op("extrude", "join")), Growth::Builds);
+        assert_eq!(growth_of(&with_op("revolve", "intersect")), Growth::Removes);
+        assert_eq!(growth_of(&with_op("sweep", "cut")), Growth::Builds);
+        assert_eq!(growth_of(&with_op("sketch", "")), Growth::Inert);
+        let mut suppressed = with_op("extrude", "join");
+        suppressed["suppressed"] = json!(true);
+        assert_eq!(growth_of(&suppressed), Growth::Inert);
+    }
 
     #[test]
     fn split_blends_keep_source_state_and_expand_later_feature_seeds() {

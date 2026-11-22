@@ -145,6 +145,13 @@ jobs:
           cargo build --release --locked --target wasm32-unknown-unknown -p dutchman-plugin
           bash scripts/package-plugin.sh target/wasm32-unknown-unknown/release/dutchman_plugin.wasm plugin-out "$VERSION"
           (cd plugin-out && sha256sum --check --strict "dutchman-plugin-$VERSION.zip.sha256")
+          # The plugin users install must say the release's version, not the source manifest's.
+          manifest=$(unzip -p "plugin-out/dutchman-plugin-$VERSION.zip" plugin.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+          if [ "$manifest" != "$VERSION" ]; then
+            echo "::error title=Plugin version::dutchman-plugin-$VERSION.zip says version $manifest in plugin.json, not $VERSION"
+            exit 1
+          fi
+          echo "plugin.json version: $manifest"
       - uses: actions/upload-artifact@v7
         with:
           name: dutchman-plugin
