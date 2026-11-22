@@ -20631,9 +20631,11 @@ impl dutchman_solidcraft::SolidCraftEvaluator for PrefixEvaluator {
             f["type"] == "extrude" && f.get("suppressed").and_then(Value::as_bool) != Some(true)
         });
         let side = if live { self.kept } else { self.source };
-        Ok(json!({"bodies": [{"volume_mm3": side * side * side, "area_mm2": 6.0 * side * side,
+        Ok(
+            json!({"bodies": [{"volume_mm3": side * side * side, "area_mm2": 6.0 * side * side,
             "faces": 6, "bbox": {"min": [0, 0, 0], "max": [side, side, side]}}],
-            "timeline": [], "total": {"faces": 6}}))
+            "timeline": [], "total": {"faces": 6}}),
+        )
     }
 
     fn run(
@@ -20658,7 +20660,11 @@ fn a_prefix_inside_the_source_shape_is_not_kept_when_only_a_blend_follows() {
     }));
     let (document, report) = convert(&model, &writer);
     let rows = &report.outcome().unwrap().features;
-    assert_eq!(rows[1].status, dutchman_core::FeatureStatus::Blocked, "{report:?}");
+    assert_eq!(
+        rows[1].status,
+        dutchman_core::FeatureStatus::Blocked,
+        "{report:?}"
+    );
     let reason = rows[1].reason.as_deref().unwrap();
     assert!(
         reason.contains("inside the source's final shape")
@@ -20684,7 +20690,11 @@ fn a_prefix_that_holds_the_source_shape_stays_when_only_a_blend_follows() {
     }));
     let (document, report) = convert(&model, &writer);
     let rows = &report.outcome().unwrap().features;
-    assert_eq!(rows[1].status, dutchman_core::FeatureStatus::Mapped, "{report:?}");
+    assert_eq!(
+        rows[1].status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{report:?}"
+    );
     assert!(
         document["features"]
             .as_array()

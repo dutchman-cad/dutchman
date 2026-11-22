@@ -2753,11 +2753,26 @@ mod tests {
             sources: [(1, 0), (2, 1)].into(),
             ..History::default()
         };
-        history.growth = vec![Growth::Inert, Growth::Builds, Growth::Rounds, Growth::Rounds];
+        history.growth = vec![
+            Growth::Inert,
+            Growth::Builds,
+            Growth::Rounds,
+            Growth::Rounds,
+        ];
         assert_eq!(history.unreachable_prefix(), Some(false));
-        history.growth = vec![Growth::Inert, Growth::Builds, Growth::Removes, Growth::Inert];
+        history.growth = vec![
+            Growth::Inert,
+            Growth::Builds,
+            Growth::Removes,
+            Growth::Inert,
+        ];
         assert_eq!(history.unreachable_prefix(), Some(true));
-        history.growth = vec![Growth::Inert, Growth::Builds, Growth::Rounds, Growth::Builds];
+        history.growth = vec![
+            Growth::Inert,
+            Growth::Builds,
+            Growth::Rounds,
+            Growth::Builds,
+        ];
         assert_eq!(history.unreachable_prefix(), None);
         // Nothing follows the last retained feature: the whole history has its own check.
         history.growth = vec![Growth::Inert, Growth::Builds, Growth::Inert];
@@ -2766,9 +2781,7 @@ mod tests {
 
     #[test]
     fn source_features_are_classed_by_what_they_can_do_to_the_bodies_before_them() {
-        let with_op = |kind: &str, op: &str| {
-            json!({"definition": {"kind": "operation", "value": {"kind": kind, "value": {"op": op}}}})
-        };
+        let with_op = |kind: &str, op: &str| json!({"definition": {"kind": "operation", "value": {"kind": kind, "value": {"op": op}}}});
         assert_eq!(growth_of(&with_op("fillet", "")), Growth::Rounds);
         assert_eq!(growth_of(&with_op("extrude", "cut")), Growth::Removes);
         assert_eq!(growth_of(&with_op("extrude", "join")), Growth::Builds);
