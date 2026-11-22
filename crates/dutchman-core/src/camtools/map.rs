@@ -25,7 +25,6 @@ pub(super) enum Kind {
     Torch,
     Waterjet,
     ThreadMill,
-    TSlot,
     Keyseat,
     Dovetail,
     Lollipop,
@@ -49,7 +48,6 @@ impl Kind {
             Kind::Torch => "torch",
             Kind::Waterjet => "waterjet",
             Kind::ThreadMill => "thread_mill",
-            Kind::TSlot => "t_slot",
             Kind::Keyseat => "keyseat",
             Kind::Dovetail => "dovetail",
             Kind::Lollipop => "lollipop",
@@ -57,10 +55,7 @@ impl Kind {
     }
 
     fn undercut(self) -> bool {
-        matches!(
-            self,
-            Kind::TSlot | Kind::Keyseat | Kind::Dovetail | Kind::Lollipop
-        )
+        matches!(self, Kind::Keyseat | Kind::Dovetail | Kind::Lollipop)
     }
 
     fn lathe(self) -> bool {
@@ -398,10 +393,6 @@ pub(super) struct Mapped {
     pub notes: Vec<String>,
     /// Field paths with data that CamCraft has no place for.
     pub not_carried: Vec<String>,
-    /// The tool number, when the library names one.
-    pub number: Option<i64>,
-    /// The tool's type word, as Fusion wrote it.
-    pub fusion_type: String,
 }
 
 /// Reads fields of one Fusion tool and remembers which it read.
@@ -591,8 +582,6 @@ pub(super) fn map_tool(tool: &Value, index: usize) -> Mapped {
         approximations: Vec::new(),
         notes: Vec::new(),
         not_carried: Vec::new(),
-        number: number_of,
-        fusion_type: type_word.clone(),
     };
     let to_mm = match unit.as_str() {
         "millimeters" | "millimetres" | "mm" => 1.0,
@@ -811,7 +800,7 @@ fn build(
             }
         }
         Kind::Torch | Kind::Waterjet => {}
-        Kind::TSlot | Kind::Keyseat | Kind::Lollipop => {}
+        Kind::Keyseat | Kind::Lollipop => {}
     }
     if type_word == "face mill" {
         def.center_cutting = false;
