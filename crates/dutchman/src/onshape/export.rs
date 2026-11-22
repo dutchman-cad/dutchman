@@ -9,8 +9,11 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
         source: &DocumentUrl,
         eid: &str,
         name: &str,
+        configuration: Option<&str>,
+        linked_document: Option<&str>,
     ) -> Result<()> {
-        let (path, body, cache_file) = self.step_request(source, eid)?;
+        let query = part_query("", configuration, linked_document);
+        let (path, body, cache_file) = self.step_request(source, eid, &query)?;
         if cache_file.exists() {
             let bytes = read_bounded(&cache_file, MAX_RESPONSE)?;
             self.session.credentials.check_bytes(&bytes)?;
@@ -35,11 +38,11 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
                 String::from_utf8(read_bounded(&job_file, 256)?).map_err(|_| response_error())?;
             let tid = resource_id(&tid)?;
             (
-                self.translation("GET", &format!("{API}/translations/{tid}"), &[])?,
+                self.translation("GET", &format!("{API}/translations/{tid}"), "", &[])?,
                 Some(tid),
             )
         } else {
-            (self.translation("POST", &path, &body)?, None)
+            (self.translation("POST", &path, &query, &body)?, None)
         };
         validate_job(&info, source, eid)?;
         let tid = info
@@ -76,7 +79,8 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
                     }
                     self.session.client.sleep(Duration::from_secs(delay));
                     delay = (delay * 2).min(30);
-                    info = self.translation("GET", &format!("{API}/translations/{tid}"), &[])?;
+                    info =
+                        self.translation("GET", &format!("{API}/translations/{tid}"), "", &[])?;
                     validate_job(&info, source, eid)?;
                     if let Some(actual) = info
                         .get("id")
@@ -158,8 +162,8 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
         Ok(())
     }
 
-    fn translation(&mut self, method: &str, path: &str, body: &[u8]) -> Result<Value> {
-        let response = self.session.request(method, path, "", body)?;
+    fn translation(&mut self, method: &str, path: &str, query: &str, body: &[u8]) -> Result<Value> {
+        let response = self.session.request(method, path, query, body)?;
         if !(200..300).contains(&response.status) {
             return Err(response_error());
         }
@@ -184,19 +188,17 @@ fn resource_id(value: &str) -> Result<String> {
 }
 
 fn validate_job(value: &Value, source: &DocumentUrl, eid: &str) -> Result<()> {
-    for (key, expected) in [
+    let mut expected_fields = vec![
         ("documentId", source.document.as_str()),
         ("requestElementId", eid),
-        (
-            if source.kind == "v" {
-                "versionId"
-            } else {
-                "workspaceId"
-            },
-            source.version.as_str(),
-        ),
         ("resultDocumentId", source.document.as_str()),
-    ] {
+    ];
+    if source.kind == "v" {
+        expected_fields.push(("versionId", source.version.as_str()));
+    } else if source.kind == "w" {
+        expected_fields.push(("workspaceId", source.version.as_str()));
+    }
+    for (key, expected) in expected_fields {
         if let Some(actual) = value.get(key).filter(|v| !v.is_null()) {
             let actual = actual.as_str().ok_or_else(response_error)?;
             if !actual.is_empty() && actual != expected {

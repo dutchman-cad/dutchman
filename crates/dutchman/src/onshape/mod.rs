@@ -111,6 +111,21 @@ fn hash(bytes: &[u8]) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
+fn part_query(query: &str, configuration: Option<&str>, linked_document: Option<&str>) -> String {
+    let mut params = url::form_urlencoded::Serializer::new(String::new());
+    if !query.is_empty() {
+        for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+            params.append_pair(&key, &value);
+        }
+    }
+    if let Some(configuration) = configuration {
+        params.append_pair("configuration", configuration);
+    }
+    if let Some(document) = linked_document {
+        params.append_pair("linkDocumentId", document);
+    }
+    params.finish()
+}
 fn id(value: &str) -> Result<String> {
     if value.len() != 24 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(Error::new(ErrorKind::Url, "Use an Onshape document URL with 24-character document, workspace/version, and element IDs."));
@@ -474,7 +489,7 @@ pub fn estimate_calls<C: HttpClient>(
             .count()
     };
     // An assembly may use any studio of the document; a studio is read alone.
-    let elements = if kind_of(linked).as_deref() == Some("ASSEMBLY") {
+    let mut elements = if kind_of(linked).as_deref() == Some("ASSEMBLY") {
         studios(tabs)
     } else {
         1
@@ -482,6 +497,67 @@ pub fn estimate_calls<C: HttpClient>(
     let mut remaining = u32::try_from(elements)
         .unwrap_or(u32::MAX)
         .saturating_mul(http::AUTO_ELEMENT_CALLS);
+    if kind_of(linked).as_deref() == Some("ASSEMBLY") {
+        let mut queue = VecDeque::from([source.element.clone()]);
+        let mut visited = BTreeSet::new();
+        let mut external = BTreeSet::new();
+        while let Some(element) = queue.pop_front() {
+            if !visited.insert(element.clone()) {
+                continue;
+            }
+            if visited.len() > 1000 {
+                return Err(Error::new(ErrorKind::Limit, "The Onshape assembly references too many assemblies to estimate; choose a smaller assembly."));
+            }
+            let Some(tab) = tabs
+                .iter()
+                .find(|tab| tab.get("id").and_then(Value::as_str) == Some(&element))
+            else {
+                return Err(response_error());
+            };
+            if kind_of(tab).as_deref() != Some("ASSEMBLY") {
+                continue;
+            }
+            let definition_path = format!(
+                "{API}/assemblies/d/{}/{content_kind}/{content_id}/e/{element}",
+                source.document
+            );
+            let definition = fetcher.json(
+                &definition_path,
+                "includeMateFeatures=true&includeMateConnectors=true",
+            )?;
+            references(
+                &definition,
+                &source.document,
+                &mid,
+                &mut queue,
+                &mut external,
+                0,
+            )?;
+        }
+        elements = elements.saturating_add(external.len());
+        for (document, element, external_mid, configuration, linked_document) in external {
+            let cache = scope.join(&document).join(&external_mid);
+            let base = format!("{API}/partstudios/d/{document}/m/{external_mid}/e/{element}");
+            let features = format!("{base}/features");
+            let sketches = format!("{base}/sketches");
+            let features_query = part_query(
+                "rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false",
+                configuration.as_deref(),
+                linked_document.as_deref(),
+            );
+            let sketches_query =
+                part_query("", configuration.as_deref(), linked_document.as_deref());
+            let cached = [(&features, &features_query), (&sketches, &sketches_query)]
+                .into_iter()
+                .filter(|(path, query)| {
+                    cache
+                        .join(hash(format!("{path}?{query}").as_bytes()))
+                        .exists()
+                })
+                .count() as u32;
+            remaining = remaining.saturating_add(http::AUTO_ELEMENT_CALLS.saturating_sub(cached));
+        }
+    }
     if kind_of(linked).as_deref() == Some("PARTSTUDIO") {
         // Replies already cached cost nothing.
         let base = format!(
@@ -1059,6 +1135,8 @@ fn fetch_inner<C: HttpClient>(
                 source.version.clone(),
                 source.element.clone(),
             )]),
+            None,
+            None,
         )?;
         match captured {
             Capture::Complete(report) => {
@@ -1122,6 +1200,8 @@ fn capture<C: HttpClient>(
     mid: &str,
     hits: &mut u32,
     ancestry: &BTreeSet<(String, String, String)>,
+    configuration: Option<&str>,
+    linked_document: Option<&str>,
 ) -> Result<Capture> {
     let content_kind = if source.kind == "v" { "v" } else { "m" };
     let content_id = if source.kind == "v" {
@@ -1191,7 +1271,11 @@ fn capture<C: HttpClient>(
                 let features = fetcher
                     .raw(
                         &format!("{base}/features"),
-                        "rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false",
+                        &part_query(
+                            "rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false",
+                            configuration,
+                            linked_document,
+                        ),
                         file.clone(),
                         false,
                     )?
@@ -1267,7 +1351,7 @@ fn capture<C: HttpClient>(
                     let file = format!("{prefix}/bodydetails/{i}.json");
                     fetcher.raw(
                         &format!("{base}/bodydetails"),
-                        &bodydetails_query(i, list.len()),
+                        &part_query(&bodydetails_query(i, list.len()), configuration, linked_document),
                         file,
                         false,
                     )?;
@@ -1281,25 +1365,40 @@ fn capture<C: HttpClient>(
                 paths.insert("bodydetails", index);
                 let config = format!("{prefix}/configuration.json");
                 if fetcher
-                    .raw(&configuration_path, "", config.clone(), true)?
+                    .raw(
+                        &configuration_path,
+                        &part_query("", configuration, linked_document),
+                        config.clone(),
+                        true,
+                    )?
                     .is_some()
                 {
                     paths.insert("configuration", config);
                 }
                 let variables = format!("{prefix}/variables.json");
                 if fetcher
-                    .raw(&variables_path, VARIABLES_QUERY, variables.clone(), true)?
+                    .raw(
+                        &variables_path,
+                        &part_query(VARIABLES_QUERY, configuration, linked_document),
+                        variables.clone(),
+                        true,
+                    )?
                     .is_some()
                 {
                     paths.insert("variables", variables);
                 }
                 if !sketch_only(list) {
                     let step = format!("{prefix}/export.step");
-                    fetcher.export_step(source, &eid, &step)?;
+                    fetcher.export_step(source, &eid, &step, configuration, linked_document)?;
                     paths.insert("step", step);
                 }
                 let sketches = format!("{prefix}/sketches.json");
-                fetcher.raw(&format!("{base}/sketches"), "", sketches.clone(), false)?;
+                fetcher.raw(
+                    &format!("{base}/sketches"),
+                    &part_query("", configuration, linked_document),
+                    sketches.clone(),
+                    false,
+                )?;
                 paths.insert("sketches", sketches);
             }
             "ASSEMBLY" => {
@@ -1329,6 +1428,81 @@ fn capture<C: HttpClient>(
         }
         elements.push(json!({"id": eid, "name": tab_name, "type": kind, "files": paths}));
     }
+    // External references are pinned to immutable microversions. Capture them under
+    // references/ so the assembly bundle remains self-contained.
+    for (document, element, external_mid, configuration, linked_document) in external.clone() {
+        fetcher.session.allow(http::AUTO_ELEMENT_CALLS);
+        let identity = (document.clone(), external_mid.clone(), element.clone());
+        if ancestry.contains(&identity) || ancestry.len() >= 8 {
+            return Err(Error::new(ErrorKind::Unsupported, "External Part Studios repeat a reference or exceed eight levels; fetch an assembly without a reference cycle."));
+        }
+        let source = DocumentUrl {
+            document: document.clone(),
+            kind: "m".into(),
+            version: external_mid.clone(),
+            element: element.clone(),
+        };
+        let mut chain = ancestry.clone();
+        chain.insert(identity);
+        let directory = tempfile::tempdir_in(scope).map_err(io_error)?;
+        let output = directory.path().join("reference.onshape-bundle");
+        let mut reference_hits = 0;
+        let Capture::Complete(_) = capture(
+            fetcher.session,
+            &source,
+            &output,
+            scope,
+            &external_mid,
+            &mut reference_hits,
+            &chain,
+            configuration.as_deref(),
+            linked_document.as_deref(),
+        )?
+        else {
+            return Err(changed_error());
+        };
+        fetcher.hits += reference_hits;
+        let bytes = read_bounded(&output, MAX_TOTAL as u64)?;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(io_error)?;
+        if archive.len() > 4096 {
+            return Err(response_error());
+        }
+        let config_segment = configuration
+            .as_deref()
+            .map(|value| format!("config-{}", &hash(value.as_bytes())[..16]));
+        let prefix = match config_segment {
+            Some(config) => format!("references/{document}/{external_mid}/{element}/{config}/"),
+            None => format!("references/{document}/{external_mid}/{element}/"),
+        };
+        let mut reference_sources = BTreeMap::new();
+        for i in 0..archive.len() {
+            let mut member = archive.by_index(i).map_err(io_error)?;
+            let name = member.name().map_err(io_error)?.to_owned();
+            let mut data = Vec::new();
+            member
+                .by_ref()
+                .take(MAX_TOTAL as u64 + 1)
+                .read_to_end(&mut data)
+                .map_err(io_error)?;
+            if name == "manifest.json" {
+                let manifest: Value =
+                    serde_json::from_slice(&data).map_err(|_| response_error())?;
+                if let Some(sources) = manifest.get("file_sources").and_then(Value::as_object) {
+                    reference_sources.extend(
+                        sources
+                            .iter()
+                            .map(|(path, source)| (path.clone(), source.clone())),
+                    );
+                }
+            }
+            fetcher.add(format!("{prefix}{name}"), data)?;
+        }
+        for (path, source) in reference_sources {
+            fetcher
+                .file_sources
+                .insert(format!("{prefix}{path}"), source);
+        }
+    }
     *hits += fetcher.hits;
     if source.kind == "w" {
         let final_mid = current_microversion(fetcher.session, source)?;
@@ -1342,7 +1516,7 @@ fn capture<C: HttpClient>(
         }
     }
     fetcher.record_source("manifest.json", content_kind);
-    let manifest = json!({"schema": "dutchman.onshape-bundle/1", "fetched_at": timestamp(fetcher.session.client.now()), "fetcher": format!("dutchman {}", crate::BUILD_VERSION), "api_version": "v17", "document": {"id": source.document, "name": name, "workspace_or_version": source.kind, "wvid": source.version, "microversion": mid}, "root_element": source.element, "elements": elements, "external": external.into_iter().map(|(d,e,m)| json!({"documentId":d,"elementId":e,"microversionId":m})).collect::<Vec<_>>(), "calls": fetcher.session.calls, "consistent": true, "file_sources": fetcher.file_sources});
+    let manifest = json!({"schema": "dutchman.onshape-bundle/1", "fetched_at": timestamp(fetcher.session.client.now()), "fetcher": format!("dutchman {}", crate::BUILD_VERSION), "api_version": "v17", "document": {"id": source.document, "name": name, "workspace_or_version": source.kind, "wvid": source.version, "microversion": mid}, "root_element": source.element, "elements": elements, "external": external.into_iter().map(|(d,e,m,configuration,link_document_id)| json!({"documentId":d,"elementId":e,"microversionId":m,"configuration":configuration,"linkDocumentId":link_document_id})).collect::<Vec<_>>(), "calls": fetcher.session.calls, "consistent": true, "file_sources": fetcher.file_sources});
     privacy(&manifest)?;
     fetcher.add(
         "manifest.json".into(),
@@ -1530,7 +1704,7 @@ fn references(
     did: &str,
     mid: &str,
     queue: &mut VecDeque<String>,
-    external: &mut BTreeSet<(String, String, String)>,
+    external: &mut BTreeSet<(String, String, String, Option<String>, Option<String>)>,
     depth: usize,
 ) -> Result<()> {
     if depth > 100 {
@@ -1563,7 +1737,30 @@ fn references(
                         .or_else(|| map.get("microversionId"))
                         .and_then(Value::as_str)
                         .ok_or_else(response_error)?;
-                    external.insert((d, e, id(m).map_err(|_| response_error())?));
+                    let configuration = map
+                        .get("configuration")
+                        .and_then(Value::as_str)
+                        .map(|value| {
+                            if value.len() > 16 * 1024 {
+                                Err(response_error())
+                            } else {
+                                Ok(value.to_owned())
+                            }
+                        })
+                        .transpose()?;
+                    let linked_document = map
+                        .get("linkDocumentId")
+                        .and_then(Value::as_str)
+                        .map(id)
+                        .transpose()?
+                        .or_else(|| Some(did.to_owned()));
+                    external.insert((
+                        d,
+                        e,
+                        id(m).map_err(|_| response_error())?,
+                        configuration,
+                        linked_document,
+                    ));
                 }
             }
             for child in map.values() {

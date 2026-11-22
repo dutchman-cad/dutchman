@@ -1936,7 +1936,10 @@ The ZIP's manifest uses separate schema `dutchman.onshape-bundle/1` and records
 `files`), `external`, and `calls`. New captures add `root_element`, the selected
 Part Studio or assembly element ID. `files` maps roles to archive paths, including
 `definition` and `features` for assemblies. `external` lists `documentId`,
-`elementId`, and `microversionId` for other-document references. Raw API responses
+`elementId`, and `microversionId` for other-document references, with optional
+`configuration` and `linkDocumentId` for configured or standard-content parts. Each
+referenced Part Studio is captured under `references/<document>/<microversion>/<element>/`;
+configured references use an additional configuration-specific directory. Raw API responses
 are retained verbatim. Part Studio roles are `features`, `bodydetails` (the rollback
 index file), `sketches` (the raw sketch-information response at
 `partstudios/<element>/sketches.json`), optional `configuration` and `variables`, and
@@ -1949,11 +1952,11 @@ one HTTP attempt per uncached Part Studio to the existing `calls` count.
 
 Successful manifests also contain `consistent: true` and `file_sources`, mapping each
 archive path (including generated indices and manifest) to `path_kind` (`m`, `v`, or
-`w`) and `microversion`. Each file records its owning document's microversion. Derived references are captured
-under `references/<document>/<version>/<element>/` with their own manifests and pins;
-their `file_sources` entries are also included in the root manifest. These captures may
-use a different document or version from the root. `external` continues to describe
-uncaptured assembly references.
+`w`) and `microversion`. Each file records its owning document's microversion. Derived and
+assembly references are captured under `references/<document>/<version-or-microversion>/<element>/`
+with their own manifests and pins; their `file_sources` entries are also included in the root
+manifest. These captures may use a different document or version from the root. `external`
+continues to describe the assembly's references even though their Part Studios are included.
 Version content reads use `v`; workspace reads use `m` where supported and `w` for
 STEP/variables. Exported STEP records its initiating request's path kind, since
 poll/download endpoints identify jobs/files directly. Generated files inherit the

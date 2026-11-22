@@ -963,6 +963,88 @@ fn same_document_two_part_revolute_assembly_includes_referenced_partstudio_once(
         .is_ok());
     assert_eq!(mock.sent.iter().filter(|(m, _, _)| m == "POST").count(), 1);
 }
+
+#[test]
+fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache() {
+    const OTHER: &str = "777777777777777777777777";
+    const OTHER_MID: &str = "888888888888888888888888";
+    const OTHER_ELEMENT: &str = "999999999999999999999999";
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = assembly_mock();
+    mock.replies.get_mut(3).unwrap().body = serde_json::to_vec(&json!({
+        "rootAssembly": {
+            "documentId": DID,
+            "elementId": AS,
+            "documentMicroversion": MID,
+            "instances": [{
+                "type": "Part",
+                "documentId": OTHER,
+                "elementId": OTHER_ELEMENT,
+                "documentMicroversion": OTHER_MID,
+                "configuration": "size=large;length=25mm;",
+                "linkDocumentId": DID
+            }]
+        }
+    }))
+    .unwrap();
+    mock.replies.extend([
+        response(200, json!({"name":"Synthetic standard part"})),
+        response(200, json!([{"id":OTHER_ELEMENT,"elementType":"PARTSTUDIO","name":"Configured bolt"}])),
+        response(200, json!({"sourceMicroversion":OTHER_MID,"features":[{"featureId":"variable","featureType":"assignVariable","parameters":[]}]})),
+        response(404, json!({})),
+        response(404, json!({})),
+        response(200, sketch_information(OTHER_MID)),
+    ]);
+    let report = run(&mut mock, &dir, AS, 100).unwrap();
+    assert_eq!(mock.replies.len(), 0);
+    let feature_request = mock
+        .sent
+        .iter()
+        .find(|(_, path, _)| path.ends_with("/features") && path.contains(OTHER))
+        .unwrap();
+    assert!(feature_request
+        .2
+        .contains("configuration=size%3Dlarge%3Blength%3D25mm%3B"));
+    assert!(feature_request.2.contains(&format!("linkDocumentId={DID}")));
+    assert!(report.calls >= 10);
+    let mut archive = open_bundle(&dir);
+    let prefix = format!("references/{OTHER}/{OTHER_MID}/{OTHER_ELEMENT}/config-");
+    assert!(archive
+        .file_names()
+        .any(|name| name.starts_with(&prefix) && name.ends_with("features.json")));
+    assert_eq!(
+        archive
+            .file_names()
+            .filter(|name| name.starts_with(&prefix))
+            .count(),
+        4
+    );
+    let external_manifest_path = archive
+        .file_names()
+        .find(|name| name.starts_with(&prefix) && name.ends_with("manifest.json"))
+        .unwrap()
+        .to_owned();
+    let manifest = zip_value(&mut archive, "manifest.json");
+    assert_eq!(
+        manifest["external"][0]["configuration"],
+        "size=large;length=25mm;"
+    );
+    assert_eq!(manifest["external"][0]["linkDocumentId"], DID);
+    let sketch_path = external_manifest_path.replace(
+        "manifest.json",
+        &format!("partstudios/{OTHER_ELEMENT}/sketches.json"),
+    );
+    assert_eq!(
+        manifest["file_sources"][sketch_path.as_str()]["microversion"],
+        OTHER_MID
+    );
+    drop(archive);
+
+    let mut cached = Mock::default();
+    let again = run(&mut cached, &dir, AS, 100).unwrap();
+    assert_eq!(again.calls, 0);
+    assert!(cached.sent.is_empty());
+}
 #[test]
 fn workspace_refetch_uses_the_same_total_call_budget() {
     let dir = tempfile::tempdir().unwrap();
@@ -2192,12 +2274,20 @@ fn an_explicit_budget_is_never_raised_by_the_document() {
 }
 
 fn listing_mock(tabs: Value) -> Mock {
+    let has_assembly = tabs.as_array().is_some_and(|tabs| {
+        tabs.iter()
+            .any(|tab| tab.get("id").and_then(Value::as_str) == Some(AS))
+    });
+    let mut replies = VecDeque::from([
+        response(200, json!({"microversion": MID})),
+        response(200, json!({"name": "Synthetic mechanism"})),
+        response(200, tabs),
+    ]);
+    if has_assembly {
+        replies.push_back(response(200, json!({"rootAssembly":{"documentId":DID,"elementId":AS,"documentMicroversion":MID,"instances":[]}})));
+    }
     Mock {
-        replies: VecDeque::from([
-            response(200, json!({"microversion": MID})),
-            response(200, json!({"name": "Synthetic mechanism"})),
-            response(200, tabs),
-        ]),
+        replies,
         ..Mock::default()
     }
 }
@@ -2218,13 +2308,13 @@ fn the_estimate_counts_the_listing_calls_and_the_elements_and_skips_cached_repli
     let auth = FetchAuth::ApiKeys(credentials());
     let mut mock = listing_mock(big_assembly_tabs());
     let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
-    // Three listing calls, then 30 for each of the assembly and its two studios.
-    assert_eq!(mock.sent.len(), 3);
-    assert_eq!(estimate.listing_calls, 3);
+    // Four listing calls, then 30 for each of the assembly and its two studios.
+    assert_eq!(mock.sent.len(), 4);
+    assert_eq!(estimate.listing_calls, 4);
     assert_eq!(estimate.elements, 3);
-    assert_eq!(estimate.calls, 93);
+    assert_eq!(estimate.calls, 94);
     assert!(estimate.needs_approval());
-    assert!(estimate.question().contains("about 93"));
+    assert!(estimate.question().contains("about 94"));
     assert!(estimate.question().contains("2,500"));
     // The listing is cached, so a second estimate makes no request and counts none.
     let mut idle = Mock::default();
@@ -2232,6 +2322,33 @@ fn the_estimate_counts_the_listing_calls_and_the_elements_and_skips_cached_repli
     assert!(idle.sent.is_empty());
     assert_eq!(again.listing_calls, 0);
     assert_eq!(again.calls, 90);
+}
+
+#[test]
+fn the_assembly_estimate_counts_external_configurations_and_reuses_definitions() {
+    const OTHER: &str = "777777777777777777777777";
+    const OTHER_MID: &str = "888888888888888888888888";
+    const OTHER_ELEMENT: &str = "999999999999999999999999";
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache");
+    let auth = FetchAuth::ApiKeys(credentials());
+    let mut mock = listing_mock(json!([{"id":AS,"elementType":"ASSEMBLY","name":"Assembly"}]));
+    mock.replies.get_mut(3).unwrap().body = serde_json::to_vec(&json!({
+        "rootAssembly": {
+            "documentId": DID, "elementId": AS, "documentMicroversion": MID,
+            "instances": [{"type":"Part","documentId":OTHER,"elementId":OTHER_ELEMENT,
+                "documentMicroversion":OTHER_MID,"configuration":"size=large;","linkDocumentId":DID}]
+        }
+    })).unwrap();
+    let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
+    assert_eq!(estimate.elements, 2);
+    assert_eq!(estimate.listing_calls, 4);
+    assert_eq!(estimate.calls, 64);
+
+    let mut cached = Mock::default();
+    let again = estimate_calls(&mut cached, &auth, &source(AS), &cache).unwrap();
+    assert_eq!(again.listing_calls, 0);
+    assert_eq!(again.calls, 60);
 }
 
 #[test]
@@ -2264,15 +2381,15 @@ fn a_large_fetch_without_a_go_stops_with_the_estimate_and_spends_only_the_listin
     )
     .err()
     .unwrap();
-    // The mock panics on a fourth request, so the listing was all it spent.
-    assert_eq!(mock.sent.len(), 3);
+    // The mock has only the four estimate-time listing replies.
+    assert_eq!(mock.sent.len(), 4);
     assert_eq!(error.kind, ErrorKind::Approval);
-    assert_eq!((error.calls, error.estimate), (3, Some(93)));
+    assert_eq!((error.calls, error.estimate), (4, Some(94)));
     assert!(!dir.path().join("test.onshape-bundle").exists());
     let report = dutchman::json::onshape_fetch(&Err(error));
     assert_eq!(report["error"]["code"], "onshape/approval");
-    assert_eq!(report["estimated_calls"], 93);
-    assert_eq!(report["calls"], 3);
+    assert_eq!(report["estimated_calls"], 94);
+    assert_eq!(report["calls"], 4);
     let message = report["error"]["message"].as_str().unwrap();
     assert!(message.contains("--yes") && message.contains("max_calls"));
 }

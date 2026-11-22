@@ -228,7 +228,9 @@ convert without this field. Fetch an older bundle again if a reference is missin
 Repeated references share captured files; cycles and chains over eight levels are refused.
 The reader also caps the combined serialized neutral reference payloads at 256 MiB,
 so repeated inserts cannot expand their captured designs without a bound.
-Assembly references to other documents retain the existing `external` behavior.
+Assembly bundles now include the referenced Part Studios, while the root `external` manifest
+entries continue to identify those cross-document assembly references. Conversion behavior for
+those assembly references is unchanged.
 
 Select a SolidCraft 0.44 target (for example, CLI `--solidcraft-version 0.44.0`)
 to retain the link. The existing default target stays unchanged; a target
@@ -466,7 +468,10 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
   instances, occurrences, transforms, mates, and connectors as returned by Onshape.
   Referenced elements in the same document are fetched too, including Part Studios.
   References to other documents appear in manifest `external` entries with
-  `documentId`, `elementId`, and `microversionId`; those documents are not fetched.
+  `documentId`, `elementId`, and `microversionId`. Dutchman also captures each referenced
+  Part Studio at that immutable microversion under `references/<document>/<microversion>/<element>/`.
+  Configured references retain their configuration and linked-document context in API requests
+  and use a configuration-specific bundle subdirectory.
 
 No separate Parasolid, mass-property, FeatureScript, translation-status, or
 account metadata files are included. Dutchman follows assembly references within the document
@@ -524,11 +529,15 @@ All endpoints use API v17.
 
 Onshape's Free and Standard plans allow 2,500 API calls a year, so Dutchman tells you
 what a fetch will cost before it spends it. First it lists the document, which costs at
-most three calls (microversion, name, tab list) and is cached. From that listing it
+most three calls (microversion, name, tab list) and is cached. For assemblies, it also reads
+reachable assembly definitions so it can count external references. From that listing it
 estimates the whole fetch: 30 calls for each Part Studio or assembly it will read (an
-assembly may use every Part Studio of the document; a Part Studio is read alone), plus the
-listing calls already made. Replies already in the cache cost no call and are not counted,
-in the estimate or in any limit.
+assembly may use every Part Studio of the document; a Part Studio is read alone), plus 30
+for each external Part Studio referenced by the selected assembly. Estimating an assembly
+also reads reachable assembly definitions to find those references; the replies are cached and reused by the
+fetch. Configured references are counted separately. Cached feature and sketch replies reduce
+the external-studio estimate; other cached immutable replies are reused by the fetch without
+another API request. The listing calls are included in the estimate.
 
 - **Up to 50 estimated calls:** it prints the estimate and fetches.
 - **Above 50:** it asks first. On a terminal the command line prints the estimate and asks
