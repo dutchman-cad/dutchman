@@ -100,7 +100,8 @@ pub(crate) fn map(
     }
     // The blind distance of the first side keeps the parameter that sets it, so editing the
     // parameter lengthens the extrude.
-    if !extent.contains_key("through_all") && !extent.contains_key("to") {
+    let same_side = same_side_span(definition.get("extent"), forward)?;
+    if same_side.is_none() && !extent.contains_key("through_all") && !extent.contains_key("to") {
         let first = ["/extent/side", "/extent/first"]
             .iter()
             .find_map(|path| number(definition.pointer(path)?.pointer("/termination/length")));
@@ -126,8 +127,18 @@ pub(crate) fn map(
             extent.insert("distance".to_owned(), json!(expression));
         }
     }
-    let mut start_height = 0.0;
+    let base = same_side.map_or(0.0, |(low, _)| low);
+    let mut start_height = base;
+    if same_side.is_some()
+        && definition.pointer("/start/kind").and_then(Value::as_str) == Some("from_face")
+    {
+        return Err(
+            "a two-sided extrude with both ends on one side of the sketch plane, starting from a face, is not mapped yet"
+                .to_owned(),
+        );
+    }
     if let Some(offset) = start_offset(definition.get("start"))? {
+        let offset = offset + base;
         start_height = offset;
         // Both offsets are measured along the profile normal, regardless of travel.
         extent.insert("start_offset".to_owned(), json!(mm(offset)));
@@ -153,7 +164,8 @@ pub(crate) fn map(
             .zip(sketch.normal)
             .map(|((coordinate, origin), normal)| (coordinate - origin) * normal)
             .sum();
-        if offset.abs() > 1e-9 {
+        let offset = offset + base;
+        if offset.abs() > 1e-9 || same_side.is_some() {
             start_height = offset;
             extent.insert("start_offset".to_owned(), json!(mm(offset)));
         }
@@ -363,6 +375,16 @@ fn extent(
             out.insert("convention".to_owned(), json!("total_distance"));
             put(&mut out, side, "distance");
         }
+        Some("two_sided") if same_side_span(Some(extent), forward)?.is_some() => {
+            let (low, high) = same_side_span(Some(extent), forward)?.unwrap_or_default();
+            // Both ends lie on one side of the sketch plane, so there is no slab on the other
+            // side for `distance2` to describe (SolidCraft keeps it a positive length against
+            // the normal). The solid is the slab between the two ends: start it at the near
+            // end with a start offset along the normal, and sweep one way to the far end.
+            out.insert("direction".to_owned(), json!("positive"));
+            out.insert("start_offset".to_owned(), json!(mm(low)));
+            out.insert("distance".to_owned(), json!(mm(high - low)));
+        }
         Some("two_sided") => {
             let first = side(feature, extent.get("first"), ctx, normal)?;
             let second = side(feature, extent.get("second"), ctx, normal)?;
@@ -405,6 +427,45 @@ fn extent(
         }
     }
     Ok(out)
+}
+
+/// The heights along the sketch normal, `(low, high)`, of a two-sided blind extrude whose
+/// second extent is negative. The second extent is a signed distance from the sketch plane,
+/// against the first side's travel; a negative one puts both ends on the same side of the plane.
+/// `None` when the second extent is not a negative blind length.
+fn same_side_span(extent: Option<&Value>, forward: bool) -> Result<Option<(f64, f64)>, String> {
+    let Some(extent) =
+        extent.filter(|e| e.get("kind").and_then(Value::as_str) == Some("two_sided"))
+    else {
+        return Ok(None);
+    };
+    let blind_length = |side: &str| -> Option<f64> {
+        let termination = extent.get(side)?.get("termination")?;
+        (termination.get("kind")?.as_str()? == "blind")
+            .then(|| number(termination.get("length")))
+            .flatten()
+            .filter(|length| length.is_finite())
+    };
+    let Some(second) = blind_length("second").filter(|length| *length < 0.0) else {
+        return Ok(None);
+    };
+    let first = blind_length("first")
+        .filter(|length| *length > 0.0)
+        .ok_or("a two-sided extrude with a negative second extent needs a blind first extent")?;
+    // Heights of the first and second ends along the sketch normal.
+    let (a, b) = if forward {
+        (first, -second)
+    } else {
+        (-first, second)
+    };
+    let (low, high) = if a < b { (a, b) } else { (b, a) };
+    if high - low <= 1e-9 {
+        return Err(
+            "its two extents cancel, leaving no thickness between the first and second end"
+                .to_owned(),
+        );
+    }
+    Ok(Some((low, high)))
 }
 
 /// One side's travel, as far as SolidCraft can follow it.

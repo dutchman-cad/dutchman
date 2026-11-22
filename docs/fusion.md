@@ -217,6 +217,9 @@ different end, and CADIR supplies no input face geometry to prove which face exi
 Final-body faces cannot establish that timeline state. Tilted plane ends and native,
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
+A two-sided blind extrude whose second extent is signed and lies on the same side of the
+sketch plane as the first (a negative second distance) is written as a one-sided extrude
+that starts at the nearer end; extents that cancel to zero thickness are refused.
 
 Planar historical face selections also search intervals between trim-loop crossings when
 corner-triangle picks all land in holes. Each new point must lie in the material region,

@@ -10792,6 +10792,95 @@ fn reverse_start_offsets_and_two_sided_distances_follow_the_normal() {
     }
 }
 
+/// A two-sided blind extrude of the 10 x 10 base, with the given first and second lengths.
+fn two_blind_sides(reversed: bool, first: f64, second: f64) -> Model {
+    changed_extrude(|definition| {
+        if reversed {
+            definition["direction"] = json!({"kind": "reversed_profile_normal"});
+        }
+        definition["extent"] = json!({"kind": "two_sided",
+            "first": {"termination": {"kind": "blind", "length": first}},
+            "second": {"termination": {"kind": "blind", "length": second}}});
+    })
+}
+
+#[test]
+fn a_negative_second_extent_spans_the_slab_between_both_ends() {
+    // (reversed, first, second, expected z range)
+    for (reversed, first, second, low, high) in [
+        (false, 7.0, -3.0, 3.0, 7.0),
+        (false, 3.0, -7.0, 3.0, 7.0),
+        (true, 7.0, -3.0, -7.0, -3.0),
+        (true, 3.0, -7.0, -7.0, -3.0),
+    ] {
+        let model = two_blind_sides(reversed, first, second);
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
+        assert_eq!(
+            document["features"][1]["extent"],
+            json!({"direction": "positive", "distance": format!("{} mm", high - low),
+                   "start_offset": format!("{low} mm")})
+        );
+        if let Some(cli) = solidcraft() {
+            let (bytes, _) = written(&model);
+            let boxes = bounds(&cli, &bytes);
+            assert_eq!(boxes.len(), 1);
+            assert!((boxes[0].0[2] - low).abs() < 1e-6, "{boxes:?}");
+            assert!((boxes[0].1[2] - high).abs() < 1e-6, "{boxes:?}");
+            let actual = volumes(&cli, &bytes);
+            assert!((actual[0] - 100.0 * (high - low)).abs() < 1e-4);
+        }
+    }
+}
+
+#[test]
+fn a_negative_second_extent_adds_to_a_start_offset() {
+    let model = changed_extrude(|definition| {
+        definition["start"] = json!({"kind": "offset_profile_plane", "offset": 2.0});
+        definition["extent"] = json!({"kind": "two_sided",
+            "first": {"termination": {"kind": "blind", "length": 7.0}},
+            "second": {"termination": {"kind": "blind", "length": -3.0}}});
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
+    assert_eq!(document["features"][1]["extent"]["start_offset"], "5 mm");
+    assert_eq!(document["features"][1]["extent"]["distance"], "4 mm");
+}
+
+#[test]
+fn positive_two_sided_extents_keep_their_distance2() {
+    let (document, report) = convert(
+        &two_blind_sides(false, 4.0, 6.0),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
+    assert_eq!(
+        document["features"][1]["extent"],
+        json!({"direction": "positive", "distance": "4 mm", "distance2": "6 mm"})
+    );
+}
+
+#[test]
+fn cancelling_two_sided_extents_are_refused_with_a_reason() {
+    for reversed in [false, true] {
+        let (_, report) = convert(
+            &two_blind_sides(reversed, 5.0, -5.0),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains("its two extents cancel"),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
 #[test]
 fn equal_two_sided_revolves_become_symmetric() {
     let model = ring_history(json!({"kind": "two_sided",
