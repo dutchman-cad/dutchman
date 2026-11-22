@@ -15121,7 +15121,7 @@ fn partial_history_appearance_bindings_reach_the_visible_original() {
                 .to_string(),
             )
             .unwrap();
-            assert!(std::process::Command::new(cli)
+            assert!(std::process::Command::new(&cli)
                 .arg("run")
                 .arg(&script)
                 .arg("--in")
