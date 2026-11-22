@@ -12639,7 +12639,7 @@ fn unsupported_modify_options_explain_what_stops_history() {
     for family in ["thread", "detailed_thread"] {
         cases.push((
             json!({"kind": "unresolved", "value": {"family": family}}),
-            "threads whose construction is unresolved are not supported yet",
+            "threads whose construction is unresolved are not supported yet: the source's thread record was not decoded, so its designation, size, faces and whether it is cosmetic or modeled are unknown",
         ));
     }
     cases.push((

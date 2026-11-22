@@ -2511,7 +2511,10 @@ fn map_feature(
                 Some("thread" | "detailed_thread")
             ) =>
         {
-            Err("threads whose construction is unresolved are not supported yet".to_owned())
+            // The decoder found the thread but admitted none of its record layouts, so the
+            // design carries no designation, nominal size, pitch, faces or modeled flag:
+            // nothing says whether it is a cosmetic annotation or a modeled groove.
+            Err("threads whose construction is unresolved are not supported yet: the source's thread record was not decoded, so its designation, size, faces and whether it is cosmetic or modeled are unknown".to_owned())
         }
         Some("cosmetic_thread") => thread::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("pattern")

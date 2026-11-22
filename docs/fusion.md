@@ -702,6 +702,12 @@ thread data cannot prove an exact helical reconstruction. The final modeled geom
 retained, with the source designation in a Degraded `history/modeled-thread-retained`
 loss. See [modeled threads](history.md) for the profile and face-selection limits.
 
+A Fusion Thread whose record the decoder does not decode (no designation, nominal size or
+faces) arrives as an unresolved Thread. The history stops there with "threads whose
+construction is unresolved are not supported yet", now followed by what is missing: the
+source does not say whether the thread is cosmetic or modeled, so Dutchman cannot map it.
+The fix is in the decoder, which has to recognise that thread's record layout.
+
 Unreadable local and xref positions, including local stored-frame fallbacks and
 positions assumed to be the identity, count
 as unplaced in `completeness.unplaced`, together with children whose world position
