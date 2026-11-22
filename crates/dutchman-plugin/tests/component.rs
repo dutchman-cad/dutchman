@@ -134,6 +134,7 @@ enum Fault {
     ResolveLimit,
     Aggregate,
     Oversize,
+    FolderDenied,
 }
 impl Host {
     fn input(&mut self, operation: &str, path: &str) -> Result<(), PluginError> {
@@ -189,6 +190,11 @@ impl clock::Host for Host {
 }
 impl source::Host for Host {
     fn resolve(&mut self, path: String) -> Result<Option<String>, PluginError> {
+        if matches!(self.fault, Some(Fault::FolderDenied)) && !path.is_empty() {
+            return Err(PluginError::PermissionDenied(
+                "input_folder was not granted".into(),
+            ));
+        }
         self.input("resolve", &path)?;
         if path.is_empty() {
             return Ok(Some(path));
@@ -472,6 +478,7 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     fatal_member_failures(&engine, &component, &linker, &root)?;
     stand_up_replays(&engine, &component, &linker, &root)?;
     hidden_repeated_bodies(&engine, &component, &linker, &root)?;
+    folder_not_granted(&engine, &component, &linker, &root)?;
     let mut fixtures = Vec::new();
     collect_fixtures(&root, &mut fixtures)?;
     fixtures.sort();
@@ -904,5 +911,46 @@ fn hidden_repeated_bodies(
     eprintln!(
         "stand_up_hidden_bodies: first and repeated placement names and visibility match SolidCraft evaluation"
     );
+    Ok(())
+}
+
+/// An assembly whose input folder was not granted stops before reading anything, with
+/// a message that names the grant and what it is for.
+fn folder_not_granted(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let main = std::fs::read(root.join("placed_cubes.sldasm"))?;
+    let mut host = host(root, main.clone());
+    host.fault = Some(Fault::FolderDenied);
+    let mut store = Store::new(engine, host);
+    store.limiter(|host| &mut host.limits);
+    store.set_fuel(50_000_000_000)?;
+    let instance = ImporterPlugin::instantiate(&mut store, component, linker)?;
+    let result = import_file(
+        &instance,
+        &mut store,
+        "convert",
+        &source::FileInfo {
+            name: "placed_cubes.sldasm".into(),
+            size: main.len() as u64,
+        },
+        "{}",
+    )?;
+    let Err(PluginError::PermissionDenied(message)) = result else {
+        return Err(format!("Expected a folder refusal, got {result:?}").into());
+    };
+    for needle in [
+        "placed_cubes.sldasm",
+        "read access to the input folder",
+        "part files",
+        "input_folder was not granted",
+    ] {
+        assert!(message.contains(needle), "{needle}: {message}");
+    }
+    assert_eq!(store.data().calls, 0, "nothing is read before the grant");
+    assert!(store.data().output.is_empty());
     Ok(())
 }

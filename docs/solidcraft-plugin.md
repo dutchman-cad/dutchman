@@ -42,6 +42,24 @@ SolidCraft checks the converted history against the original geometry. A history
 is the visible model; one it cannot check stays hidden beside the original geometry, marked as
 not checked.
 
+## First run in one pass
+
+Everything the plugin needs is set once, before the first file:
+
+| Step | Where | Value | What it is for |
+|---|---|---|---|
+| 1 | **Preferences > Plugins > Max plugin fuel** | at least 670960576380 | The plugin's work budget; SolidCraft's default (100,000,000,000) stops larger designs with a fuel error. |
+| 2 | **Max plugin memory (MiB)**, same page, only if SolidCraft refuses the memory request | at least 2048 | Room for the decoded model. |
+| 3 | **Install plugin...** and approve | memory and "read access to the input folder" | Assembly parts are read from the folder of the file you open. |
+
+The plugin cannot open a dialog or change SolidCraft's preferences, so these are SolidCraft's
+settings, not something Dutchman can do for you. What Dutchman does itself: when you open a
+`.iam` or `.sldasm` and the folder was not granted, it stops before reading anything and says
+which grant is missing and what it is for, instead of failing on the first missing part. A
+design above the plugin's estimate is sent to the Dutchman app before any work is done.
+If SolidCraft stops a conversion with "used all ... fuel it asks for", raise **Max plugin fuel**
+to 670960576380 as in step 1.
+
 ## What it asks for
 
 | Asks for | Why |

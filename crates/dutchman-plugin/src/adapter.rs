@@ -121,6 +121,13 @@ mod guest {
                 return Err(PluginError::Cancelled);
             }
             control::progress(0.0, "Reading the design");
+            // An assembly cannot convert without its parts: ask for the folder now, before
+            // reading the assembly, instead of failing on the first missing part.
+            if crate::notice::needs_part_folder(&file.name) {
+                if let Err(e) = source::resolve(&file.name) {
+                    return Err(folder_denied(&file.name, e));
+                }
+            }
             let budget = Cell::new(0u64);
             let index_error = RefCell::new(None);
             let checked =
@@ -147,6 +154,7 @@ mod guest {
             // The first error a host import returned, passed back to the host unchanged.
             let host_error: RefCell<Option<PluginError>> = RefCell::new(None);
             let keep = |e: PluginError| {
+                let e = folder_denied(&file.name, e);
                 let message = format!("Host input: {e:?}");
                 host_error.borrow_mut().get_or_insert(e);
                 dutchman_core::Error::Decode(message)
@@ -226,6 +234,16 @@ mod guest {
             }
             control::progress(1.0, "Converted");
             Ok(report)
+        }
+    }
+
+    /// A refused folder read says what the grant is for and how to give it.
+    fn folder_denied(file_name: &str, e: PluginError) -> PluginError {
+        match e {
+            PluginError::PermissionDenied(host) => {
+                PluginError::PermissionDenied(crate::notice::folder_access(file_name, &host))
+            }
+            other => other,
         }
     }
 
