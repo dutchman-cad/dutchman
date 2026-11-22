@@ -131,6 +131,35 @@ pub(crate) enum Growth {
     Builds,
 }
 
+/// Suppresses every feature of `features` that builds or changes a body, leaving sketches,
+/// datums and the like live. The features still rebuild when the user unsuppresses them;
+/// until then a hidden editable-history copy produces no body of its own, so an export or
+/// a measure of the design sees each part once, as the visible original.
+pub(crate) fn suppress_bodies(features: &mut [Value]) {
+    for feature in features {
+        let kind = feature.get("type").and_then(Value::as_str).unwrap_or("");
+        let leaves_bodies = kind.starts_with("datum")
+            || matches!(
+                kind,
+                "sketch"
+                    | "spatial_sketch"
+                    | "tree_node"
+                    | "reference_image"
+                    | "cosmetic_thread"
+                    | "plane"
+                    | "axis"
+                    | "point"
+            )
+            || kind.ends_with("_plane")
+            || kind.ends_with("_axis");
+        if !leaves_bodies {
+            if let Some(fields) = feature.as_object_mut() {
+                fields.insert("suppressed".to_owned(), Value::Bool(true));
+            }
+        }
+    }
+}
+
 /// What `feature` can do to the extent of the bodies before it.
 fn growth_of(feature: &Value) -> Growth {
     if feature.get("suppressed").and_then(Value::as_bool) == Some(true)

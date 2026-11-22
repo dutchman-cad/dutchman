@@ -1833,12 +1833,13 @@ fn an_unverified_history_can_be_kept_hidden_beside_the_visible_original() {
     let (document, report) = convert(&model, &writer);
 
     assert!(history_line(&report).contains("unverified: verification turned off; kept hidden"));
-    // The original is the visible model; the history is all there, in a hidden part.
+    // The original is the visible model; the history is all there, in a hidden part, with
+    // its extrusion suppressed so it builds no second body.
     assert_eq!(
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -6815,7 +6816,7 @@ fn composite_mirror_chains_refuse_unrepresentable_stages_and_excessive_products(
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -10945,7 +10946,7 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
             types(&document),
             [
                 ("sketch".to_owned(), false),
-                ("extrude".to_owned(), false),
+                ("extrude".to_owned(), true),
                 ("import".to_owned(), false),
             ]
         );
@@ -13510,7 +13511,7 @@ fn blends_without_a_solidcraft_to_replay_the_history_are_refused() {
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -13557,7 +13558,7 @@ fn a_replay_that_runs_out_of_time_refuses_the_blend() {
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -14968,7 +14969,12 @@ fn assert_partial(document: &Value, report: &Report, sketches: usize) {
     assert!(features
         .iter()
         .take(features.len() - 1)
-        .all(|f| &f["component"] == component && f["suppressed"] == false));
+        .all(|f| &f["component"] == component
+            && f["suppressed"]
+                == !matches!(
+                    f["type"].as_str(),
+                    Some("sketch" | "spatial_sketch" | "plane" | "axis" | "point")
+                )));
     assert_eq!(
         document["visibility"]["hidden_occurrences"],
         json!([[document["occurrences"][0]["id"]]])
@@ -15220,7 +15226,7 @@ fn a_blocker_keeps_the_prefix_and_later_resolved_sketches() {
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("sketch".to_owned(), false),
             ("import".to_owned(), false)
         ]
@@ -15428,7 +15434,11 @@ fn a_partial_component_is_hidden_in_every_assembly_placement() {
         .collect();
     assert_eq!(prefix.len(), 3);
     assert!(prefix.iter().any(|f| f["type"] == "extrude"));
-    assert!(prefix.iter().all(|f| f["suppressed"] == false));
+    // The hidden copy builds no second body: its body-building features are suppressed,
+    // its sketches stay live.
+    assert!(prefix
+        .iter()
+        .all(|f| f["suppressed"] == (f["type"] != "sketch")));
     let original = features
         .iter()
         .find(|f| &f["component"] == second && f["type"] == "import")
@@ -15778,7 +15788,7 @@ fn sketch_choice_keeps_required_profiles_but_not_reference_sketches() {
             types(&document),
             [
                 ("sketch".to_owned(), false),
-                ("extrude".to_owned(), false),
+                ("extrude".to_owned(), true),
                 ("import".to_owned(), false)
             ]
         );

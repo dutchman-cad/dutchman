@@ -231,6 +231,10 @@ pub(crate) fn history_design(
         history.next_id = occurrence.saturating_add(1);
     }
     let mut features = history.features.clone();
+    if hidden {
+        // The visible Import is the part; the hidden copy builds no second body.
+        crate::history::suppress_bodies(&mut features);
+    }
     if live == Live::Original {
         for feature in &mut features {
             if let Some(fields) = feature.as_object_mut() {
@@ -772,11 +776,12 @@ mod history_tests {
                         (version >= SolidCraftVersion::V0_30_0).then_some(&Value::Bool(true))
                     );
                     assert_eq!(doc["visibility"]["hidden_occurrences"], json!([[4]]));
-                    assert!(doc["features"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .all(|f| f["suppressed"] == false));
+                    // The hidden copy builds no body of its own (the visible Import is
+                    // the part), but its sketches stay live and the Import stays visible.
+                    for f in doc["features"].as_array().unwrap() {
+                        let expected = f["type"] == "extrude";
+                        assert_eq!(f["suppressed"], expected, "{f}");
+                    }
                 } else {
                     assert!(doc.get("components").is_none());
                 }
