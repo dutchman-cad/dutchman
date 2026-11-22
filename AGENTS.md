@@ -48,9 +48,8 @@ release's `solidcraft-cli`:
 
 ## Pull requests
 
-Comment `/claim` before starting, then open a draft pull request within 24 hours, even rough.
-After that, claims lapse after 5 inactive days unless waiting on a maintainer or an open
-dependency. Maintainer claims never lapse; `/unclaim` releases a claim ([rules](docs/claiming.md)).
+Open a pull request when you're ready; for a bigger change, a short comment on the issue first
+helps avoid duplicate work (it isn't a reservation).
 
 1. Branch from `main`; one topic per pull request, with tests for what changed.
 2. Update the docs the change affects: [docs/guide.md](docs/guide.md),

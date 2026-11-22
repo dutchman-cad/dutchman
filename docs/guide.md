@@ -1222,12 +1222,7 @@ resolved non-construction profile curves; this is not supported yet". The decode
 supply the actual profile curves. An empty profile table can still use the complete bound
 sketch when its non-construction curves are decoded; no loop or contour is guessed.
 
-## Claim work before starting
+## Before starting
 
-Comment `/claim` on the issue first: claim, then a draft pull request within 24 hours,
-even rough. Comment `/unclaim` to release it. After a linked pull request exists, claims
-lapse after 5 days without activity from you. The bot reminds you at 12 hours without a
-pull request, and a day before an idle claim lapses. A ready pull request waiting on a
-maintainer or an open dependency keeps the claim active; maintainer claims never lapse.
-On lapse, pull requests stay open for others to continue with the original author credited
-in a `Co-authored-by:` trailer. See [claiming an issue](claiming.md) for the full rules.
+Open a pull request when you're ready; for a bigger change, a short comment on the issue first
+helps avoid duplicate work (it isn't a reservation).
