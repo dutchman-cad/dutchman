@@ -311,6 +311,7 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
                             "step", "stp", "igs", "iges", "zip",
                         ],
                     )
+                    .add_filter("Fusion tool libraries", &["tools", "json"])
                     .pick_files()
                     .await
                     .unwrap_or_default(),

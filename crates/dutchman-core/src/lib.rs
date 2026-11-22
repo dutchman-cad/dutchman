@@ -6,6 +6,7 @@
 //! not be carried across. See `docs/ARCHITECTURE.md`.
 
 mod assembly;
+pub mod camtools;
 mod companion;
 pub mod contents;
 mod decode;

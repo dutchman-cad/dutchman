@@ -95,7 +95,13 @@ impl Settings {
 pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
     let extension = options.output_extension();
     for job in jobs {
-        let _ = job.output.set_extension(extension);
+        let _ = job
+            .output
+            .set_extension(if crate::tool_library::is_library(&job.input) {
+                dutchman_core::camtools::EXTENSION
+            } else {
+                extension
+            });
         job.replace = !options.no_clobber && Format::part_revision(&job.input).is_none();
         if options.project.is_some() {
             job.search.project.clone_from(&options.project);
@@ -441,6 +447,23 @@ pub fn line(result: &Value) -> String {
             .pointer("/output/path")
             .and_then(Value::as_str)
             .unwrap_or("?");
+        if result.pointer("/output/format").and_then(Value::as_str)
+            == Some(crate::tool_library::FORMAT)
+        {
+            let count = |key: &str| {
+                result
+                    .pointer(&format!("/tools/{key}"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            let (written, left) = (count("written"), count("not_written"));
+            let words = if left == 0 {
+                format!("{written} tools")
+            } else {
+                format!("{written} tools; {left} not written, see the losses")
+            };
+            return format!("converted  {input} -> {output} ({words})");
+        }
         let written = match (
             result.get("mode").and_then(Value::as_str),
             result
@@ -605,7 +628,11 @@ fn plan_with_limit(
                         Format::part_revision(&relative)
                             .map_or_else(|| relative.clone(), |(part, _)| part),
                     )
-                    .with_extension(crate::OutputFormat::Solidcraft.extension()),
+                    .with_extension(if crate::tool_library::is_library(&path) {
+                        dutchman_core::camtools::EXTENSION
+                    } else {
+                        crate::OutputFormat::Solidcraft.extension()
+                    }),
                 &mut outputs,
             );
             let replace = Format::part_revision(&path).is_none();
@@ -870,7 +897,12 @@ fn search(
         }
         if meta.is_dir() {
             search(root, &path, depth + 1, out, skipped, include, left);
-        } else if meta.is_file() && Format::from_path(&path).is_none() {
+        } else if meta.is_file()
+            && Format::from_path(&path).is_none()
+            && !path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("tools"))
+        {
             *skipped.entry(extension_of(&path)).or_insert(0) += 1;
         } else if meta.is_file() {
             let relative = path

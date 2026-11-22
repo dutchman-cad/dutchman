@@ -20,7 +20,7 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
 tempfile.workspace = true
-zip = { workspace = true, optional = true }
+zip.workspace = true
 
 [features]
 # Every input format but FreeCAD. A build may name only the formats it reads (as a
@@ -29,7 +29,7 @@ default = ["formats", "source-reader"]
 # Capability-based reader API for sandboxed front ends.
 source-reader = []
 formats = ["fusion", "inventor", "solidworks", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz", "onshape"]
-onshape = ["step", "dep:zip", "dep:base64", "dep:flate2"]
+onshape = ["step", "dep:base64", "dep:flate2"]
 fusion = ["cadmpeg-registry/f3d"]
 inventor = ["cadmpeg-registry/inventor"]
 solidworks = ["cadmpeg-registry/sldprt"]

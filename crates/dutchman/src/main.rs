@@ -1074,10 +1074,15 @@ fn run_cli() -> ExitCode {
                 }
                 return exit(&report);
             }
+            let library = dutchman::tool_library::is_library(&input);
             let output = explicit.unwrap_or_else(|| {
                 dutchman_core::Format::part_revision(&default_input)
                     .map_or_else(|| default_input.clone(), |(part, _)| part)
-                    .with_extension(options.output_extension())
+                    .with_extension(if library {
+                        dutchman_core::camtools::EXTENSION
+                    } else {
+                        options.output_extension()
+                    })
             });
             if derived {
                 if input == output

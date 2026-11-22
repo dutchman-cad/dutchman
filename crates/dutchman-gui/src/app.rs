@@ -71,6 +71,19 @@ fn running_file_line(rows: &[Row]) -> Option<String> {
     ))
 }
 
+/// Whether `path` is a file Dutchman converts by itself: a design in a known format, or a Fusion
+/// tool library (written as CamCraft's `.camtools`).
+fn is_known_file(path: &Path) -> bool {
+    dutchman_core::Format::from_path(path).is_some() || dutchman::tool_library::is_library(path)
+}
+
+/// The reader's status line for `path`, whichever kind of file it is.
+fn status_line(path: &Path) -> Option<String> {
+    dutchman_core::Format::from_path(path)
+        .map(|format| format.status_for(path))
+        .or_else(|| dutchman::tool_library::status(path))
+}
+
 /// The "last shown" Part positions choice, naming the program when every queued design comes from one.
 fn last_shown_label(inputs: &[PathBuf]) -> String {
     let mut families = inputs
@@ -94,8 +107,7 @@ impl Row {
             self.report.as_ref(),
         );
         if view.capability.is_none() {
-            view.capability = dutchman_core::Format::from_path(&self.input)
-                .map(|format| format.status_for(&self.input));
+            view.capability = status_line(&self.input);
         }
         view
     }
@@ -1603,7 +1615,7 @@ impl App {
             && self
                 .inputs
                 .first()
-                .is_some_and(|input| dutchman_core::Format::from_path(input).is_some());
+                .is_some_and(|input| is_known_file(input));
         let text = if single_file {
             sentences.first()?.clone()
         } else {
@@ -2551,15 +2563,14 @@ impl App {
                                 ui,
                                 |ui| {
                                     ui.vertical(|ui| {
-                                        let folder =
-                                            if dutchman_core::Format::from_path(input).is_some() {
-                                                input.parent().filter(|parent| {
-                                                    !parent.as_os_str().is_empty()
-                                                        && *parent != Path::new(".")
-                                                })
-                                            } else {
-                                                Some(input.as_path())
-                                            };
+                                        let folder = if is_known_file(input) {
+                                            input.parent().filter(|parent| {
+                                                !parent.as_os_str().is_empty()
+                                                    && *parent != Path::new(".")
+                                            })
+                                        } else {
+                                            Some(input.as_path())
+                                        };
                                         // Keep real folders and their estimates in one paragraph.
                                         let mut line = egui::text::LayoutJob::default();
                                         let mut tooltip = String::new();
@@ -2595,17 +2606,13 @@ impl App {
                                             ui.add(egui::Label::new(line).wrap())
                                                 .on_hover_text(tooltip);
                                         }
-                                        if dutchman_core::Format::from_path(input).is_some()
+                                        if is_known_file(input)
                                             && (self.inputs.len() > 1 || estimate.is_none())
                                         {
                                             ui.add(egui::Label::new(file_name(input)).wrap());
                                         }
-                                        if let Some(format) =
-                                            dutchman_core::Format::from_path(input)
-                                        {
-                                            ui.add(
-                                                egui::Label::new(format.status_for(input)).wrap(),
-                                            );
+                                        if let Some(status) = status_line(input) {
+                                            ui.add(egui::Label::new(status).wrap());
                                         }
                                     });
                                 },
@@ -3117,6 +3124,10 @@ impl App {
                         }
                     });
                 }
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Fusion tool library (.tools, .json)");
+                    ui.label(dutchman::tool_library::WORDS);
+                });
             });
         });
         if self.running() && self.diagnostic_stopped {

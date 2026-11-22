@@ -235,6 +235,7 @@ fn area_noun(area: &str, stage: Stage) -> &'static str {
         "source" | "container" | "structure" | "parse" | "decode" | "directory" | "framing"
         | "native" | "legacy" | "card" | "validation" => "parts of the file",
         "design" => "design details",
+        "tool" | "tools" => "tools",
         "writer" | "export" | "target" => "details of the converted design",
         _ => match stage {
             Stage::Input | Stage::Decode => "parts of the file",

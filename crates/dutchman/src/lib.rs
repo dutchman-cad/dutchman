@@ -35,6 +35,7 @@ pub mod repro;
 pub mod saved_report;
 pub mod share_links;
 pub mod stop;
+pub mod tool_library;
 pub mod watch;
 pub mod worker;
 
@@ -613,6 +614,9 @@ pub(crate) fn convert_options_with_observer(
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
     observer: Option<std::sync::Arc<dyn dutchman_core::MemberObserver>>,
 ) -> Value {
+    if tool_library::is_library(input) {
+        return tool_library::convert(input, output, replace);
+    }
     if options.diagnostics.as_ref().is_some_and(|path| {
         path == output
             || std::fs::canonicalize(path)

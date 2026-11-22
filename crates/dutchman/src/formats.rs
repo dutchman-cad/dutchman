@@ -61,6 +61,7 @@ pub fn text() -> String {
         ));
     }
     out.push_str("\nFreeCAD TechDraw → DXF  drawings: page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped\n");
+    out.push_str("\nFusion tool libraries (.tools, .json) convert to CamCraft's .camtools: tool geometry, holder and cutting data; tools and fields CamCraft has no place for are named in the report\n");
     out.push_str("\nWritten as a SolidCraft design (.sc), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)\n");
     out
 }
@@ -108,6 +109,7 @@ pub fn markdown() -> String {
         ));
     }
     out.push_str("\nFreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.\n");
+    out.push_str("\nFusion tool libraries (`.tools`, `.json`) also convert to CamCraft's `.camtools` (`dutchman library.tools`): tool geometry, holder and cutting data, with every tool and field CamCraft has no place for named in the report. See docs/camcraft-tools.md.\n");
     out.push_str("\nOutput is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).\n");
     out
 }
@@ -134,5 +136,6 @@ pub fn json() -> Value {
             })
         })
         .collect();
-    json!({"schema": SCHEMA, "ok": true, "formats": formats, "drawings": [{"input": Format::FreeCadDocument.id(), "name": "FreeCAD TechDraw", "output": "dxf", "converts": "page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped"}]})
+    json!({"schema": SCHEMA, "ok": true, "formats": formats, "drawings": [{"input": Format::FreeCadDocument.id(), "name": "FreeCAD TechDraw", "output": "dxf", "converts": "page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped"}],
+        "tool_libraries": [{"input": "fusion_tool_library", "name": "Fusion tool library", "extensions": ["tools", "json"], "output": "camtools", "converts": "tool geometry, holder and cutting data; tools and fields CamCraft has no place for are named in the report"}]})
 }
