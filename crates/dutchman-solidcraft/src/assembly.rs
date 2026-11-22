@@ -1580,6 +1580,9 @@ impl Builder<'_> {
             history.looks.clear();
             history.face_looks.clear();
             history.hidden_bodies.clear();
+        } else if hidden {
+            // The visible Import already is the part: the hidden copy builds no second body.
+            history::suppress_bodies(&mut history.features);
         }
         self.mark_written(part);
         self.unused_sketches.extend(history.hidden_sketches());

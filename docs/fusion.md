@@ -307,6 +307,13 @@ visible final-shape Import receives its own names and colours. Names remain dist
 from those of the editable copy.
 When a partial history is kept hidden, appearance losses refer to the visible final
 shape rather than to final bodies absent from that partial copy.
+A hidden editable-history copy builds no body of its own: its body-building features are
+written suppressed and only its sketches stay live. The visible final-shape Import is the
+part, so a STEP export, a render, a body count or a mass measure of the design sees each
+part once. To edit the history, unsuppress its features in the timeline and suppress or
+hide the final-shape Import while you work. The conversion check in
+`scripts/written-design-compare.py` fails when any hidden editable-history copy holds a
+body, and names the part it would duplicate.
 The look keeps the resolved colour, opacity, and appearance name; it does not infer a
 physical material from a visual preset.
 
