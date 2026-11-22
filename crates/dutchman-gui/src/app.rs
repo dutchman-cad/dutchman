@@ -644,7 +644,7 @@ impl App {
     pub fn set_link_transport_for_test(
         &mut self,
         transport: std::sync::Arc<dyn crate::paste::Transport>,
-        fetch: fn(String, &Path) -> Result<PathBuf, String>,
+        fetch: crate::paste::Fetch,
     ) {
         self.intake.transport = transport;
         self.intake.fetch = fetch;
@@ -783,6 +783,14 @@ impl App {
                         Ok(size) => self.intake.prompt = Some((link, size)),
                         Err(why) => self.notice = Some(why),
                     }
+                }
+                Message::Calls(sent, needed) => {
+                    self.set_transfer_caption(match needed {
+                        Some(needed) if needed >= sent => {
+                            format!("Fetching from Onshape: {sent} of about {needed} API calls…")
+                        }
+                        _ => format!("Fetching from Onshape: {sent} API calls…"),
+                    });
                 }
                 Message::Progress(bytes, size) => {
                     self.intake.progress = Some((bytes, size));

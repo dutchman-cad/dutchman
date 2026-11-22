@@ -3989,7 +3989,11 @@ mod paste_inputs {
         assert!(!h.get_by_label("Open").accesskit_node().is_disabled());
     }
 
-    fn fetch(_link: String, folder: &Path) -> Result<PathBuf, String> {
+    fn fetch(
+        _link: String,
+        folder: &Path,
+        _progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
         std::thread::sleep(Duration::from_millis(100));
         let out = folder.join("part.onshape-bundle");
         std::fs::copy(fixture("onshape-revolve.onshape-bundle"), &out)
@@ -4065,16 +4069,24 @@ mod paste_inputs {
         assert_bundle_survives_exit(h, output.path());
     }
 
-    fn failing_fetch(_link: String, _folder: &Path) -> Result<PathBuf, String> {
+    fn failing_fetch(
+        _link: String,
+        _folder: &Path,
+        _progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
         std::thread::sleep(Duration::from_millis(50));
         Err("The Onshape fetch stopped after 50 calls at the safety limit.".to_owned())
     }
 
-    fn panicking_fetch(_link: String, _folder: &Path) -> Result<PathBuf, String> {
+    fn panicking_fetch(
+        _link: String,
+        _folder: &Path,
+        _progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
         panic!("synthetic fetch failure");
     }
 
-    fn fetch_error_message(fetch: fn(String, &Path) -> Result<PathBuf, String>) -> String {
+    fn fetch_error_message(fetch: dutchman_gui::paste::Fetch) -> String {
         let output = tempfile::tempdir().unwrap();
         let mut h = window(true);
         h.state_mut().set_verify(false);
@@ -4111,12 +4123,60 @@ mod paste_inputs {
         );
     }
 
-    fn budget_then_ok_fetch(link: String, folder: &Path) -> Result<PathBuf, String> {
+    fn budget_then_ok_fetch(
+        link: String,
+        folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
         static CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
             return Err(App::budget_stop_message_for_test().to_owned());
         }
-        fetch(link, folder)
+        fetch(link, folder, progress)
+    }
+
+    /// Reports 12 of about 51 calls and holds the fetch open until the test has looked.
+    fn counting_fetch(
+        link: String,
+        folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        progress.calls(12, Some(51));
+        let started = Instant::now();
+        while !COUNT_SEEN.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "caption never read"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        progress.calls(53, Some(51));
+        fetch(link, folder, progress)
+    }
+    static COUNT_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    #[test]
+    fn an_onshape_fetch_counts_its_calls_on_the_result_card() {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(true);
+        h.state_mut().set_out_dir(output.path().into());
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), counting_fetch);
+        paste(&mut h, LINK);
+        let started = Instant::now();
+        while h
+            .query_by_label("Fetching from Onshape: 12 of about 51 API calls…")
+            .is_none()
+        {
+            assert!(started.elapsed() < Duration::from_secs(30), "no call count");
+            std::thread::sleep(Duration::from_millis(10));
+            h.step();
+        }
+        COUNT_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
+        wait_for_conversion(&mut h);
+        assert!(h.query_by_label_contains("API calls").is_none());
+        assert!(h.state().rows()[0].report.is_some());
     }
 
     #[test]

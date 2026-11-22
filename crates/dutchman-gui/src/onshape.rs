@@ -405,24 +405,30 @@ pub(crate) const CONTINUE_CALLS: u32 = 6000;
 /// offers "Continue fetching" under it, so it names no command-line option.
 pub(crate) const BUDGET_STOP: &str = "This Onshape document needs more requests than Dutchman makes in one go, so it stopped. Choose Continue fetching to carry on from where it stopped; what it already fetched is kept.";
 
-pub(crate) fn fetch(link: String, folder: &std::path::Path) -> Result<std::path::PathBuf, String> {
-    fetch_with_token_file(link, folder, None)
+pub(crate) fn fetch(
+    link: String,
+    folder: &std::path::Path,
+    progress: &mut dyn dutchman::onshape::FetchProgress,
+) -> Result<std::path::PathBuf, String> {
+    fetch_with_token_file(link, folder, None, progress)
 }
 
 /// Carries on after a stop at the request limit, with a larger limit and the cached replies.
 pub(crate) fn fetch_continuing(
     link: String,
     folder: &std::path::Path,
+    progress: &mut dyn dutchman::onshape::FetchProgress,
 ) -> Result<std::path::PathBuf, String> {
-    fetch_with_budget(link, folder, None, Some(CONTINUE_CALLS))
+    fetch_with_budget(link, folder, None, Some(CONTINUE_CALLS), progress)
 }
 
 pub(crate) fn fetch_with_token_file(
     link: String,
     folder: &std::path::Path,
     bearer_token_file: Option<std::path::PathBuf>,
+    progress: &mut dyn dutchman::onshape::FetchProgress,
 ) -> Result<std::path::PathBuf, String> {
-    fetch_with_budget(link, folder, bearer_token_file, None)
+    fetch_with_budget(link, folder, bearer_token_file, None, progress)
 }
 
 pub(crate) fn fetch_with_budget(
@@ -430,19 +436,23 @@ pub(crate) fn fetch_with_budget(
     folder: &std::path::Path,
     bearer_token_file: Option<std::path::PathBuf>,
     max_calls: Option<u32>,
+    progress: &mut dyn dutchman::onshape::FetchProgress,
 ) -> Result<std::path::PathBuf, String> {
     let element = dutchman::onshape::DocumentUrl::parse(&link, None)
         .map_err(|why| why.message.to_owned())?
         .element;
     let out = folder.join(format!("{element}.onshape-bundle"));
-    let report = dutchman::onshape::run(&dutchman::onshape::FetchOptions {
-        document_url: link,
-        out: Some(out.clone()),
-        version: None,
-        bearer_token_file,
-        max_calls,
-        json: false,
-    });
+    let report = dutchman::onshape::run_with_progress(
+        &dutchman::onshape::FetchOptions {
+            document_url: link,
+            out: Some(out.clone()),
+            version: None,
+            bearer_token_file,
+            max_calls,
+            json: false,
+        },
+        Some(progress),
+    );
     if report.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
         Ok(out)
     } else {
@@ -586,7 +596,12 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let missing = folder.path().join("missing-token");
         let link = "https://cad.onshape.com/documents/111111111111111111111111/v/222222222222222222222222/e/333333333333333333333333";
-        let error = fetch_with_token_file(link.into(), folder.path(), Some(missing)).unwrap_err();
+        struct Silent;
+        impl dutchman::onshape::FetchProgress for Silent {
+            fn calls(&mut self, _sent: u32, _needed: Option<u32>) {}
+        }
+        let error = fetch_with_token_file(link.into(), folder.path(), Some(missing), &mut Silent)
+            .unwrap_err();
         assert!(error.contains("bearer token file"));
         assert!(!error.contains("missing-token"));
     }

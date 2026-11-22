@@ -2213,3 +2213,33 @@ fn an_explicit_budget_is_never_raised_by_the_document() {
     assert_eq!(error.kind, ErrorKind::Budget);
     assert_eq!(router.sent, 50);
 }
+
+#[derive(Default)]
+struct Counted(Vec<(u32, Option<u32>)>);
+impl FetchProgress for Counted {
+    fn calls(&mut self, sent: u32, needed: Option<u32>) {
+        self.0.push((sent, needed));
+    }
+}
+#[test]
+fn progress_counts_each_call_and_estimates_after_the_feature_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = partstudio_mock(MID, "1");
+    let mut counted = Counted::default();
+    let report = fetch_watched(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut counted),
+    )
+    .unwrap();
+    assert_eq!(report.calls, 11);
+    let sent: Vec<u32> = counted.0.iter().map(|(sent, _)| *sent).collect();
+    assert_eq!(sent, (1..=11).collect::<Vec<_>>());
+    // Microversion, document, tabs and features come before the estimate.
+    assert!(counted.0[..4].iter().all(|(_, needed)| needed.is_none()));
+    assert!(counted.0[4..].iter().all(|(_, needed)| *needed == Some(11)));
+}

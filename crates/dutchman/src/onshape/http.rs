@@ -120,6 +120,16 @@ pub(super) struct Session<'a, C> {
     /// With no `--max-calls`, the limit starts at [`AUTO_BASE_CALLS`] and grows as the
     /// document's elements and body-detail requests are discovered, up to [`AUTO_CEILING_CALLS`].
     pub auto: bool,
+    /// Told after each call is sent.
+    pub progress: Option<&'a mut dyn FetchProgress>,
+    /// The fetch's estimate of the total calls the document needs, once it is known.
+    pub needed: Option<u32>,
+}
+
+/// Follows a fetch as it runs.
+pub trait FetchProgress {
+    /// After each call is sent: the calls so far, and the estimated total once it is known.
+    fn calls(&mut self, sent: u32, needed: Option<u32>);
 }
 
 /// Calls an automatic budget starts with: document name, tab list, microversion checks.
@@ -176,6 +186,9 @@ impl<C: HttpClient> Session<'_, C> {
                 ]),
             };
             self.calls += 1;
+            if let Some(progress) = self.progress.as_mut() {
+                progress.calls(self.calls, self.needed);
+            }
             let response = self.client.send(&request).map_err(|mut e| {
                 e.calls = self.calls;
                 e
@@ -441,6 +454,8 @@ mod bearer_tests {
             calls: 0,
             max_calls: 0,
             auto: false,
+            progress: None,
+            needed: None,
         };
         for (path, query, body) in [
             (format!("/api/{token}"), String::new(), Vec::new()),

@@ -486,7 +486,7 @@ count every HTTP attempt, including metadata, consistency checks, export creatio
 polling, download, retries, and a refetch. Dutchman stops **before** the attempt over
 the limit and prints the count on success or failure. This conservative local limit
 differs from Onshape's yearly billing, which may exclude unsuccessful requests.
-`--max-calls 0` permits cache reads only. The desktop app uses the automatic limit; if a fetch stops at it, the Results card says so and offers Continue fetching, which carries on with a larger limit and the replies already cached. `--json`
+`--max-calls 0` permits cache reads only. The desktop app uses the automatic limit; if a fetch stops at it, the Results card says so and offers Continue fetching, which carries on with a larger limit and the replies already cached. While it fetches, the Results card counts the calls sent and, once the root Part Studio's feature list is read, the estimated total: one per body-detail state, configuration, variables, sketches, the STEP export (request, one poll, download) and, for a workspace, the final microversion check. Slow export polls and retries can take it past the estimate. `--json`
 returns the same `dutchman.onshape-fetch/1` report as MCP.
 
 Responses are cached privately under `${XDG_CACHE_HOME:-~/.cache}/dutchman/onshape`,

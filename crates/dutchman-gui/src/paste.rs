@@ -286,16 +286,35 @@ pub(crate) enum Source {
 pub(crate) enum Message {
     Probed(Link, Result<Option<u64>, String>),
     Progress(u64, Option<u64>),
+    /// Onshape calls sent so far, and the estimated total once it is known.
+    Calls(u32, Option<u32>),
     Finished(Result<(PathBuf, Option<tempfile::TempDir>), String>),
+}
+
+/// Fetches an Onshape link into a bundle in the folder, telling the progress after each call.
+pub type Fetch =
+    fn(String, &Path, &mut dyn dutchman::onshape::FetchProgress) -> Result<PathBuf, String>;
+
+/// Sends a fetch's call count to the window.
+struct Calls {
+    sender: std::sync::mpsc::Sender<Message>,
+    ctx: eframe::egui::Context,
+}
+
+impl dutchman::onshape::FetchProgress for Calls {
+    fn calls(&mut self, sent: u32, needed: Option<u32>) {
+        let _ = self.sender.send(Message::Calls(sent, needed));
+        self.ctx.request_repaint();
+    }
 }
 
 pub(crate) struct Inbox {
     pub(crate) sender: std::sync::mpsc::Sender<Message>,
     pub(crate) receiver: std::sync::mpsc::Receiver<Message>,
     pub(crate) transport: std::sync::Arc<dyn Transport>,
-    pub(crate) fetch: fn(String, &Path) -> Result<PathBuf, String>,
+    pub(crate) fetch: Fetch,
     /// Used instead of `fetch` when carrying on after a stop at the request limit.
-    pub(crate) continue_fetch: fn(String, &Path) -> Result<PathBuf, String>,
+    pub(crate) continue_fetch: Fetch,
     /// Set for the next `start`; it clears itself.
     pub(crate) continuing: bool,
     /// The Onshape link whose fetch stopped at the request limit, while it can be continued.
@@ -378,15 +397,20 @@ impl Inbox {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let link = match source {
                     Source::Onshape(link) => {
+                        let mut calls = Calls {
+                            sender: sender.clone(),
+                            ctx: ctx.clone(),
+                        };
                         let result = if bearer_token_file.is_some() {
                             crate::onshape::fetch_with_budget(
                                 link,
                                 &output,
                                 bearer_token_file,
                                 continuing.then_some(crate::onshape::CONTINUE_CALLS),
+                                &mut calls,
                             )
                         } else {
-                            fetch(link, &output)
+                            fetch(link, &output, &mut calls)
                         };
                         return result.map(|path| (path, None));
                     }
