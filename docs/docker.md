@@ -213,7 +213,7 @@ Then build it in that folder, with the SolidCraft 0.46.2 archive for x86_64 here
 ```sh
 docker build -t dutchman \
   --build-arg SOLIDCRAFT_VERSION=0.46.2 \
-  --build-arg SOLIDCRAFT_SHA256=27b3b8334fbf99ab376d0bea176afaf55ef83b7aff822eb731eddb8d632b9112 .
+  --build-arg SOLIDCRAFT_SHA256=b04255a539a4e060b98087ba70f29538b84f0f7cc0178fc3a2167926d0a9178c .
 ```
 
 It takes about a minute and adds about 550 MB. Build again after each `docker pull` to update
