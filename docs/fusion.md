@@ -580,6 +580,10 @@ transform, and each component as a product definition.
   holds it. Its geometry is still converted and can be shown again in SolidCraft. In a part with
   shown and hidden bodies, the hidden ones are written marked hidden: SolidCraft 0.42 and newer
   open them hidden, older releases show the part whole.
+- **Suppressed components** (an occurrence the source suppresses, as Inventor and Solid Edge
+  assemblies and a component a Fusion configuration excludes) are placed hidden at their
+  position, the same way; they stay in the design and its part list, and an Info
+  `suppressed components` note names them.
 - **Joints** between components become SolidCraft joints: fixed ones rigid (their offset kept),
   revolute ones turning about the connector's z axis with their limits, slider ones along it.
   Each connector frame is in its own part. Offsets apply to the second connector:
