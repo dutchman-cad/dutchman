@@ -1,12 +1,16 @@
 # The desktop app
 
+The window opens wider than tall (1180 by 800 points, or 90% of a smaller monitor) and
+never smaller than 520 by 420.
+
 ## Fusion tool libraries
 
 A Fusion tool library (`.tools`, or the `.json` export of one) converts to CamCraft's
 `.camtools`. The Designs list counts it as a tool library, its result says `Converted` or
 `Converted, some tools left out` with how many tools were written, and the only button on the
-card is **Show in folder**. The report panel asks about missing tools or wrong sizes, and has
-no STEP step.
+card is **Show in folder**. The report panel asks about missing tools or wrong sizes, and its third step asks for the
+same library exported the other way (`.tools` for a `.json`, `.json` for a `.tools`). The
+Designs list shows each entry's name, with the full path in its tooltip.
 
 ## Ask your AI about this file
 
