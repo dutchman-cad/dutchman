@@ -1252,27 +1252,33 @@ fn read_form(src: &Src<'_>) -> Result<FormTeeth, String> {
         let e = o
             .get("end")
             .and_then(Value::as_array)
-            .filter(|e| e.len() == 2)
             .ok_or("its profile has a segment without an end point")?;
+        let [r, z] = e.as_slice() else {
+            return Err("its profile has a segment without an end point".into());
+        };
         let (r, z) = (
-            number(&e[0]).ok_or("a profile radius is not a number")?,
-            number(&e[1]).ok_or("a profile height is not a number")?,
+            number(r).ok_or("a profile radius is not a number")?,
+            number(z).ok_or("a profile height is not a number")?,
         );
         pts.push((r * src.to_mm, z * src.to_mm));
     }
-    if pts.len() < 5 || pts[0] != (0.0, 0.0) || pts[pts.len() - 1].0 != 0.0 {
-        return Err("its profile does not run from the axis at the tip to the axis above".into());
+    let axis_err = "its profile does not run from the axis at the tip to the axis above";
+    let [first, inner @ .., last] = pts.as_slice() else {
+        return Err(axis_err.into());
+    };
+    if inner.len() < 3 || *first != (0.0, 0.0) || last.0 != 0.0 {
+        return Err(axis_err.into());
     }
-    let inner = &pts[1..pts.len() - 1];
-    let root = inner[0].0;
-    if inner[0].1.abs() > EPS || root <= 0.0 {
+    let (Some(&(root, root_z)), Some(&(top, _))) = (inner.first(), inner.last()) else {
+        return Err(axis_err.into());
+    };
+    if root_z.abs() > EPS || root <= 0.0 {
         return Err("its profile does not start at the tip".into());
     }
-    let top = inner[inner.len() - 1].0;
     // Teeth: climbs out of the root radius at one angle to one crest radius.
     let mut teeth: Vec<(f64, f64, f64)> = Vec::new(); // (start height, crest radius, flank angle)
-    for w in inner.windows(2) {
-        let (a, b) = (w[0], w[1]);
+    for pair in inner.windows(2) {
+        let [a, b] = *pair else { continue };
         let (dr, dz) = (b.0 - a.0, b.1 - a.1);
         if dr > EPS && (a.0 - root).abs() < EPS && dz > EPS {
             let ang = dz.atan2(dr).to_degrees();
@@ -1300,12 +1306,15 @@ fn read_form(src: &Src<'_>) -> Result<FormTeeth, String> {
             round6(2.0 * flank)
         ));
     }
-    let pitch = round6(teeth[1].0 - teeth[0].0);
-    if pitch <= 0.0
-        || teeth
-            .windows(2)
-            .any(|w| (w[1].0 - w[0].0 - pitch).abs() > EPS)
-    {
+    let gaps: Vec<f64> = teeth
+        .windows(2)
+        .filter_map(|w| match *w {
+            [a, b] => Some(b.0 - a.0),
+            _ => None,
+        })
+        .collect();
+    let pitch = round6(gaps.first().copied().unwrap_or(0.0));
+    if pitch <= 0.0 || gaps.iter().any(|g| (g - pitch).abs() > EPS) {
         return Err("its tooth rows are not at one pitch".into());
     }
     Ok(FormTeeth {
