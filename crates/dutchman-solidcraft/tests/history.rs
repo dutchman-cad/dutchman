@@ -2358,10 +2358,9 @@ fn replayed_prefix_bodies(cli: &Path, design: &[u8]) -> Vec<Value> {
     )
     .unwrap();
     let features = document["features"].as_array().unwrap();
-    let remove = features
-        .iter()
-        .position(|f| f["type"] == "remove")
-        .unwrap_or_else(|| panic!("no Remove feature: {document}"));
+    let remove = features.iter().position(|f| f["type"] == "remove");
+    assert!(remove.is_some(), "no Remove feature: {document}");
+    let remove = remove.unwrap();
     assert!(remove > 0, "no replayed feature before the Remove");
     let script = vec![
         json!({"command": "timeline.roll_to", "params": {"feature": features[remove - 1]["id"]}}),
