@@ -39,7 +39,8 @@ roxmltree = "0.21"
 thiserror = "2"
 sysinfo = { version = "0.37.2", default-features = false, features = ["system", "disk"] }
 tempfile = "3"
-zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# zip 9.8 needs Rust 1.89; the workspace builds with 1.88 (the msrv job), so cap it here.
+zip = { version = ">=9, <9.8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # Never crash: hostile input must come back as an error, never as a panic.
 [workspace.lints.rust]
