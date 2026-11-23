@@ -522,11 +522,10 @@ fn plan(type_word: &str) -> Plan {
             Kind::Taper,
             "CamCraft has no countersink: written as a chamfer mill with the countersink's angle",
         ),
-        "tapered mill" => Plan::Skip("CamCraft has no tapered end mill"),
+        "tapered mill" => Plan::Kind(Kind::Taper),
         "radius mill" => Plan::Skip("CamCraft has no radius (corner-rounding) mill"),
-        "form mill" => {
-            Plan::Skip("CamCraft's form tool is a lathe gauge; a milling form profile has no place")
-        }
+        // A milling form tool is carried only as the multi-form thread mill its profile draws.
+        "form mill" => Plan::Kind(Kind::ThreadMill),
         "counter bore" => Plan::Skip("CamCraft has no counterbore tool"),
         "reamer" => Plan::Skip("CamCraft has no reamer"),
         "laser cutter" => Plan::Skip("CamCraft has no laser tool"),
@@ -676,8 +675,24 @@ fn build(
     notes: &mut Vec<String>,
 ) -> Result<Def, String> {
     let lathe = kind.lathe_or_bore();
-    let diameter = src
-        .len(
+    let tapered = type_word == "tapered mill";
+    let form = if type_word == "form mill" {
+        Some(read_form(src)?)
+    } else {
+        None
+    };
+    let tapered_tip = if tapered {
+        Some(tapered_tip(src)?)
+    } else {
+        None
+    };
+    let diameter = if let Some(f) = &form {
+        let _ = src.len("geometry", &["DC", "diameter"]);
+        f.crest_d
+    } else if let Some(d) = tapered_tip {
+        d
+    } else {
+        src.len(
             "geometry",
             if lathe {
                 &["DC", "diameter", "INSD", "IC"][..]
@@ -686,7 +701,8 @@ fn build(
             },
         )
         .filter(|d| *d > 0.0)
-        .ok_or("it states no diameter")?;
+        .ok_or("it states no diameter")?
+    };
     let flute = src.len("geometry", &["LCF", "flute-length", "LE"]);
     let body = src.len("geometry", &["LB", "body-length"]);
     let overall = src.len("geometry", &["OAL", "overall-length"]);
@@ -717,7 +733,14 @@ fn build(
         flute_len = Some(diameter);
         notes.push("no cutting length: the insert size was used".into());
     }
-    let flute_len = flute_len.ok_or("it states no flute (cutting) length")?;
+    let mut flute_len = flute_len.ok_or("it states no flute (cutting) length")?;
+    if let Some(f) = &form {
+        flute_len = round6(f.rows as f64 * f.pitch);
+        notes.push(format!(
+            "cutting length {flute_len} mm is the {} tooth rows the profile draws",
+            f.rows
+        ));
+    }
 
     let reach = body.or(overall).unwrap_or(0.0);
     let shank_len = if reach > flute_len {
@@ -725,8 +748,23 @@ fn build(
     } else {
         0.0
     };
+    let shoulder = if kind.undercut() {
+        src.len("geometry", &["shoulder-diameter"])
+            .filter(|v| *v > 0.0)
+    } else {
+        None
+    };
     let mut shank_d = shaft.filter(|v| *v > 0.0).unwrap_or(diameter);
-    if kind.undercut() && shaft.is_none() {
+    if let Some(f) = &form {
+        shank_d = f.shank_d;
+    }
+    if kind.undercut() {
+        // Fusion's shoulder is the narrowed part between the head and the shank: CamCraft's neck.
+        if let Some(sd) = shoulder {
+            shank_d = sd;
+        }
+    }
+    if kind.undercut() && shaft.is_none() && shoulder.is_none() {
         // A neck CamCraft can judge needs its own diameter; the library gave none.
         shank_d = 0.0;
     }
@@ -769,7 +807,9 @@ fn build(
         Kind::EndMill | Kind::BullNose => def.corner_r = corner.unwrap_or(0.0),
         Kind::BallNose => def.corner_r = round6(diameter / 2.0),
         Kind::Taper => {
-            def.tip_angle = if type_word == "counter sink" {
+            def.tip_angle = if tapered {
+                taper.map(|t| 2.0 * t).ok_or("it states no taper angle")?
+            } else if type_word == "counter sink" {
                 point
                     .or_else(|| taper.map(|t| 2.0 * t))
                     .ok_or("it states no countersink angle")?
@@ -794,13 +834,18 @@ fn build(
             def.left_hand = type_word == "tap left hand";
         }
         Kind::ThreadMill => {
-            def.pitch = pitch
-                .filter(|p| *p > 0.0)
-                .ok_or("it states no thread pitch")?;
-            def.tip_angle = profile.unwrap_or_else(|| {
-                approximations.push("no thread profile angle: 60 degrees used".into());
-                60.0
-            });
+            if let Some(f) = &form {
+                def.pitch = f.pitch;
+                def.tip_angle = f.angle;
+            } else {
+                def.pitch = pitch
+                    .filter(|p| *p > 0.0)
+                    .ok_or("it states no thread pitch")?;
+                def.tip_angle = profile.unwrap_or_else(|| {
+                    approximations.push("no thread profile angle: 60 degrees used".into());
+                    60.0
+                });
+            }
         }
         Kind::Bore => def.nose_radius = corner.unwrap_or(0.0),
         Kind::Turning => def.nose_radius = corner.ok_or("it states no nose radius")?,
@@ -869,6 +914,7 @@ fn build(
     if !note_parts.is_empty() {
         def.notes = Some(trim_to(&note_parts.join("; "), 500));
     }
+    nudge_dovetail(&mut def, notes);
     if let Some(why) = def.refusal() {
         return Err(format!("CamCraft would refuse it: {why}"));
     }
@@ -918,6 +964,9 @@ fn holder_of(src: &Src<'_>, notes: &mut Vec<String>) -> (f64, f64) {
     (round6(width), round6(height))
 }
 
+/// A preset that states speed and feed: name, category, rpm, feed, stepdown, stepover.
+type UsablePreset = (String, Option<String>, f64, f64, Option<f64>, Option<f64>);
+
 /// Spindle speed, feed and per-material rows from the presets.
 fn cutting_data(
     src: &Src<'_>,
@@ -936,7 +985,7 @@ fn cutting_data(
         src.mark("start-values.presets".into());
     }
     // (name, category, rpm, feed, stepdown, stepover) of every preset that states speed and feed.
-    let mut usable: Vec<(String, Option<String>, f64, f64, Option<f64>, Option<f64>)> = Vec::new();
+    let mut usable: Vec<UsablePreset> = Vec::new();
     let mut turning: Vec<Option<(f64, f64)>> = Vec::new();
     for (i, p) in presets.iter().enumerate() {
         let name = p
@@ -1166,4 +1215,141 @@ fn unread(src: &Src<'_>) -> Vec<String> {
 
 fn number_of(v: &Value) -> Option<f64> {
     number(v)
+}
+
+/// What a form mill's profile draws when it is a multi-form thread mill.
+struct FormTeeth {
+    /// Across the tooth crests, mm.
+    crest_d: f64,
+    pitch: f64,
+    /// Included flank angle, degrees.
+    angle: f64,
+    rows: usize,
+    /// The widest diameter at the top of the profile (the shank), mm.
+    shank_d: f64,
+}
+
+/// Fusion's form mill stores a profile of `{"end": [radius, height]}` points from the axis at
+/// the tip, round and back to the axis. CamCraft's library has no place for a drawn profile; the
+/// one shape it names is a multi-form thread mill (rows of equal 60-degree-style teeth at one
+/// pitch), so that is read, and every other profile is refused by what it draws.
+fn read_form(src: &Src<'_>) -> Result<FormTeeth, String> {
+    const EPS: f64 = 1e-5;
+    let raw = src
+        .tool
+        .get("geometry")
+        .and_then(|g| g.get("profile"))
+        .and_then(Value::as_array)
+        .ok_or("a form mill states no profile")?;
+    let mut pts: Vec<(f64, f64)> = Vec::new();
+    for seg in raw {
+        let o = seg
+            .as_object()
+            .ok_or("its profile has a segment that is not a point")?;
+        if o.len() != 1 {
+            return Err("its profile has curved segments CamCraft's library cannot hold".into());
+        }
+        let e = o
+            .get("end")
+            .and_then(Value::as_array)
+            .filter(|e| e.len() == 2)
+            .ok_or("its profile has a segment without an end point")?;
+        let (r, z) = (
+            number(&e[0]).ok_or("a profile radius is not a number")?,
+            number(&e[1]).ok_or("a profile height is not a number")?,
+        );
+        pts.push((r * src.to_mm, z * src.to_mm));
+    }
+    if pts.len() < 5 || pts[0] != (0.0, 0.0) || pts[pts.len() - 1].0 != 0.0 {
+        return Err("its profile does not run from the axis at the tip to the axis above".into());
+    }
+    let inner = &pts[1..pts.len() - 1];
+    let root = inner[0].0;
+    if inner[0].1.abs() > EPS || root <= 0.0 {
+        return Err("its profile does not start at the tip".into());
+    }
+    let top = inner[inner.len() - 1].0;
+    // Teeth: climbs out of the root radius at one angle to one crest radius.
+    let mut teeth: Vec<(f64, f64, f64)> = Vec::new(); // (start height, crest radius, flank angle)
+    for w in inner.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (dr, dz) = (b.0 - a.0, b.1 - a.1);
+        if dr > EPS && (a.0 - root).abs() < EPS && dz > EPS {
+            let ang = dz.atan2(dr).to_degrees();
+            if let Some(&(_, c0, a0)) = teeth.first() {
+                if (b.0 - c0).abs() > EPS || (ang - a0).abs() > 1e-3 {
+                    break; // the neck's step out to the shank
+                }
+            }
+            teeth.push((a.1, b.0, ang));
+        } else if dr < -EPS {
+            if let Some(&(_, _, a0)) = teeth.first() {
+                let down = dz.atan2(-dr).to_degrees();
+                if (down - a0).abs() > 1e-3 && (b.0 - root).abs() < EPS {
+                    return Err("its teeth are asymmetric: the two flanks differ in angle".into());
+                }
+            }
+        }
+    }
+    let Some(&(_, crest_r, flank)) = teeth.first() else {
+        return Err("its profile draws no tooth".into());
+    };
+    if teeth.len() == 1 {
+        return Err(format!(
+            "its profile is one tooth of {} degrees included: CamCraft's single-form thread mill needs a pitch range Fusion does not store, and a form that is not a thread has no place in a library",
+            round6(2.0 * flank)
+        ));
+    }
+    let pitch = round6(teeth[1].0 - teeth[0].0);
+    if pitch <= 0.0
+        || teeth
+            .windows(2)
+            .any(|w| (w[1].0 - w[0].0 - pitch).abs() > EPS)
+    {
+        return Err("its tooth rows are not at one pitch".into());
+    }
+    Ok(FormTeeth {
+        crest_d: round6(2.0 * crest_r),
+        pitch,
+        angle: round6(2.0 * flank),
+        rows: teeth.len(),
+        shank_d: round6(2.0 * top),
+    })
+}
+
+/// A tapered mill's tip: CamCraft's cone ends in a sharp point, so only a tip of zero across
+/// (no flat, no ball) is the same tool. Returns the diameter its cone reaches at the cutting
+/// length.
+fn tapered_tip(src: &Src<'_>) -> Result<f64, String> {
+    let tip = src.len("geometry", &["DC", "diameter"]).unwrap_or(0.0);
+    let ball = src.len("geometry", &["RE", "corner-radius"]).unwrap_or(0.0);
+    if tip > 0.0 || ball > 0.0 {
+        return Err(format!(
+            "its tip is {tip} mm across with a {ball} mm corner radius: CamCraft's cone ends in a sharp point, so a flat or ball tip has no place"
+        ));
+    }
+    let flute = src
+        .len("geometry", &["LCF", "flute-length", "LE"])
+        .filter(|v| *v > 0.0)
+        .ok_or("it states no flute (cutting) length")?;
+    let ta = src
+        .raw("geometry", &["TA", "taper-angle"])
+        .filter(|t| *t > 0.0 && *t < 90.0)
+        .ok_or("it states no taper angle")?;
+    Ok(round6(2.0 * flute * ta.to_radians().tan()))
+}
+
+/// CamCraft compares a dovetail's flank to its neck with no tolerance, so a flank that meets the
+/// neck exactly can be refused for float dust. Shave the neck by the dust (never more than a
+/// nanometre) so the exact tool is taken.
+fn nudge_dovetail(def: &mut Def, notes: &mut Vec<String>) {
+    if def.kind != Kind::Dovetail {
+        return;
+    }
+    let (r, sr) = (def.diameter * 0.5, def.shank_d * 0.5);
+    let top = r - def.flute_len / def.tip_angle.to_radians().tan();
+    if top < sr && sr - top < 1e-9 {
+        def.shank_d = 2.0 * top - 1e-12;
+        notes.push("the neck meets the head's flank exactly; it is shaved by under a nanometre so CamCraft's exact comparison takes it".into());
+    }
 }

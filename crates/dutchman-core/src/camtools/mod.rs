@@ -71,7 +71,9 @@
 //! | `slot mill` | `keyseat` (degraded) |
 //! | `center drill`, `spot drill` | `drill` (degraded) |
 //! | `counter sink` | `taper` with the countersink angle (degraded) |
-//! | `tapered mill`, `radius mill`, `form mill`, `counter bore`, `reamer`, `laser cutter`, `marking`, `turning custom`, any other type | listed, not written |
+//! | `form mill` | `thread_mill`, when `geometry.profile` draws rows of equal teeth at one pitch (pitch, angle, crest diameter and cutting length read from it); any other profile is listed, not written |
+//! | `tapered mill` | `taper`, when its tip is a sharp point; a flat or ball tip is listed, not written |
+//! | `radius mill`, `counter bore`, `reamer`, `laser cutter`, `marking`, `turning custom`, any other type | listed, not written |
 //!
 //! Holder entries (`type` `holder`) are not tools; they are counted in the report.
 //!

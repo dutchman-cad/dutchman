@@ -75,7 +75,9 @@ degrees.
 | `plasma cutter`, `water jet cutter` | `torch`, `waterjet` (spindle speed 0) |
 | `turning general`, `turning grooving`, `turning threading`, `turning form` | `turning`, `groove`, `thread`, `form` |
 | `face mill`, `slot mill`, `center drill`, `spot drill`, `counter sink` | `end_mill`, `keyseat`, `drill`, `drill`, `taper` (reported as degraded) |
-| `tapered mill`, `radius mill`, `form mill`, `counter bore`, `reamer`, `laser cutter`, `marking`, `turning custom`, anything else | not written; named in the report |
+| `form mill` | `thread_mill` | Only when `geometry.profile` draws two or more rows of equal teeth at one pitch: pitch, included flank angle, crest diameter and the cutting length (rows x pitch) are read from the profile; the profile itself (crest and root flats, neck) is named as not carried. One tooth (a single-form thread mill needs a pitch range Fusion does not store), uneven rows and curved profiles are not written. |
+| `tapered mill` | `taper` | Only when the tip is a sharp point (tip diameter 0, no corner radius): the cone's diameter at the cutting length comes from the taper angle. A flat or ball tip has no place in CamCraft's cone and the tool is not written. |
+| `radius mill`, `counter bore`, `reamer`, `laser cutter`, `marking`, `turning custom`, anything else | not written; named in the report |
 
 Holder entries in a library (`type` `holder`) are not tools; the report counts them.
 

@@ -1073,3 +1073,201 @@ fn turning_tools_carry_their_fields() {
         .iter()
         .any(|l| l.subject.contains("no nose") && l.detail.contains("nose radius")));
 }
+
+/// A form mill's profile as Fusion writes it: `{"end": [radius, height]}` from the axis at the
+/// tip, round and back to the axis (millimetres here).
+fn profile(points: &[(f64, f64)]) -> Value {
+    Value::Array(points.iter().map(|(r, z)| json!({"end": [r, z]})).collect())
+}
+
+/// A multi-form thread mill: `rows` teeth of 60 degrees included at `pitch`, crest radius 3,
+/// root radius 2, a neck, then a 4 mm radius shank.
+fn thread_profile(rows: usize, pitch: f64) -> Value {
+    let depth = 1.0;
+    let half = depth * 30f64.to_radians().tan();
+    let mut p = vec![(0.0, 0.0), (2.0, 0.0)];
+    for i in 0..rows {
+        let z = 0.5 + i as f64 * pitch;
+        p.push((3.0, z + half));
+        if i + 1 < rows {
+            p.push((2.0, z + 2.0 * half));
+            p.push((2.0, z + pitch));
+        }
+    }
+    let last = p[p.len() - 1].1;
+    p.push((4.0, last + 6.0));
+    p.push((4.0, 40.0));
+    p.push((0.0, 40.0));
+    profile(&p)
+}
+
+fn form_tool(name: &str, profile: Value) -> Value {
+    let mut t = tool(
+        "form mill",
+        name,
+        geo(&[
+            ("DC", 6.0),
+            ("LCF", 12.0),
+            ("LB", 30.0),
+            ("OAL", 40.0),
+            ("NOF", 3.0),
+        ]),
+    );
+    t["geometry"]["profile"] = profile;
+    t
+}
+
+#[test]
+fn a_form_mill_drawing_rows_of_teeth_is_a_multi_form_thread_mill() {
+    let c = convert_lib(&library(vec![form_tool("multi", thread_profile(4, 1.5))]));
+    let out = written(&c);
+    let t = find(&out, "multi");
+    assert_eq!(t["kind"], "thread_mill");
+    assert_eq!(t["diameter"], 6.0);
+    assert_eq!(t["pitch"], 1.5);
+    assert_eq!(t["tip_angle"], 60.0);
+    assert_eq!(t["flute_len"], 6.0);
+    assert_eq!(t["shank_d"], 8.0);
+    assert_eq!(t["flutes"], 3);
+    let info = c
+        .report
+        .losses()
+        .iter()
+        .find(|l| l.code.as_deref() == Some("camtools/tool.field-not-carried"))
+        .unwrap();
+    assert!(info.detail.contains("geometry.profile"), "{}", info.detail);
+}
+
+#[test]
+fn one_tooth_or_uneven_rows_or_free_forms_are_refused_by_what_they_draw() {
+    let uneven = {
+        let mut p = vec![(0.0, 0.0), (2.0, 0.0)];
+        for z in [0.5, 2.0, 4.0] {
+            p.push((2.0, z));
+            p.push((3.0, z + 0.5));
+            p.push((2.0, z + 1.0));
+        }
+        p.extend([(4.0, 8.0), (4.0, 40.0), (0.0, 40.0)]);
+        profile(&p)
+    };
+    let free = json!([{"end": [0.0, 0.0]}, {"end": [2.0, 0.0], "center": [1.0, 1.0]}, {"end": [3.0, 5.0]}, {"end": [3.0, 9.0]}, {"end": [0.0, 9.0]}]);
+    let double_angle = profile(&[
+        (0.0, 0.0),
+        (2.0, 0.0),
+        (4.0, 0.8),
+        (2.0, 1.6),
+        (2.0, 9.0),
+        (4.0, 11.0),
+        (4.0, 40.0),
+        (0.0, 40.0),
+    ]);
+    let c = convert_lib(&library(vec![
+        form_tool("single", thread_profile(1, 1.5)),
+        form_tool("uneven", uneven),
+        form_tool("free", free),
+        form_tool("double", double_angle),
+        form_tool("keeper", thread_profile(3, 1.5)),
+    ]));
+    assert_eq!(c.tools_written, 1);
+    assert_eq!(written(&c)[0].0, "keeper");
+    let dropped: Vec<_> = c
+        .report
+        .losses()
+        .iter()
+        .filter(|l| l.severity == Severity::Dropped)
+        .collect();
+    let why = |name: &str| {
+        dropped
+            .iter()
+            .find(|l| l.subject.contains(name))
+            .unwrap_or_else(|| panic!("{name} not dropped"))
+            .detail
+            .clone()
+    };
+    assert!(why("single").contains("single-form thread mill needs a pitch range"));
+    assert!(why("double").contains("degrees included"));
+    assert!(why("uneven").contains("not at one pitch"));
+    assert!(why("free").contains("curved segments"));
+}
+
+#[test]
+fn a_tapered_mill_is_a_cone_only_when_its_tip_is_a_point() {
+    let sharp = tool(
+        "tapered mill",
+        "sharp",
+        geo(&[
+            ("DC", 0.0),
+            ("LCF", 10.0),
+            ("LB", 30.0),
+            ("SFDM", 8.0),
+            ("TA", 30.0),
+        ]),
+    );
+    let blunt = tool(
+        "tapered mill",
+        "blunt",
+        geo(&[
+            ("DC", 1.0),
+            ("LCF", 10.0),
+            ("LB", 30.0),
+            ("SFDM", 8.0),
+            ("TA", 30.0),
+        ]),
+    );
+    let ball = tool(
+        "tapered mill",
+        "ball",
+        geo(&[
+            ("DC", 0.0),
+            ("RE", 0.5),
+            ("LCF", 10.0),
+            ("LB", 30.0),
+            ("SFDM", 8.0),
+            ("TA", 30.0),
+        ]),
+    );
+    let c = convert_lib(&library(vec![sharp, blunt, ball]));
+    let out = written(&c);
+    assert_eq!(c.tools_written, 1);
+    let t = find(&out, "sharp");
+    assert_eq!(t["kind"], "taper");
+    assert_eq!(t["tip_angle"], 60.0);
+    assert_eq!(t["flute_len"], 10.0);
+    // The cone meets its diameter exactly at the cutting length: 2 * 10 * tan(30 degrees).
+    assert!((t["diameter"].as_f64().unwrap() - 11.547005).abs() < 1e-6);
+    let dropped: Vec<_> = c
+        .report
+        .losses()
+        .iter()
+        .filter(|l| l.severity == Severity::Dropped)
+        .collect();
+    assert_eq!(dropped.len(), 2);
+    assert!(dropped.iter().all(|l| l.detail.contains("sharp point")));
+}
+
+#[test]
+fn a_dovetail_whose_neck_meets_its_flank_is_taken_with_the_shoulder_as_the_neck() {
+    // Inches: a 0.24 head, 0.0575 high, 45 degree flank, on a 0.125 shoulder under a 0.25 shank.
+    let mut t = tool(
+        "dovetail mill",
+        "dove",
+        geo(&[
+            ("DC", 0.24),
+            ("LCF", 0.0575),
+            ("LB", 1.0),
+            ("OAL", 1.5),
+            ("SFDM", 0.25),
+            ("TA", 45.0),
+            ("shoulder-diameter", 0.125),
+            ("shoulder-length", 1.0),
+        ]),
+    );
+    t["unit"] = json!("inches");
+    let c = convert_lib(&library(vec![t]));
+    let out = written(&c);
+    let d = find(&out, "dove");
+    assert_eq!(d["kind"], "dovetail");
+    assert_eq!(d["tip_angle"], 45.0);
+    assert!((d["shank_d"].as_f64().unwrap() - 3.175).abs() < 1e-6);
+    assert!((d["shank_len"].as_f64().unwrap() - 23.9395).abs() < 1e-6);
+}
