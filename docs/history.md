@@ -517,7 +517,9 @@ from the sheet's outer face. The unchanged base can be a single simple polygon, 
 L-shaped or notched sheet: attachment uses the actual profile edge, including a concave edge,
 rather than the edge of a bounding rectangle. Curved, open, crossing, disconnected, or
 collinear base edges and base profiles with holes or partial regions are not supported yet
-by this attachment proof. Any other plate, or a bend without its plate, keeps the geometry
+by this attachment proof. A plate attached along several edges is the same flange on every edge when each further
+edge is as long as the first, parallel to it and on the same face of the sheet; the flange lists
+all of them. Any other plate, or a bend without its plate, keeps the geometry
 and reports the unsupported shape. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
 outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. A sheet-metal
 corner that cadmpeg proves leaves its body unchanged (a single flange's corner, with nothing to
