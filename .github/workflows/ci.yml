@@ -183,7 +183,9 @@ jobs:
     # Stays on GitHub-hosted runners: it needs the wasm32-wasip2 target, which the shared runners do not carry,
     # and a job must not install targets on a shared box.
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # A cold wasm32 build of the plugin takes longer than 5 minutes; the tight limit cancelled it
+    # on release-candidate runs.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
