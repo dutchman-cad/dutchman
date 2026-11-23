@@ -3312,6 +3312,28 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
     }
 }
 
+/// People use a square or wider window, so the window never opens taller than wide, on any
+/// landscape monitor and at the smallest size the app allows.
+#[test]
+fn the_default_window_is_never_taller_than_wide() {
+    let fit = dutchman_gui::FIT_SIZE;
+    assert!(fit[1] <= fit[0], "the fitted size {fit:?} is tall");
+    for monitor in [
+        [1280.0, 720.0],
+        [1366.0, 768.0],
+        [1440.0, 900.0],
+        [1920.0, 1080.0],
+        [2560.0, 1440.0],
+        [1024.0, 1024.0],
+    ] {
+        let size = dutchman_gui::fit_size(monitor);
+        assert!(size[1] <= size[0], "{size:?} on {monitor:?} is tall");
+    }
+    // The smallest window the app allows is landscape too.
+    let smallest = dutchman_gui::fit_size([100.0, 100.0]);
+    assert!(smallest[1] <= smallest[0], "{smallest:?} is tall");
+}
+
 #[test]
 fn the_default_size_is_centred_and_capped_at_the_monitor() {
     assert_eq!(

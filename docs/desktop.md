@@ -1,5 +1,8 @@
 # The desktop app
 
+The window opens wider than tall (1180 by 800 points, or 90% of a smaller monitor) and
+never smaller than 520 by 420.
+
 ## Ask your AI about this file
 
 Each completed conversion saves its full `dutchman.convert/1` JSON report beside the
