@@ -69,6 +69,7 @@ pub(crate) fn map(
                 .and_then(|profile| profile.get("value"))
                 .unwrap_or(&Value::Null),
             ctx,
+            None,
         )?
     } else {
         profile(reference, ctx)?

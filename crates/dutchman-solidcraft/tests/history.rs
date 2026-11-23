@@ -16483,6 +16483,118 @@ fn solidcraft_extrudes_a_historical_face_along_its_outward_normal() {
     }
 }
 
+/// The example cube with a loft that joins a square of side `top`, 10 mm beyond the cube's top
+/// (`up`) or bottom face, onto that face as it was before the loft: a historical face section.
+/// `change` edits the loft's definition.
+fn face_loft(up: bool, top: f64, change: impl FnOnce(&mut Value)) -> Model {
+    let model = face_extrude(up, |_| {});
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let z = if up { 20.0 } else { -10.0 };
+    let (a, b) = (5.0 - top / 2.0, 5.0 + top / 2.0);
+    let sketch = "f3d:model:sketch#9";
+    let ring: Vec<Value> = [21, 22, 23, 24]
+        .map(|k| json!({"entity": format!("f3d:model:sketch-entity#{k}"), "reversed": false}))
+        .to_vec();
+    let wire_model = &mut wire["model"];
+    wire_model["sketches"].as_array_mut().unwrap().push(json!({
+        "id": sketch,
+        "name": "Far",
+        "placement": {"kind": "resolved", "frame": {
+            "origin": {"x": 0.0, "y": 0.0, "z": z},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+        }},
+        "profiles": [ring],
+    }));
+    let far_line = |key: u32, from: [f64; 2], to: [f64; 2]| {
+        let mut row = line(key, from, to);
+        row["sketch"] = json!(sketch);
+        row
+    };
+    wire_model["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            far_line(21, [a, a], [b, a]),
+            far_line(22, [b, a], [b, b]),
+            far_line(23, [b, b], [a, b]),
+            far_line(24, [a, b], [a, a]),
+        ]);
+    let mut definition = json!({"kind": "loft", "value": {"sections": [
+        {"kind": "profile", "value": {"kind": "planar", "value": {"kind": "historical_faces", "value": {
+            "state": "test:face:feature-input#3",
+            "faces": ["test:face:historical-face#target"],
+            "native": ["synthetic profile group"],
+        }}}},
+        {"kind": "profile", "value": {"kind": "planar", "value": {
+            "kind": "sketch_profiles", "value": {"sketch": sketch, "profiles": [0]}}}},
+    ], "guidance": {"kind": "guides", "value": []}, "op": "join", "closed": false, "solid": true,
+    "ruled": false, "linearize": false}});
+    change(&mut definition["value"]);
+    let features = wire_model["features"].as_array_mut().unwrap();
+    let mut loft = features.pop().unwrap();
+    loft["ordinal"] = json!(3);
+    loft["name"] = json!("Face loft");
+    loft["definition"] = json!({"kind": "operation", "value": definition});
+    features.push(json!({"id": "f3d:model:feature#9", "ordinal": 2, "name": "Far sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": sketch}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
+    features.push(loft);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn a_loft_section_that_is_a_historical_face_waits_for_the_replay_that_proves_it() {
+    let (_, report) = convert(
+        &face_loft(true, 4.0, |_| {}),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("replay of the history before it"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn a_loft_section_of_several_faces_is_refused() {
+    let model = face_loft(true, 4.0, |definition| {
+        definition["sections"][0]["value"]["value"]["value"]["faces"] = json!([
+            "test:face:historical-face#target",
+            "test:face:historical-face#side0"
+        ]);
+    });
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("a loft section of several faces is not mapped yet")
+            || history_line(&report).contains("its selected faces share an edge"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn solidcraft_lofts_from_a_historical_face() {
+    let Some(cli) = solidcraft() else { return };
+    // The cube plus a frustum from its 10 mm face to a 4 mm square 10 mm away: 1000 + 520 mm^3,
+    // out of the top or out of the bottom (the face's sketch is on its outward side).
+    for up in [true, false] {
+        let (bytes, report) = written_with(&face_loft(up, 4.0, |_| {}), &replaying(&cli));
+        assert!(
+            history_line(&report).starts_with("4 of 4 features rebuilt"),
+            "{up}: {}",
+            history_line(&report)
+        );
+        let volume = volumes(&cli, &bytes);
+        assert_eq!(volume.len(), 1);
+        assert!((volume[0] - 1520.0).abs() < 1e-3, "{up}: {volume:?}");
+    }
+}
+
 /// `face_extrude`, then a chamfer of an edge of the extruded block's end face: the one along X
 /// at Y = 0, which no face of the cube can merge with.
 fn face_extrude_then_chamfer(up: bool) -> Model {
