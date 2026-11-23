@@ -270,9 +270,17 @@ pub(super) fn fallback(feature: &Value, ctx: &mut Context) -> Result<Value, Stri
                 .is_some_and(|by| Some(by.as_str()) == feature.get("id").and_then(Value::as_str))
         })
     }) || feature.get("ordinal").and_then(Value::as_u64).is_none()
-        || !later_changes(feature, &ids, ctx).is_empty()
     {
         return Err("its unchanged result body is not available".to_owned());
+    }
+    // The source stores the body only as the design ends, so a later feature that changes it
+    // leaves no state of its own to import, and no face of it to read a profile from.
+    let later = later_changes(feature, &ids, ctx);
+    if let Some(change) = later.iter().find(|row| !reapplies(row)).or(later.first()) {
+        return Err(format!(
+            "the body it makes is changed by the later feature \"{}\", and the source stores that body only as the design ends, so neither a stored result nor a profile read from its faces can be proven",
+            name(change).unwrap_or("?")
+        ));
     }
     import(feature, &ids, ctx)
 }

@@ -1566,7 +1566,11 @@ fn map_into(
             ctx.extra.clear();
             ctx.blends.truncate(blends);
             history.features.truncate(before);
-            let imported = base::fallback(feature, &mut ctx).map_err(|_| reason.clone())?;
+            let imported = base::fallback(feature, &mut ctx).map_err(|why| {
+                format!(
+                    "{reason}; the source states no sketch for its profile (it is absent from this design), and {why}"
+                )
+            })?;
             ctx.profile_unverified = false;
             ctx.profile_mismatch = false;
             ctx.inferred = None;

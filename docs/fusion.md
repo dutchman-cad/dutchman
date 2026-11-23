@@ -717,6 +717,11 @@ this fallback: replacing them would discard earlier body history. No geometry is
 reconstructed from an unavailable sketch. The feature is `mapped`, written as an Import, and
 `history/body-fallback-imported` reports the lost recipe as Degraded. Later features
 and verification use the imported body as usual.
+When a later feature changes that final-model body (a fillet, a moved face) and the source keeps no
+history body for the feature, the feature is refused: the source stores the body only as the design
+ends, so neither a stored result nor a profile read from the faces of that body can be proven. The
+reason keeps the original refusal first, says the source states no sketch for the profile, and names
+the later feature that changes the body.
 
 Fusion thread construction records carry a designation, nominal-size text, profile/type,
 physical pitch, and, in extended records, class and hand controls. The pinned codec projects

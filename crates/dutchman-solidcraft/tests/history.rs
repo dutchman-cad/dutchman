@@ -8824,6 +8824,51 @@ fn a_missing_recipe_uses_final_geometry_only_without_later_body_changes() {
         dutchman_core::FeatureStatus::Blocked,
         "{report:?}"
     );
+    let line = history_line(&report);
+    assert!(
+        line.contains("it is absent from this design")
+            && line.contains("changed by the later feature")
+            && line.contains("only as the design ends"),
+        "{line}"
+    );
+}
+
+#[test]
+fn a_sketchless_extrude_whose_body_a_later_fillet_changes_says_why_it_stops() {
+    // cadmpeg names an Extrude whose profile chain has no Sketch by its scope record, and
+    // keeps the profile native; the body the extrude makes exists only as the design ends.
+    let mut model = fallback_cube(false, true, "new_body");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["definition"]["value"]["value"]["profile"] =
+        json!({"kind": "planar", "value": {"kind": "native", "value": "synthetic:profile#1"}});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let mut report = Report::default();
+    report.push_coded(
+        Severity::Degraded,
+        "source",
+        "f3d/feature.extrude-profile-sketch-absent",
+        "Profile selection record 220 of Extrude scope record 217 has a chain record that names no Sketch, and the profile stays native.",
+    );
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .write(&model, &mut Vec::new(), &mut report)
+        .unwrap();
+    assert_eq!(
+        report.outcome().unwrap().features[1].status,
+        dutchman_core::FeatureStatus::Blocked,
+        "{report:?}"
+    );
+    let line = history_line(&report);
+    assert!(
+        line.contains("native profiles are not mapped yet")
+            && line.contains("the source states no sketch for its profile")
+            && line.contains("is changed by the later feature"),
+        "{line}"
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .all(|loss| loss.code.as_deref() != Some("history/body-fallback-imported")));
 }
 
 #[test]
