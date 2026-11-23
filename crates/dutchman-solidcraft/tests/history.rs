@@ -2344,11 +2344,12 @@ fn volumes(cli: &Path, design: &[u8]) -> Vec<f64> {
         .collect()
 }
 
-/// The bodies the converted features of a visible partial history build, measured.
+/// The bodies the converted features of a partial history build, measured.
 ///
-/// The writer puts a partial history's features first, then a Remove of the bodies they make
-/// and the Import of the rest. This rolls the timeline back to the feature before the Remove,
-/// so what is measured is the replay alone, before its bodies are taken away.
+/// For a SolidCraft with Remove, the writer puts a partial history's features first, then a
+/// Remove of the bodies they make and the Import of the rest; this rolls the timeline back to
+/// the feature before the Remove, so what is measured is the replay alone. An older target
+/// (the 0.18.2 floor) keeps the hidden suppressed copy instead, measured with its features on.
 fn replayed_prefix_bodies(cli: &Path, design: &[u8]) -> Vec<Value> {
     let document: Value = serde_json::from_reader(
         ZipArchive::new(Cursor::new(design))
@@ -2358,9 +2359,9 @@ fn replayed_prefix_bodies(cli: &Path, design: &[u8]) -> Vec<Value> {
     )
     .unwrap();
     let features = document["features"].as_array().unwrap();
-    let remove = features.iter().position(|f| f["type"] == "remove");
-    assert!(remove.is_some(), "no Remove feature: {document}");
-    let remove = remove.unwrap();
+    let Some(remove) = features.iter().position(|f| f["type"] == "remove") else {
+        return hidden_replay_bodies(cli, design);
+    };
     assert!(remove > 0, "no replayed feature before the Remove");
     let script = vec![
         json!({"command": "timeline.roll_to", "params": {"feature": features[remove - 1]["id"]}}),
