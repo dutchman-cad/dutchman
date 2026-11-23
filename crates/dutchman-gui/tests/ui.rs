@@ -4278,6 +4278,7 @@ mod paste_inputs {
         wait_for_conversion(&mut h);
     }
 
+    #[cfg(feature = "test-support")]
     /// Names the design, then holds until the screenshot is taken.
     fn named_held_fetch(
         _link: String,
@@ -4294,6 +4295,7 @@ mod paste_inputs {
         Err("Fetch ended.".into())
     }
 
+    #[cfg(feature = "test-support")]
     #[test]
     #[ignore = "renders real GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
     fn onshape_title_screenshots() {
