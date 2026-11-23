@@ -189,7 +189,23 @@ fn a_tool_library_result_is_presented_as_tools_not_as_a_design() {
     let policy = dutchman::report_policy::ReportPolicy::bundled();
     let steps = SendSteps::new(policy, None, &report, Surface::Desktop);
     assert_eq!(steps.intro, SEND_TOOLS_INTRO);
-    assert!(!steps.step_card);
+    // The third card asks for the library's other export, whichever one this was.
+    assert!(steps.step_card);
+    assert_eq!(
+        steps.step_title,
+        "Please add the same library exported as .tools"
+    );
+    assert_eq!(
+        steps.step_note,
+        Some("The other export of the same library lets us check every tool's sizes.")
+    );
+    let mut from_tools = report.clone();
+    from_tools["input"]["extension"] = serde_json::json!("tools");
+    let steps = SendSteps::new(policy, None, &from_tools, Surface::Desktop);
+    assert_eq!(
+        steps.step_title,
+        "Please add the same library exported as .json"
+    );
     // Too big for Discord: the DM note names the tool library and the hours, not design sizes.
     let big = dutchman::report_policy::ReportPolicy::bundled();
     let linked = SendSteps::new(big, Some(u64::MAX), &report, Surface::Desktop);

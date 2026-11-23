@@ -2543,20 +2543,14 @@ impl App {
                                 ui,
                                 |ui| {
                                     ui.vertical(|ui| {
-                                        let folder = if is_known_file(input) {
-                                            input.parent().filter(|parent| {
-                                                !parent.as_os_str().is_empty()
-                                                    && *parent != Path::new(".")
-                                            })
-                                        } else {
-                                            Some(input.as_path())
-                                        };
-                                        // Keep real folders and their estimates in one paragraph.
+                                        // Each entry shows its name, not its path; the full path is
+                                        // in the tooltip. A folder or link has no separate name
+                                        // line, so its name leads the paragraph with the estimate.
+                                        let known = is_known_file(input);
                                         let mut line = egui::text::LayoutJob::default();
-                                        let mut tooltip = String::new();
-                                        if let Some(folder) = folder {
-                                            tooltip = display(folder);
-                                            RichText::new(&tooltip).append_to(
+                                        let mut tooltip = display(input);
+                                        if !known {
+                                            RichText::new(file_name(input)).append_to(
                                                 &mut line,
                                                 ui.style(),
                                                 egui::FontSelection::Default,
@@ -2566,8 +2560,7 @@ impl App {
                                         if let Some((text, hover, large)) =
                                             estimate.as_ref().filter(|_| index == 0)
                                         {
-                                            let prefix =
-                                                if folder.is_some() { " — " } else { "" };
+                                            let prefix = if known { "" } else { " — " };
                                             RichText::new(format!("{prefix}{text}"))
                                                 .small()
                                                 .color(if *large { p.lantern_text } else { p.tide })
@@ -2577,19 +2570,16 @@ impl App {
                                                     egui::FontSelection::Default,
                                                     Align::Center,
                                                 );
-                                            if !tooltip.is_empty() {
-                                                tooltip.push('\n');
-                                            }
+                                            tooltip.push('\n');
                                             tooltip.push_str(hover);
                                         }
                                         if !line.text.is_empty() {
                                             ui.add(egui::Label::new(line).wrap())
-                                                .on_hover_text(tooltip);
+                                                .on_hover_text(tooltip.clone());
                                         }
-                                        if is_known_file(input)
-                                            && (self.inputs.len() > 1 || estimate.is_none())
-                                        {
-                                            ui.add(egui::Label::new(file_name(input)).wrap());
+                                        if known && (self.inputs.len() > 1 || estimate.is_none()) {
+                                            ui.add(egui::Label::new(file_name(input)).wrap())
+                                                .on_hover_text(display(input));
                                         }
                                         if let Some(status) = status_line(input) {
                                             ui.add(egui::Label::new(status).wrap());
@@ -3483,9 +3473,14 @@ impl App {
             ];
             if step_card {
                 cards.push(report_panel::Card {
-                    title: present::SEND_STEP_TITLE,
+                    title: steps
+                        .as_ref()
+                        .map_or(present::SEND_STEP_TITLE, |steps| steps.step_title.as_str()),
                     button: None,
-                    hint: report_panel::STEP_TEXT,
+                    hint: steps
+                        .as_ref()
+                        .and_then(|steps| steps.step_note)
+                        .unwrap_or(report_panel::STEP_TEXT),
                     done: None,
                 });
             }
@@ -4383,7 +4378,8 @@ mod tests {
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty() && *parent != Path::new("."))
             {
-                assert!(harness.query_by_label(&display(parent)).is_some());
+                // Entries show their name; the folder is only in the tooltip.
+                assert!(harness.query_by_label(&display(parent)).is_none());
             }
         }
     }
@@ -5329,7 +5325,8 @@ mod tests {
                         app
                     });
                 h.run_steps(8);
-                let paragraph = format!("{} — {sentence}", display(&folder));
+                // The entry shows its name, with the full path in the tooltip.
+                let paragraph = format!("{} — {sentence}", file_name(&folder));
                 let text_rect = h.get_by_label(&paragraph).rect();
                 let remove = h.get_by_label("Remove").rect();
                 assert!(text_rect.right() < remove.left());

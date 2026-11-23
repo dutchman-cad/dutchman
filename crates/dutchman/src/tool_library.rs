@@ -39,6 +39,21 @@ pub fn is_report(report: &Value) -> bool {
     report.pointer("/input/format").and_then(Value::as_str) == Some("fusion_tool_library")
 }
 
+/// The title of the third card for the library of `report`: the same library exported the other
+/// way, `.tools` for a `.json` and `.json` for a `.tools`.
+pub fn other_export_title(report: &Value) -> String {
+    let ext = report
+        .pointer("/input/extension")
+        .and_then(Value::as_str)
+        .unwrap_or("json");
+    let other = if ext.eq_ignore_ascii_case("tools") {
+        "json"
+    } else {
+        "tools"
+    };
+    format!("Please add the same library exported as .{other}")
+}
+
 /// What was written, in a sentence: the tools written out of the tools read.
 pub fn outcome(report: &Value) -> String {
     let count = |key: &str| {

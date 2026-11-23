@@ -99,6 +99,10 @@ pub const REPORT_CONVERTED: &str = "Something wrong? Report this file";
 pub const SEND_CONVERTED_INTRO: &str =
     "If the converted result has lost features, wrong placement or missing colours, help us fix it:";
 
+/// The third card's note for a Fusion tool library.
+pub const SEND_TOOLS_STEP_NOTE: &str =
+    "The other export of the same library lets us check every tool's sizes.";
+
 /// The panel's intro for a Fusion tool library.
 pub const SEND_TOOLS_INTRO: &str = "If tools are missing or their sizes are wrong, help us fix it:";
 
@@ -167,6 +171,10 @@ pub struct SendSteps {
     pub drag: bool,
     /// Whether to ask for a STEP export too.
     pub step_card: bool,
+    /// The third card's title and note: a STEP export of the design, or for a Fusion tool library
+    /// the same library exported the other way.
+    pub step_title: String,
+    pub step_note: Option<&'static str>,
 }
 
 impl SendSteps {
@@ -199,7 +207,11 @@ impl SendSteps {
                 SEND_INTRO
             },
             drag,
-            step_card: !source_is_step(report) && !crate::tool_library::is_report(report),
+            step_card: !source_is_step(report),
+            step_title: crate::tool_library::is_report(report)
+                .then(|| crate::tool_library::other_export_title(report))
+                .unwrap_or_else(|| SEND_STEP_TITLE.to_owned()),
+            step_note: crate::tool_library::is_report(report).then_some(SEND_TOOLS_STEP_NOTE),
         }
     }
 }
