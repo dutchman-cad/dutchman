@@ -787,8 +787,13 @@ pub fn summary(jobs: &[Job]) -> String {
     let mut assemblies = 0;
     let mut parts = 0;
     let mut steps = 0;
+    let mut libraries = 0;
     let fallbacks = jobs.iter().filter(|job| job.fallback.is_some()).count();
     for job in jobs {
+        if crate::tool_library::is_library(&job.input) {
+            libraries += 1;
+            continue;
+        }
         match extension_of(&job.input).as_str() {
             "sldasm" | "iam" | "f3z" => assemblies += 1,
             "step" | "stp" => steps += 1,
@@ -803,8 +808,19 @@ pub fn summary(jobs: &[Job]) -> String {
     };
     let part_word = if parts == 1 { "part" } else { "parts" };
     let file_word = if steps == 1 { "file" } else { "files" };
+    let library_word = if libraries == 1 {
+        "tool library"
+    } else {
+        "tool libraries"
+    };
+    if libraries > 0 && assemblies + parts + steps == 0 {
+        return format!("{libraries} {library_word}");
+    }
     let mut text =
         format!("{assemblies} {assembly_word}, {parts} {part_word}, {steps} STEP {file_word}");
+    if libraries > 0 {
+        text.push_str(&format!(", {libraries} {library_word}"));
+    }
     if assemblies > 0 {
         text.push_str("; converting assemblies with their parts");
     }

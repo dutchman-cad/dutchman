@@ -25,8 +25,33 @@ pub fn status(path: &Path) -> Option<String> {
             .and_then(|e| e.to_str())
             .unwrap_or("tools")
             .to_owned();
-        format!("{PROGRAM} .{ext}: {WORDS}")
+        status_text(&ext)
     })
+}
+
+/// The status line for a tool library with extension `ext`.
+pub fn status_text(ext: &str) -> String {
+    format!("{PROGRAM} tool library (.{ext}): {WORDS}")
+}
+
+/// Whether `report` is about a tool library.
+pub fn is_report(report: &Value) -> bool {
+    report.pointer("/input/format").and_then(Value::as_str) == Some("fusion_tool_library")
+}
+
+/// What was written, in a sentence: the tools written out of the tools read.
+pub fn outcome(report: &Value) -> String {
+    let count = |key: &str| {
+        report
+            .pointer(&format!("/tools/{key}"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    };
+    format!(
+        "{} of {} tools written to CamCraft's tool library",
+        count("written"),
+        count("read")
+    )
 }
 
 /// What Dutchman does with a tool library, in the words the reports use.

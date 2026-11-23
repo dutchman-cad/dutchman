@@ -1,5 +1,13 @@
 # The desktop app
 
+## Fusion tool libraries
+
+A Fusion tool library (`.tools`, or the `.json` export of one) converts to CamCraft's
+`.camtools`. The Designs list counts it as a tool library, its result says `Converted` or
+`Converted, some tools left out` with how many tools were written, and the only button on the
+card is **Show in folder**. The report panel asks about missing tools or wrong sizes, and has
+no STEP step.
+
 ## Ask your AI about this file
 
 Each completed conversion saves its full `dutchman.convert/1` JSON report beside the

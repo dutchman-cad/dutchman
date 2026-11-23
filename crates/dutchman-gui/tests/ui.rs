@@ -2924,8 +2924,91 @@ fn synthetic_tool_library(kinds: &[&str]) -> String {
     serde_json::json!({"version": 22, "data": tools}).to_string()
 }
 
-/// A Fusion tool library converted to CamCraft's `.camtools`: queued, converted with a tool
-/// that cannot be written, and one where no tool can be written. Synthetic libraries, built here.
+/// A synthetic library converted for real in a temporary folder, as the row a finished card shows,
+/// with neutral paths. Returns the row, its input path and the Designs summary the real planner
+/// makes for the library.
+#[cfg(feature = "test-support")]
+fn converted_tool_library(kinds: &[&str]) -> (dutchman_gui::app::Row, PathBuf, String) {
+    let work = tempfile::tempdir().unwrap();
+    let source = work.path().join("Shop tools.json");
+    std::fs::write(&source, synthetic_tool_library(kinds)).unwrap();
+    let made = work.path().join("Shop tools.camtools");
+    let summary = dutchman::batch::plan(&[source.clone()], work.path()).description;
+    let mut report = dutchman::tool_library::convert(&source, &made, true);
+    let docs = PathBuf::from("/Users/demo/Documents");
+    let input = docs.join("Shop tools.json");
+    let output = docs.join("Converted").join("Shop tools.camtools");
+    report["input"]["path"] = serde_json::json!(input);
+    let ok = report["ok"] == true;
+    if ok {
+        report["output"]["path"] = serde_json::json!(output);
+    }
+    let row = dutchman_gui::app::Row {
+        input: input.clone(),
+        output: ok.then_some(output),
+        status: if ok {
+            Status::Converted
+        } else {
+            Status::Failed
+        },
+        progress: None,
+        job: None,
+        size: None,
+        report: Some(report),
+    };
+    (row, input, summary)
+}
+
+/// A converted Fusion tool library is shown as one, not as a design.
+#[cfg(feature = "test-support")]
+#[test]
+fn a_tool_library_card_uses_tool_wording_and_no_design_buttons() {
+    for (kinds, word, body) in [
+        (
+            &["flat end mill", "ball end mill", "reamer"][..],
+            "Converted, some tools left out",
+            "2 of 3 tools written to CamCraft's tool library",
+        ),
+        (
+            &["flat end mill", "ball end mill"][..],
+            "Converted",
+            "2 of 2 tools written to CamCraft's tool library",
+        ),
+    ] {
+        let (row, input, summary) = converted_tool_library(kinds);
+        let mut harness = harness();
+        harness.state_mut().add_inputs([input]);
+        harness.state_mut().preview_result_for_test(row);
+        harness.run_steps(16);
+        assert_eq!(summary, "1 tool library");
+        harness.state_mut().set_project_summary_for_test(&summary);
+        harness.run_steps(8);
+        harness.get_by_label(word);
+        harness.get_by_label(body);
+        harness.get_by_label("Show in folder");
+        harness.get_by_label_contains("Fusion tool library (.json)");
+        harness.get_by_label_contains("1 tool library");
+        harness.get_by_label(dutchman::present::SEND_TOOLS_INTRO);
+        for absent in [
+            "Open in SolidCraft",
+            "Add matching STEP",
+            "Converted, no history",
+            dutchman::present::SEND_CONVERTED_INTRO,
+            dutchman::present::SEND_STEP_TITLE,
+        ] {
+            assert!(
+                harness.query_by_label(absent).is_none(),
+                "{absent} is shown for a tool library"
+            );
+        }
+        assert!(harness
+            .query_by_label_contains("Geometry without history")
+            .is_none());
+    }
+}
+
+/// A Fusion tool library converted to CamCraft's `.camtools`: converted with a tool that cannot
+/// be written, and one where no tool can be written. Synthetic libraries, built here.
 #[cfg(feature = "test-support")]
 #[test]
 #[ignore = "renders GPU screenshots of the tool library flow; set DUTCHMAN_GUI_SCREENSHOTS"]
@@ -2956,53 +3039,18 @@ fn tool_library_screenshots() {
                 ),
                 ("tool-library-none", &["reamer", "reamer"][..]),
             ] {
-                // The library is converted for real in a temporary folder; the card shows
-                // neutral paths, as the app shows paths as they are.
-                let work = tempfile::tempdir().unwrap();
-                let source = work.path().join("Shop tools.json");
-                std::fs::write(&source, synthetic_tool_library(kinds)).unwrap();
-                let made = work.path().join("Shop tools.camtools");
-                let mut report = dutchman::tool_library::convert(&source, &made, true);
                 let docs = PathBuf::from("/Users/demo/Documents");
-                let input = docs.join("Shop tools.json");
-                let output = docs.join("Converted").join("Shop tools.camtools");
-                report["input"]["path"] = serde_json::json!(input);
-                let ok = report["ok"] == true;
-                if ok {
-                    report["output"]["path"] = serde_json::json!(output);
-                }
+                let (row, input, summary) = converted_tool_library(kinds);
                 let mut harness = screenshot_harness(theme);
                 harness.set_size(egui::vec2(1280.0, 800.0));
                 harness.state_mut().set_checker_for_test(true);
                 harness.state_mut().preview_solidcraft(Some("0.46.2"));
                 harness.state_mut().add_inputs([input.clone()]);
                 harness.state_mut().set_out_dir(docs.join("Converted"));
+                harness.state_mut().set_project_summary_for_test(&summary);
                 harness.run_steps(8);
-                if case == "tool-library-partial" {
-                    shot(
-                        &mut harness,
-                        &dir,
-                        &mut index,
-                        &format!("tool-library-queued-{language}"),
-                        name,
-                        "A Fusion tool library queued, with its status line.",
-                    );
-                }
-                harness
-                    .state_mut()
-                    .preview_result_for_test(dutchman_gui::app::Row {
-                        input,
-                        output: ok.then_some(output),
-                        status: if ok {
-                            Status::Converted
-                        } else {
-                            Status::Failed
-                        },
-                        progress: None,
-                        job: None,
-                        size: None,
-                        report: Some(report),
-                    });
+                harness.state_mut().preview_result_for_test(row);
+                harness.state_mut().set_project_summary_for_test(&summary);
                 harness.run_steps(16);
                 shot(
                     &mut harness,

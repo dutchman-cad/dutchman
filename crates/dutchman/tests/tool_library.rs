@@ -52,7 +52,7 @@ fn a_json_library_converts_beside_itself() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Fusion .json"), "{stdout}");
+    assert!(stdout.contains("Fusion tool library (.json)"), "{stdout}");
     assert!(stdout.contains("2 tools; 1 not written"), "{stdout}");
     let written = camtools(&dir.path().join("shop.camtools"));
     assert_eq!(written["format"], "camcraft-tools");
@@ -166,4 +166,28 @@ fn formats_names_the_tool_library_conversion() {
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["tool_libraries"][0]["output"], "camtools");
     assert!(String::from_utf8_lossy(&dutchman(&["formats"]).stdout).contains(".camtools"));
+}
+
+#[test]
+fn a_tool_library_result_is_presented_as_tools_not_as_a_design() {
+    use dutchman::present::{FileView, SendSteps, Status, Surface, SEND_TOOLS_INTRO};
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("shop.json");
+    std::fs::write(&input, library().to_string()).unwrap();
+    let report = dutchman::tool_library::convert(&input, &dir.path().join("shop.camtools"), true);
+    let view = FileView::from_report(&report);
+    assert_eq!(view.status, Status::ConvertedWithLosses);
+    assert_eq!(view.status_word, "Converted, some tools left out");
+    assert_eq!(
+        view.outcome,
+        "2 of 3 tools written to CamCraft's tool library"
+    );
+    assert_eq!(
+        view.capability.as_deref(),
+        Some("Fusion tool library (.json): converts the tool library to CamCraft's .camtools")
+    );
+    let policy = dutchman::report_policy::ReportPolicy::bundled();
+    let steps = SendSteps::new(policy, None, &report, Surface::Desktop);
+    assert_eq!(steps.intro, SEND_TOOLS_INTRO);
+    assert!(!steps.step_card);
 }
