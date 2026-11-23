@@ -3994,6 +3994,37 @@ mod paste_inputs {
         assert!(h.query_by_label("Your Onshape API keys").is_some());
     }
 
+    /// The startup estimate reports free memory from a background thread. Its line appearing in
+    /// the frame that handles a click must not lose the click.
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn a_late_free_memory_line_does_not_drop_a_click_below_it() {
+        let mut h = window(true);
+        let started = Instant::now();
+        // Let the real startup estimate land first, so only the test changes the line below.
+        while h.query_by_label_contains("of memory free").is_none()
+            && started.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        let input = fixture("generated_unit_cube.f3d");
+        let sizes = dutchman::choices::read_sizes(&input).unwrap();
+        h.state_mut().set_sizes_for_test(input.clone(), sizes, 0);
+        h.run_steps(2);
+        assert!(h.query_by_label_contains("of memory free").is_none());
+        h.get_by_label("Onshape connected ✓").click_accesskit();
+        let sizes = dutchman::choices::read_sizes(&input).unwrap();
+        h.state_mut()
+            .set_sizes_for_test(input, sizes, 8_000_000_000);
+        h.step();
+        h.run_steps(3);
+        assert!(h.query_by_label_contains("of memory free").is_some());
+        assert!(h
+            .query_by_label("Paste your Onshape Part Studio link")
+            .is_some());
+    }
+
     #[test]
     fn onshape_open_enables_only_for_a_document_link_and_keeps_text_paste_in_the_field() {
         let mut h = window(true);

@@ -2607,11 +2607,16 @@ impl App {
                     );
                 }
             };
-            if self.inputs.is_empty() {
-                summary(ui);
-            } else {
-                ui.horizontal_wrapped(summary);
-            }
+            // One fixed scope, whatever it holds: the free-memory line arrives from a background
+            // estimate, and widgets added here must not shift the ids of the controls below. A
+            // shifted id drops a click or the share-link field's keyboard focus in that frame.
+            ui.push_id("input-summary", |ui| {
+                if self.inputs.is_empty() {
+                    summary(ui);
+                } else {
+                    ui.horizontal_wrapped(summary);
+                }
+            });
             if self.inputs.is_empty() {
                 ui.add_space(theme::SPACE_2);
             }
