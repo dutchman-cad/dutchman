@@ -2989,13 +2989,18 @@ fn a_tool_library_card_uses_tool_wording_and_no_design_buttons() {
         harness.get_by_label_contains("Fusion tool library (.json)");
         harness.get_by_label_contains("1 tool library");
         harness.get_by_label(dutchman::present::SEND_TOOLS_INTRO);
-        harness.get_by_label("Please add the same library exported as .tools");
+        harness.get_by_label("Please add the same library as .tools");
         harness.get_by_label(dutchman::present::SEND_TOOLS_STEP_NOTE);
         // The Designs list shows the file's name; its full path is in the tooltip.
         assert!(harness
             .query_by_label_contains("/Users/demo/Documents/Shop tools.json")
             .is_none());
-        harness.get_by_label_contains("Shop tools.json");
+        assert!(
+            harness
+                .query_all_by_label_contains("Shop tools.json")
+                .count()
+                >= 1
+        );
         assert!(harness.query_by_label_contains("for the design").is_none());
         for absent in [
             "Open in SolidCraft",
@@ -3031,7 +3036,7 @@ fn tool_library_screenshots() {
             Some([
                 "Unserem Discord-Server beitreten".to_owned(),
                 "Dutchy eine Direktnachricht senden".to_owned(),
-                "Bitte einen STEP-Export hinzufügen".to_owned(),
+                "Bitte dieselbe Werkzeugbibliothek als .tools hinzufügen".to_owned(),
             ]),
         ),
     ] {

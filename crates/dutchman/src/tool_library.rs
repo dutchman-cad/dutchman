@@ -51,7 +51,7 @@ pub fn other_export_title(report: &Value) -> String {
     } else {
         "tools"
     };
-    format!("Please add the same library exported as .{other}")
+    format!("Please add the same library as .{other}")
 }
 
 /// What was written, in a sentence: the tools written out of the tools read.
