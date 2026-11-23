@@ -334,11 +334,12 @@ fn all_hidden(part: &Model) -> bool {
         && bodies.iter().all(|body| body.visible == Some(false))
 }
 
-/// Whether the source suppresses an occurrence. cadmpeg states `suppressed` where the source
-/// holds the instance out of the product: Inventor's and Solid Edge's suppressed components,
-/// and a Fusion component a configuration excludes. In each the component is neither shown nor
-/// counted, so it is placed hidden. (SolidWorks leaves a suppressed component out of the
-/// decoded design, so it never reaches here; STEP, FreeCAD and Onshape state none.)
+/// Whether the source suppresses an occurrence. cadmpeg states `suppressed` on the occurrence
+/// itself where the source holds the instance out of the product: Inventor's and Solid Edge's
+/// suppressed components. There the component is neither shown nor counted, so it is placed
+/// hidden. Suppression an override states (Fusion's selection of a stored layout) never
+/// reaches here: the placed tree leaves that occurrence out. (SolidWorks leaves a suppressed
+/// component out of the decoded design; STEP, FreeCAD and Onshape state none.)
 fn suppresses(occurrence: &Value) -> bool {
     occurrence.get("suppressed").and_then(Value::as_bool) == Some(true)
 }
@@ -7919,6 +7920,47 @@ mod tests {
         assert!(occurrence_hidden(&shown, true));
         shown["visible"] = json!(false);
         assert!(occurrence_hidden(&shown, false));
+    }
+
+    #[test]
+    fn a_suppressed_component_is_placed_hidden_and_reported() {
+        let mut suppressed = placed(1, "block", inside(0), 0.0);
+        suppressed["suppressed"] = json!(true);
+        suppressed["visible"] = json!(true);
+        suppressed["name"] = json!("Gone");
+        let mut off = placed(2, "block", inside(0), 30.0);
+        off["suppressed"] = json!(false);
+        let model = nested(
+            false,
+            Some(json!([placed(0, "frame", root(), 100.0), suppressed, off])),
+        );
+        let mut report = Report::default();
+        let (assembly, _) = local_components_with_threads(
+            &model,
+            &BTreeMap::new(),
+            1,
+            crate::PartPositions::Smart,
+            &mut report,
+        )
+        .unwrap()
+        .unwrap();
+        let frame = assembly.parts[assembly.placements[0].part]
+            .assembly
+            .as_ref()
+            .unwrap();
+        let hidden: Vec<bool> = frame.placements.iter().map(|p| p.hidden).collect();
+        assert_eq!(hidden, [true, false]);
+        // Placed, not dropped, and still where the file puts it.
+        assert_eq!(frame.placements.len(), 2);
+        assert_eq!(frame.placements[0].transform[0][3], 0.0);
+        let notes: Vec<&crate::Loss> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.subject == "suppressed components")
+            .collect();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].severity, Severity::Info);
+        assert!(notes[0].detail.contains("Gone"));
     }
 
     #[test]

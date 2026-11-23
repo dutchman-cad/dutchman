@@ -322,7 +322,23 @@ impl Products<'_> {
                     }
                 }
             }
-            if placed.get("suppressed").and_then(Value::as_bool) == Some(true)
+            // An occurrence the source itself states suppressed is kept, with what it holds,
+            // and placed hidden (see `suppresses`). Suppression an override states (Fusion
+            // selects each stored layout of a component by suppressing the children an
+            // insertion does not hold) still leaves the occurrence out: there it names which
+            // children exist, not a component the user suppressed. One whose alternate
+            // representation or instance bodies cannot be placed is left out as before, and so
+            // is a deactivated definition, which the source removes from the product.
+            let stated = row.get("suppressed").and_then(Value::as_bool) == Some(true);
+            let suppressed = placed.get("suppressed").and_then(Value::as_bool) == Some(true);
+            let by_override = suppressed && !stated;
+            let unplaceable = placed.get("representation").is_some()
+                || prototype
+                    .get("instance_bodies")
+                    .and_then(Value::as_array)
+                    .is_some_and(|rows| !rows.is_empty());
+            if by_override
+                || (suppressed && unplaceable)
                 || prototype.get("active").and_then(Value::as_bool) == Some(false)
             {
                 if source_node {
@@ -330,12 +346,7 @@ impl Products<'_> {
                 }
                 continue;
             }
-            if placed.get("representation").is_some()
-                || prototype
-                    .get("instance_bodies")
-                    .and_then(Value::as_array)
-                    .is_some_and(|rows| !rows.is_empty())
-            {
+            if unplaceable {
                 return Err(
                     "alternate representations and instance bodies are not supported yet"
                         .to_owned(),
