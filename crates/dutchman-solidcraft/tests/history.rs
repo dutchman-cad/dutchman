@@ -9732,6 +9732,11 @@ const PLATE: &str = "f3d:model:sketch#41";
 /// up, attached to that edge, then the plate's bend of `radius`. `extra` adds a line to the
 /// plate sketch, which makes it more than one rectangle.
 fn attached_plate(near: f64, radius: f64, extra: bool) -> Model {
+    attached_plate_on(near, radius, extra, 1)
+}
+
+/// As `attached_plate`, attached along the first `attached` of the front and back edges.
+fn attached_plate_on(near: f64, radius: f64, extra: bool, attached: usize) -> Model {
     let mut model = flanged_cube(1.0, "forward");
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
@@ -9760,7 +9765,7 @@ fn attached_plate(near: f64, radius: f64, extra: bool) -> Model {
     let attachment = |name: &str| {
         json!({"kind": "historical", "value": {
             "state": format!("test:sheet:feature-input#{name}"),
-            "edges": [edges[0]], "native": "synthetic edge",
+            "edges": &edges[..attached], "native": "synthetic edge",
         }})
     };
     m["sketches"].as_array_mut().unwrap().push(json!({
@@ -9819,6 +9824,31 @@ fn an_attached_plate_and_its_bend_become_one_edge_flange() {
     assert_eq!(flange["angle"], "90 deg");
     assert_eq!(flange["radius"], "2 mm");
     assert_eq!(flange["position"], "inside");
+}
+
+#[test]
+fn a_plate_attached_along_two_edges_is_one_flange_on_both() {
+    let (document, report) = convert(
+        &attached_plate_on(3.0, 2.0, false, 2),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let flanges: Vec<_> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["type"] == "sheet_flange")
+        .collect();
+    assert_eq!(flanges.len(), 1);
+    assert_eq!(
+        flanges[0]["edges"],
+        json!([[5.0, 0.0, 1.0], [5.0, 10.0, 1.0]])
+    );
+    assert_eq!(flanges[0]["height"], "20 mm");
 }
 
 #[test]

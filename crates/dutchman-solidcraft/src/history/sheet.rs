@@ -755,9 +755,9 @@ pub(super) fn attached_plate(
         return Err("its thickness differs from the base sheet's".to_owned());
     }
     let picks = prove_picks(state, selected, &base)?;
-    let [pick] = picks.as_slice() else {
-        return Err("a plate attached along several edges is not supported yet".to_owned());
-    };
+    let (pick, others) = picks
+        .split_first()
+        .ok_or("a plate needs at least one attached edge")?;
     let (sketch_id, _) = profile(definition.get("profile"), ctx)?;
     let sketch = ctx
         .sketches
@@ -768,6 +768,22 @@ pub(super) fn attached_plate(
     let (a, b) = pick.ends;
     let along = difference(b, a);
     let length = dot(along, along).sqrt();
+    // Inventor builds the plate once on each attached edge: the same rectangle, standing
+    // square on the same face of the sheet. A further edge is the same flange only when it
+    // is as long as the first and on the same face.
+    for other in others {
+        let (c, d) = other.ends;
+        let long = difference(d, c);
+        if (dot(long, long).sqrt() - length).abs() > TOL
+            || (other.index >= 4) != (pick.index >= 4)
+            || dot(long, along).abs() / (length * length) < 1.0 - 1e-6
+        {
+            return Err(
+                "a plate attached along edges of different lengths or faces is not supported yet"
+                    .to_owned(),
+            );
+        }
+    }
     let e = scale(along, 1.0 / length);
     let growth = base.growth;
     let normal = sketch.normal;
@@ -824,7 +840,8 @@ pub(super) fn attached_plate(
         "id": id,
         "name": name(feature).map(str::to_owned).unwrap_or_else(|| format!("Flange{id}")),
         "type": "sheet_flange", "suppressed": false,
-        "edges": [pick.point], "height": format!("{far} mm"),
+        "edges": picks.iter().map(|pick| pick.point).collect::<Vec<_>>(),
+        "height": format!("{far} mm"),
         "angle": "90 deg", "radius": format!("{radius} mm"), "position": "inside",
     }))
 }
