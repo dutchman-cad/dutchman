@@ -32,10 +32,10 @@ jobs:
     outputs:
       run: ${{ steps.diff.outputs.run }}
       voron: ${{ steps.diff.outputs.voron }}
-      # Self-hosted 'flyer' runners: merge queue, main, and pull requests from this repository by
-      # people (never forks, never bots). FLYER=off sends everything to GitHub. A direct dispatch
+      # Self-hosted 'flyer' runners: the merge queue and pushes to main only; pull requests run on
+      # GitHub-hosted runners. FLYER=off sends everything to GitHub. A direct dispatch
       # stays on GitHub. The caller's event decides when this runs as part of ci.yml.
-      flyer: ${{ vars.FLYER != 'off' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot')) }}
+      flyer: ${{ vars.FLYER != 'off' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     steps:
       - uses: actions/checkout@v7
         with:
