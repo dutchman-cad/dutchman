@@ -4317,6 +4317,10 @@ mod paste_inputs {
         wait_for_conversion(&mut h);
     }
 
+    /// The design name [`named_held_fetch`] reports.
+    #[cfg(feature = "test-support")]
+    static SHOT_TITLE: std::sync::Mutex<&str> = std::sync::Mutex::new("Bracket - Part Studio 1");
+
     #[cfg(feature = "test-support")]
     /// Names the design, then holds until the screenshot is taken.
     fn named_held_fetch(
@@ -4325,7 +4329,8 @@ mod paste_inputs {
         progress: &mut dyn dutchman::onshape::FetchProgress,
     ) -> Result<PathBuf, String> {
         progress.calls(12, Some(51));
-        progress.named("Bracket - Part Studio 1");
+        let title = *SHOT_TITLE.lock().unwrap();
+        progress.named(title);
         let started = Instant::now();
         while !SHOT_TAKEN.load(std::sync::atomic::Ordering::SeqCst) {
             assert!(started.elapsed() < Duration::from_secs(60), "never shot");
@@ -4340,36 +4345,48 @@ mod paste_inputs {
     fn onshape_title_screenshots() {
         let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
         std::fs::create_dir_all(&dir).unwrap();
-        for (theme, name) in [
-            (ThemePreference::Light, "day"),
-            (ThemePreference::Dark, "night"),
+        // English, and a long simulated German design name (the app has no translations yet).
+        for (language, title) in [
+            ("english", "Bracket - Part Studio 1"),
+            (
+                "german",
+                "Getriebegehäuse Rückseite mit Befestigungsflansch - Teilestudio Lagerdeckel 1",
+            ),
         ] {
-            SHOT_TAKEN.store(false, std::sync::atomic::Ordering::SeqCst);
-            let mut h = window(true);
-            h.ctx.set_theme(theme);
-            h.state_mut().set_checker_for_test(true);
-            h.state_mut().preview_solidcraft(Some("0.46.2"));
-            h.state_mut()
-                .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
-            h.state_mut().set_verify(false);
-            h.state_mut()
-                .set_link_transport_for_test(Arc::new(MockNetwork::default()), named_held_fetch);
-            paste(&mut h, LINK);
-            let started = Instant::now();
-            while h
-                .query_by_label("Bracket - Part Studio 1.onshape-bundle")
-                .is_none()
-            {
-                assert!(started.elapsed() < Duration::from_secs(30), "no title");
-                std::thread::sleep(Duration::from_millis(10));
-                h.step();
+            *SHOT_TITLE.lock().unwrap() = title;
+            for (theme, name) in [
+                (ThemePreference::Light, "day"),
+                (ThemePreference::Dark, "night"),
+            ] {
+                SHOT_TAKEN.store(false, std::sync::atomic::Ordering::SeqCst);
+                let mut h = window(true);
+                h.ctx.set_theme(theme);
+                h.state_mut().set_checker_for_test(true);
+                h.state_mut().preview_solidcraft(Some("0.46.2"));
+                h.state_mut()
+                    .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
+                h.state_mut().set_verify(false);
+                h.state_mut().set_link_transport_for_test(
+                    Arc::new(MockNetwork::default()),
+                    named_held_fetch,
+                );
+                paste(&mut h, LINK);
+                let started = Instant::now();
+                while h
+                    .query_by_label(&format!("{title}.onshape-bundle"))
+                    .is_none()
+                {
+                    assert!(started.elapsed() < Duration::from_secs(30), "no title");
+                    std::thread::sleep(Duration::from_millis(10));
+                    h.step();
+                }
+                h.run_steps(3);
+                h.render()
+                    .unwrap()
+                    .save(dir.join(format!("onshape-title-fetching-{language}-{name}.png")))
+                    .unwrap();
+                SHOT_TAKEN.store(true, std::sync::atomic::Ordering::SeqCst);
             }
-            h.run_steps(3);
-            h.render()
-                .unwrap()
-                .save(dir.join(format!("onshape-title-fetching-{name}.png")))
-                .unwrap();
-            SHOT_TAKEN.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
