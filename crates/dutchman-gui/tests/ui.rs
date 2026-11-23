@@ -2904,6 +2904,121 @@ fn converted_report_screenshots() {
     std::fs::write(dir.join("index.md"), index).unwrap();
 }
 
+/// A synthetic Fusion tool library: `kinds` are the Fusion tool types, one tool each.
+#[cfg(feature = "test-support")]
+fn synthetic_tool_library(kinds: &[&str]) -> String {
+    let tools: Vec<_> = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| {
+            serde_json::json!({
+                "BMC": "carbide", "description": format!("Tool {}", i + 1), "type": kind,
+                "unit": "millimeters",
+                "geometry": {"DC": 6.0, "LCF": 12.0, "LB": 40.0, "SFDM": 6.0, "NOF": 2},
+                "post-process": {"number": i + 1},
+                "start-values": {"presets": [{"n": 9000.0, "v_f": 1500.0,
+                    "material": {"category": "all"}}]}
+            })
+        })
+        .collect();
+    serde_json::json!({"version": 22, "data": tools}).to_string()
+}
+
+/// A Fusion tool library converted to CamCraft's `.camtools`: queued, converted with a tool
+/// that cannot be written, and one where no tool can be written. Synthetic libraries, built here.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the tool library flow; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn tool_library_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, titles) in [
+        ("english", None),
+        (
+            "german",
+            Some([
+                "Unserem Discord-Server beitreten".to_owned(),
+                "Dutchy eine Direktnachricht senden".to_owned(),
+                "Bitte einen STEP-Export hinzufügen".to_owned(),
+            ]),
+        ),
+    ] {
+        *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = titles;
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            for (case, kinds) in [
+                (
+                    "tool-library-partial",
+                    &["flat end mill", "ball end mill", "reamer"][..],
+                ),
+                ("tool-library-none", &["reamer", "reamer"][..]),
+            ] {
+                // The library is converted for real in a temporary folder; the card shows
+                // neutral paths, as the app shows paths as they are.
+                let work = tempfile::tempdir().unwrap();
+                let source = work.path().join("Shop tools.json");
+                std::fs::write(&source, synthetic_tool_library(kinds)).unwrap();
+                let made = work.path().join("Shop tools.camtools");
+                let mut report = dutchman::tool_library::convert(&source, &made, true);
+                let docs = PathBuf::from("/Users/demo/Documents");
+                let input = docs.join("Shop tools.json");
+                let output = docs.join("Converted").join("Shop tools.camtools");
+                report["input"]["path"] = serde_json::json!(input);
+                let ok = report["ok"] == true;
+                if ok {
+                    report["output"]["path"] = serde_json::json!(output);
+                }
+                let mut harness = screenshot_harness(theme);
+                harness.set_size(egui::vec2(1280.0, 800.0));
+                harness.state_mut().set_checker_for_test(true);
+                harness.state_mut().preview_solidcraft(Some("0.46.2"));
+                harness.state_mut().add_inputs([input.clone()]);
+                harness.state_mut().set_out_dir(docs.join("Converted"));
+                harness.run_steps(8);
+                if case == "tool-library-partial" {
+                    shot(
+                        &mut harness,
+                        &dir,
+                        &mut index,
+                        &format!("tool-library-queued-{language}"),
+                        name,
+                        "A Fusion tool library queued, with its status line.",
+                    );
+                }
+                harness
+                    .state_mut()
+                    .preview_result_for_test(dutchman_gui::app::Row {
+                        input,
+                        output: ok.then_some(output),
+                        status: if ok {
+                            Status::Converted
+                        } else {
+                            Status::Failed
+                        },
+                        progress: None,
+                        job: None,
+                        size: None,
+                        report: Some(report),
+                    });
+                harness.run_steps(16);
+                shot(
+                    &mut harness,
+                    &dir,
+                    &mut index,
+                    &format!("{case}-{language}"),
+                    name,
+                    "The result after converting the library.",
+                );
+            }
+        }
+    }
+    *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = None;
+    std::fs::write(dir.join("tool-library.md"), index).unwrap();
+}
+
 #[cfg(feature = "test-support")]
 #[test]
 #[ignore = "renders GPU screenshots of a card with unchecked extrude regions"]
