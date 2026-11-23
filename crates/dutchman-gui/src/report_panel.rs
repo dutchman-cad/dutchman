@@ -132,7 +132,7 @@ pub fn cards(
                         let top = ui.cursor().top();
                         // One row each for the title, the button and the note, the same height
                         // in every card, so they line up whatever the title's length.
-                        ui.horizontal(|ui| {
+                        ui.horizontal_top(|ui| {
                             badge(ui, p, number, advice);
                             fit_title(ui, p, &title_text);
                         });
@@ -171,30 +171,26 @@ pub fn cards(
     pressed
 }
 
-/// A card's title on one line: a long one shrinks a step at a time down to a floor, then is
-/// cut with an ellipsis; either way the full title is in the tooltip. The card never grows.
+/// A card's title in a row two lines tall at the normal size, the same in every card so the
+/// buttons below line up. A title past two lines ends in an ellipsis, with the full title on
+/// hover. The font never shrinks.
 fn fit_title(ui: &mut egui::Ui, p: &Palette, title: &str) {
-    const FLOOR: f32 = 11.0;
+    const LINES: usize = 2;
     let width = ui.available_width();
     let font = egui::TextStyle::Body.resolve(ui.style());
-    let measure = |size: f32| {
-        ui.painter()
-            .layout_no_wrap(
-                title.to_owned(),
-                egui::FontId::new(size, font.family.clone()),
-                p.ink,
-            )
-            .size()
-            .x
-    };
-    let mut size = font.size;
-    while size > FLOOR && measure(size) > width {
-        size -= 1.0;
-    }
-    let cut = measure(size) > width;
-    let response =
-        ui.add(egui::Label::new(RichText::new(title).size(size).strong().color(p.ink)).truncate());
-    if cut || size < font.size {
+    let line = ui.fonts_mut(|fonts| fonts.row_height(&font));
+    ui.set_min_height(LINES as f32 * line);
+    let cut = ui
+        .painter()
+        .layout(title.to_owned(), font.clone(), p.ink, width)
+        .rows
+        .len()
+        > LINES;
+    let mut job = egui::text::LayoutJob::simple(title.to_owned(), font, p.ink, width);
+    job.wrap.max_rows = LINES;
+    job.wrap.overflow_character = Some('\u{2026}');
+    let response = ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Wrap));
+    if cut {
         response.on_hover_text(title);
     }
 }
