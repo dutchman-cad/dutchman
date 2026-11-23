@@ -3458,6 +3458,30 @@ fn a_result_title_has_its_own_line_above_one_row_of_buttons() {
     }
 }
 
+/// In a wide window the left column (Designs, Output folder, the report panel) is not scrolled by
+/// a conversion: it sits at the top before and after, with the first frames of the result too.
+#[test]
+fn the_wide_left_column_stays_at_the_top_through_a_conversion() {
+    let work = tempfile::tempdir().unwrap();
+    let input = work.path().join("cube.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe(|cc| test_app(cc));
+    #[cfg(feature = "test-support")]
+    h.state_mut().set_checker_for_test(true);
+    h.state_mut().add_inputs([input]);
+    h.state_mut().set_out_dir(work.path().join("converted"));
+    h.state_mut().set_verify(false);
+    h.run_steps(8);
+    let before = h.get_by_label("DESIGNS").rect().top();
+    convert(&mut h);
+    for _ in 0..4 {
+        h.run_steps(4);
+        assert_eq!(h.get_by_label("DESIGNS").rect().top(), before);
+    }
+}
+
 #[test]
 fn a_very_long_result_name_wraps_instead_of_eliding() {
     let work = tempfile::tempdir().unwrap();
@@ -3474,8 +3498,9 @@ fn a_very_long_result_name_wraps_instead_of_eliding() {
     h.state_mut().set_verify(false);
     h.run_steps(8);
     convert(&mut h);
-    // The page may have scrolled, so every place the name is shown counts: the design list and
-    // the result title.
+    // A narrow window scrolls its one page to the Results after a run (the app does that on
+    // purpose, as before the one-column change), so this test does not assume a scroll
+    // position: every place the name is shown counts, the design list and the result title.
     let names: Vec<_> = h.get_all_by_label_contains("a_very_long").collect();
     assert!(names.len() >= 2, "the design list and the result title");
     for name in &names {
