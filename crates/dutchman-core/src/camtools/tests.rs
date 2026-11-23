@@ -1085,7 +1085,7 @@ fn profile(points: &[(f64, f64)]) -> Value {
 fn thread_profile(rows: usize, pitch: f64) -> Value {
     let depth = 1.0;
     let half = depth * 30f64.to_radians().tan();
-    let mut p = vec![(0.0, 0.0), (2.0, 0.0)];
+    let mut p = vec![(0.0, 0.0), (2.0, 0.0), (2.0, 0.5)];
     for i in 0..rows {
         let z = 0.5 + i as f64 * pitch;
         p.push((3.0, z + half));
