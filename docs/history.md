@@ -144,6 +144,7 @@ refuses the choice rather than failing the replay):
 | Proof | Allowed difference |
 |---|---|
 | Fillet and chamfer input edge | Exactly one rebuilt edge passes through the edge midpoint within 1e-6 mm, with ends and length within 1e-6 (of the larger, at least 1 mm), and direction within 1e-6 of parallel. A refusal says the nearest rebuilt edge is farther than 0.01 mm when the rebuilt body, not the tolerance, differs. |
+| Inferred fillet and chamfer edges | When the midpoint proof finds no edge, each nearby straight rebuilt edge is a candidate and is picked at its own midpoint; a pick that also lies on another straight rebuilt edge is dropped, so two close parallel edges are never picked between. |
 | Profile face the source names | Positions within 1e-5 mm; directions within 1e-5 of parallel; the face's plane within 1e-4 mm of the sketch plane; area within 1e-4 (2e-2 when an edge is curved, as SolidCraft measures those from a mesh) of the face's, at least 1 mm². Its edges are covered within 1e-4 of a straight edge's length, within 1e-3 of the radius (at least 1 mm) from the circle, and within 2e-3 rad of a curved edge's turn. |
 | Extrude end cap | The swept profile's area within the larger of 1 mm² and 3% of the cap's area; a face's plane within 1e-4 mm of the end plane. |
 
