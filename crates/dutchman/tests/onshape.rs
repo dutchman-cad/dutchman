@@ -1016,6 +1016,7 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
         response(200, json!({"microversionId":OTHER_MID,"bodies":[{"id":"bolt","type":"SOLID","properties":{"name":"Configured bolt"}}]})),
         response(200, json!({"sourceMicroversion":OTHER_MID,"configurationParameters":[],"currentConfiguration":[]})),
         response(200, json!({"variables":[{"name":"length","type":"NUMBER","expression":"25mm","value":"25mm"}]})),
+        response(200, json!({"id":"external-export","requestState":"ACTIVE","documentId":OTHER,"versionId":OTHER_VERSION,"resultDocumentId":OTHER,"requestElementId":OTHER_ELEMENT})),
         response(200, json!({"id":"external-export","requestState":"DONE","documentId":OTHER,"versionId":OTHER_VERSION,"resultDocumentId":OTHER,"requestElementId":OTHER_ELEMENT,"resultExternalDataIds":["external-step"]})),
         Response { status: 200, headers: BTreeMap::new(), body: b"ISO-10303-21; synthetic external solid".to_vec() },
         response(200, sketch_information(OTHER_MID)),
@@ -1043,6 +1044,9 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
                 == &format!(
                     "/api/v17/partstudios/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/export/step"
             )
+    }));
+    assert!(mock.sent.iter().any(|(method, path, _)| {
+        method == "GET" && path == "/api/v17/translations/external-export"
     }));
     assert!(mock.sent.iter().any(|(_, path, _)| {
         path == &format!("/api/v17/documents/d/{OTHER}/externaldata/external-step")
