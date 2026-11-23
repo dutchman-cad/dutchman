@@ -353,7 +353,7 @@ mod tests {
             serde_json::from_str(include_str!("../plugin.json")).unwrap();
         let requested = manifest["runtime"]["limits"]["fuel"].as_u64().unwrap();
         assert!(requested > 0 && requested <= SOLIDCRAFT_DEFAULT_MAX_PLUGIN_FUEL);
-        assert!(PLUGIN_BUDGET.fuel <= SOLIDCRAFT_DEFAULT_MAX_PLUGIN_FUEL);
+        const { assert!(PLUGIN_BUDGET.fuel <= SOLIDCRAFT_DEFAULT_MAX_PLUGIN_FUEL) };
     }
 
     #[test]
