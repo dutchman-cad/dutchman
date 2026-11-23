@@ -145,13 +145,64 @@ pub(crate) fn map(
                 "numeric spreadsheet cell kept as an unused parameter",
             );
         }
+        let unit =
+            display_unit(parameter).unwrap_or_else(|| units.get(name).map_or("", String::as_str));
+        let expr = match rounded_display_number(parameter, &expr, unit) {
+            Some(value) => {
+                report.push(
+                    Severity::Info,
+                    format!("parameter {name}"),
+                    format!(
+                        "expression `{}` is a rounded display number, not the value {value}; \
+                         kept as its value",
+                        parameter.expression.trim()
+                    ),
+                );
+                value
+            }
+            None => expr,
+        };
         written.insert(parameter.id.as_str().to_owned(), name.clone());
         out.push(json!({"name": name, "expr": expr,
-            "unit": display_unit(parameter).unwrap_or_else(|| units.get(name).map_or("", String::as_str)),
-            "model": parameter.owner.is_some() && !cells.contains_key(parameter.id.as_str()),
+            "unit": unit,
+            "model": parameter.owner.is_some() && !cells.contains_key(parameter.id.as_str())
+                || inventor_model_parameter(parameter),
         }));
     }
     (out, written)
+}
+
+/// The parameter's value as an expression when its expression is only a bare number that does
+/// not give that value in the unit it is written in: a decoder that keeps a dimension's
+/// display text (a length shown rounded in the document's inches) leaves a number that
+/// SolidCraft would read in `unit`, not the length the design holds.
+fn rounded_display_number(parameter: &DesignParameter, expr: &str, unit: &str) -> Option<String> {
+    let number: f64 = expr.trim().parse().ok()?;
+    let value = parameter.value.as_ref()?;
+    let expected = match (value, unit) {
+        (ParameterValue::Length(length), "mm") => length.get(),
+        (ParameterValue::Length(length), "cm") => length.get() / 10.0,
+        (ParameterValue::Length(length), "m") => length.get() / 1000.0,
+        (ParameterValue::Length(length), "in") => length.get() / 25.4,
+        (ParameterValue::Length(length), "ft") => length.get() / 304.8,
+        (ParameterValue::Angle(angle), "deg") => angle.get().to_degrees(),
+        (ParameterValue::Angle(angle), "rad") => angle.get(),
+        _ => return None,
+    };
+    ((number - expected).abs() > 1e-9 * expected.abs().max(1.0)).then(|| literal(value))?
+}
+
+/// Inventor names the parameters its features and sketch dimensions create `d0`, `d1`, ...;
+/// the parameters a user adds carry the names the user gave them.
+fn inventor_model_parameter(parameter: &DesignParameter) -> bool {
+    parameter
+        .id
+        .as_str()
+        .starts_with("inventor:design:parameter#")
+        && parameter
+            .name
+            .strip_prefix('d')
+            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// A neutral parameter may retain a preferred display unit independently of its
@@ -508,6 +559,14 @@ impl<'a> Bindings<'a> {
                     return Err(format!("unsupported function {word}"));
                 }
                 append(&mut out, word)?;
+            } else if matches!(word, "ul" | "grad")
+                && follows_number(expression, start)
+                && !names_dependency(self, p, word)
+            {
+                if word == "grad" {
+                    return Err("unit grad (gradians) has no SolidCraft unit".to_owned());
+                }
+                out.truncate(out.trim_end().len());
             } else if reserved(word)
                 && !p.dependencies.iter().any(|id| {
                     self.parameters
@@ -528,6 +587,25 @@ impl<'a> Bindings<'a> {
         validate(&out, &self.names)?;
         Ok(out)
     }
+}
+
+/// Whether a unit word at `start` follows a number or a closing parenthesis, as in `2 ul`.
+fn follows_number(expression: &str, start: usize) -> bool {
+    expression
+        .get(..start)
+        .map(str::trim_end)
+        .and_then(|before| before.chars().next_back())
+        .is_some_and(|c| c.is_ascii_digit() || c == '.' || c == ')')
+}
+
+/// Whether `word` is the name of a parameter `p` depends on.
+fn names_dependency(bindings: &Bindings<'_>, p: &DesignParameter, word: &str) -> bool {
+    p.dependencies.iter().any(|id| {
+        bindings
+            .parameters
+            .get(id.as_str())
+            .is_some_and(|(dependency, _)| dependency.name == word)
+    })
 }
 
 /// Whole identifiers, including qualified properties and label references. Numeric
@@ -881,6 +959,40 @@ mod map_tests {
     }
 
     #[test]
+    fn a_rounded_display_number_gives_way_to_the_value() {
+        let parameters = json!([
+            parameter(
+                1,
+                "d1",
+                "0.25",
+                json!({"kind": "length", "value": 6.35}),
+                true
+            ),
+            parameter(
+                2,
+                "d2",
+                "6.35",
+                json!({"kind": "length", "value": 6.35}),
+                true
+            ),
+            parameter(
+                3,
+                "a1",
+                "30",
+                json!({"kind": "angle", "value": 45f64.to_radians()}),
+                true
+            ),
+        ]);
+        let model = with(cube(), json!([]), parameters);
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        assert_eq!(params[0]["expr"], json!("6.35 mm"));
+        assert_eq!(params[1]["expr"], json!("6.35"));
+        assert_eq!(params[2]["expr"], json!("45 deg"));
+        assert_eq!(report.losses().len(), 2, "{:?}", report.losses());
+    }
+
+    #[test]
     fn degree_signs_keep_their_expressions_as_deg() {
         let angle = |deg: f64| json!({"kind": "angle", "value": deg.to_radians()});
         let parameters = json!([
@@ -902,6 +1014,73 @@ mod map_tests {
             ]
         );
         assert!(report.losses().is_empty(), "{:?}", report.losses());
+    }
+
+    fn inventor(mut row: Value) -> Value {
+        let key = row["ordinal"].as_u64().unwrap();
+        row["id"] = json!(format!("inventor:design:parameter#{key}"));
+        row["dependencies"] = json!(row["dependencies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_str().unwrap().replace("f3d:model", "inventor:design"))
+            .collect::<Vec<_>>());
+        row
+    }
+
+    #[test]
+    fn inventor_expressions_keep_their_graph_with_user_and_model_parameters() {
+        let length = |v: f64| json!({"kind": "length", "value": v});
+        let parameters = json!([
+            inventor(parameter(1, "Width", "40 mm", length(40.0), false)),
+            inventor(depending(
+                parameter(2, "Height", "(Width) / (2 ul)", length(20.0), false),
+                &[1]
+            )),
+            inventor(depending(
+                parameter(3, "d0", "((Width) / (2 ul)) + (5 mm)", length(25.0), false),
+                &[1]
+            )),
+            inventor(depending(
+                parameter(4, "d1", "(Height) * (1.5 ul)", length(30.0), false),
+                &[2]
+            )),
+            inventor(depending(
+                parameter(5, "d2", "-(d1)", length(-30.0), false),
+                &[4]
+            )),
+            inventor(depending(
+                parameter(6, "d3", "(10 grad) + (d1)", length(30.0), false),
+                &[4]
+            )),
+        ]);
+        let model = with(cube(), json!([]), parameters);
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        let expr = |name: &str| {
+            params
+                .iter()
+                .find(|p| p["name"] == name)
+                .map(|p| (p["expr"].as_str().unwrap().to_owned(), p["model"].clone()))
+        };
+        assert_eq!(expr("Width"), Some(("40 mm".to_owned(), json!(false))));
+        assert_eq!(
+            expr("Height"),
+            Some(("(Width) / (2)".to_owned(), json!(false)))
+        );
+        assert_eq!(
+            expr("d0"),
+            Some(("((Width) / (2)) + (5 mm)".to_owned(), json!(true)))
+        );
+        assert_eq!(
+            expr("d1"),
+            Some(("(Height) * (1.5)".to_owned(), json!(true)))
+        );
+        assert_eq!(expr("d2"), Some(("-(d1)".to_owned(), json!(true))));
+        assert_eq!(expr("d3"), Some(("30 mm".to_owned(), json!(true))));
+        let losses = report.losses();
+        assert_eq!(losses.len(), 1, "{losses:?}");
+        assert!(losses[0].detail.contains("gradians"), "{losses:?}");
     }
 
     fn depending(row: Value, on: &[u32]) -> Value {

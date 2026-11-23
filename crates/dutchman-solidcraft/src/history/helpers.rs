@@ -13,7 +13,21 @@ pub(super) fn is_helper(feature: &Value) -> bool {
         && operation(feature)
             .get("kind")
             .and_then(Value::as_str)
-            .is_some_and(dutchman_core::is_native_binder))
+            .is_some_and(|kind| {
+                dutchman_core::is_native_binder(kind)
+                    || dutchman_core::is_native_coordinate_system(kind)
+            }))
+}
+
+/// A binder, or a native operation other than a coordinate frame: its source geometry must
+/// resolve. A native coordinate frame only places later features.
+fn is_binder_like(kind: &str, definition: &Value) -> bool {
+    kind == "binder"
+        || (kind == "native"
+            && !definition
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(dutchman_core::is_native_coordinate_system))
 }
 
 fn contains(value: &Value, ids: &[&str]) -> bool {
@@ -60,7 +74,7 @@ pub(super) fn map(feature: &Value, ctx: &Context, report: &mut Report) -> Result
     }
     let definition = operation(feature);
     let kind = super::operation_kind(feature).unwrap_or_default();
-    if matches!(kind, "binder" | "native") {
+    if is_binder_like(kind, definition) {
         // A construction plane has one carrier frame, already carried by attached sketches.
         // A native subelement selector on a solid does not prove which source face it means.
         let source = definition
@@ -128,7 +142,11 @@ pub(super) fn map(feature: &Value, ctx: &Context, report: &mut Report) -> Result
         );
         Ok(Mapped::Nothing)
     } else {
-        Err(format!("a {} used by a later feature is not mapped yet: the dependent feature does not carry its resolved placement", kind.replace('_', " ")))
+        let name = match definition.get("kind").and_then(Value::as_str) {
+            Some(native) if kind == "native" => format!("native {native}"),
+            _ => kind.replace('_', " "),
+        };
+        Err(format!("a {name} used by a later feature is not mapped yet: the dependent feature does not carry its resolved placement"))
     }
 }
 
@@ -179,6 +197,7 @@ mod tests {
             json!({"kind": "binder", "value": {}}),
             json!({"kind": "native", "value": {"kind": "PartDesign::SubShapeBinder", "parameters": {}}}),
             json!({"kind": "native", "value": {"kind": "PartDesign::ShapeBinder", "parameters": {}}}),
+            json!({"kind": "native", "value": {"kind": "CoordinateSystem", "parameters": {}}}),
         ] {
             let helper = helper(definition);
             assert!(is_helper(&helper));
@@ -197,6 +216,30 @@ mod tests {
                 .any(|loss| loss.severity == Severity::Info
                     && loss.detail == "helper not converted: nothing uses it"));
         }
+    }
+
+    #[test]
+    fn a_used_native_coordinate_system_needs_users_that_carry_their_placement() {
+        let frame = helper(
+            json!({"kind": "native", "value": {"kind": "CoordinateSystem", "parameters": {}}}),
+        );
+        assert!(is_helper(&frame));
+        let wire =
+            json!({"features": [frame.clone(), user(json!({"kind": "combine", "value": {}}))]});
+        let ctx = Context::testing(&wire);
+        let refused = map(&wire["features"][0], &ctx, &mut Report::default())
+            .err()
+            .unwrap();
+        assert!(
+            refused.contains("does not carry its resolved placement"),
+            "{refused}"
+        );
+        let wire = json!({"features": [frame, user(json!({"kind": "datum_point", "value": {"position": {"x": 1, "y": 2, "z": 3}}}))]});
+        let ctx = Context::testing(&wire);
+        assert!(matches!(
+            map(&wire["features"][0], &ctx, &mut Report::default()),
+            Ok(Mapped::Nothing)
+        ));
     }
 
     #[test]

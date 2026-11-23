@@ -4232,6 +4232,50 @@ mod paste_inputs {
         }
     }
 
+    /// Reports 12 calls, then loops until the window's Stop button asks it to end.
+    fn stoppable_fetch(
+        _link: String,
+        _folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        progress.calls(12, Some(51));
+        let started = Instant::now();
+        while !progress.stop_requested() {
+            assert!(started.elapsed() < Duration::from_secs(30), "never stopped");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Err(App::budget_stop_message_for_test())
+    }
+
+    #[test]
+    fn stop_ends_an_onshape_fetch_and_offers_continue_fetching() {
+        let mut h = window(true);
+        let output = tempfile::tempdir().unwrap();
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), stoppable_fetch);
+        output_picker(&mut h, output.path());
+        paste(&mut h, LINK);
+        let started = Instant::now();
+        while h
+            .query_by_label("Fetching from Onshape: 12 of about 51 API calls…")
+            .is_none()
+        {
+            assert!(started.elapsed() < Duration::from_secs(20), "no call count");
+            std::thread::sleep(Duration::from_millis(10));
+            h.step();
+        }
+        h.get_by_label("Stop").click_accesskit();
+        while h.query_by_label("Continue fetching").is_none() {
+            assert!(started.elapsed() < Duration::from_secs(20), "no button");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        h.run_steps(3);
+        assert_eq!(h.state().rows()[0].status, Status::Stopped);
+        assert!(h.query_by_label("Failed").is_none());
+    }
+
     #[test]
     fn a_request_limit_stop_offers_continue_fetching_without_command_line_words() {
         let mut h = window(true);

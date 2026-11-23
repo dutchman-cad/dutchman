@@ -1851,12 +1851,13 @@ fn an_unverified_history_can_be_kept_hidden_beside_the_visible_original() {
     let (document, report) = convert(&model, &writer);
 
     assert!(history_line(&report).contains("unverified: verification turned off; kept hidden"));
-    // The original is the visible model; the history is all there, in a hidden part.
+    // The original is the visible model; the history is all there, in a hidden part, with
+    // its extrusion suppressed so it builds no second body.
     assert_eq!(
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -2340,6 +2341,61 @@ fn volumes(cli: &Path, design: &[u8]) -> Vec<f64> {
             );
             volume.unwrap()
         })
+        .collect()
+}
+
+/// The bodies of the hidden replay beside a written design's visible original, measured.
+///
+/// The writer leaves the hidden history component's body-building features suppressed, so a
+/// plain evaluation holds only the original. This asks SolidCraft (`timeline.suppress`) to
+/// turn those features back on, then measures: the bodies that come out hidden are the replay
+/// alone, so the replay stays proven correct without a second body in the exported design.
+fn hidden_replay_bodies(cli: &Path, design: &[u8]) -> Vec<Value> {
+    let document: Value = serde_json::from_reader(
+        ZipArchive::new(Cursor::new(design))
+            .unwrap()
+            .by_name("document.json")
+            .unwrap(),
+    )
+    .unwrap();
+    let component = document["components"][0]["id"].clone();
+    let mut script: Vec<Value> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["component"] == component && f["suppressed"] == true)
+        .map(|f| json!({"command": "timeline.suppress", "params": {"feature": f["id"], "suppressed": false}}))
+        .collect();
+    assert!(
+        !script.is_empty(),
+        "no suppressed replay feature: {document}"
+    );
+    script.push(json!({"command": "document.inspect", "params": {"measure": true}}));
+    let dir = tempfile::tempdir().unwrap();
+    let (input, steps, output) = (
+        dir.path().join("replay.solidcraft"),
+        dir.path().join("replay.json"),
+        dir.path().join("replay.out.json"),
+    );
+    std::fs::write(&input, design).unwrap();
+    std::fs::write(&steps, Value::Array(script.clone()).to_string()).unwrap();
+    assert!(std::process::Command::new(cli)
+        .arg("run")
+        .arg(&steps)
+        .arg("--in")
+        .arg(&input)
+        .arg("--results")
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap()
+        .success());
+    let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+    let bodies = results[script.len() - 1]["bodies"].as_array().unwrap();
+    bodies
+        .iter()
+        .filter(|body| body["visible"] == false)
+        .cloned()
         .collect()
 }
 
@@ -6833,7 +6889,7 @@ fn composite_mirror_chains_refuse_unrepresentable_stages_and_excessive_products(
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -10963,7 +11019,7 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
             types(&document),
             [
                 ("sketch".to_owned(), false),
-                ("extrude".to_owned(), false),
+                ("extrude".to_owned(), true),
                 ("import".to_owned(), false),
             ]
         );
@@ -12639,7 +12695,7 @@ fn unsupported_modify_options_explain_what_stops_history() {
     for family in ["thread", "detailed_thread"] {
         cases.push((
             json!({"kind": "unresolved", "value": {"family": family}}),
-            "threads whose construction is unresolved are not supported yet",
+            "threads whose construction is unresolved are not supported yet: the source's thread record was not decoded, so its designation, size, faces and whether it is cosmetic or modeled are unknown",
         ));
     }
     cases.push((
@@ -13528,7 +13584,7 @@ fn blends_without_a_solidcraft_to_replay_the_history_are_refused() {
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -13575,7 +13631,7 @@ fn a_replay_that_runs_out_of_time_refuses_the_blend() {
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -14986,7 +15042,12 @@ fn assert_partial(document: &Value, report: &Report, sketches: usize) {
     assert!(features
         .iter()
         .take(features.len() - 1)
-        .all(|f| &f["component"] == component && f["suppressed"] == false));
+        .all(|f| &f["component"] == component
+            && f["suppressed"]
+                == !matches!(
+                    f["type"].as_str(),
+                    Some("sketch" | "spatial_sketch" | "plane" | "axis" | "point")
+                )));
     assert_eq!(
         document["visibility"]["hidden_occurrences"],
         json!([[document["occurrences"][0]["id"]]])
@@ -15078,7 +15139,7 @@ fn partial_history_appearance_bindings_reach_the_visible_original() {
                 .to_string(),
             )
             .unwrap();
-            assert!(std::process::Command::new(cli)
+            assert!(std::process::Command::new(&cli)
                 .arg("run")
                 .arg(&script)
                 .arg("--in")
@@ -15091,13 +15152,21 @@ fn partial_history_appearance_bindings_reach_the_visible_original() {
                 .success());
             let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
             let bodies = results[0]["bodies"].as_array().unwrap();
-            assert_eq!(bodies.len(), 2, "{results}");
+            assert_eq!(bodies.len(), 1, "{results}");
             assert!(
                 bodies
                     .iter()
                     .any(|b| b["name"] == name && b["visible"] == true),
                 "{results}"
             );
+            // Turned back on, the hidden replay is still one 1000 mm³ cube.
+            let (bytes, _) = written_with(
+                &model,
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            let replay = hidden_replay_bodies(&cli, &bytes);
+            assert_eq!(replay.len(), 1, "{replay:?}");
+            assert_eq!(replay[0]["volume_mm3"], 1000.0);
             assert_eq!(
                 results[1]["body"]["appearance"]["color"], "#ff0000",
                 "{results}"
@@ -15238,7 +15307,7 @@ fn a_blocker_keeps_the_prefix_and_later_resolved_sketches() {
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("sketch".to_owned(), false),
             ("import".to_owned(), false)
         ]
@@ -15342,9 +15411,18 @@ fn partial_history_replays_beside_the_unchanged_original() {
     let (document, report) = convert(&model, &writer);
     assert_partial(&document, &report, 2);
     assert!(history_line(&report).contains("retained features replay in SolidCraft"));
-    // eval includes hidden bodies: one editable 1000 mm³ cube and the original cube.
+    // The visible model is the original cube alone: the hidden replay's features are suppressed.
     let (bytes, _) = written_with(&model, &writer);
-    assert_eq!(volumes(&cli, &bytes), [1000.0, 1000.0]);
+    assert_eq!(volumes(&cli, &bytes), [1000.0]);
+    // With its features turned back on, the hidden replay is one editable 1000 mm³ cube.
+    let replay = hidden_replay_bodies(&cli, &bytes);
+    assert_eq!(
+        replay
+            .iter()
+            .map(|b| b["volume_mm3"].as_f64().unwrap())
+            .collect::<Vec<_>>(),
+        [1000.0]
+    );
 }
 
 #[test]
@@ -15370,12 +15448,16 @@ fn cc0_freecad_subshape_binder_keeps_the_earlier_pad() {
         let (bytes, _) = written_with(&model, &writer);
         let mut measured = volumes(&cli, &bytes);
         measured.sort_by(f64::total_cmp);
-        // The hidden prefix is 6000 mm³. The visible original is two solids,
-        // 3000 + 6000 mm³, as the recipe's CC0 manifest records.
-        assert_eq!(measured.len(), 3);
-        for (actual, expected) in measured.iter().zip([3000.0, 6000.0, 6000.0]) {
+        // The visible original is two solids, 3000 + 6000 mm³, as the recipe's CC0 manifest
+        // records; the hidden prefix's features are suppressed and add no body.
+        assert_eq!(measured.len(), 2);
+        for (actual, expected) in measured.iter().zip([3000.0, 6000.0]) {
             assert!((actual - expected).abs() < 1e-6, "{measured:?}");
         }
+        // Turned back on, the hidden prefix is one 6000 mm³ body.
+        let replay = hidden_replay_bodies(&cli, &bytes);
+        assert_eq!(replay.len(), 1, "{replay:?}");
+        assert_eq!(replay[0]["volume_mm3"], 6000.0);
         let dir = tempfile::tempdir().unwrap();
         let design = dir.path().join("F16b.solidcraft");
         let script = dir.path().join("visibility.json");
@@ -15403,7 +15485,7 @@ fn cc0_freecad_subshape_binder_keeps_the_earlier_pad() {
         assert!(status.success());
         let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
         let bodies = results[0]["bodies"].as_array().unwrap();
-        assert_eq!(bodies.len(), 3);
+        assert_eq!(bodies.len(), 2);
         let visible: Vec<_> = bodies.iter().filter(|b| b["visible"] == true).collect();
         assert_eq!(visible.len(), 2);
         assert_eq!(
@@ -15416,10 +15498,8 @@ fn cc0_freecad_subshape_binder_keeps_the_earlier_pad() {
         assert!(visible
             .iter()
             .all(|b| b["name"].as_str().unwrap().starts_with("F16b")));
-        let hidden: Vec<_> = bodies.iter().filter(|b| b["visible"] == false).collect();
-        assert_eq!(hidden.len(), 1);
-        assert_eq!(hidden[0]["name"], "Body1");
-        assert_eq!(hidden[0]["volume_mm3"], 6000.0);
+        assert!(bodies.iter().all(|b| b["visible"] == true));
+        assert_eq!(replay[0]["name"], "Body1");
         assert_eq!(results[1]["bodies"], 2);
     }
 }
@@ -15446,7 +15526,11 @@ fn a_partial_component_is_hidden_in_every_assembly_placement() {
         .collect();
     assert_eq!(prefix.len(), 3);
     assert!(prefix.iter().any(|f| f["type"] == "extrude"));
-    assert!(prefix.iter().all(|f| f["suppressed"] == false));
+    // The hidden copy builds no second body: its body-building features are suppressed,
+    // its sketches stay live.
+    assert!(prefix
+        .iter()
+        .all(|f| f["suppressed"] == (f["type"] != "sketch")));
     let original = features
         .iter()
         .find(|f| &f["component"] == second && f["type"] == "import")
@@ -15796,7 +15880,7 @@ fn sketch_choice_keeps_required_profiles_but_not_reference_sketches() {
             types(&document),
             [
                 ("sketch".to_owned(), false),
-                ("extrude".to_owned(), false),
+                ("extrude".to_owned(), true),
                 ("import".to_owned(), false)
             ]
         );
@@ -16536,6 +16620,127 @@ fn an_extrude_distance_follows_the_parameter_that_sets_it() {
             assert!((edited[0] - 2000.0).abs() < 0.01, "{edited:?}");
         }
     }
+}
+
+/// The extrude's distance as an Inventor file states it: a document parameter `d1` of the
+/// form `Height / 2 ul` that no feature owns, bound to the extrude by the feature's
+/// `source_properties`, with the user parameter `Height` (20 mm) behind it.
+fn cube_with_bound_distance_parameter() -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let parameters = wire["model"]["parameters"].as_array_mut().unwrap();
+    parameters[0].as_object_mut().unwrap().remove("owner");
+    parameters[0]["expression"] = json!("(Height) / (2 ul)");
+    parameters[0]["dependencies"] = json!(["f3d:model:parameter#3"]);
+    parameters.push(json!({"id": "f3d:model:parameter#3", "name": "Height", "expression": "20 mm", "value": {"kind": "length", "value": 20.0}, "ordinal": 0, "dependencies": [], "properties": {}}));
+    wire["model"]["features"][1]["source_properties"] =
+        json!({"extent_distance_parameter": "f3d:model:parameter#1"});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn an_inventor_extrude_distance_keeps_its_expression_and_follows_the_user_parameter() {
+    let model = cube_with_bound_distance_parameter();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let params = document["params"].as_array().unwrap();
+    let find = |name: &str| params.iter().find(|p| p["name"] == name).unwrap();
+    assert_eq!(find("Height")["expr"], "20 mm");
+    assert_eq!(find("d1")["expr"], "(Height) / (2)");
+    assert_eq!(document["features"][1]["extent"]["distance"], "d1");
+    if let Some(cli) = solidcraft() {
+        let bytes = written(&model).0;
+        let edited = volumes(&cli, &with_param(&bytes, "Height", "40 mm"));
+        assert!((edited[0] - 2000.0).abs() < 0.01, "{edited:?}");
+    }
+}
+
+#[test]
+fn an_inventor_extrude_distance_keeps_its_value_when_the_bound_parameter_differs() {
+    let mut model = cube_with_bound_distance_parameter();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["parameters"][0]["value"]["value"] = json!(7.0);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(document["features"][1]["extent"]["distance"], "10 mm");
+}
+
+/// The Inventor block with user parameters Width = 40 mm, Height = Width / 2 and Hole = 6 mm,
+/// sketch dimensions Width, Width / 2 + 5 mm and Height, an extrude of Height * 1.5 and
+/// d2 = d1 * 2.
+// TODO: the fixture is filled in when the file is added to dutchman-core/tests/fixtures.
+const INVENTOR_EXPRESSIONS_FIXTURE: &str = "inventor_parameter_expressions.ipt";
+
+#[test]
+fn an_inventor_part_keeps_its_parameter_expressions() {
+    let input = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures")
+        .join(INVENTOR_EXPRESSIONS_FIXTURE);
+    if !input.exists() {
+        eprintln!("{INVENTOR_EXPRESSIONS_FIXTURE} is not in the fixtures yet");
+        return;
+    }
+    let model = dutchman_core::read(
+        dutchman_core::Format::InventorPart,
+        &input,
+        &mut Report::default(),
+    )
+    .unwrap();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let params = document["params"].as_array().unwrap();
+    let find = |name: &str| params.iter().find(|p| p["name"] == name);
+    let width = find("Width").expect("Width is a parameter");
+    assert_eq!(width["expr"], "40 mm");
+    assert_eq!(width["model"], false);
+    assert_eq!(find("Hole").expect("Hole is a parameter")["expr"], "6 mm");
+    let height = find("Height").expect("Height is a parameter");
+    assert!(
+        height["expr"].as_str().unwrap().contains("Width"),
+        "{height}"
+    );
+    // d2 = d1 * 2 keeps its reference to d1.
+    let d2 = find("d2").expect("d2 is a parameter");
+    assert!(d2["expr"].as_str().unwrap().contains("d1"), "{d2}");
+    assert_eq!(d2["model"], true);
+    // The sketch dimensions (40, 25 and 20 mm) and the extrude distance (30 mm) are driven by
+    // parameters; the dimensions read Width and Height.
+    let driven: Vec<&str> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|f| {
+            f["sketch"]["constraints"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c["param"].as_str())
+        })
+        .collect();
+    for expected in ["Width", "Height"] {
+        assert!(
+            driven
+                .iter()
+                .any(|name| find(name)
+                    .is_some_and(|p| p["expr"].as_str().unwrap().contains(expected))),
+            "no sketch dimension is driven by a parameter reading {expected}: {driven:?}"
+        );
+    }
+    let extrude = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|f| f["extent"]["distance"].as_str())
+        .expect("the extrude has a distance");
+    assert!(find(extrude).is_some(), "{extrude} is a parameter");
 }
 
 #[test]

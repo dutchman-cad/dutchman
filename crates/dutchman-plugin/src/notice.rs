@@ -73,14 +73,14 @@ pub(crate) fn plain(text: &str) -> String {
 #[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn failure(error: &Error) -> String {
     let reason = match error {
-        Error::MemoryBudget(reason) => reason.clone(),
+        Error::MemoryBudget(reason) | Error::EmptyExport(reason) => reason.clone(),
         Error::Decode(reason)
         | Error::Encode(reason)
         | Error::Assembly(reason)
         | Error::Restate(reason) => plain(reason),
         _ => plain(&error.to_string()),
     };
-    let intro = if matches!(error, Error::MemoryBudget(_)) {
+    let intro = if matches!(error, Error::MemoryBudget(_) | Error::EmptyExport(_)) {
         ""
     } else {
         "If this file opens in the app that made it, it's a bug in Dutchman. Help us fix it:\n"

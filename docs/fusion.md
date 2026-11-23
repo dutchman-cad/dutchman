@@ -20,6 +20,9 @@ An unreadable sketch point no longer discards otherwise readable design history.
 component occurrence frames and inserted-component placements resolve, and construction-plane
 mirrors read their selected work plane. Known simple and clearance hole forms no longer
 report an assumed diameter; tapped holes still report how their stored bore is interpreted.
+A Fusion coordinate system that cadmpeg keeps only as construction references builds no geometry,
+so the history continues past it; a later feature that needs its placement is refused with a reason
+that names it.
 
 Bodies now follow the component that stored them, and component placements read from saved
 local occurrence paths, so more designs open as placed parts with their own history. A local
@@ -307,6 +310,13 @@ visible final-shape Import receives its own names and colours. Names remain dist
 from those of the editable copy.
 When a partial history is kept hidden, appearance losses refer to the visible final
 shape rather than to final bodies absent from that partial copy.
+A hidden editable-history copy builds no body of its own: its body-building features are
+written suppressed and only its sketches stay live. The visible final-shape Import is the
+part, so a STEP export, a render, a body count or a mass measure of the design sees each
+part once. To edit the history, unsuppress its features in the timeline and suppress or
+hide the final-shape Import while you work. The conversion check in
+`scripts/written-design-compare.py` fails when any hidden editable-history copy holds a
+body, and names the part it would duplicate.
 The look keeps the resolved colour, opacity, and appearance name; it does not infer a
 physical material from a visual preset.
 
@@ -339,6 +349,13 @@ conversion: on the Voron V1.8 that takes the peak from 11.0 GB to 8.7 GB, with t
 Fusion keeps some sketches with no Sketch step in the timeline; cadmpeg then lists the sketch
 alone. A feature whose profile uses such a sketch gets it written just before itself, so the
 feature finds it; any other such sketch is kept for reference after the timeline, as before.
+
+## A design whose timeline did not decode
+
+A design that carries no feature history converts as an import, and the report says "the design
+carries no feature history". When the file does hold a timeline but cadmpeg could not decode it (for
+example a sheet-metal settings record it found invalid), the report says so instead: the feature
+timeline is in the file, but cadmpeg could not decode it, followed by what it could not read.
 
 ## Trimmed and unresolved profile regions
 
@@ -667,6 +684,20 @@ A face sketch is made only from a flat face: every boundary point must lie on on
 1e-5 of the face's size. When one does not, the refusal gives the largest distance off the plane
 and names a curved face such as a cylinder wall, whose two end circles face opposite ways.
 
+## Hidden parts with `--import-only`
+
+`--import-only` (stored geometry only) keeps every part the design hides, hidden as in the
+source, so it holds the same parts as the default preset. A hidden occurrence is still placed, its
+component still holds its stored body as an Import, and the design's `visibility.hidden_occurrences`
+lists it. The default preset adds, beside many parts, an "Editable history" component with the
+rebuilt body, named `Body (<part>)` or `Body 1 (<part>)`; those rebuilt copies exist only there, so
+a body-name count is higher in the default result without any stored part being missing. On the
+public RailCore II 300ZL (CC BY-SA 4.0), `--import-only --no-sketches` holds 287 occurrences in 188
+components with 20 hidden occurrences, 270 bodies; the default preset holds the same 287
+occurrences plus 29 "Editable history" occurrences, and 333 bodies. TopPanel, ElectroGuard,
+Right_Panel, Back Panel, X_Endstop_Mount, Front_Motor_Mount, Titan_Mount, 5015BlowerFan,
+Back_X_Carriage, Front_X_Carriage, 300ZL Bed and Belt_Retainer_Clip are bodies in both.
+
 ## Stored body fallback
 
 When a new-body extrude, revolve, sweep or loft requires a profile or path absent
@@ -707,6 +738,12 @@ Modeled thread history remains blocked even on SolidCraft 0.45: the available no
 thread data cannot prove an exact helical reconstruction. The final modeled geometry is
 retained, with the source designation in a Degraded `history/modeled-thread-retained`
 loss. See [modeled threads](history.md) for the profile and face-selection limits.
+
+A Fusion Thread whose record the decoder does not decode (no designation, nominal size or
+faces) arrives as an unresolved Thread. The history stops there with "threads whose
+construction is unresolved are not supported yet", now followed by what is missing: the
+source does not say whether the thread is cosmetic or modeled, so Dutchman cannot map it.
+The fix is in the decoder, which has to recognise that thread's record layout.
 
 Unreadable local and xref positions, including local stored-frame fallbacks and
 positions assumed to be the identity, count

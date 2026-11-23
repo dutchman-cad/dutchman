@@ -330,8 +330,10 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
         assert!(report.losses().iter().any(|note| note
             .detail
             .contains("unverified: verification turned off; kept hidden")));
+        // The hidden history's body-building features are written suppressed, so only the two
+        // visible parts evaluate to bodies (an export holds one body per part).
         if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
-            assert_eq!(evaluate(&cli, &bytes).len(), 3);
+            assert_eq!(evaluate(&cli, &bytes).len(), 2);
         }
     }
 }
@@ -1811,6 +1813,39 @@ fn a_placement_the_source_hides_is_written_hidden() {
         .iter()
         .all(|path| path.as_array().unwrap().len() == 2));
     assert!(placed_twice_shows_nothing_hidden());
+}
+
+#[test]
+fn an_import_only_write_keeps_a_hidden_placement_with_its_stored_body_hidden() {
+    // Import-only writes no history; the hidden occurrence still holds its stored body.
+    let mut model = placed_twice();
+    if let Some(assembly) = &mut model.assembly {
+        assembly.placements[1].hidden = true;
+    }
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .import_only(true)
+        .sketches(false)
+        .verification(Verification::Off)
+        .write(&model, &mut bytes, &mut Report::default())
+        .unwrap();
+    let document = document(&bytes);
+    let occurrences = document["occurrences"].as_array().unwrap();
+    assert_eq!(occurrences.len(), 2, "{occurrences:?}");
+    let moved = occurrences.iter().find(|o| o["name"] == "Moved").unwrap();
+    assert_eq!(
+        document["visibility"]["hidden_occurrences"],
+        serde_json::json!([[moved["id"]]])
+    );
+    for occurrence in occurrences {
+        let imports = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|feature| feature["component"] == occurrence["component"])
+            .count();
+        assert_eq!(imports, 1, "{occurrence:?}");
+    }
 }
 
 fn placed_twice_shows_nothing_hidden() -> bool {

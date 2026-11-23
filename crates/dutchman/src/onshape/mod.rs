@@ -38,6 +38,7 @@ pub enum ErrorKind {
     Unsupported,
     Changed,
     Export,
+    Stopped,
 }
 impl ErrorKind {
     pub fn code(self) -> &'static str {
@@ -56,6 +57,7 @@ impl ErrorKind {
             Self::Unsupported => "onshape/not-supported",
             Self::Changed => "onshape/changed",
             Self::Export => "onshape/export",
+            Self::Stopped => "onshape/stopped",
         }
     }
 }
@@ -749,8 +751,6 @@ struct Fetcher<'a, 'b, C> {
     microversion: String,
     content_kind: &'static str,
     file_sources: BTreeMap<String, Value>,
-    pending_cache: BTreeMap<PathBuf, Vec<u8>>,
-    pending_bytes: usize,
     skew: bool,
     hits: u32,
     files: BTreeMap<String, Vec<u8>>,
@@ -764,27 +764,40 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
         );
     }
 
-    fn cache_response(&mut self, file: &Path, bytes: &[u8], path: &str) -> Result<()> {
+    /// Where the reply to `path` is cached. Workspace replies (variables and the STEP export,
+    /// which Onshape serves only from a workspace or version) go to a `w` folder of their
+    /// own: they hold for this microversion only once a later check finds the workspace
+    /// still at it, and a check that finds it changed deletes the folder.
+    pub(super) fn cache_dir(&self, path: &str) -> PathBuf {
         if path.contains("/w/") {
-            self.pending_bytes = self
-                .pending_bytes
-                .checked_add(bytes.len())
-                .ok_or_else(response_error)?;
-            if self.pending_bytes > MAX_TOTAL {
-                return Err(Error::new(
-                    ErrorKind::Limit,
-                    "The provisional Onshape cache exceeds 512 MiB; fetch a smaller element.",
-                ));
-            }
-            self.pending_cache.insert(file.into(), bytes.to_vec());
-            Ok(())
+            self.cache.join("w")
         } else {
-            private_write(file, bytes)
+            self.cache.clone()
         }
     }
 
+    /// Saves each reply as it arrives, so a fetch stopped by the call limit, a network
+    /// failure or a restart sends only the calls it is missing when run again.
+    fn cache_response(&mut self, file: &Path, bytes: &[u8]) -> Result<()> {
+        if let Some(parent) = file.parent() {
+            private_dir(parent)?;
+        }
+        private_write(file, bytes)
+    }
+
+    fn cache_file(&self, path: &str, query: &str) -> PathBuf {
+        self.cache_dir(path)
+            .join(hash(format!("{path}?{query}").as_bytes()))
+    }
+
+    /// 1 when [`Self::get`] would send this request, 0 when its reply is cached.
+    fn missing(&self, path: &str, query: &str) -> u32 {
+        let file = self.cache_file(path, query);
+        u32::from(!file.exists() && !file.with_extension("absent").exists())
+    }
+
     fn get(&mut self, path: &str, query: &str, optional: bool) -> Result<Option<Vec<u8>>> {
-        let cache_file = self.cache.join(hash(format!("{path}?{query}").as_bytes()));
+        let cache_file = self.cache_file(path, query);
         let absent = cache_file.with_extension("absent");
         if optional && absent.exists() {
             self.hits += 1;
@@ -802,7 +815,7 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
         }
         let response = self.session.request("GET", path, query, &[])?;
         if optional && response.status == 404 {
-            self.cache_response(&absent, b"", path)?;
+            self.cache_response(&absent, b"")?;
             return Ok(None);
         }
         if !(200..300).contains(&response.status) {
@@ -811,12 +824,13 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
         let value: Value = serde_json::from_slice(&response.body).map_err(|_| response_error())?;
         self.session.credentials.check_json(&value)?;
         privacy(&value)?;
-        if path.contains("/w/") {
-            self.skew |= check_microversion(&value, &self.microversion).is_err();
+        if path.contains("/w/") && check_microversion(&value, &self.microversion).is_err() {
+            // The workspace has moved on; this attempt ends as changed, so keep nothing.
+            self.skew = true;
         } else {
             check_microversion(&value, &self.microversion)?;
+            self.cache_response(&cache_file, &response.body)?;
         }
-        self.cache_response(&cache_file, &response.body, path)?;
         Ok(Some(response.body))
     }
     fn json(&mut self, path: &str, query: &str) -> Result<Value> {
@@ -892,8 +906,14 @@ fn resolve<C: HttpClient>(
         "{}-{}-{}-resolution.json",
         source.document, source.kind, source.version
     ));
+    // A workspace fetch that stopped before it finished (call limit, network, a restart)
+    // carries on at the microversion it started from, so its saved replies all still apply.
+    // The closing microversion check then proves the workspace never moved, or starts over.
+    let unfinished = unfinished_path(&scope, source);
     let mid = if source.kind == "v" && resolution.exists() {
         String::from_utf8(read_bounded(&resolution, 128)?).map_err(|_| response_error())?
+    } else if source.kind == "w" && unfinished.exists() {
+        String::from_utf8(read_bounded(&unfinished, 128)?).map_err(|_| response_error())?
     } else {
         let mid = current_microversion(session, source)?;
         if source.kind == "v" {
@@ -902,6 +922,14 @@ fn resolve<C: HttpClient>(
         mid
     };
     Ok((scope, id(&mid).map_err(|_| response_error())?))
+}
+
+/// Where a workspace fetch records the microversion it started from until it finishes.
+fn unfinished_path(scope: &Path, source: &DocumentUrl) -> PathBuf {
+    scope.join(format!(
+        "{}-w-{}-{}-unfinished.json",
+        source.document, source.version, source.element
+    ))
 }
 
 fn fetch_inner<C: HttpClient>(
@@ -920,9 +948,13 @@ fn fetch_inner<C: HttpClient>(
         None => resolve(session, source, cache)?,
     };
     let mut mid = mid;
+    let unfinished = unfinished_path(&scope, source);
     let mut hits = 0;
     for attempt in 0..2 {
-        match capture(
+        if source.kind == "w" {
+            private_write(&unfinished, mid.as_bytes())?;
+        }
+        let captured = capture(
             session,
             source,
             output,
@@ -934,17 +966,30 @@ fn fetch_inner<C: HttpClient>(
                 source.version.clone(),
                 source.element.clone(),
             )]),
-        )? {
-            Capture::Complete(report) => return Ok(report),
+        )?;
+        match captured {
+            Capture::Complete(report) => {
+                remove_if_present(&unfinished)?;
+                return Ok(report);
+            }
             Capture::Changed(current) => {
                 if attempt == 1 {
+                    remove_if_present(&unfinished)?;
                     return Err(changed_error());
                 }
                 mid = current;
             }
         }
     }
+    remove_if_present(&unfinished)?;
     Err(changed_error())
+}
+
+fn remove_if_present(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(io_error(error)),
+        _ => Ok(()),
+    }
 }
 
 fn changed_error() -> Error {
@@ -1085,26 +1130,44 @@ fn capture<C: HttpClient>(
                 fetcher
                     .session
                     .allow(u32::try_from(wanted.len()).unwrap_or(u32::MAX));
+                let configuration_path = format!(
+                    "{API}/elements/d/{}/{content_kind}/{content_id}/e/{eid}/configuration",
+                    source.document
+                );
+                let variables_path = format!(
+                    "{API}/variables/d/{}/{}/{}/e/{eid}/variables",
+                    source.document, source.kind, source.version
+                );
+                const VARIABLES_QUERY: &str = "includeValuesAndReferencedVariables=true";
                 if ancestry.len() == 1 && elements.is_empty() {
-                    fetcher.session.needed = Some(whole_fetch_calls(
-                        fetcher.session.calls,
-                        source,
-                        wanted.len(),
-                        sketch_only(list),
-                    ));
+                    // Count only the calls not already cached, so a continued fetch
+                    // estimates what it has left, not the whole document again.
+                    let mut rest = wanted
+                        .iter()
+                        .map(|i| {
+                            fetcher.missing(
+                                &format!("{base}/bodydetails"),
+                                &bodydetails_query(*i, list.len()),
+                            )
+                        })
+                        .sum::<u32>();
+                    rest += fetcher.missing(&configuration_path, "");
+                    rest += fetcher.missing(&variables_path, VARIABLES_QUERY);
+                    rest += fetcher.missing(&format!("{base}/sketches"), "");
+                    if !sketch_only(list) {
+                        rest += fetcher.step_calls_missing(source, &eid)?;
+                    }
+                    if source.kind == "w" {
+                        rest += 1;
+                    }
+                    fetcher.session.needed = Some(fetcher.session.calls.saturating_add(rest));
                 }
                 let mut indices = Vec::new();
                 for i in wanted {
                     let file = format!("{prefix}/bodydetails/{i}.json");
-                    // Past the last feature is the final state, which -1 asks for.
-                    let bar = if i >= list.len() {
-                        "-1".to_owned()
-                    } else {
-                        i.to_string()
-                    };
                     fetcher.raw(
                         &format!("{base}/bodydetails"),
-                        &format!("rollbackBarIndex={bar}&includeGeometricData=true"),
+                        &bodydetails_query(i, list.len()),
                         file,
                         false,
                     )?;
@@ -1118,30 +1181,14 @@ fn capture<C: HttpClient>(
                 paths.insert("bodydetails", index);
                 let config = format!("{prefix}/configuration.json");
                 if fetcher
-                    .raw(
-                        &format!(
-                            "{API}/elements/d/{}/{content_kind}/{content_id}/e/{eid}/configuration",
-                            source.document
-                        ),
-                        "",
-                        config.clone(),
-                        true,
-                    )?
+                    .raw(&configuration_path, "", config.clone(), true)?
                     .is_some()
                 {
                     paths.insert("configuration", config);
                 }
                 let variables = format!("{prefix}/variables.json");
                 if fetcher
-                    .raw(
-                        &format!(
-                            "{API}/variables/d/{}/{}/{}/e/{eid}/variables",
-                            source.document, source.kind, source.version
-                        ),
-                        "includeValuesAndReferencedVariables=true",
-                        variables.clone(),
-                        true,
-                    )?
+                    .raw(&variables_path, VARIABLES_QUERY, variables.clone(), true)?
                     .is_some()
                 {
                     paths.insert("variables", variables);
@@ -1185,12 +1232,14 @@ fn capture<C: HttpClient>(
     *hits += fetcher.hits;
     if source.kind == "w" {
         let final_mid = current_microversion(fetcher.session, source)?;
+        let workspace = fetcher.cache.join("w");
         if final_mid != mid || fetcher.skew {
+            // Some workspace replies may postdate the change; none of them can be trusted.
+            if workspace.exists() {
+                std::fs::remove_dir_all(&workspace).map_err(io_error)?;
+            }
             return Ok(Capture::Changed(final_mid));
         }
-    }
-    for (path, bytes) in &fetcher.pending_cache {
-        private_write(path, bytes)?;
     }
     fetcher.record_source("manifest.json", content_kind);
     let manifest = json!({"schema": "dutchman.onshape-bundle/1", "fetched_at": timestamp(fetcher.session.client.now()), "fetcher": format!("dutchman {}", crate::BUILD_VERSION), "api_version": "v17", "document": {"id": source.document, "name": name, "workspace_or_version": source.kind, "wvid": source.version, "microversion": mid}, "root_element": source.element, "elements": elements, "external": external.into_iter().map(|(d,e,m)| json!({"documentId":d,"elementId":e,"microversionId":m})).collect::<Vec<_>>(), "calls": fetcher.session.calls, "consistent": true, "file_sources": fetcher.file_sources});
@@ -1222,8 +1271,6 @@ impl<'a, 'b, C: HttpClient> Fetcher<'a, 'b, C> {
             microversion: mid.into(),
             content_kind,
             file_sources: BTreeMap::new(),
-            pending_cache: BTreeMap::new(),
-            pending_bytes: 0,
             skew: false,
             hits: 0,
             files: BTreeMap::new(),
@@ -1233,9 +1280,7 @@ impl<'a, 'b, C: HttpClient> Fetcher<'a, 'b, C> {
 
     /// Whether a reply is already cached, so reading it costs no call.
     fn is_cached(&self, path: &str, query: &str) -> bool {
-        self.cache
-            .join(hash(format!("{path}?{query}").as_bytes()))
-            .exists()
+        self.missing(path, query) == 0
     }
 }
 
@@ -1275,20 +1320,15 @@ fn document_name<C: HttpClient>(
 /// Calls a STEP export usually takes: the request, one poll, and the download.
 const STEP_CALLS: u32 = 3;
 
-/// The total calls a fetch of the root Part Studio needs, from its feature list: one per
-/// body-detail state, configuration, variables and sketches, the STEP export, and the final
-/// microversion check of a workspace. It does not foresee slow polls or retries.
-fn whole_fetch_calls(sent: u32, source: &DocumentUrl, snapshots: usize, sketch_only: bool) -> u32 {
-    let mut rest = u32::try_from(snapshots)
-        .unwrap_or(u32::MAX)
-        .saturating_add(3);
-    if !sketch_only {
-        rest = rest.saturating_add(STEP_CALLS);
-    }
-    if source.kind == "w" {
-        rest = rest.saturating_add(1);
-    }
-    sent.saturating_add(rest)
+/// The body-detail query for the state before feature `index`; past the last feature is
+/// the final state, which -1 asks for.
+fn bodydetails_query(index: usize, features: usize) -> String {
+    let bar = if index >= features {
+        "-1".to_owned()
+    } else {
+        index.to_string()
+    };
+    format!("rollbackBarIndex={bar}&includeGeometricData=true")
 }
 
 fn check_microversion(value: &Value, expected: &str) -> Result<()> {

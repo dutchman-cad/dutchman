@@ -963,30 +963,6 @@ fn same_document_two_part_revolute_assembly_includes_referenced_partstudio_once(
     assert_eq!(mock.sent.iter().filter(|(m, _, _)| m == "POST").count(), 1);
 }
 #[test]
-fn workspace_budget_must_cover_the_final_consistency_check() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut mock = partstudio_mock(MID, "1");
-    let error = workspace_run(&mut mock, &dir, 11).err().unwrap();
-    assert_eq!(error.kind, ErrorKind::Budget);
-    assert_eq!(error.calls, 11);
-    assert!(!dir.path().join("test.onshape-bundle").exists());
-    let mut retry = Mock::default();
-    retry
-        .replies
-        .push_back(response(200, json!({"microversion":MID})));
-    let mut workspace_responses = partstudio_replies(MID, "2");
-    for _ in 0..5 {
-        workspace_responses.pop_front();
-    }
-    // The sketch-information response uses a pinned /m/ path and is already cached.
-    workspace_responses.pop_back();
-    retry.replies.extend(workspace_responses);
-    retry
-        .replies
-        .push_back(response(200, json!({"microversion":MID})));
-    assert_eq!(workspace_run(&mut retry, &dir, 50).unwrap().calls, 6);
-}
-#[test]
 fn workspace_refetch_uses_the_same_total_call_budget() {
     let dir = tempfile::tempdir().unwrap();
     let mut mock = partstudio_mock(MID, "1");
@@ -2439,4 +2415,228 @@ fn progress_counts_each_call_and_estimates_after_the_feature_list() {
     // Microversion, document, tabs and features come before the estimate.
     assert!(counted.0[..4].iter().all(|(_, needed)| needed.is_none()));
     assert!(counted.0[4..].iter().all(|(_, needed)| *needed == Some(11)));
+}
+
+/// Asks to stop once `after` calls have been sent.
+struct StopAfter {
+    after: u32,
+    sent: u32,
+}
+impl FetchProgress for StopAfter {
+    fn calls(&mut self, sent: u32, _: Option<u32>) {
+        self.sent = sent;
+    }
+    fn stop_requested(&mut self) -> bool {
+        self.sent >= self.after
+    }
+}
+#[test]
+fn a_requested_stop_ends_the_fetch_and_the_next_fetch_sends_only_the_missing_calls() {
+    let whole = workspace_replies();
+    let total = u32::try_from(whole.len()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = Mock {
+        replies: whole.clone().into(),
+        ..Mock::default()
+    };
+    let mut stop = StopAfter { after: 3, sent: 0 };
+    let error = fetch_watched(
+        &mut first,
+        &FetchAuth::ApiKeys(credentials()),
+        &workspace_source(),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut stop),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Stopped);
+    assert_eq!(error.kind.code(), "onshape/stopped");
+    assert_eq!(error.calls, 3);
+    assert_eq!(first.sent.len(), 3);
+    assert!(!dir.path().join("test.onshape-bundle").exists());
+    let mut again = Mock {
+        replies: whole[3..].to_vec().into(),
+        ..Mock::default()
+    };
+    let report = workspace_run(&mut again, &dir, 50).unwrap();
+    assert_eq!(report.calls, total - 3);
+    assert!(dir.path().join("test.onshape-bundle").exists());
+}
+
+fn bundle_files(dir: &tempfile::TempDir) -> BTreeMap<String, Vec<u8>> {
+    let mut zip = open_bundle(dir);
+    let names: Vec<String> = zip.file_names().map(|n| n.unwrap().into_owned()).collect();
+    names
+        .into_iter()
+        .filter(|name| name != "manifest.json")
+        .map(|name| {
+            let mut bytes = Vec::new();
+            zip.by_name(&name).unwrap().read_to_end(&mut bytes).unwrap();
+            (name, bytes)
+        })
+        .collect()
+}
+
+/// Every reply of an uninterrupted workspace fetch, in order: the microversion, the Part
+/// Studio's ten replies, and the closing microversion check.
+fn workspace_replies() -> Vec<Response> {
+    let mut mock = partstudio_mock(MID, "1");
+    mock.replies
+        .push_back(response(200, json!({"microversion":MID})));
+    mock.replies.into()
+}
+
+#[test]
+fn a_stopped_workspace_fetch_continues_with_only_the_calls_it_is_missing() {
+    let whole = workspace_replies();
+    let total = u32::try_from(whole.len()).unwrap();
+    let reference = tempfile::tempdir().unwrap();
+    let mut mock = Mock {
+        replies: whole.clone().into(),
+        ..Mock::default()
+    };
+    assert_eq!(
+        workspace_run(&mut mock, &reference, 50).unwrap().calls,
+        total
+    );
+    for stop in 0..total {
+        let dir = tempfile::tempdir().unwrap();
+        let mut first = Mock {
+            replies: whole.clone().into(),
+            ..Mock::default()
+        };
+        let error = workspace_run(&mut first, &dir, stop).err().unwrap();
+        assert_eq!(error.kind, ErrorKind::Budget, "stop at {stop}");
+        assert!(!dir.path().join("test.onshape-bundle").exists());
+        // A new client stands in for a relaunch: only the cache folder carries over.
+        let mut again = Mock {
+            replies: whole[stop as usize..].to_vec().into(),
+            ..Mock::default()
+        };
+        let report = workspace_run(&mut again, &dir, 50)
+            .unwrap_or_else(|error| panic!("stop at {stop}: {error:?}, sent {:?}", again.sent));
+        assert_eq!(report.calls, total - stop, "stop at {stop}");
+        assert!(again.replies.is_empty(), "stop at {stop}");
+        assert_eq!(
+            bundle_files(&dir),
+            bundle_files(&reference),
+            "stop at {stop}"
+        );
+    }
+}
+
+#[test]
+fn stopping_one_call_short_continues_with_exactly_that_call() {
+    let whole = workspace_replies();
+    let total = u32::try_from(whole.len()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = Mock {
+        replies: whole.clone().into(),
+        ..Mock::default()
+    };
+    let error = workspace_run(&mut first, &dir, total - 1).err().unwrap();
+    assert_eq!((error.kind, error.calls), (ErrorKind::Budget, total - 1));
+    let mut again = Mock::default();
+    again
+        .replies
+        .push_back(response(200, json!({"microversion":MID})));
+    let report = workspace_run(&mut again, &dir, 50).unwrap();
+    assert_eq!(report.calls, 1);
+    assert_eq!(again.sent.len(), 1);
+    assert!(again.sent[0].1.ends_with("/currentmicroversion"));
+    assert_sources(&mut open_bundle(&dir), MID, "m");
+}
+
+#[test]
+fn a_stopped_version_fetch_continues_with_exactly_the_missing_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut whole = Mock::default();
+    whole
+        .replies
+        .push_back(response(200, json!({"microversion":MID})));
+    whole.replies.extend(partstudio_replies(MID, "1"));
+    let replies: Vec<Response> = whole.replies.into();
+    let total = u32::try_from(replies.len()).unwrap();
+    let mut first = Mock {
+        replies: replies.clone().into(),
+        ..Mock::default()
+    };
+    let error = run(&mut first, &dir, PS, total - 1).err().unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    let mut again = Mock {
+        replies: replies[replies.len() - 1..].to_vec().into(),
+        ..Mock::default()
+    };
+    assert_eq!(run(&mut again, &dir, PS, 50).unwrap().calls, 1);
+    assert_eq!(again.sent.len(), 1);
+}
+
+#[test]
+fn continuing_after_the_workspace_changed_starts_over_at_its_new_state() {
+    const MID2: &str = "888888888888888888888888";
+    let whole = workspace_replies();
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = Mock {
+        replies: whole.clone().into(),
+        ..Mock::default()
+    };
+    // Stop after the variables reply, a workspace reply saved for MID.
+    workspace_run(&mut first, &dir, 6).err().unwrap();
+    let mut again = Mock::default();
+    // The rest of the MID fetch, then a check that finds the workspace moved on.
+    again
+        .replies
+        .extend(whole[6..whole.len() - 1].iter().cloned());
+    again
+        .replies
+        .push_back(response(200, json!({"microversion":MID2})));
+    again.replies.extend(partstudio_replies(MID2, "2"));
+    again
+        .replies
+        .push_back(response(200, json!({"microversion":MID2})));
+    workspace_run(&mut again, &dir, 50).unwrap();
+    assert!(again.replies.is_empty());
+    let mut zip = open_bundle(&dir);
+    assert_sources(&mut zip, MID2, "m");
+    let vars = zip_value(&mut zip, &format!("partstudios/{PS}/variables.json"));
+    assert_eq!(vars[0]["variables"][0]["value"], "2");
+}
+
+#[test]
+fn a_continued_fetch_estimates_only_the_calls_it_has_left() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut whole = Mock::default();
+    whole
+        .replies
+        .push_back(response(200, json!({"microversion":MID})));
+    whole.replies.extend(partstudio_replies(MID, "1"));
+    let replies: Vec<Response> = whole.replies.into();
+    let mut first = Mock {
+        replies: replies.clone().into(),
+        ..Mock::default()
+    };
+    // Stop after the variables: the STEP export (3 calls) and the sketches are left.
+    run(&mut first, &dir, PS, 7).err().unwrap();
+    let mut again = Mock {
+        replies: replies[7..].to_vec().into(),
+        ..Mock::default()
+    };
+    let mut counted = Counted::default();
+    let report = fetch_watched(
+        &mut again,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut counted),
+    )
+    .unwrap();
+    assert_eq!(report.calls, 4);
+    assert_eq!(
+        counted.0,
+        (1..=4).map(|sent| (sent, Some(4))).collect::<Vec<_>>()
+    );
 }

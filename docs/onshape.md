@@ -442,7 +442,7 @@ account metadata files are included. Dutchman follows assembly references within
 and refuses assembly references to a different microversion of that document. Derived
 references are captured separately at their immutable versions, including other documents. It fetches at
 most 1,000 elements and 10,000 files. Responses are limited to 64 MiB; the complete
-bundle's uncompressed payload and provisional workspace cache each have a 512 MiB cap.
+bundle's uncompressed payload has a 512 MiB cap.
 
 ### Consistency
 
@@ -453,15 +453,29 @@ Versions are immutable, so no final head check is needed.
 For a workspace URL, Dutchman reads the current microversion at the start. Endpoints
 that support microversions use `/m/<microversion>`; STEP export and variables use
 `/w/<workspace>`, as required by Onshape's API. After fetching everything, Dutchman
-reads the workspace microversion again. If it changed, it discards that attempt's
+reads the workspace microversion again. If it changed, it deletes that microversion's
 workspace-only responses and refetches once from the newly observed microversion.
 If the second attempt also changes, it stops without replacing the output:
 
 > the document changed while fetching; try again, or use a version link
 
 The call budget covers both attempts and every consistency check. A fetch that
-cannot afford its final check writes no bundle. Workspace-only responses become
-reusable cache entries only after a successful final head check.
+cannot afford its final check writes no bundle.
+
+### Continue a stopped fetch
+
+Every reply is saved to the cache as it arrives. A fetch that stops before it finishes,
+at the call limit, on a network failure, or when the app or computer restarts, keeps
+what it fetched. Run the same link again, the same day or later, and Dutchman sends only
+the calls it is missing: a fetch stopped one call short finishes with one call. Stop in
+the app ends a running fetch before its next call and keeps what it fetched; Continue
+fetching then sends only the missing calls.
+
+A stopped workspace fetch continues at the microversion it started from, so it does not
+read the current microversion again. Its final check proves that the workspace has not
+changed since that start, and only then are its saved workspace replies used. If the
+workspace changed in the meantime, the check finds the new microversion, the saved
+workspace replies are deleted, and the fetch starts over from the new state, as above.
 
 Successful manifests contain `consistent: true` and `file_sources`, a map from
 archive file path to `{ "path_kind": "m|v|w", "microversion": "..." }`. Every
@@ -517,9 +531,10 @@ scoped by a digest of the access key, document ID, microversion, and complete re
 path/query. Export cache keys also include the export options. No key is written
 there. Re-fetching an immutable version can cost zero calls. A fully cached
 workspace fetch costs two head checks, even when its microversion has not changed.
-Unverified workspace-only responses are discarded when an attempt changes or fails;
+Workspace-only responses are deleted when a check finds the workspace changed;
 immutable responses remain cached. Optional 404s become absence markers for that
-microversion. Immutable-version exports can resume a pending job after interruption.
+microversion. An export job interrupted after it started resumes polling instead of
+starting again.
 Keep the cache private; removing it spends calls again.
 
 STEP exports are polled at increasing intervals (one second, doubling to at most

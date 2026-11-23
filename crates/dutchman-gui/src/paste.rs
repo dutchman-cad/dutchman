@@ -311,9 +311,14 @@ pub type Fetch =
 struct Calls {
     sender: std::sync::mpsc::Sender<Message>,
     ctx: eframe::egui::Context,
+    /// Set by the Stop button; read before each call.
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl dutchman::onshape::FetchProgress for Calls {
+    fn stop_requested(&mut self) -> bool {
+        self.stop.load(std::sync::atomic::Ordering::SeqCst)
+    }
     fn calls(&mut self, sent: u32, needed: Option<u32>) {
         let _ = self.sender.send(Message::Calls(sent, needed));
         self.ctx.request_repaint();
@@ -341,6 +346,9 @@ pub(crate) struct Inbox {
     pub(crate) last_onshape: Option<String>,
     pub(crate) bearer_token_file: Option<PathBuf>,
     pub(crate) active: bool,
+    /// Asks the running Onshape fetch to stop before its next call.
+    pub(crate) stop_onshape: bool,
+    pub(crate) stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) row: Option<usize>,
     pub(crate) caption: String,
     pub(crate) progress: Option<(u64, Option<u64>)>,
@@ -369,6 +377,8 @@ impl Inbox {
             last_onshape: None,
             bearer_token_file: None,
             active: false,
+            stop_onshape: false,
+            stop: Default::default(),
             row: None,
             caption: String::new(),
             progress: None,
@@ -399,6 +409,9 @@ impl Inbox {
         ctx: &eframe::egui::Context,
     ) {
         self.active = true;
+        self.stop.store(false, std::sync::atomic::Ordering::SeqCst);
+        let stop = self.stop.clone();
+        self.stop_onshape = matches!(source, Source::Onshape(_));
         self.row = Some(row);
         let sender = self.sender.clone();
         let transport = self.transport.clone();
@@ -434,6 +447,7 @@ impl Inbox {
                         let mut calls = Calls {
                             sender: sender.clone(),
                             ctx: ctx.clone(),
+                            stop,
                         };
                         let result = if bearer_token_file.is_some() {
                             crate::onshape::fetch_with_budget(
