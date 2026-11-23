@@ -4232,6 +4232,106 @@ mod paste_inputs {
         }
     }
 
+    /// Names the design after 12 calls, then holds until released.
+    fn named_fetch(
+        link: String,
+        folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        progress.calls(12, Some(51));
+        progress.named("Bracket - Part Studio 1");
+        let started = Instant::now();
+        while !NAME_SEEN.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(started.elapsed() < Duration::from_secs(30), "never read");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        fetch(link, folder, progress)
+    }
+    static NAME_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    #[test]
+    fn the_row_goes_by_the_design_name_once_the_fetch_knows_it() {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(true);
+        h.state_mut().set_out_dir(output.path().into());
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), named_fetch);
+        paste(&mut h, LINK);
+        let started = Instant::now();
+        while h
+            .query_by_label("Bracket - Part Studio 1.onshape-bundle")
+            .is_none()
+        {
+            assert!(started.elapsed() < Duration::from_secs(30), "no title");
+            std::thread::sleep(Duration::from_millis(10));
+            h.step();
+        }
+        assert_eq!(
+            h.state().rows()[0].input,
+            PathBuf::from("Bracket - Part Studio 1.onshape-bundle")
+        );
+        assert!(h
+            .query_by_label("cccccccccccccccccccccccc.onshape-bundle")
+            .is_none());
+        NAME_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
+        wait_for_conversion(&mut h);
+    }
+
+    /// Names the design, then holds until the screenshot is taken.
+    fn named_held_fetch(
+        _link: String,
+        _folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        progress.calls(12, Some(51));
+        progress.named("Bracket - Part Studio 1");
+        let started = Instant::now();
+        while !SHOT_TAKEN.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(started.elapsed() < Duration::from_secs(60), "never shot");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Err("Fetch ended.".into())
+    }
+
+    #[test]
+    #[ignore = "renders real GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+    fn onshape_title_screenshots() {
+        let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            SHOT_TAKEN.store(false, std::sync::atomic::Ordering::SeqCst);
+            let mut h = window(true);
+            h.ctx.set_theme(theme);
+            h.state_mut().set_checker_for_test(true);
+            h.state_mut().preview_solidcraft(Some("0.46.2"));
+            h.state_mut()
+                .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
+            h.state_mut().set_verify(false);
+            h.state_mut()
+                .set_link_transport_for_test(Arc::new(MockNetwork::default()), named_held_fetch);
+            paste(&mut h, LINK);
+            let started = Instant::now();
+            while h
+                .query_by_label("Bracket - Part Studio 1.onshape-bundle")
+                .is_none()
+            {
+                assert!(started.elapsed() < Duration::from_secs(30), "no title");
+                std::thread::sleep(Duration::from_millis(10));
+                h.step();
+            }
+            h.run_steps(3);
+            h.render()
+                .unwrap()
+                .save(dir.join(format!("onshape-title-fetching-{name}.png")))
+                .unwrap();
+            SHOT_TAKEN.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     /// Reports 12 calls, then loops until the window's Stop button asks it to end.
     fn stoppable_fetch(
         _link: String,

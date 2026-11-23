@@ -804,6 +804,12 @@ impl App {
                         _ => format!("Fetching from Onshape: {sent} API calls…"),
                     });
                 }
+                Message::Named(title) => {
+                    // The running row goes by the design's name instead of the link's id.
+                    if let Some(row) = self.intake.row.and_then(|index| self.rows.get_mut(index)) {
+                        row.input = PathBuf::from(format!("{title}.onshape-bundle"));
+                    }
+                }
                 Message::Progress(bytes, size) => {
                     self.intake.progress = Some((bytes, size));
                     let total = size.map_or_else(

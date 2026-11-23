@@ -352,7 +352,9 @@ version is shown as an advisory notice, such as "This log is from Dutchman 0.2.5
 
 Onshape result cards also offer **Show bundle** and **Send to Dutchman**. The fetched
 `.onshape-bundle` stays beside the `.sc` with the same base name after the app closes,
-including when you opened the document by pasting or dropping its link. **Show bundle**
+including when you opened the document by pasting or dropping its link. It is named after
+the design, `<document name> - <tab name>.onshape-bundle`, and the result row shows that
+name while the fetch runs. **Show bundle**
 reveals the source archive in Finder or Explorer. **Send to Dutchman** opens the existing
 report review with that archive attached; **Send** uploads it privately. The private-send
 card uses the original archive when the report upload is too large.

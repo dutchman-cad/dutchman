@@ -306,8 +306,12 @@ Use a URL of the form `https://cad.onshape.com/documents/<document>/w/<workspace
 or `/v/<version>` instead of `/w/<workspace>`. IDs have 24 hexadecimal characters.
 `--version` takes an immutable Onshape version ID and overrides the URL's workspace
 or version. Query parameters and fragments are not supported yet; one default
-configuration is fetched. The default output is `<element-id>.onshape-bundle` in
-the current folder. An existing output is replaced only after a successful fetch.
+configuration is fetched. The default output is `<document name> - <tab name>.onshape-bundle`
+in the current folder, from the names the fetch already reads (no extra API call), or
+`<element-id>.onshape-bundle` when no name is known. A bundle of the same document and tab
+already there is replaced; when another file has the name, the new bundle gets ` (2)`, ` (3)`
+and so on. An explicit `--out` is used exactly as given, and an existing
+output is replaced only after a successful fetch.
 
 ### Connect your Onshape account
 

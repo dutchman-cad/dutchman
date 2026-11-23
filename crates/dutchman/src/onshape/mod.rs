@@ -167,7 +167,8 @@ impl DocumentUrl {
 pub struct FetchOptions {
     /// URL of one of your own Onshape Part Studios or assemblies.
     pub document_url: String,
-    /// Bundle file (default: <element-id>.onshape-bundle).
+    /// Bundle file (default: "<document name> - <tab name>.onshape-bundle" in the current
+    /// folder, or <element-id>.onshape-bundle when no name is known).
     #[arg(long)]
     pub out: Option<PathBuf>,
     /// Immutable Onshape version ID, overriding the URL's workspace/version.
@@ -195,6 +196,8 @@ struct Setup {
     credentials: FetchAuth,
     cache: PathBuf,
     output: PathBuf,
+    /// No `--out`: the bundle is renamed after the design's title once it is written.
+    retitle: bool,
 }
 
 fn setup(options: &FetchOptions) -> Result<Setup> {
@@ -215,6 +218,92 @@ fn setup(options: &FetchOptions) -> Result<Setup> {
         credentials,
         cache,
         output,
+        retitle: options.out.is_none(),
+    })
+}
+
+/// The name a bundle goes by: "Document - Tab", or just the document name when the tab
+/// name is missing, empty or the same. Control and path-unsafe characters are dropped,
+/// whitespace collapses, and it stops at 100 characters. `None` when nothing is left.
+pub fn bundle_title(document: &str, tab: Option<&str>) -> Option<String> {
+    fn clean(text: &str) -> String {
+        let kept: String = text
+            .chars()
+            .map(|c| {
+                if c.is_control() || "/\\:*?\"<>|".contains(c) {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect();
+        kept.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+    let document = clean(document);
+    let tab = clean(tab.unwrap_or_default());
+    let full = match (document.is_empty(), tab.is_empty() || tab == document) {
+        (true, true) => return None,
+        (true, false) => tab,
+        (false, true) => document,
+        (false, false) => format!("{document} - {tab}"),
+    };
+    let capped: String = full.chars().take(100).collect();
+    let title = capped.trim_end_matches(['.', ' ']).trim_start_matches('.');
+    (!title.is_empty()).then(|| title.to_owned())
+}
+
+/// The document id and root element a bundle's manifest names; `None` for anything else.
+fn bundle_design(path: &Path) -> Option<(String, String)> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut zip = zip::ZipArchive::new(file).ok()?;
+    let entry = zip.by_name("manifest.json").ok()?;
+    let mut bytes = Vec::new();
+    entry.take(MAX_RESPONSE).read_to_end(&mut bytes).ok()?;
+    let manifest: Value = serde_json::from_slice(&bytes).ok()?;
+    let document = manifest.pointer("/document/id")?.as_str()?.to_owned();
+    let element = manifest.get("root_element")?.as_str()?.to_owned();
+    Some((document, element))
+}
+
+/// Moves a finished bundle to `<title>.onshape-bundle` beside it. A bundle of the same
+/// document and element already there is replaced, as a fetch again replaces the id-named
+/// file; any other file is kept, and the name gets " (2)", " (3)" and so on. Returns the
+/// final path. The replies the fetch cached live elsewhere, so a resumed fetch does not
+/// depend on this name.
+pub fn retitle(output: &Path, title: &str) -> Result<PathBuf> {
+    let folder = output.parent().unwrap_or_else(|| Path::new(""));
+    let design = bundle_design(output);
+    let mut number = 1u32;
+    loop {
+        let name = if number == 1 {
+            format!("{title}.onshape-bundle")
+        } else {
+            format!("{title} ({number}).onshape-bundle")
+        };
+        let target = folder.join(name);
+        if target == output {
+            return Ok(target);
+        }
+        if !target.exists() || (design.is_some() && bundle_design(&target) == design) {
+            std::fs::rename(output, &target).map_err(io_error)?;
+            return Ok(target);
+        }
+        number = number.saturating_add(1);
+    }
+}
+
+/// Renames a default-named bundle after its title, and reports the final path. A failed
+/// rename keeps the id-named bundle, which is complete.
+fn finish(result: Result<FetchReport>, retitle_default: bool) -> Result<FetchReport> {
+    result.map(|mut report| {
+        if retitle_default {
+            if let Some(title) = &report.title {
+                if let Ok(path) = retitle(&report.output, title) {
+                    report.output = path;
+                }
+            }
+        }
+        report
     })
 }
 
@@ -234,7 +323,7 @@ pub fn run_with_progress(
         let progress = progress
             .as_mut()
             .map(|progress| &mut **progress as &mut dyn FetchProgress);
-        fetch_gated_watched(
+        let result = fetch_gated_watched(
             &mut NetworkClient::default(),
             &setup.credentials,
             &setup.source,
@@ -243,7 +332,8 @@ pub fn run_with_progress(
             options.max_calls,
             options.yes,
             progress,
-        )
+        );
+        finish(result, setup.retitle)
     });
     crate::json::onshape_fetch(&result)
 }
@@ -263,14 +353,15 @@ pub fn estimate(options: &FetchOptions) -> Result<Estimate> {
 /// Fetches after the estimate was shown and, if it was above [`ASK_ABOVE_CALLS`], allowed.
 pub fn run_after(options: &FetchOptions, estimate: &Estimate) -> Value {
     let result = setup(options).and_then(|setup| {
-        fetch_approved(
+        let result = fetch_approved(
             &mut NetworkClient::default(),
             &setup.credentials,
             &setup.source,
             &setup.output,
             &setup.cache,
             estimate,
-        )
+        );
+        finish(result, setup.retitle)
     });
     crate::json::onshape_fetch(&result)
 }
@@ -607,6 +698,8 @@ pub fn login<C: HttpClient>(
 
 pub struct FetchReport {
     pub output: PathBuf,
+    /// The design's title ([`bundle_title`]), when the document and tab names give one.
+    pub title: Option<String>,
     pub microversion: String,
     pub calls: u32,
     pub cache_hits: u32,
@@ -1053,6 +1146,7 @@ fn capture<C: HttpClient>(
         ));
     }
     let mut queue = VecDeque::from([source.element.clone()]);
+    let mut title = None;
     let mut visited = BTreeSet::new();
     let mut elements = Vec::new();
     let mut external = BTreeSet::new();
@@ -1079,6 +1173,12 @@ fn capture<C: HttpClient>(
             .get("name")
             .and_then(Value::as_str)
             .ok_or_else(response_error)?;
+        if visited.len() == 1 {
+            title = bundle_title(&name, Some(tab_name));
+            if let (Some(title), Some(progress)) = (&title, fetcher.session.progress.as_mut()) {
+                progress.named(title);
+            }
+        }
         let mut paths = BTreeMap::new();
         match kind {
             "PARTSTUDIO" => {
@@ -1251,6 +1351,7 @@ fn capture<C: HttpClient>(
     write_bundle(output, &fetcher.files)?;
     Ok(Capture::Complete(FetchReport {
         output: output.into(),
+        title,
         microversion: mid.into(),
         calls: fetcher.session.calls,
         cache_hits: *hits,

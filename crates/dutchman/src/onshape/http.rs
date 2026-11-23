@@ -135,6 +135,9 @@ pub trait FetchProgress {
     fn stop_requested(&mut self) -> bool {
         false
     }
+    /// Once, as soon as the document name and the linked tab's name are known: the title
+    /// the design goes by ([`super::bundle_title`]). Costs no call.
+    fn named(&mut self, _title: &str) {}
 }
 
 /// Calls an automatic budget starts with: document name, tab list, microversion checks.

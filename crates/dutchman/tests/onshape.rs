@@ -901,6 +901,7 @@ fn report_handles_non_utf8_output_paths_without_panicking() {
     let output = std::path::PathBuf::from(std::ffi::OsString::from_vec(vec![b'x', 0xff]));
     let result = Ok(FetchReport {
         output,
+        title: None,
         microversion: MID.into(),
         calls: 0,
         cache_hits: 0,
@@ -2415,6 +2416,172 @@ fn progress_counts_each_call_and_estimates_after_the_feature_list() {
     // Microversion, document, tabs and features come before the estimate.
     assert!(counted.0[..4].iter().all(|(_, needed)| needed.is_none()));
     assert!(counted.0[4..].iter().all(|(_, needed)| *needed == Some(11)));
+}
+
+#[derive(Default)]
+struct Titles(Vec<String>);
+impl FetchProgress for Titles {
+    fn calls(&mut self, _: u32, _: Option<u32>) {}
+    fn named(&mut self, title: &str) {
+        self.0.push(title.to_owned());
+    }
+}
+#[test]
+fn the_title_comes_from_the_document_and_tab_names_without_extra_calls() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = partstudio_mock(MID, "1");
+    let mut titles = Titles::default();
+    let report = fetch_watched(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut titles),
+    )
+    .unwrap();
+    // The same eleven calls as a fetch nobody names.
+    assert_eq!(report.calls, 11);
+    assert_eq!(titles.0, ["Synthetic Part Studio - Synthetic tab"]);
+    assert_eq!(
+        report.title.as_deref(),
+        Some("Synthetic Part Studio - Synthetic tab")
+    );
+}
+#[test]
+fn a_resumed_fetch_names_the_design_from_the_cache() {
+    let whole = workspace_replies();
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = Mock {
+        replies: whole.clone().into(),
+        ..Mock::default()
+    };
+    let mut stop = StopAfter { after: 3, sent: 0 };
+    fetch_watched(
+        &mut first,
+        &FetchAuth::ApiKeys(credentials()),
+        &workspace_source(),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut stop),
+    )
+    .err()
+    .unwrap();
+    let mut again = Mock {
+        replies: whole[3..].to_vec().into(),
+        ..Mock::default()
+    };
+    let mut titles = Titles::default();
+    let report = fetch_watched(
+        &mut again,
+        &FetchAuth::ApiKeys(credentials()),
+        &workspace_source(),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut titles),
+    )
+    .unwrap();
+    assert_eq!(report.calls, u32::try_from(whole.len()).unwrap() - 3);
+    assert_eq!(titles.0.len(), 1);
+    assert_eq!(report.title.as_deref(), Some(titles.0[0].as_str()));
+}
+#[test]
+fn bundle_titles_join_names_and_drop_unsafe_characters() {
+    use dutchman::onshape::bundle_title;
+    assert_eq!(
+        bundle_title("Bracket", Some("Part Studio 1")).as_deref(),
+        Some("Bracket - Part Studio 1")
+    );
+    for tab in [None, Some(""), Some("  "), Some("Bracket")] {
+        assert_eq!(bundle_title("Bracket", tab).as_deref(), Some("Bracket"));
+    }
+    assert_eq!(
+        bundle_title("A/B: \"C\"?", Some("x\ty|z*<>")).as_deref(),
+        Some("A B C - x y z")
+    );
+    assert_eq!(
+        bundle_title("  many   spaces. ", Some("tab...")).as_deref(),
+        Some("many spaces. - tab")
+    );
+    assert_eq!(
+        bundle_title("", Some("Only tab")).as_deref(),
+        Some("Only tab")
+    );
+    assert_eq!(bundle_title("///", Some("..")), None);
+    let long = bundle_title(&"é".repeat(300), Some("tab")).unwrap();
+    assert_eq!(long.chars().count(), 100);
+}
+#[test]
+fn retitling_replaces_a_bundle_of_the_same_design_only() {
+    use dutchman::onshape::retitle;
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let bundle = |name: &str, document: &str, element: &str| {
+        let path = dir.path().join(name);
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        zip.start_file("manifest.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(
+            serde_json::to_vec(&json!({"document": {"id": document}, "root_element": element}))
+                .unwrap()
+                .as_slice(),
+        )
+        .unwrap();
+        zip.finish().unwrap();
+        path
+    };
+    let title = "Bracket - Part Studio 1";
+    let first = retitle(&bundle("e1.onshape-bundle", "d1", "e1"), title).unwrap();
+    assert_eq!(first, dir.path().join(format!("{title}.onshape-bundle")));
+    // The same design fetched again replaces its bundle.
+    let again = retitle(&bundle("e1.onshape-bundle", "d1", "e1"), title).unwrap();
+    assert_eq!(again, first);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    // Another design with the same title keeps both.
+    let other = retitle(&bundle("e2.onshape-bundle", "d2", "e2"), title).unwrap();
+    assert_eq!(
+        other,
+        dir.path().join(format!("{title} (2).onshape-bundle"))
+    );
+    assert!(first.exists());
+}
+#[test]
+fn retitling_never_overwrites_a_bundle_that_is_there() {
+    use dutchman::onshape::retitle;
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        path
+    };
+    let first = write("id1.onshape-bundle", "one");
+    let moved = retitle(&first, "Bracket - Part Studio 1").unwrap();
+    assert_eq!(
+        moved,
+        dir.path().join("Bracket - Part Studio 1.onshape-bundle")
+    );
+    assert!(!first.exists());
+    let second = write("id1.onshape-bundle", "two");
+    let moved = retitle(&second, "Bracket - Part Studio 1").unwrap();
+    assert_eq!(
+        moved,
+        dir.path()
+            .join("Bracket - Part Studio 1 (2).onshape-bundle")
+    );
+    let third = write("id1.onshape-bundle", "three");
+    let moved = retitle(&third, "Bracket - Part Studio 1").unwrap();
+    assert_eq!(
+        moved,
+        dir.path()
+            .join("Bracket - Part Studio 1 (3).onshape-bundle")
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("Bracket - Part Studio 1.onshape-bundle")).unwrap(),
+        "one"
+    );
 }
 
 /// Asks to stop once `after` calls have been sent.

@@ -1375,6 +1375,7 @@ pub fn onshape_fetch(result: &crate::onshape::Result<crate::onshape::FetchReport
     match result {
         Ok(report) => {
             json!({"schema": crate::onshape::SCHEMA, "ok": true, "output": report.output.display().to_string(),
+            "title": report.title,
             "microversion": report.microversion, "calls": report.calls, "cache_hits": report.cache_hits})
         }
         Err(error) => {

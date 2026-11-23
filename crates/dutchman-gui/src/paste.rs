@@ -288,6 +288,8 @@ pub(crate) enum Message {
     Progress(u64, Option<u64>),
     /// Onshape calls sent so far, and the estimated total once it is known.
     Calls(u32, Option<u32>),
+    /// The design's title, once the fetch has the document and tab names.
+    Named(String),
     Finished(Result<(PathBuf, Option<tempfile::TempDir>), String>),
     /// The Onshape link needs about this many calls, more than the app spends unasked.
     NeedsApproval(String, u32),
@@ -321,6 +323,10 @@ impl dutchman::onshape::FetchProgress for Calls {
     }
     fn calls(&mut self, sent: u32, needed: Option<u32>) {
         let _ = self.sender.send(Message::Calls(sent, needed));
+        self.ctx.request_repaint();
+    }
+    fn named(&mut self, title: &str) {
+        let _ = self.sender.send(Message::Named(title.to_owned()));
         self.ctx.request_repaint();
     }
 }
