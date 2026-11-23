@@ -11,6 +11,9 @@ updates:
     ignore:
       - dependency-name: "cadmpeg*"
       - dependency-name: "dutchman*"
+      # The SolidCraft plugin's bindings stay on the wit-bindgen SolidCraft's host is built
+      # with; they move with a SolidCraft release, by hand (#982).
+      - dependency-name: "wit-bindgen*"
       # zip 9.8 needs Rust 1.89; the workspace builds with 1.88 (the msrv job).
       - dependency-name: "zip"
         versions: [">=9.8.0"]
