@@ -68,6 +68,10 @@ pub struct Card<'a> {
     pub done: Option<&'a str>,
 }
 
+/// Titles that replace the cards' own, so a screenshot test can show long translations.
+#[cfg(feature = "test-support")]
+pub static TITLES_FOR_TEST: std::sync::Mutex<Option<[String; 3]>> = std::sync::Mutex::new(None);
+
 /// The narrowest a card gets before the cards wrap onto another line.
 const MIN_CARD_WIDTH: f32 = 175.0;
 /// The step number's circle.
@@ -97,11 +101,20 @@ pub fn cards(
         ui.columns(across, |columns| {
             for (column, (ui, card)) in columns.iter_mut().zip(chunk).enumerate() {
                 let number = line * across + column + 1;
+                #[cfg(feature = "test-support")]
+                let title_text = TITLES_FOR_TEST
+                    .lock()
+                    .ok()
+                    .and_then(|titles| titles.as_ref().and_then(|t| t.get(number - 1).cloned()))
+                    .unwrap_or_else(|| card.title.to_owned());
+                #[cfg(not(feature = "test-support"))]
+                let title_text = card.title.to_owned();
                 let natural_id = base.with(("natural", number));
                 let natural = ui
                     .data(|data| data.get_temp::<f32>(natural_id))
                     .unwrap_or(0.0);
                 let spare = (tallest - natural).max(0.0);
+                let button_id = base.with("button-height");
                 let advice = card.button.is_none();
                 let frame = if advice {
                     Frame::new()
@@ -117,18 +130,21 @@ pub fn cards(
                         ui.set_width(ui.available_width());
                         theme::compact_rows(ui);
                         let top = ui.cursor().top();
+                        // One row each for the title, the button and the note, the same height
+                        // in every card, so they line up whatever the title's length.
                         ui.horizontal(|ui| {
                             badge(ui, p, number, advice);
-                            ui.add(
-                                egui::Label::new(RichText::new(card.title).strong().color(p.ink))
-                                    .wrap(),
-                            );
+                            fit_title(ui, p, &title_text);
                         });
-                        ui.add_space(spare);
                         if let Some((label, step)) = card.button {
-                            if ui.add(filled(p, label)).clicked() {
+                            let response = ui.add(filled(p, label));
+                            ui.data_mut(|data| data.insert_temp(button_id, response.rect.height()));
+                            if response.clicked() {
                                 pressed = Some(step);
                             }
+                        } else {
+                            let height = ui.data(|data| data.get_temp::<f32>(button_id));
+                            ui.add_space(height.unwrap_or(0.0));
                         }
                         // Left-aligned: a justified column would stretch the gaps between words.
                         ui.with_layout(Layout::top_down(Align::Min), |ui| match card.done {
@@ -139,6 +155,7 @@ pub fn cards(
                                 ui.label(RichText::new(card.hint).small().color(p.tide));
                             }
                         });
+                        ui.add_space(spare);
                         let height = ui.cursor().top() - top - spare;
                         ui.data_mut(|data| data.insert_temp(natural_id, height));
                         measured = measured.max(height);
@@ -152,6 +169,34 @@ pub fn cards(
         ui.ctx().request_repaint();
     }
     pressed
+}
+
+/// A card's title on one line: a long one shrinks a step at a time down to a floor, then is
+/// cut with an ellipsis; either way the full title is in the tooltip. The card never grows.
+fn fit_title(ui: &mut egui::Ui, p: &Palette, title: &str) {
+    const FLOOR: f32 = 11.0;
+    let width = ui.available_width();
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let measure = |size: f32| {
+        ui.painter()
+            .layout_no_wrap(
+                title.to_owned(),
+                egui::FontId::new(size, font.family.clone()),
+                p.ink,
+            )
+            .size()
+            .x
+    };
+    let mut size = font.size;
+    while size > FLOOR && measure(size) > width {
+        size -= 1.0;
+    }
+    let cut = measure(size) > width;
+    let response =
+        ui.add(egui::Label::new(RichText::new(title).size(size).strong().color(p.ink)).truncate());
+    if cut || size < font.size {
+        response.on_hover_text(title);
+    }
 }
 
 /// The step's number in a circle: filled for a step with a button, outlined for advice.

@@ -5325,6 +5325,68 @@ fn cloud_report_button_opens_the_review_screen_without_opening_more() {
     assert_eq!(harness.query_all_by_label(CLOUD).count(), 1);
 }
 
+/// The three step cards on a shared grid, with English and with long German titles.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the step cards; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn step_cards_grid_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, titles) in [
+        ("english", None),
+        (
+            "german",
+            Some([
+                "Unserem Discord-Server beitreten".to_owned(),
+                "Dutchy eine Direktnachricht senden".to_owned(),
+                "Bitte einen STEP-Export hinzufügen".to_owned(),
+            ]),
+        ),
+    ] {
+        *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = titles;
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let docs = PathBuf::from("/Users/demo/Documents");
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().set_checker_for_test(true);
+            harness.state_mut().preview_solidcraft(Some("0.46.2"));
+            harness.state_mut().set_out_dir(docs.join("Converted"));
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: docs.join("Bracket.f3d"),
+                    output: Some(docs.join("Converted").join("Bracket.sc")),
+                    status: Status::Converted,
+                    progress: None,
+                    report: Some(serde_json::json!({"ok": true,
+                        "input": {"path": docs.join("Bracket.f3d"), "format": "fusion_archive"}})),
+                    job: None,
+                    size: Some(100),
+                });
+            harness.run_steps(8);
+            harness.run_steps(8);
+            harness.get_by_label(CLOUD).scroll_to_me();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("step-cards-grid-{language}"),
+                name,
+                "The three step cards on a shared grid.",
+            );
+        }
+    }
+    *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = None;
+    std::fs::write(dir.join("step-cards-grid.md"), index).unwrap();
+}
+
 /// The report panel's two buttons, finished and mid-run, in Day and Night.
 #[cfg(feature = "test-support")]
 #[test]
