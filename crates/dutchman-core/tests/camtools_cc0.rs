@@ -1,7 +1,7 @@
 //! A Fusion tool library made for these tests (see `fixtures/README.md`), converted to
 //! `.camtools` from both of its forms.
 
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 
 use std::path::Path;
 
