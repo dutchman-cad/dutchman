@@ -2344,6 +2344,52 @@ fn volumes(cli: &Path, design: &[u8]) -> Vec<f64> {
         .collect()
 }
 
+/// The bodies the converted features of a visible partial history build, measured.
+///
+/// The writer puts a partial history's features first, then a Remove of the bodies they make
+/// and the Import of the rest. This rolls the timeline back to the feature before the Remove,
+/// so what is measured is the replay alone, before its bodies are taken away.
+fn replayed_prefix_bodies(cli: &Path, design: &[u8]) -> Vec<Value> {
+    let document: Value = serde_json::from_reader(
+        ZipArchive::new(Cursor::new(design))
+            .unwrap()
+            .by_name("document.json")
+            .unwrap(),
+    )
+    .unwrap();
+    let features = document["features"].as_array().unwrap();
+    let remove = features
+        .iter()
+        .position(|f| f["type"] == "remove")
+        .unwrap_or_else(|| panic!("no Remove feature: {document}"));
+    assert!(remove > 0, "no replayed feature before the Remove");
+    let script = vec![
+        json!({"command": "timeline.roll_to", "params": {"feature": features[remove - 1]["id"]}}),
+        json!({"command": "document.inspect", "params": {"measure": true}}),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let (input, steps, output) = (
+        dir.path().join("replay.solidcraft"),
+        dir.path().join("replay.json"),
+        dir.path().join("replay.out.json"),
+    );
+    std::fs::write(&input, design).unwrap();
+    std::fs::write(&steps, Value::Array(script).to_string()).unwrap();
+    assert!(std::process::Command::new(cli)
+        .arg("run")
+        .arg(&steps)
+        .arg("--in")
+        .arg(&input)
+        .arg("--results")
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap()
+        .success());
+    let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+    results[1]["bodies"].as_array().unwrap().clone()
+}
+
 /// The bodies of the hidden replay beside a written design's visible original, measured.
 ///
 /// The writer leaves the hidden history component's body-building features suppressed, so a
@@ -15098,7 +15144,7 @@ fn assert_rest_visible(document: &Value, sketches: usize) {
         rest["name"]
             .as_str()
             .unwrap()
-            .starts_with("Rest of the design (from "),
+            .starts_with("Rest of the design"),
         "{rest}"
     );
     let remove = &features[features.len() - 2];
@@ -15769,11 +15815,12 @@ fn partial_history_replays_beside_the_unchanged_original() {
     let (document, report) = convert(&model, &writer);
     assert_partial(&document, &report, 2);
     assert!(history_line(&report).contains("retained features replay in SolidCraft"));
-    // The visible model is the original cube alone: the hidden replay's features are suppressed.
+    // The finished model is the original cube alone: the Remove takes the replay's body away
+    // and the import brings the source's shape back.
     let (bytes, _) = written_with(&model, &writer);
     assert_eq!(volumes(&cli, &bytes), [1000.0]);
-    // With its features turned back on, the hidden replay is one editable 1000 mm³ cube.
-    let replay = hidden_replay_bodies(&cli, &bytes);
+    // Rolled back to before the Remove, the visible features build one editable 1000 mm³ cube.
+    let replay = replayed_prefix_bodies(&cli, &bytes);
     assert_eq!(
         replay
             .iter()
@@ -15807,13 +15854,13 @@ fn cc0_freecad_subshape_binder_keeps_the_earlier_pad() {
         let mut measured = volumes(&cli, &bytes);
         measured.sort_by(f64::total_cmp);
         // The visible original is two solids, 3000 + 6000 mm³, as the recipe's CC0 manifest
-        // records; the hidden prefix's features are suppressed and add no body.
+        // records; the prefix's body is removed again before the import adds them.
         assert_eq!(measured.len(), 2);
         for (actual, expected) in measured.iter().zip([3000.0, 6000.0]) {
             assert!((actual - expected).abs() < 1e-6, "{measured:?}");
         }
-        // Turned back on, the hidden prefix is one 6000 mm³ body.
-        let replay = hidden_replay_bodies(&cli, &bytes);
+        // Rolled back to before the Remove, the prefix is one 6000 mm³ body.
+        let replay = replayed_prefix_bodies(&cli, &bytes);
         assert_eq!(replay.len(), 1, "{replay:?}");
         assert_eq!(replay[0]["volume_mm3"], 6000.0);
         let dir = tempfile::tempdir().unwrap();
@@ -20594,6 +20641,9 @@ fn unresolved_revolve_synthetic_control_has_more_regions_than_its_stored_loop() 
         .run(
             &bytes,
             &[
+                // The revolve sits in the hidden partial history with its body-building
+                // features suppressed, so turn it on before measuring what it makes.
+                json!({"command":"timeline.suppress","params":{"feature":revolve["id"],"suppressed":false}}),
                 json!({"command":"timeline.roll_to","params":{"feature":revolve["id"]}}),
                 json!({"command":"document.inspect","params":{}}),
             ],
@@ -20602,7 +20652,7 @@ fn unresolved_revolve_synthetic_control_has_more_regions_than_its_stored_loop() 
         )
         .unwrap();
     assert_eq!(
-        result[1]["bodies"].as_array().unwrap().len(),
+        result[2]["bodies"].as_array().unwrap().len(),
         2,
         "{result:?}"
     );
