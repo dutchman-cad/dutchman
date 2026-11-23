@@ -190,4 +190,11 @@ fn a_tool_library_result_is_presented_as_tools_not_as_a_design() {
     let steps = SendSteps::new(policy, None, &report, Surface::Desktop);
     assert_eq!(steps.intro, SEND_TOOLS_INTRO);
     assert!(!steps.step_card);
+    // Too big for Discord: the DM note names the tool library and the hours, not design sizes.
+    let big = dutchman::report_policy::ReportPolicy::bundled();
+    let linked = SendSteps::new(big, Some(u64::MAX), &report, Surface::Desktop);
+    assert_eq!(
+        linked.dm_text,
+        "Paste the message. Dutchy replies with a private upload link for the tool library (72 hours)."
+    );
 }

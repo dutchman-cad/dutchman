@@ -180,6 +180,10 @@ impl SendSteps {
         let dm_text = match (drag, surface) {
             (true, Surface::Desktop) => "Drag the file in (its folder is open).".to_owned(),
             (true, Surface::Web) => "Drag the file in (the file you picked).".to_owned(),
+            (false, _) if crate::tool_library::is_report(report) => format!(
+                "Paste the message. Dutchy replies with a private upload link for the tool library ({} hours).",
+                policy.private_link.hours
+            ),
             (false, _) => format!(
                 "Paste the message. Dutchy replies with a private upload link (up to {}).",
                 policy.link_limits()

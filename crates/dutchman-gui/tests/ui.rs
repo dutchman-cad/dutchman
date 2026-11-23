@@ -2989,6 +2989,7 @@ fn a_tool_library_card_uses_tool_wording_and_no_design_buttons() {
         harness.get_by_label_contains("Fusion tool library (.json)");
         harness.get_by_label_contains("1 tool library");
         harness.get_by_label(dutchman::present::SEND_TOOLS_INTRO);
+        assert!(harness.query_by_label_contains("for the design").is_none());
         for absent in [
             "Open in SolidCraft",
             "Add matching STEP",
