@@ -288,7 +288,7 @@ results, **About** chooses another; **Report this file…** on any finished card
 card's file and brings the panel into view. Its numbered cards are the way to reach us, Discord
 first:
 
-1. **Join our Discord server**: **Open invite** opens the invite. Already in? Skip this step.
+1. **Join our Discord**: **Open invite** opens the invite. Already in? Skip this step.
 2. **DM Dutchy**: **Copy and open DM** copies a message and opens Dutchy's DM. A file within
    Discord's upload limit is dragged in, and its folder opens for that; for a larger one, Dutchy
    replies with a private upload link. See
@@ -311,9 +311,10 @@ file's message is that details line, with its error code, then "Anything else we
 Before any file has finished, or while one is still converting, the message names only the
 version and how long it has been running.
 
-**Anonymous report** and **GitHub issue** are secondary buttons directly below the three steps.
-**Anonymous report** opens the review for a direct upload to the cloud inbox; nothing is sent
-until you review it and click Send. **GitHub issue** is the public backup. It opens the
+A row starting with the small label **Not on Discord?** and holding **File a GitHub issue ↗** and, last, **Review and send report** sits directly below the three steps.
+While the file is still converting the cloud button is greyed out and says "Available when this
+file finishes". **Review and send report** opens the review for a direct upload to the cloud inbox; nothing is sent
+until you review it and click Send. **File a GitHub issue ↗** is the public backup. It opens the
 [A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
 form in your browser with Dutchman's version, your system and the error's stage, upstream and
 code filled in, and copies the file's anonymous report, which names no file and no folder.
@@ -323,7 +324,7 @@ under 2,000 characters so GitHub opens it while you are signed in. For converted
 form says that the result is wrong and asks what differs from the original. With no finished
 file, it opens the empty form.
 
-**More** also offers **Anonymous report** and **GitHub issue**, plus **Ask your AI
+**More** offers **Ask your AI
 about this file**, and, for a failed file, **Diagnose this file**. The review opens in the panel,
 under its steps, not in another window. **Send the whole file privately** in it goes back to the
 steps; with a saved bundle, **Send this bundle privately** makes the DM step show the bundle's
@@ -343,7 +344,7 @@ Log names include UTC date and time, Dutchman version and result, for example
 completed runs use `converted`, `failed` or `stopped`. **Open diagnostics folder** opens the
 folder containing the newest 50 logs, including older time-only names.
 
-**Anonymous report** names this run's log automatically and lets you show or copy it.
+**Review and send report** names this run's log automatically and lets you show or copy it.
 The log contains no names or contents from the design. Send uploads only the summary or
 bundle described in that review; the log stays local. The copied Discord DM names the same
 log so you can attach it without guessing which file belongs to the run. An older log's
@@ -352,7 +353,9 @@ version is shown as an advisory notice, such as "This log is from Dutchman 0.2.5
 
 Onshape result cards also offer **Show bundle** and **Send to Dutchman**. The fetched
 `.onshape-bundle` stays beside the `.sc` with the same base name after the app closes,
-including when you opened the document by pasting or dropping its link. **Show bundle**
+including when you opened the document by pasting or dropping its link. It is named after
+the design, `<document name> - <tab name>.onshape-bundle`, and the result row shows that
+name while the fetch runs. **Show bundle**
 reveals the source archive in Finder or Explorer. **Send to Dutchman** opens the existing
 report review with that archive attached; **Send** uploads it privately. The private-send
 card uses the original archive when the report upload is too large.
@@ -550,7 +553,7 @@ source and matching STEP or converted geometry side by side. These are whole-des
 views. On a file check, click **Target part N** to save the report target. Comparison
 body numbers still need local resolution to the correct assembly part.
 
-**Anonymous report**, under **More** in **Is there a problem? Is something missing?**,
+**Review and send report**, in **Is there a problem? Is something missing?**,
 reviews the part roles and exact sizes; bundles contain geometry. The public-test permission is
 separate and unticked. Extraction is not supported yet: choose anonymous summary, or send the
 whole file privately with the panel's Discord steps. Send/retry always requires a click. If the endpoint does

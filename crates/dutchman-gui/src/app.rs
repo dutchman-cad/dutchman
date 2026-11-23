@@ -816,6 +816,12 @@ impl App {
                         _ => format!("Fetching from Onshape: {sent} API calls…"),
                     });
                 }
+                Message::Named(title) => {
+                    // The running row goes by the design's name instead of the link's id.
+                    if let Some(row) = self.intake.row.and_then(|index| self.rows.get_mut(index)) {
+                        row.input = PathBuf::from(format!("{title}.onshape-bundle"));
+                    }
+                }
                 Message::Progress(bytes, size) => {
                     self.intake.progress = Some((bytes, size));
                     let total = size.map_or_else(
@@ -2224,7 +2230,7 @@ impl App {
         self.page_scrolls = area.content_size.y > area.inner_rect.height() + 1.0;
     }
 
-    /// A wide window: choices scroll above a pinned report panel; results scroll separately.
+    /// A wide window: choices and the report panel scroll as one column; results scroll separately.
     fn wide_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, view: &present::RunView) {
         let rect = ui.available_rect_before_wrap();
         let gap = theme::SPACE_8;
@@ -2234,54 +2240,20 @@ impl App {
             egui::pos2(rect.min.x + left_width + gap, rect.min.y),
             rect.max,
         );
-        let height_id = ui.id().with("report-panel-height");
-        let measured = ui
-            .data(|data| data.get_temp::<f32>(height_id))
-            .unwrap_or(360.0);
-        // Bound long reviews and More so the input and output controls remain reachable.
-        let report_height = measured.min(left.height() * 0.7);
-        let pinned_top = left.bottom() - report_height;
-        let mut report_top = pinned_top;
-        let choices = egui::Rect::from_min_max(
-            left.min,
-            egui::pos2(left.right(), report_top - theme::SPACE_4),
-        );
-        ui.scope_builder(egui::UiBuilder::new().max_rect(choices), |ui| {
-            let area = ScrollArea::vertical()
+        // One scroll area for the whole left column: Designs, Output folder, then the report
+        // panel, each at its natural height, so no card is squeezed or clipped.
+        ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+            ScrollArea::vertical()
                 .id_salt("main-left")
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     self.inputs_panel(ui);
                     ui.add_space(theme::SPACE_4);
                     self.output_panel(ui, ctx);
+                    ui.add_space(theme::SPACE_8);
+                    self.report_panel(ui, view);
                 });
-            // Use spare room below compact controls, while retaining the pinned
-            // boundary when Advanced or a long input list needs its own scroll area.
-            if !self.rows.is_empty() {
-                report_top = (choices.top() + area.content_size.y + theme::SPACE_4).min(pinned_top);
-            }
-        });
-        let report = egui::Rect::from_min_max(egui::pos2(left.left(), report_top), left.max);
-        ui.scope_builder(egui::UiBuilder::new().max_rect(report), |ui| {
-            let top = ui.cursor().top();
-            let reveal = self.reveal_report;
-            self.report_heading(ui);
-            let heading_height = ui.cursor().top() - top;
-            // Keep the body width fixed while its measured height grows. A disappearing
-            // scrollbar would reflow the cards and change button IDs during a click.
-            let mut scroll = ScrollArea::vertical()
-                .id_salt("report-panel-body")
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-                .auto_shrink([false, false]);
-            if reveal {
-                scroll = scroll.vertical_scroll_offset(0.0);
-            }
-            let area = scroll.show(ui, |ui| self.report_panel_body(ui, view));
-            let height = heading_height + area.content_size.y;
-            if (height - measured).abs() > 0.5 {
-                ui.data_mut(|data| data.insert_temp(height_id, height));
-                ui.ctx().request_repaint();
-            }
         });
         ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
             self.unfinished_notice(ui);
@@ -3061,19 +3033,27 @@ impl App {
         let p = *theme::palette(ui);
         ui.horizontal(|ui| {
             if self.running() {
-                let stopping = self.diagnostic_stopped;
+                let fetching = self.run.is_none() && self.intake.active && self.intake.stop_onshape;
+                let fetch_stopping = self.intake.stop.load(std::sync::atomic::Ordering::SeqCst);
+                let stopping = self.diagnostic_stopped || (fetching && fetch_stopping);
                 let label = if stopping {
                     report_panel::STOPPING_BUTTON
                 } else {
                     "Stop"
                 };
                 if ui
-                    .add_enabled(self.run.is_some() && !stopping, egui::Button::new(label))
+                    .add_enabled(
+                        (self.run.is_some() || fetching) && !stopping,
+                        egui::Button::new(label),
+                    )
                     .clicked()
                 {
                     if let Some(run) = &self.run {
                         run.stop();
                         self.diagnostic_stopped = true;
+                    } else if fetching {
+                        // The fetch ends before its next call and keeps what it fetched.
+                        self.intake.stop.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                 }
             } else {
@@ -3506,8 +3486,44 @@ impl App {
                 Some(Step::Dm) => action = Some(Action::Dm(selected)),
                 Some(Step::Github) | None => {}
             }
-            if report_panel::backup_link(ui, &p, present::REPORT_BUTTON).clicked() {
-                action = Some(Action::Report(selected.filter(|_| report.is_some())));
+            let mut show_wait_hint = false;
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(report_panel::NOT_ON_DISCORD)
+                        .small()
+                        .color(p.tide),
+                );
+                if ui
+                    .button(present::REPORT_BUTTON)
+                    .on_hover_text(present::REPORT_HELP)
+                    .clicked()
+                {
+                    action = Some(Action::Report(selected.filter(|_| report.is_some())));
+                }
+                if let Some((index, _)) = row {
+                    let ready = report.is_some() && file.is_some_and(|file| file.can_report);
+                    let button = ui.add_enabled(
+                        ready && !busy,
+                        egui::Button::new(report_panel::CLOUD_REPORT_BUTTON),
+                    );
+                    if !ready || busy {
+                        button.on_disabled_hover_text(report_panel::CLOUD_REPORT_WAIT);
+                        show_wait_hint = !ready;
+                    } else if button.clicked() {
+                        action = Some(Action::Consent(index));
+                    }
+                }
+            });
+            if show_wait_hint {
+                // Its own line under the buttons, so it never wraps beside them.
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(report_panel::CLOUD_REPORT_WAIT)
+                            .small()
+                            .color(p.tide),
+                    )
+                    .wrap_mode(egui::TextWrapMode::Extend),
+                );
             }
             if let Some(text) = done(Step::Github) {
                 ui.label(RichText::new(text).small().strong().color(p.ink));
@@ -3517,13 +3533,6 @@ impl App {
                     egui::CollapsingHeader::new(report_panel::MORE)
                         .id_salt(("report-more", index, &row.input))
                         .show(ui, |ui| {
-                            if file.can_report
-                                && ui
-                                    .add_enabled(!busy, egui::Button::new("Anonymous report"))
-                                    .clicked()
-                            {
-                                action = Some(Action::Consent(index));
-                            }
                             if row.output.is_some() {
                                 if let Some(chosen) =
                                     ask_ai_ui(ui, index, self.ai_prompts.get(&index), reveal_ai)
@@ -4799,18 +4808,16 @@ mod tests {
                     app
                 });
             harness.run_steps(8);
-            // The question and its steps show at once; the anonymous review is under More.
+            // The question, its steps and the cloud button show at once.
             harness.get_by_label(report_panel::QUESTION);
-            assert!(harness.query_by_label("Anonymous report").is_none());
+            harness.get_by_label(report_panel::CLOUD_REPORT_BUTTON);
             let join = harness.get_by_label(present::SEND_JOIN_BUTTON).rect();
             let dm = harness.get_by_label(present::SEND_DM_BUTTON).rect();
             harness.get_by_label(report_panel::MORE).click_accesskit();
             harness.run_steps(8);
             assert!(harness.query_by_label("Diagnose this file").is_none());
             let review = harness
-                .query_all_by_label("Anonymous report")
-                .last()
-                .unwrap()
+                .get_by_label(report_panel::CLOUD_REPORT_BUTTON)
                 .rect();
             // Discord first: the invite's card stands left of the DM's, both above More.
             assert!(join.right() <= dm.left());
@@ -4819,9 +4826,7 @@ mod tests {
                 assert!(rect.left() >= 0.0 && rect.right() <= width);
             }
             harness
-                .query_all_by_label("Anonymous report")
-                .next()
-                .unwrap()
+                .get_by_label(report_panel::CLOUD_REPORT_BUTTON)
                 .click_accesskit();
             harness.run_steps(8);
             harness.get_by_label("This file converted, but the result is wrong.");

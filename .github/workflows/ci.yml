@@ -50,9 +50,10 @@ jobs:
       docker: ${{ steps.diff.outputs.docker }}
       platform: ${{ steps.platform.outputs.platform }}
       floor: ${{ steps.platform.outputs.floor }}
-      # Self-hosted 'flyer' runners: merge queue, main, and pull requests from this repository by
-      # people (never forks, never bots such as Dependabot). FLYER=off sends everything to GitHub.
-      flyer: ${{ vars.FLYER != 'off' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot')) }}
+      # Self-hosted 'flyer' runners: the merge queue and pushes to main only. Every pull request
+      # runs on GitHub-hosted runners (free for a public repository, and parallel), so PRs never
+      # hold flyer slots the queue and main need. FLYER=off sends everything to GitHub.
+      flyer: ${{ vars.FLYER != 'off' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -213,7 +214,7 @@ jobs:
     # bots). Warm build: about 6 min against 12 on GitHub. Set the repository variable FLYER to
     # 'off' to send these runs back to GitHub.
     runs-on: ${{ (matrix.os == 'ubuntu-latest' && needs.changes.outputs.flyer == 'true') && fromJSON('["self-hosted", "flyer"]') || matrix.os }}
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 30 || 25 }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || (needs.changes.outputs.flyer == 'true' && 25 || 45) }}
     env:
       # Debug info is most of a cold Windows build's time and is not needed to run the tests.
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -368,7 +369,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'false'
     runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
-    timeout-minutes: 25
+    timeout-minutes: ${{ needs.changes.outputs.flyer == 'true' && 25 || 45 }}
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"

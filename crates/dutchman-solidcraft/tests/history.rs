@@ -1851,12 +1851,13 @@ fn an_unverified_history_can_be_kept_hidden_beside_the_visible_original() {
     let (document, report) = convert(&model, &writer);
 
     assert!(history_line(&report).contains("unverified: verification turned off; kept hidden"));
-    // The original is the visible model; the history is all there, in a hidden part.
+    // The original is the visible model; the history is all there, in a hidden part, with
+    // its extrusion suppressed so it builds no second body.
     assert_eq!(
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -2340,6 +2341,61 @@ fn volumes(cli: &Path, design: &[u8]) -> Vec<f64> {
             );
             volume.unwrap()
         })
+        .collect()
+}
+
+/// The bodies of the hidden replay beside a written design's visible original, measured.
+///
+/// The writer leaves the hidden history component's body-building features suppressed, so a
+/// plain evaluation holds only the original. This asks SolidCraft (`timeline.suppress`) to
+/// turn those features back on, then measures: the bodies that come out hidden are the replay
+/// alone, so the replay stays proven correct without a second body in the exported design.
+fn hidden_replay_bodies(cli: &Path, design: &[u8]) -> Vec<Value> {
+    let document: Value = serde_json::from_reader(
+        ZipArchive::new(Cursor::new(design))
+            .unwrap()
+            .by_name("document.json")
+            .unwrap(),
+    )
+    .unwrap();
+    let component = document["components"][0]["id"].clone();
+    let mut script: Vec<Value> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["component"] == component && f["suppressed"] == true)
+        .map(|f| json!({"command": "timeline.suppress", "params": {"feature": f["id"], "suppressed": false}}))
+        .collect();
+    assert!(
+        !script.is_empty(),
+        "no suppressed replay feature: {document}"
+    );
+    script.push(json!({"command": "document.inspect", "params": {"measure": true}}));
+    let dir = tempfile::tempdir().unwrap();
+    let (input, steps, output) = (
+        dir.path().join("replay.solidcraft"),
+        dir.path().join("replay.json"),
+        dir.path().join("replay.out.json"),
+    );
+    std::fs::write(&input, design).unwrap();
+    std::fs::write(&steps, Value::Array(script.clone()).to_string()).unwrap();
+    assert!(std::process::Command::new(cli)
+        .arg("run")
+        .arg(&steps)
+        .arg("--in")
+        .arg(&input)
+        .arg("--results")
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap()
+        .success());
+    let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+    let bodies = results[script.len() - 1]["bodies"].as_array().unwrap();
+    bodies
+        .iter()
+        .filter(|body| body["visible"] == false)
+        .cloned()
         .collect()
 }
 
@@ -6833,7 +6889,7 @@ fn composite_mirror_chains_refuse_unrepresentable_stages_and_excessive_products(
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -8768,6 +8824,51 @@ fn a_missing_recipe_uses_final_geometry_only_without_later_body_changes() {
         dutchman_core::FeatureStatus::Blocked,
         "{report:?}"
     );
+    let line = history_line(&report);
+    assert!(
+        line.contains("it is absent from this design")
+            && line.contains("changed by the later feature")
+            && line.contains("only as the design ends"),
+        "{line}"
+    );
+}
+
+#[test]
+fn a_sketchless_extrude_whose_body_a_later_fillet_changes_says_why_it_stops() {
+    // cadmpeg names an Extrude whose profile chain has no Sketch by its scope record, and
+    // keeps the profile native; the body the extrude makes exists only as the design ends.
+    let mut model = fallback_cube(false, true, "new_body");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["definition"]["value"]["value"]["profile"] =
+        json!({"kind": "planar", "value": {"kind": "native", "value": "synthetic:profile#1"}});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let mut report = Report::default();
+    report.push_coded(
+        Severity::Degraded,
+        "source",
+        "f3d/feature.extrude-profile-sketch-absent",
+        "Profile selection record 220 of Extrude scope record 217 has a chain record that names no Sketch, and the profile stays native.",
+    );
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .write(&model, &mut Vec::new(), &mut report)
+        .unwrap();
+    assert_eq!(
+        report.outcome().unwrap().features[1].status,
+        dutchman_core::FeatureStatus::Blocked,
+        "{report:?}"
+    );
+    let line = history_line(&report);
+    assert!(
+        line.contains("native profiles are not mapped yet")
+            && line.contains("the source states no sketch for its profile")
+            && line.contains("is changed by the later feature"),
+        "{line}"
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .all(|loss| loss.code.as_deref() != Some("history/body-fallback-imported")));
 }
 
 #[test]
@@ -10963,7 +11064,7 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
             types(&document),
             [
                 ("sketch".to_owned(), false),
-                ("extrude".to_owned(), false),
+                ("extrude".to_owned(), true),
                 ("import".to_owned(), false),
             ]
         );
@@ -13528,7 +13629,7 @@ fn blends_without_a_solidcraft_to_replay_the_history_are_refused() {
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -13575,7 +13676,7 @@ fn a_replay_that_runs_out_of_time_refuses_the_blend() {
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("import".to_owned(), false)
         ]
     );
@@ -14986,7 +15087,12 @@ fn assert_partial(document: &Value, report: &Report, sketches: usize) {
     assert!(features
         .iter()
         .take(features.len() - 1)
-        .all(|f| &f["component"] == component && f["suppressed"] == false));
+        .all(|f| &f["component"] == component
+            && f["suppressed"]
+                == !matches!(
+                    f["type"].as_str(),
+                    Some("sketch" | "spatial_sketch" | "plane" | "axis" | "point")
+                )));
     assert_eq!(
         document["visibility"]["hidden_occurrences"],
         json!([[document["occurrences"][0]["id"]]])
@@ -15078,7 +15184,7 @@ fn partial_history_appearance_bindings_reach_the_visible_original() {
                 .to_string(),
             )
             .unwrap();
-            assert!(std::process::Command::new(cli)
+            assert!(std::process::Command::new(&cli)
                 .arg("run")
                 .arg(&script)
                 .arg("--in")
@@ -15091,13 +15197,21 @@ fn partial_history_appearance_bindings_reach_the_visible_original() {
                 .success());
             let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
             let bodies = results[0]["bodies"].as_array().unwrap();
-            assert_eq!(bodies.len(), 2, "{results}");
+            assert_eq!(bodies.len(), 1, "{results}");
             assert!(
                 bodies
                     .iter()
                     .any(|b| b["name"] == name && b["visible"] == true),
                 "{results}"
             );
+            // Turned back on, the hidden replay is still one 1000 mm³ cube.
+            let (bytes, _) = written_with(
+                &model,
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            let replay = hidden_replay_bodies(&cli, &bytes);
+            assert_eq!(replay.len(), 1, "{replay:?}");
+            assert_eq!(replay[0]["volume_mm3"], 1000.0);
             assert_eq!(
                 results[1]["body"]["appearance"]["color"], "#ff0000",
                 "{results}"
@@ -15238,7 +15352,7 @@ fn a_blocker_keeps_the_prefix_and_later_resolved_sketches() {
         types(&document),
         [
             ("sketch".to_owned(), false),
-            ("extrude".to_owned(), false),
+            ("extrude".to_owned(), true),
             ("sketch".to_owned(), false),
             ("import".to_owned(), false)
         ]
@@ -15342,9 +15456,18 @@ fn partial_history_replays_beside_the_unchanged_original() {
     let (document, report) = convert(&model, &writer);
     assert_partial(&document, &report, 2);
     assert!(history_line(&report).contains("retained features replay in SolidCraft"));
-    // eval includes hidden bodies: one editable 1000 mm³ cube and the original cube.
+    // The visible model is the original cube alone: the hidden replay's features are suppressed.
     let (bytes, _) = written_with(&model, &writer);
-    assert_eq!(volumes(&cli, &bytes), [1000.0, 1000.0]);
+    assert_eq!(volumes(&cli, &bytes), [1000.0]);
+    // With its features turned back on, the hidden replay is one editable 1000 mm³ cube.
+    let replay = hidden_replay_bodies(&cli, &bytes);
+    assert_eq!(
+        replay
+            .iter()
+            .map(|b| b["volume_mm3"].as_f64().unwrap())
+            .collect::<Vec<_>>(),
+        [1000.0]
+    );
 }
 
 #[test]
@@ -15370,12 +15493,16 @@ fn cc0_freecad_subshape_binder_keeps_the_earlier_pad() {
         let (bytes, _) = written_with(&model, &writer);
         let mut measured = volumes(&cli, &bytes);
         measured.sort_by(f64::total_cmp);
-        // The hidden prefix is 6000 mm³. The visible original is two solids,
-        // 3000 + 6000 mm³, as the recipe's CC0 manifest records.
-        assert_eq!(measured.len(), 3);
-        for (actual, expected) in measured.iter().zip([3000.0, 6000.0, 6000.0]) {
+        // The visible original is two solids, 3000 + 6000 mm³, as the recipe's CC0 manifest
+        // records; the hidden prefix's features are suppressed and add no body.
+        assert_eq!(measured.len(), 2);
+        for (actual, expected) in measured.iter().zip([3000.0, 6000.0]) {
             assert!((actual - expected).abs() < 1e-6, "{measured:?}");
         }
+        // Turned back on, the hidden prefix is one 6000 mm³ body.
+        let replay = hidden_replay_bodies(&cli, &bytes);
+        assert_eq!(replay.len(), 1, "{replay:?}");
+        assert_eq!(replay[0]["volume_mm3"], 6000.0);
         let dir = tempfile::tempdir().unwrap();
         let design = dir.path().join("F16b.solidcraft");
         let script = dir.path().join("visibility.json");
@@ -15403,7 +15530,7 @@ fn cc0_freecad_subshape_binder_keeps_the_earlier_pad() {
         assert!(status.success());
         let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
         let bodies = results[0]["bodies"].as_array().unwrap();
-        assert_eq!(bodies.len(), 3);
+        assert_eq!(bodies.len(), 2);
         let visible: Vec<_> = bodies.iter().filter(|b| b["visible"] == true).collect();
         assert_eq!(visible.len(), 2);
         assert_eq!(
@@ -15416,10 +15543,8 @@ fn cc0_freecad_subshape_binder_keeps_the_earlier_pad() {
         assert!(visible
             .iter()
             .all(|b| b["name"].as_str().unwrap().starts_with("F16b")));
-        let hidden: Vec<_> = bodies.iter().filter(|b| b["visible"] == false).collect();
-        assert_eq!(hidden.len(), 1);
-        assert_eq!(hidden[0]["name"], "Body1");
-        assert_eq!(hidden[0]["volume_mm3"], 6000.0);
+        assert!(bodies.iter().all(|b| b["visible"] == true));
+        assert_eq!(replay[0]["name"], "Body1");
         assert_eq!(results[1]["bodies"], 2);
     }
 }
@@ -15446,7 +15571,11 @@ fn a_partial_component_is_hidden_in_every_assembly_placement() {
         .collect();
     assert_eq!(prefix.len(), 3);
     assert!(prefix.iter().any(|f| f["type"] == "extrude"));
-    assert!(prefix.iter().all(|f| f["suppressed"] == false));
+    // The hidden copy builds no second body: its body-building features are suppressed,
+    // its sketches stay live.
+    assert!(prefix
+        .iter()
+        .all(|f| f["suppressed"] == (f["type"] != "sketch")));
     let original = features
         .iter()
         .find(|f| &f["component"] == second && f["type"] == "import")
@@ -15796,7 +15925,7 @@ fn sketch_choice_keeps_required_profiles_but_not_reference_sketches() {
             types(&document),
             [
                 ("sketch".to_owned(), false),
-                ("extrude".to_owned(), false),
+                ("extrude".to_owned(), true),
                 ("import".to_owned(), false)
             ]
         );
@@ -16396,6 +16525,118 @@ fn solidcraft_extrudes_a_historical_face_along_its_outward_normal() {
             definition["extent"]["side"]["termination"]["length"] = json!(3.0);
         }));
         assert!((volume[0] - 700.0).abs() < 1e-3, "{up}: {volume:?}");
+    }
+}
+
+/// The example cube with a loft that joins a square of side `top`, 10 mm beyond the cube's top
+/// (`up`) or bottom face, onto that face as it was before the loft: a historical face section.
+/// `change` edits the loft's definition.
+fn face_loft(up: bool, top: f64, change: impl FnOnce(&mut Value)) -> Model {
+    let model = face_extrude(up, |_| {});
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let z = if up { 20.0 } else { -10.0 };
+    let (a, b) = (5.0 - top / 2.0, 5.0 + top / 2.0);
+    let sketch = "f3d:model:sketch#9";
+    let ring: Vec<Value> = [21, 22, 23, 24]
+        .map(|k| json!({"entity": format!("f3d:model:sketch-entity#{k}"), "reversed": false}))
+        .to_vec();
+    let wire_model = &mut wire["model"];
+    wire_model["sketches"].as_array_mut().unwrap().push(json!({
+        "id": sketch,
+        "name": "Far",
+        "placement": {"kind": "resolved", "frame": {
+            "origin": {"x": 0.0, "y": 0.0, "z": z},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+        }},
+        "profiles": [ring],
+    }));
+    let far_line = |key: u32, from: [f64; 2], to: [f64; 2]| {
+        let mut row = line(key, from, to);
+        row["sketch"] = json!(sketch);
+        row
+    };
+    wire_model["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            far_line(21, [a, a], [b, a]),
+            far_line(22, [b, a], [b, b]),
+            far_line(23, [b, b], [a, b]),
+            far_line(24, [a, b], [a, a]),
+        ]);
+    let mut definition = json!({"kind": "loft", "value": {"sections": [
+        {"kind": "profile", "value": {"kind": "planar", "value": {"kind": "historical_faces", "value": {
+            "state": "test:face:feature-input#3",
+            "faces": ["test:face:historical-face#target"],
+            "native": ["synthetic profile group"],
+        }}}},
+        {"kind": "profile", "value": {"kind": "planar", "value": {
+            "kind": "sketch_profiles", "value": {"sketch": sketch, "profiles": [0]}}}},
+    ], "guidance": {"kind": "guides", "value": []}, "op": "join", "closed": false, "solid": true,
+    "ruled": false, "linearize": false}});
+    change(&mut definition["value"]);
+    let features = wire_model["features"].as_array_mut().unwrap();
+    let mut loft = features.pop().unwrap();
+    loft["ordinal"] = json!(3);
+    loft["name"] = json!("Face loft");
+    loft["definition"] = json!({"kind": "operation", "value": definition});
+    features.push(json!({"id": "f3d:model:feature#9", "ordinal": 2, "name": "Far sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": sketch}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
+    features.push(loft);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn a_loft_section_that_is_a_historical_face_waits_for_the_replay_that_proves_it() {
+    let (_, report) = convert(
+        &face_loft(true, 4.0, |_| {}),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("replay of the history before it"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn a_loft_section_of_several_faces_is_refused() {
+    let model = face_loft(true, 4.0, |definition| {
+        definition["sections"][0]["value"]["value"]["value"]["faces"] = json!([
+            "test:face:historical-face#target",
+            "test:face:historical-face#side0"
+        ]);
+    });
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("a loft section of several faces is not mapped yet")
+            || history_line(&report).contains("its selected faces share an edge"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn solidcraft_lofts_from_a_historical_face() {
+    let Some(cli) = solidcraft() else { return };
+    // The cube plus a frustum from its 10 mm face to a 4 mm square 10 mm away: 1000 + 520 mm^3,
+    // out of the top or out of the bottom (the face's sketch is on its outward side).
+    for up in [true, false] {
+        let (bytes, report) = written_with(&face_loft(up, 4.0, |_| {}), &replaying(&cli));
+        assert!(
+            history_line(&report).starts_with("4 of 4 features rebuilt"),
+            "{up}: {}",
+            history_line(&report)
+        );
+        let volume = volumes(&cli, &bytes);
+        assert_eq!(volume.len(), 1);
+        assert!((volume[0] - 1520.0).abs() < 1e-3, "{up}: {volume:?}");
     }
 }
 

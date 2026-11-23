@@ -145,14 +145,51 @@ pub(crate) fn map(
                 "numeric spreadsheet cell kept as an unused parameter",
             );
         }
+        let unit =
+            display_unit(parameter).unwrap_or_else(|| units.get(name).map_or("", String::as_str));
+        let expr = match rounded_display_number(parameter, &expr, unit) {
+            Some(value) => {
+                report.push(
+                    Severity::Info,
+                    format!("parameter {name}"),
+                    format!(
+                        "expression `{}` is a rounded display number, not the value {value}; \
+                         kept as its value",
+                        parameter.expression.trim()
+                    ),
+                );
+                value
+            }
+            None => expr,
+        };
         written.insert(parameter.id.as_str().to_owned(), name.clone());
         out.push(json!({"name": name, "expr": expr,
-            "unit": display_unit(parameter).unwrap_or_else(|| units.get(name).map_or("", String::as_str)),
+            "unit": unit,
             "model": parameter.owner.is_some() && !cells.contains_key(parameter.id.as_str())
                 || inventor_model_parameter(parameter),
         }));
     }
     (out, written)
+}
+
+/// The parameter's value as an expression when its expression is only a bare number that does
+/// not give that value in the unit it is written in: a decoder that keeps a dimension's
+/// display text (a length shown rounded in the document's inches) leaves a number that
+/// SolidCraft would read in `unit`, not the length the design holds.
+fn rounded_display_number(parameter: &DesignParameter, expr: &str, unit: &str) -> Option<String> {
+    let number: f64 = expr.trim().parse().ok()?;
+    let value = parameter.value.as_ref()?;
+    let expected = match (value, unit) {
+        (ParameterValue::Length(length), "mm") => length.get(),
+        (ParameterValue::Length(length), "cm") => length.get() / 10.0,
+        (ParameterValue::Length(length), "m") => length.get() / 1000.0,
+        (ParameterValue::Length(length), "in") => length.get() / 25.4,
+        (ParameterValue::Length(length), "ft") => length.get() / 304.8,
+        (ParameterValue::Angle(angle), "deg") => angle.get().to_degrees(),
+        (ParameterValue::Angle(angle), "rad") => angle.get(),
+        _ => return None,
+    };
+    ((number - expected).abs() > 1e-9 * expected.abs().max(1.0)).then(|| literal(value))?
 }
 
 /// Inventor names the parameters its features and sketch dimensions create `d0`, `d1`, ...;
@@ -918,6 +955,40 @@ mod map_tests {
                 json!({"name": "a1", "expr": "90 deg", "unit": "deg", "model": true}),
             ]
         );
+        assert_eq!(report.losses().len(), 2, "{:?}", report.losses());
+    }
+
+    #[test]
+    fn a_rounded_display_number_gives_way_to_the_value() {
+        let parameters = json!([
+            parameter(
+                1,
+                "d1",
+                "0.25",
+                json!({"kind": "length", "value": 6.35}),
+                true
+            ),
+            parameter(
+                2,
+                "d2",
+                "6.35",
+                json!({"kind": "length", "value": 6.35}),
+                true
+            ),
+            parameter(
+                3,
+                "a1",
+                "30",
+                json!({"kind": "angle", "value": 45f64.to_radians()}),
+                true
+            ),
+        ]);
+        let model = with(cube(), json!([]), parameters);
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        assert_eq!(params[0]["expr"], json!("6.35 mm"));
+        assert_eq!(params[1]["expr"], json!("6.35"));
+        assert_eq!(params[2]["expr"], json!("45 deg"));
         assert_eq!(report.losses().len(), 2, "{:?}", report.losses());
     }
 

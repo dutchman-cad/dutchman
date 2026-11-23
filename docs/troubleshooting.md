@@ -10,7 +10,7 @@ report (replace `part.f3d` with your file or folder):
 dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d
 ```
 
-In the desktop app, **GitHub issue** in **Is there a problem? Is something missing?**
+In the desktop app, **File a GitHub issue ↗** in **Is there a problem? Is something missing?**
 does this for you. Review
 `report-anon.json`, then paste it into the
 [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
@@ -41,6 +41,7 @@ and requested reports.
 | `… reading geometry is not supported yet. Export a STEP file and convert that instead.` | The format is recognised, but its reader has no geometry path yet. Export STEP from the program that made the design and convert that. |
 | `cannot read this design: its contents are inventor data, not Fusion archive (.f3d); rename it to match` | The file's extension does not match its contents. Rename it with the right extension. |
 | `cannot read this design: no geometry could be read from this Fusion archive (.f3d) file` | The file holds no geometry Dutchman can read yet, for example a design saved without bodies, or one whose geometry is stored in a form cadmpeg does not read yet. |
+| `This STEP file contains no shapes: it has a product but no solids, surfaces or curves, so the program that wrote it exported an empty design. …` | The STEP text is well formed but holds no geometry at all, for example a design with only sketches or dimensions. Add bodies in the program that wrote it and export again. The JSON error keeps `"kind": "decode"` and adds `"cause": "empty_export"`. A STEP file that does hold geometry Dutchman could not read says `no geometry could be read from this STEP (.step, .stp) file` instead. |
 | `cannot read this design: malformed container: …` | Download or copy the file again, or check its extension. If the original opens in the program that made it, use the anonymous reporting route above. |
 | `cannot convert this design: the model has no solids or surfaces SolidCraft can import` | The file was read but held nothing SolidCraft can hold as a solid or surface: no body, or no face whose bounds can be written. When only some faces of a body can be bounded, those faces convert as surfaces and the report lists the rest. |
 | `missing.f3d: No such file or directory (os error 2)` | Check the path. |
@@ -110,7 +111,7 @@ and the file is the quickest way to fix it. A failed file's card in the desktop 
 has the steps (in the desktop app, in **Is there a problem? Is something missing?** at the bottom
 left; **Report this file…** on a card chooses that file):
 
-1. **Join our Discord server.** Already in? Skip this step.
+1. **Join our Discord.** Already in? Skip this step.
 2. **DM Dutchy.** The button copies a message and opens Dutchy's DM. Paste the message.
    It gives Dutchman's version, the error's code, the report id, the file's size, and whether a
    STEP is at hand. It names no file, and the report id is the one in the anonymous report and
@@ -124,8 +125,8 @@ left; **Report this file…** on a card chooses that file):
 Only the Dutchman team sees it. It's never published or used in public tests, and we delete it
 on request.
 
-The secondary pills are **Anonymous report** (review before direct cloud upload) and
-**GitHub issue** (a public issue under your GitHub username).
+The secondary buttons are **Review and send report** (review before direct cloud upload) and
+**File a GitHub issue ↗** (a public issue under your GitHub username).
 
 ## When you can't share the file
 

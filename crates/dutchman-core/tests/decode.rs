@@ -482,3 +482,38 @@ fn errors_a_freecad_file_already_had_are_reported_apart_from_losses() {
     assert!(clean.source_errors().is_empty());
     assert_eq!(clean.source_errors_message(), None);
 }
+
+#[test]
+fn a_step_file_with_a_product_and_no_shapes_says_it_is_an_empty_export() {
+    let err = read(
+        Format::Step,
+        &fixture("empty_export.step"),
+        &mut Report::default(),
+    )
+    .unwrap_err();
+    assert!(matches!(err, Error::EmptyExport(_)), "{err}");
+    assert_eq!(err.kind(), "decode");
+    assert_eq!(err.cause(), Some("empty_export"));
+    assert_eq!(
+        err.to_string(),
+        "This STEP file contains no shapes: it has a product but no solids, surfaces or curves, so the program that wrote it exported an empty design. Check the design has bodies, then export it again."
+    );
+    assert!(err
+        .to_string()
+        .starts_with("This STEP file contains no shapes"));
+}
+
+#[test]
+fn a_step_file_with_only_a_curve_reads_and_is_not_an_empty_export() {
+    let text = std::fs::read_to_string(fixture("empty_export.step"))
+        .unwrap()
+        .replace(
+            "#25 = COLOUR_RGB",
+            "#26 = CARTESIAN_POINT('',(0.,0.,0.));\n#27 = DIRECTION('',(1.,0.,0.));\n#28 = VECTOR('',#27,1.);\n#29 = LINE('',#26,#28);\n#25 = COLOUR_RGB",
+        );
+    let path = scratch("with_curve.step", text.as_bytes());
+    // A curve is geometry, so the file is read; it is never reported as an empty export.
+    if let Err(err) = read(Format::Step, &path, &mut Report::default()) {
+        panic!("a STEP file holding a curve must read, got: {err}");
+    }
+}

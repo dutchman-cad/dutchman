@@ -1571,6 +1571,10 @@ impl Builder<'_> {
         }
         history.relocate(self.next_id - 1, component, &prefix(name), &mut self.taken);
         history.rename_bodies(name, &mut self.bodies);
+        if hidden {
+            // The visible Import already is the part: the hidden copy builds no second body.
+            history::suppress_bodies(&mut history.features);
+        }
         self.mark_written(part);
         self.unused_sketches.extend(history.hidden_sketches());
         self.hidden_bodies.extend(

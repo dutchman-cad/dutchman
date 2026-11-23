@@ -330,8 +330,10 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
         assert!(report.losses().iter().any(|note| note
             .detail
             .contains("unverified: verification turned off; kept hidden")));
+        // The hidden history's body-building features are written suppressed, so only the two
+        // visible parts evaluate to bodies (an export holds one body per part).
         if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
-            assert_eq!(evaluate(&cli, &bytes).len(), 3);
+            assert_eq!(evaluate(&cli, &bytes).len(), 2);
         }
     }
 }

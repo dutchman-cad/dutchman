@@ -130,12 +130,12 @@ pub fn report_link(report: &Value, anonymous: &Value) -> ReportLink {
 }
 
 /// The secondary way to report a failed file: nothing of the file, no names.
-pub const REPORT_BUTTON: &str = "GitHub issue";
+pub const REPORT_BUTTON: &str = "File a GitHub issue ↗";
 /// The folded section of a failed card that holds the other ways to send the file.
 pub const SEND_FOLD: &str = "Help us fix it";
 pub const SEND_INTRO: &str =
     "If this file opens in the app that made it, it's a bug in Dutchman. Help us fix it:";
-pub const SEND_JOIN_TITLE: &str = "Join our Discord server";
+pub const SEND_JOIN_TITLE: &str = "Join our Discord";
 pub const SEND_JOIN_BUTTON: &str = "Open invite";
 pub const SEND_JOIN_NOTE: &str = "Already in? Skip this step.";
 pub const SEND_DM_TITLE: &str = "DM Dutchy";

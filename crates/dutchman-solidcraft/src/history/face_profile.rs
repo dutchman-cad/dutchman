@@ -119,12 +119,29 @@ pub(crate) struct Proof {
 /// Maps the faces `value` selects (a `historical_faces` profile) of `feature` to a sketch of
 /// their boundary, left in `ctx` for the history, and returns its key in `ctx.sketches` and
 /// the profile selection.
+///
+/// `section` is the position of a loft section the faces are, when they are one: such a section
+/// is one face with one outer loop (a loft section with several loops, or a hole, is not
+/// proven), and its sketch is kept apart from the other sections' of the same feature.
 pub(super) fn map(
     feature: &Value,
     value: &Value,
     ctx: &mut Context,
+    section: Option<usize>,
 ) -> Result<(String, Value), String> {
     let mut faces = boundaries(feature, value, ctx)?;
+    if section.is_some() {
+        let [face] = faces.as_slice() else {
+            return Err("a loft section of several faces is not mapped yet".to_owned());
+        };
+        if loops(&face.edges)?.len() != 1 {
+            return Err(
+                "a loft section that is a face with a hole is not mapped yet: whether the \
+                 inner loop is a hole in the lofted shape is not known"
+                    .to_owned(),
+            );
+        }
+    }
     let points: Vec<V3> = faces
         .iter()
         .flat_map(|face| &face.edges)
@@ -160,8 +177,9 @@ pub(super) fn map(
     };
     let (sketch, mapped) = proof.sketch(false)?;
     let key = format!(
-        "historical-face:{}",
-        feature.get("id").and_then(Value::as_str).unwrap_or("?")
+        "historical-face:{}{}",
+        feature.get("id").and_then(Value::as_str).unwrap_or("?"),
+        section.map_or(String::new(), |section| format!(":{section}"))
     );
     ctx.sketches.insert(key.clone(), mapped);
     ctx.extra.push(sketch);

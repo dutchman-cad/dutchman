@@ -156,7 +156,10 @@ class WrittenDesignCompareTests(unittest.TestCase):
         with mock.patch.object(compare, 'combine', return_value=wrapper), \
              mock.patch.object(compare, 'hidden_history_components', return_value={'Editable history'}):
             result = compare.compare(cli, Path('written.sc'), Path('source.sc'))
-        self.assertEqual((result['ok'], result['total'], result['failures']), (2, 2, []))
+        # The hidden copy is still a body an export sees: it fails, naming the part it duplicates.
+        self.assertEqual((result['ok'], result['total']), (2, 2))
+        self.assertEqual([(f['part'], f['hidden_duplicate_bodies']) for f in result['failures']],
+                         [('(root)', ['History'])])
         self.assertEqual(result['hidden_history'], dict(bodies=1, components=[hidden_failure]))
         self.assertEqual(result['written_count'], 2)
 
@@ -164,8 +167,24 @@ class WrittenDesignCompareTests(unittest.TestCase):
         path = ('Editable history:1',)
         result = compare.summarize([body('History', path)], [body('Source', path)], {})
         result = compare.split_hidden_history(result, {'Editable history'})
-        self.assertEqual(len(result['failures']), 1)
         self.assertEqual(result['hidden_history']['components'], [])
+        self.assertEqual(len(result['failures']), 2)
+        self.assertEqual(result['failures'][1]['part'], '(root)')
+
+    def test_a_suppressed_hidden_history_leaves_no_failure(self):
+        # Hidden history whose body-building features are suppressed builds no body, so the
+        # written inventory has only the visible part and nothing is left to report.
+        result = compare.summarize([body('Visible')], [body('Source')], {0: 0})
+        result = compare.split_hidden_history(result, {'Editable history'})
+        self.assertEqual((result['failures'], result['hidden_history']['bodies']), ([], 0))
+
+    def test_every_hidden_copy_is_named_by_its_part(self):
+        path = ('Frame:1', 'Rail:2', 'Editable history:1')
+        result = compare.summarize([body('Rail', path[:2]), body('Rail', path), body('Rail', path)],
+                                   [body('Rail', path[:2])], {0: 0})
+        result = compare.split_hidden_history(result, {'Editable history'})
+        self.assertEqual([(f['part'], len(f['hidden_duplicate_bodies'])) for f in result['failures']],
+                         [('Frame:1/Rail:2', 2)])
 
     def test_hidden_history_names_require_the_explicit_flag(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -400,6 +400,9 @@ pub fn error(schema: &str, input: Value, error: &Error) -> Value {
     );
     if let Some(fields) = report.get_mut("error").and_then(Value::as_object_mut) {
         fields.insert("kind".into(), json!(error.kind()));
+        if let Some(cause) = error.cause() {
+            fields.insert("cause".into(), json!(cause));
+        }
         if let Error::Checks { facts, .. } = error {
             fields.insert("findings".into(), json!(facts.findings));
             fields.insert("curve_kinds".into(), json!(facts.curve_kinds));
@@ -1375,6 +1378,7 @@ pub fn onshape_fetch(result: &crate::onshape::Result<crate::onshape::FetchReport
     match result {
         Ok(report) => {
             json!({"schema": crate::onshape::SCHEMA, "ok": true, "output": report.output.display().to_string(),
+            "title": report.title,
             "microversion": report.microversion, "calls": report.calls, "cache_hits": report.cache_hits})
         }
         Err(error) => {
