@@ -2285,19 +2285,32 @@ impl App {
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.with_layout(Layout::left_to_right(Align::Max), |ui| {
                 ui.spacing_mut().item_spacing.x = theme::SPACE_2;
-                if compact {
-                    ui.label(RichText::new(crate::APP_NAME).heading());
+                let title_style = if compact {
+                    egui::TextStyle::Heading
                 } else {
-                    ui.label(RichText::new(crate::APP_NAME).text_style(theme::title()));
-                }
-                ui.label(RichText::new(crate::version_label()).small().color(p.tide));
+                    theme::title()
+                };
+                let lift = theme::baseline_lift(ui, &title_style, &egui::TextStyle::Small);
+                ui.label(RichText::new(crate::APP_NAME).text_style(title_style));
+                // Both texts end at the row's bottom edge; the smaller one has a different
+                // descent, so lift it until the two baselines are the same line.
+                let version = crate::version_label();
+                let font = egui::TextStyle::Small.resolve(ui.style());
+                let size = ui
+                    .fonts_mut(|fonts| fonts.layout_no_wrap(version.clone(), font, p.tide).size())
+                    + egui::vec2(1.0, lift);
+                ui.allocate_ui_with_layout(size, Layout::top_down(Align::Min), |ui| {
+                    ui.label(RichText::new(version).small().color(p.tide));
+                });
             });
             if !compact {
-                ui.label(
-                    RichText::new("Converts native CAD designs into SolidCraft designs.")
-                        .small()
-                        .color(p.tide),
-                );
+                #[allow(unused_mut)]
+                let mut subtitle = crate::SUBTITLE.to_owned();
+                #[cfg(feature = "test-support")]
+                if let Some(text) = crate::SUBTITLE_FOR_TEST.lock().ok().and_then(|t| t.clone()) {
+                    subtitle = text;
+                }
+                ui.label(RichText::new(subtitle).small().color(p.tide));
             }
         });
     }

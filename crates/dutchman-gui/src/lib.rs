@@ -25,6 +25,13 @@ pub const APP_NAME: &str = "Dutchman Convert";
 /// [`dutchman::BUILD_VERSION`], so one nightly's settings carry over to the next.
 pub const SETTINGS_NAME: &str = concat!("Dutchman Convert ", env!("CARGO_PKG_VERSION"));
 
+/// The line under the app's name in the wide header.
+pub const SUBTITLE: &str = "Converts native CAD designs into SolidCraft designs.";
+
+/// A subtitle that replaces the real one, so a screenshot test can show a long translation.
+#[cfg(feature = "test-support")]
+pub static SUBTITLE_FOR_TEST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 /// The version beside the app's name in its top row.
 pub fn version_label() -> String {
     format!("v{}", dutchman::BUILD_VERSION)

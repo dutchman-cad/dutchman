@@ -5694,3 +5694,86 @@ fn report_buttons_screenshots() {
     }
     std::fs::write(dir.join("report-buttons.md"), index).unwrap();
 }
+
+/// The baseline of a one-line label: its bottom edge, less the font's descent below the baseline.
+fn baseline_of(h: &Harness<'_, App>, label: &str, style: egui::TextStyle) -> f32 {
+    let rect = h.get_by_label(label).rect();
+    let font = style.resolve(&h.ctx.style());
+    let below = h.ctx.fonts_mut(|fonts| {
+        let galley = fonts.layout_no_wrap(label.to_owned(), font, egui::Color32::WHITE);
+        let row = &galley.rows[0];
+        row.size.y - row.glyphs[0].pos.y
+    });
+    rect.bottom() - below
+}
+
+#[test]
+fn the_version_sits_on_the_titles_baseline_in_one_line() {
+    let version = dutchman_gui::version_label();
+    for (width, title_style) in [
+        (1400.0, dutchman_gui::theme::title()),
+        (1100.0, egui::TextStyle::Heading),
+        (520.0, egui::TextStyle::Heading),
+    ] {
+        for theme in [ThemePreference::Light, ThemePreference::Dark] {
+            let h = header_harness(width, theme, false);
+            let title = baseline_of(&h, "Dutchman Convert", title_style.clone());
+            let small = baseline_of(&h, &version, egui::TextStyle::Small);
+            assert!(
+                (title - small).abs() <= 1.0,
+                "{width}: title baseline {title}, version baseline {small}"
+            );
+            let name = h.get_by_label("Dutchman Convert").rect();
+            let tag = h.get_by_label(&version).rect();
+            assert!(tag.left() >= name.right() && tag.height() < name.height());
+        }
+    }
+}
+
+/// The main window's header at 1280x800: the version on the title's line, in English and with a
+/// long German subtitle (the app has no German text yet), Day and Night.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the header; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn header_version_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, subtitle) in [
+        ("english", None),
+        (
+            "german",
+            Some("Wandelt native CAD-Konstruktionen in SolidCraft-Konstruktionen um.".to_owned()),
+        ),
+    ] {
+        *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = subtitle;
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().preview_solidcraft(Some("0.46.2"));
+            harness.run_steps(8);
+            let title = baseline_of(&harness, "Dutchman Convert", dutchman_gui::theme::title());
+            let small = baseline_of(
+                &harness,
+                &dutchman_gui::version_label(),
+                egui::TextStyle::Small,
+            );
+            assert!((title - small).abs() <= 1.0, "{language} {name}");
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("header-version-{language}"),
+                name,
+                "The version is on the title's line, on its baseline.",
+            );
+        }
+    }
+    *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = None;
+    std::fs::write(dir.join("header-version.md"), index).unwrap();
+}
