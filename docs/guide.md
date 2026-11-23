@@ -5,7 +5,8 @@ Folder and selection summaries use the highest per-file memory estimate and sum 
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
 the full path on hover. The path and estimate share one paragraph that wraps as needed,
 keeping the complete sentence visible at every window width. The compact header keeps the
-default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
+default window’s controls in view. The version number sits on the same line as the app name,
+in smaller muted type on the same baseline. Estimate values in commands, tools and JSON reports are unchanged.
 
 Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
 components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
