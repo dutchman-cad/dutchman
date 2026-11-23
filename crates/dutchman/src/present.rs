@@ -208,9 +208,11 @@ impl SendSteps {
             },
             drag,
             step_card: !source_is_step(report),
-            step_title: crate::tool_library::is_report(report)
-                .then(|| crate::tool_library::other_export_title(report))
-                .unwrap_or_else(|| SEND_STEP_TITLE.to_owned()),
+            step_title: if crate::tool_library::is_report(report) {
+                crate::tool_library::other_export_title(report)
+            } else {
+                SEND_STEP_TITLE.to_owned()
+            },
             step_note: crate::tool_library::is_report(report).then_some(SEND_TOOLS_STEP_NOTE),
         }
     }
