@@ -12853,7 +12853,12 @@ fn closed_circle_blend_from(hole: bool, seam: f64, sketch_based: bool) -> Model 
         "edges": ["synthetic:closed:edge#0"], "faces": [], "bodies": [], "vertices": [],
         "edge_geometry": [{"edge": "synthetic:closed:edge#0", "start": point(seam), "end": point(seam),
             "interior": point(seam + std::f64::consts::PI),
-            "supports": [], "tangent": {"x": seam.sin(), "y": -seam.cos(), "z": 0.0}, "faces": []}]
+            "supports": [], "tangent": {"x": seam.sin(), "y": -seam.cos(), "z": 0.0}, "faces": [],
+            // The exact carrier the input topology stores beside the edge's samples.
+            "carrier": {"range": [seam, seam + std::f64::consts::TAU], "curve": {
+                "kind": "circle", "center": {"x": c, "y": c, "z": 10.0},
+                "axis": {"x": 0.0, "y": 0.0, "z": 1.0}, "ref_direction": {"x": 1.0, "y": 0.0, "z": 0.0},
+                "radius": r}}}]
     }]);
     // Exact historical carrier in a hidden synthetic input body, separate from final geometry.
     let source = "synthetic:closed:body#0";
@@ -12922,13 +12927,17 @@ fn closed_circle_blends_keep_older_targets_and_non_circular_curves_refused() {
 fn closed_blends_distinguish_missing_historical_carriers_from_non_circular_curves() {
     let base = closed_circle_blend(true, 0.71);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
-    // A historical identity is independent of the geometry topology's identities.
-    // Keep the same samples, but do not give this selection an exact stored carrier.
+    // A historical identity is independent of the geometry topology's identities. Keep the
+    // same samples, but do not give this selection an exact stored carrier.
     let edge = json!("synthetic:historical:edge#0");
     let model = &mut wire["model"];
     let state = &mut model["feature_input_topologies"][0];
     state["edges"] = json!([edge]);
     state["edge_geometry"][0]["edge"] = edge.clone();
+    state["edge_geometry"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("carrier");
     model["features"]
         .as_array_mut()
         .unwrap()
@@ -12957,13 +12966,8 @@ fn closed_blends_distinguish_missing_historical_carriers_from_non_circular_curve
 fn closed_circle_blends_refuse_ellipses_whose_samples_alias_a_circle() {
     let base = closed_circle_blend(false, 0.0);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
-    let curve = wire["geometry"]["curves"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|row| row["id"] == "synthetic:closed:curve#0")
-        .unwrap();
-    curve["geometry"]["value"] = json!({"kind": "ellipse", "center": {"x": 0.0, "y": 0.0, "z": 10.0},
+    let carrier = &mut wire["model"]["feature_input_topologies"][0]["edge_geometry"][0]["carrier"];
+    carrier["curve"] = json!({"kind": "ellipse", "center": {"x": 0.0, "y": 0.0, "z": 10.0},
         "axis": {"x": 0.0, "y": 0.0, "z": 1.0}, "major_direction": {"x": 1.0, "y": 0.0, "z": 0.0},
         "major_radius": 5.0, "minor_radius": 3.0});
     let model = Model {
@@ -14231,7 +14235,10 @@ fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
     let start = xyz(5.0, 5.0 + BORE, 10.0);
     let sample = json!({"edge": "synthetic:rim:edge#hole-top", "interior": xyz(5.0, 5.0 - BORE, 10.0),
         "supports": [], "tangent": xyz(1.0, 0.0, 0.0), "start": start, "end": start,
-        "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"]});
+        "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"],
+        "carrier": {"range": [0.0, std::f64::consts::TAU], "curve": {"kind": "circle",
+            "center": xyz(5.0, 5.0, 10.0), "axis": xyz(0.0, 0.0, 1.0),
+            "ref_direction": xyz(0.0, 1.0, 0.0), "radius": BORE}}});
     wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#5", "edges": ["synthetic:rim:edge#hole-top"], "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"], "edge_geometry": [sample], "bodies": [], "vertices": []}]);
     // Exact input carrier belongs to an earlier hidden result, independently of final edges.
     let source = "synthetic:rim:body#0";
