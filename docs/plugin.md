@@ -35,8 +35,11 @@ archives' expanded bytes. `E` counts outer archive entries; `D` counts indexed `
 documents, with a minimum of one. These come from bounded ZIP metadata, without reading
 features or B-rep payloads. Documents are not placed parts: the 41-part arm has only two
 indexed documents. Arithmetic saturates, so overflowing work estimates are refused.
-An estimate above the manifest's **670,960,576,380 fuel** request directs the design to the
-app before native decoding. Other formats retain the existing memory/time checks.
+The manifest requests **100,000,000,000 fuel**, SolidCraft's default **Max plugin fuel**
+ceiling, so a default install loads the plugin. An estimate above that request directs the
+design to the app before native decoding. SolidCraft runs a package with exactly the fuel its
+manifest declares and the guest interface has no call to read the host's ceiling, so raising
+**Max plugin fuel** cannot give the plugin a larger budget and the message does not suggest it. Other formats retain the existing memory/time checks.
 
 Calibration used the component from `f174dac3`, before this preflight update, in Wasmtime 50.0.2,
 with editable history enabled and real CLI host evaluation. The fuel count includes
@@ -55,7 +58,8 @@ only; these public design files are not added to the test fixtures.
 
 The formula before its 3x multiplier bounds all four observations; that multiplier
 reserves room for runtime differences and unseen feature complexity. The declared request
-is exactly **4x the arm's measured fuel**, replacing the old 100-billion request.
+is SolidCraft's default 100-billion ceiling (it was 4x the arm's measured fuel, which default
+installs refused at load). The 41-part arm's estimate is above it, so it opens in the app.
 The RailCore Mini (110,045,607 expanded bytes, 45 entries, 43 documents) and 300ZL
 (74,341,274 bytes, 71 entries, 69 documents) exceed both the fuel envelope and the retained
 memory gate. They are refused from their outer indexes before inner archive inflation.
@@ -66,7 +70,7 @@ For comparison, the rc.9 component with host evaluation refused used
 
 After the update, the rebuilt component used 167,744,341,712 fuel for the arm,
 including real host evaluation, with 240,254,976 bytes of peak guest linear memory.
-The request retains more than three times that measured fuel. A synthetic archive
+That measurement is above the current request, which is why the arm is directed to the app. A synthetic archive
 with 10,000 small entries also confirmed that the compiled component refuses work
 from the fuel estimate independently of the memory estimate.
 In one headless SolidCraft 0.45.0 session, `file.import` opened all 41 arm parts in
