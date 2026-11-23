@@ -348,6 +348,15 @@ still need additional decoding in cadmpeg.
 Reference sketches are mapped from the sketch, feature and parameter data alone, built once per
 conversion: on the Voron V1.8 that takes the peak from 11.0 GB to 8.7 GB, with the same output.
 
+## Sketch text
+
+Fusion sketch text maps to SolidCraft sketch text, and SolidCraft sets the letters. The words,
+font, bold, baseline start, angle, height and the horizontal (left, centre, right) and vertical
+(top, middle, bottom) alignment are kept. Width scaling, a medium weight, and top or bottom
+anchoring (which can sit differently in SolidCraft's font box) are reported as degraded notes.
+A text with no stored placement, such as one laid out along a curve, is left out of its sketch
+with a degraded note, and the rest of the sketch maps.
+
 ## Sketches without a timeline row
 
 Fusion keeps some sketches with no Sketch step in the timeline; cadmpeg then lists the sketch
