@@ -11,6 +11,9 @@ updates:
     ignore:
       - dependency-name: "cadmpeg*"
       - dependency-name: "dutchman*"
+      # zip 9.8 needs Rust 1.89; the workspace builds with 1.88 (the msrv job).
+      - dependency-name: "zip"
+        versions: [">=9.8.0"]
       # These majors change APIs we use; each moves in its own small pull request.
       - dependency-name: "getrandom"
         update-types: ["version-update:semver-major"]
