@@ -1,12 +1,11 @@
 //! Windows release downloads: verify first, then install or replace the portable programs.
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
 use super::{Install, Spec};
-use crate::update::{version, RELEASES};
+use crate::update::{version, Timeouts, RELEASES};
 
 /// Largest download accepted; release ZIPs and AppImages are about 170 MB.
 const MAX_PACKAGE: u64 = 512 * 1024 * 1024;
@@ -30,6 +29,11 @@ fn asset_url(tag: &str, extension: &str) -> Result<String, String> {
 }
 
 fn allowed_url(url: &str) -> bool {
+    // Tests talk to a local server.
+    #[cfg(test)]
+    if url.starts_with("http://127.0.0.1:") {
+        return true;
+    }
     url.starts_with(&format!("{RELEASES}/download/"))
         || [
             "release-assets.githubusercontent.com",
@@ -39,26 +43,42 @@ fn allowed_url(url: &str) -> bool {
         .any(|host| url.starts_with(&format!("https://{host}/")))
 }
 
+/// Said whenever GitHub cannot be reached or stops answering; the installed copy is untouched.
+pub(super) const UNREACHABLE: &str = "The update could not be downloaded: GitHub did not answer in time or the connection was blocked (a firewall or proxy may be in the way). Your installed Dutchman is unchanged. Use the manual download link to get the new version.";
+
 pub(super) fn download(url: &str, limit: u64, out: &mut dyn Write) -> Result<(), String> {
-    let agent = ureq::AgentBuilder::new()
-        .redirects(0)
-        .timeout(Duration::from_secs(120))
-        .build();
+    download_with(url, limit, out, Timeouts::DEFAULT)
+}
+
+pub(super) fn download_with(
+    url: &str,
+    limit: u64,
+    out: &mut dyn Write,
+    timeouts: Timeouts,
+) -> Result<(), String> {
+    // No total limit: a slow download that keeps moving must finish.
+    let agent = crate::update::agent(timeouts, 0);
     let mut url = url.to_owned();
     for _ in 0..6 {
         if !allowed_url(&url) {
             return Err("The update download host is not allowed. Open the release page.".into());
         }
-        let response = agent
+        let response = match agent
             .get(&url)
             .set(
                 "User-Agent",
                 concat!("Dutchman-update-check/", env!("CARGO_PKG_VERSION")),
             )
             .call()
-            .map_err(|e| {
-                format!("Could not download the update: {e}. Open the release page to retry.")
-            })?;
+        {
+            Ok(response) => response,
+            Err(ureq::Error::Status(code, _)) => {
+                return Err(format!(
+                    "The update download was refused (HTTP {code}). Open the release page to download it manually."
+                ))
+            }
+            Err(_) => return Err(UNREACHABLE.into()),
+        };
         if matches!(response.status(), 301 | 302 | 303 | 307 | 308) {
             url = response
                 .header("Location")
@@ -69,8 +89,23 @@ pub(super) fn download(url: &str, limit: u64, out: &mut dyn Write) -> Result<(),
         if response.status() != 200 {
             return Err("The update download did not finish. Open the release page.".into());
         }
-        let count = std::io::copy(&mut response.into_reader().take(limit + 1), out)
+        let mut reader = response.into_reader().take(limit + 1);
+        let mut buffer = [0; 64 * 1024];
+        let mut count = 0u64;
+        loop {
+            // A read that fails is the network stalling or dropping; a write that fails is the disk.
+            let n = reader.read(&mut buffer).map_err(|_| UNREACHABLE)?;
+            if n == 0 {
+                break;
+            }
+            out.write_all(
+                buffer
+                    .get(..n)
+                    .ok_or("Could not read the update download.")?,
+            )
             .map_err(|e| e.to_string())?;
+            count += n as u64;
+        }
         if count > limit {
             return Err("The update download is too large. Open the release page.".into());
         }

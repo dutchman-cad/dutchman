@@ -424,6 +424,12 @@ Windows copies have two update paths, using the versioned package and its `.sha2
 the same stable release. Nothing changes until the SHA-256 matches; a failed download or
 checksum check deletes the download and leaves the installed copy untouched. **Download**
 remains available for a manual install.
+Every network step of an update gives up on its own: 15 seconds to look up and reach GitHub,
+and 30 seconds without a single byte arriving (a slow download that keeps moving is never cut).
+Behind a firewall that blocks `github.com` or its download hosts, the update then stops with a
+plain message, leaves the installed copy untouched, and offers **Try
+again** and **Download manually**. Nothing retries by itself, and
+Dutchman can be closed while a download is still running.
 
 - **MSI: Install (closes Dutchman).** Detection requires the running executable at
   `%LOCALAPPDATA%\Programs\Dutchman\dutchman-gui.exe` and a matching `InstallDir` string in

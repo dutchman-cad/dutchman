@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -554,6 +555,9 @@ pub struct Job {
     progress: Arc<Mutex<Progress>>,
     pub tag: String,
     prepared: Arc<Mutex<Option<windows::Verified>>>,
+    /// True while a release file is being fetched. Nothing is installed yet, so the window may
+    /// close and take the download with it.
+    downloading: Arc<AtomicBool>,
 }
 impl Default for Job {
     fn default() -> Self {
@@ -569,7 +573,12 @@ impl Job {
             })),
             tag: String::new(),
             prepared: Arc::new(Mutex::new(None)),
+            downloading: Arc::new(AtomicBool::new(false)),
         }
+    }
+    /// Whether the job is only downloading, so closing Dutchman loses nothing.
+    pub fn downloading(&self) -> bool {
+        self.downloading.load(Ordering::SeqCst)
     }
     pub fn snapshot(&self) -> Progress {
         self.progress
@@ -631,22 +640,27 @@ impl Job {
         self.set_phase(Phase::Running);
         let progress = self.progress.clone();
         let prepared = self.prepared.clone();
+        let downloading = self.downloading.clone();
         let ctx = ctx.clone();
         let result = std::thread::Builder::new()
             .name("windows-download".into())
             .spawn(move || {
-                let result =
-                    windows::prepare(&install, &tag, &windows::download).and_then(|package| {
-                        if let Some(package) = package {
-                            *prepared
-                                .lock()
-                                .map_err(|_| "The installer download worker stopped.")? =
-                                Some(package);
-                            Ok(Phase::Ready)
-                        } else {
-                            Ok(Phase::Installed)
-                        }
-                    });
+                let fetch = |url: &str, limit: u64, out: &mut dyn std::io::Write| {
+                    downloading.store(true, Ordering::SeqCst);
+                    let result = windows::download(url, limit, out);
+                    downloading.store(false, Ordering::SeqCst);
+                    result
+                };
+                let result = windows::prepare(&install, &tag, &fetch).and_then(|package| {
+                    if let Some(package) = package {
+                        *prepared
+                            .lock()
+                            .map_err(|_| "The installer download worker stopped.")? = Some(package);
+                        Ok(Phase::Ready)
+                    } else {
+                        Ok(Phase::Installed)
+                    }
+                });
                 if let Ok(mut p) = progress.lock() {
                     p.phase = result.unwrap_or_else(Phase::Failed);
                 }

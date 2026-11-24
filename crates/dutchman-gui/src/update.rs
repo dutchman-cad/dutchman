@@ -329,10 +329,53 @@ fn matches_asset(name: &str, os: &str, arch: &str, appimage: bool) -> bool {
     }
 }
 
+/// How long a network step may wait before the update gives up.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Timeouts {
+    /// Looking up the host and opening the connection.
+    pub connect: Duration,
+    /// No bytes arriving for this long. A slow download that keeps moving is never cut.
+    pub stall: Duration,
+}
+
+impl Timeouts {
+    pub(crate) const DEFAULT: Timeouts = Timeouts {
+        connect: Duration::from_secs(15),
+        stall: Duration::from_secs(30),
+    };
+}
+
+/// Resolves host names on a helper thread so a firewall that swallows DNS cannot hang a step.
+#[derive(Debug)]
+struct TimedResolver(Duration);
+
+impl ureq::Resolver for TimedResolver {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        use std::net::ToSocketAddrs;
+        let (tx, rx) = channel();
+        let netloc = netloc.to_owned();
+        std::thread::spawn(move || {
+            let _ = tx.send(netloc.to_socket_addrs().map(|found| found.collect()));
+        });
+        rx.recv_timeout(self.0).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "host name lookup timed out")
+        })?
+    }
+}
+
+/// An HTTP agent whose every step (name lookup, connect, each read, each write) is bounded.
+pub(crate) fn agent(timeouts: Timeouts, redirects: u32) -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .redirects(redirects)
+        .resolver(TimedResolver(timeouts.connect))
+        .timeout_connect(timeouts.connect)
+        .timeout_read(timeouts.stall)
+        .timeout_write(timeouts.stall)
+        .build()
+}
+
 pub(crate) fn fetch(url: &str, etag: Option<&str>) -> Result<Response, String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(20))
-        .build();
+    let agent = agent(Timeouts::DEFAULT, 5);
     let mut request = agent.get(url).set(
         "User-Agent",
         concat!("Dutchman-update-check/", env!("CARGO_PKG_VERSION")),
@@ -572,7 +615,11 @@ impl Updater {
         }
     }
     pub fn tick(&mut self, ctx: &egui::Context) {
-        if self.job.busy() && ctx.input(|i| i.viewport().close_requested()) {
+        // A download in progress has installed nothing, so it never keeps the window open.
+        if self.job.busy()
+            && !self.job.downloading()
+            && ctx.input(|i| i.viewport().close_requested())
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.open = true;
             self.closing = true;
@@ -987,9 +1034,16 @@ impl Updater {
             }
             Phase::Failed(error) => {
                 ui.label(error);
-                if ui.button("Try again").clicked() {
-                    self.job = Job::new();
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("Try again").clicked() {
+                        self.job = Job::new();
+                    }
+                    ui.hyperlink_to(
+                        "Download manually",
+                        format!("{RELEASES}/tag/{}", release.tag),
+                    );
+                });
+                return;
             }
         }
         ui.hyperlink_to("Download", format!("{RELEASES}/tag/{}", release.tag));
