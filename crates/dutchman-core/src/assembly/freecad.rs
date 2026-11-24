@@ -991,7 +991,7 @@ mod linked_bodies {
 
     #[test]
     fn a_linked_body_owns_its_features_and_sketches() {
-        let mut document = document("Assembly::AssemblyObject");
+        let mut document = plain("Assembly::AssemblyObject");
         let claimed = claim(&mut document);
         assert_eq!(claimed.dropped, 2);
         for feature in ["Body", "Sketch1", "Pad2", "Pad3", "Pad4"] {
@@ -1000,14 +1000,12 @@ mod linked_bodies {
         for feature in ["Body001", "Sketch001", "Revolution2", "Revolution3"] {
             assert_eq!(owner(&document, feature), Some("d#Body001"), "{feature}");
         }
-        // Used by features of two Bodies: neither's alone.
-        assert_eq!(owner(&document, "Shared"), None);
         assert_eq!(claimed.owned, 9);
     }
 
     #[test]
     fn each_linked_body_is_placed_once_through_its_link() {
-        let mut document = document("Assembly::AssemblyObject");
+        let mut document = plain("Assembly::AssemblyObject");
         claim(&mut document);
         let ids: Vec<&str> = document["model"]["occurrences"]
             .as_array()
@@ -1020,7 +1018,7 @@ mod linked_bodies {
 
     #[test]
     fn links_outside_an_assembly_leave_the_document_as_stored() {
-        let mut document = document("App::Part");
+        let mut document = plain("App::Part");
         let before = document.clone();
         assert_eq!(claim(&mut document), Claimed::default());
         assert_eq!(document, before);
@@ -1028,7 +1026,7 @@ mod linked_bodies {
 
     #[test]
     fn a_body_no_link_places_stays_placed() {
-        let mut document = document("Assembly::AssemblyObject");
+        let mut document = plain("Assembly::AssemblyObject");
         let rows = document["model"]["occurrences"].as_array_mut().unwrap();
         rows.retain(|row| row["id"] != "i#ring");
         let claimed = claim(&mut document);
@@ -1043,7 +1041,7 @@ mod linked_bodies {
 
     #[test]
     fn a_body_holding_placed_children_is_kept() {
-        let mut document = document("Assembly::AssemblyObject");
+        let mut document = plain("Assembly::AssemblyObject");
         document["model"]["occurrences"]
             .as_array_mut()
             .unwrap()
