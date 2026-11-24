@@ -199,10 +199,78 @@ enum Schema {
     #[serde(rename = "dutchman.report-counts/1")]
     V1,
 }
-#[derive(Serialize)]
-enum VersionBand {
-    #[serde(rename = "unknown")]
-    Unknown,
+/// The release a source program saved the file with, as a fixed word. Only a version the
+/// converter read as numbers (`major.minor.revision`, never a name or message) can select one.
+macro_rules! bands {
+    ($($variant:ident => $word:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+        enum VersionBand { $(#[serde(rename = $word)] $variant),+ }
+    };
+}
+bands!(
+    Unknown => "unknown",
+    InventorOlder => "inventor_older",
+    Inventor2016 => "inventor_2016",
+    Inventor2017 => "inventor_2017",
+    Inventor2018 => "inventor_2018",
+    Inventor2019 => "inventor_2019",
+    Inventor2020 => "inventor_2020",
+    Inventor2021 => "inventor_2021",
+    Inventor2022 => "inventor_2022",
+    Inventor2023 => "inventor_2023",
+    Inventor2024 => "inventor_2024",
+    Inventor2025 => "inventor_2025",
+    Inventor2026 => "inventor_2026",
+    Inventor2027 => "inventor_2027",
+    InventorNewer => "inventor_newer",
+);
+
+impl VersionBand {
+    /// Inventor's file version number is its release year minus 1996 (20 is 2016, 30 is 2026).
+    fn inventor(major: u8) -> Self {
+        match major {
+            0 => Self::Unknown,
+            1..=19 => Self::InventorOlder,
+            20 => Self::Inventor2016,
+            21 => Self::Inventor2017,
+            22 => Self::Inventor2018,
+            23 => Self::Inventor2019,
+            24 => Self::Inventor2020,
+            25 => Self::Inventor2021,
+            26 => Self::Inventor2022,
+            27 => Self::Inventor2023,
+            28 => Self::Inventor2024,
+            29 => Self::Inventor2025,
+            30 => Self::Inventor2026,
+            31 => Self::Inventor2027,
+            32..=40 => Self::InventorNewer,
+            // Far beyond any release: a damaged record, not a version.
+            41..=u8::MAX => Self::Unknown,
+        }
+    }
+
+    /// `version` is the report's `source_version`. Anything that is not exactly three
+    /// dot-separated decimal numbers, or comes from a format with no reliable version, is
+    /// unknown.
+    fn read(format: SourceFormat, version: Option<&str>) -> Self {
+        let mut numbers = version.unwrap_or_default().split('.').map(|part| {
+            let digits =
+                !part.is_empty() && part.len() <= 3 && part.bytes().all(|b| b.is_ascii_digit());
+            digits.then(|| part.parse::<u8>().ok()).flatten()
+        });
+        let (Some(Some(major)), Some(Some(_)), Some(Some(_)), None) = (
+            numbers.next(),
+            numbers.next(),
+            numbers.next(),
+            numbers.next(),
+        ) else {
+            return Self::Unknown;
+        };
+        match format {
+            SourceFormat::InventorPart | SourceFormat::InventorAssembly => Self::inventor(major),
+            _ => Self::Unknown,
+        }
+    }
 }
 
 /// An allow-listed report. Fields are private; serialization cannot accept arbitrary text,
@@ -283,6 +351,7 @@ pub fn report(input: &Value) -> Report {
         } else {
             Document::Part
         };
+        let band = VersionBand::read(format, file.get("source_version").and_then(Value::as_str));
         let timing = match file.get("elapsed_ms").and_then(Value::as_u64) {
             None => Timing::Unknown,
             Some(0..=999) => Timing::UnderSecond,
@@ -294,6 +363,7 @@ pub fn report(input: &Value) -> Report {
             &mut files,
             (
                 format,
+                band,
                 document,
                 Verification::read(field(file, "/verification/status")),
                 timing,
@@ -321,9 +391,12 @@ pub fn report(input: &Value) -> Report {
         files: files
             .into_iter()
             .map(
-                |((source_format, document, verification, timing, converted), count)| FileCount {
+                |(
+                    (source_format, source_version_band, document, verification, timing, converted),
+                    count,
+                )| FileCount {
                     source_format,
-                    source_version_band: VersionBand::Unknown,
+                    source_version_band,
                     document,
                     verification,
                     timing,
@@ -508,6 +581,129 @@ mod tests {
             };
             assert_ne!(Verification::read(Some(word)), Verification::Unknown);
         }
+    }
+
+    #[test]
+    fn every_band_has_an_explicit_fixed_word() {
+        // A new band fails compilation here until it is listed, and its word is pinned.
+        for band in [
+            VersionBand::Unknown,
+            VersionBand::InventorOlder,
+            VersionBand::Inventor2016,
+            VersionBand::Inventor2017,
+            VersionBand::Inventor2018,
+            VersionBand::Inventor2019,
+            VersionBand::Inventor2020,
+            VersionBand::Inventor2021,
+            VersionBand::Inventor2022,
+            VersionBand::Inventor2023,
+            VersionBand::Inventor2024,
+            VersionBand::Inventor2025,
+            VersionBand::Inventor2026,
+            VersionBand::Inventor2027,
+            VersionBand::InventorNewer,
+        ] {
+            let word = match band {
+                VersionBand::Unknown => "unknown",
+                VersionBand::InventorOlder => "inventor_older",
+                VersionBand::Inventor2016 => "inventor_2016",
+                VersionBand::Inventor2017 => "inventor_2017",
+                VersionBand::Inventor2018 => "inventor_2018",
+                VersionBand::Inventor2019 => "inventor_2019",
+                VersionBand::Inventor2020 => "inventor_2020",
+                VersionBand::Inventor2021 => "inventor_2021",
+                VersionBand::Inventor2022 => "inventor_2022",
+                VersionBand::Inventor2023 => "inventor_2023",
+                VersionBand::Inventor2024 => "inventor_2024",
+                VersionBand::Inventor2025 => "inventor_2025",
+                VersionBand::Inventor2026 => "inventor_2026",
+                VersionBand::Inventor2027 => "inventor_2027",
+                VersionBand::InventorNewer => "inventor_newer",
+            };
+            assert_eq!(serde_json::to_value(band).unwrap(), json!(word));
+        }
+    }
+
+    #[test]
+    fn inventor_file_versions_map_to_release_years_with_open_ends() {
+        let band = |version: &str| {
+            let input = json!({"input": {"format": "inventor_part"}, "source_version": version});
+            serde_json::to_value(report(&input)).unwrap()["files"][0]["source_version_band"].clone()
+        };
+        assert_eq!(band("19.9.9"), "inventor_older");
+        assert_eq!(band("1.0.0"), "inventor_older");
+        assert_eq!(band("0.1.2"), "unknown");
+        for (major, year) in (20..=31).zip(2016..=2027) {
+            assert_eq!(band(&format!("{major}.0.3")), format!("inventor_{year}"));
+        }
+        assert_eq!(band("32.0.0"), "inventor_newer");
+        assert_eq!(band("40.0.0"), "inventor_newer");
+        assert_eq!(band("41.0.0"), "unknown");
+        assert_eq!(band("255.255.255"), "unknown");
+    }
+
+    #[test]
+    fn a_version_that_is_not_three_plain_numbers_is_unknown() {
+        for version in [
+            "",
+            "25",
+            "25.2",
+            "25.2.1.0",
+            "256.0.0",
+            "-25.2.1",
+            "+25.2.1",
+            "25.2.x",
+            "25..1",
+            " 25.2.1",
+            "25.2.1 ",
+            "0025.2.1",
+            "Inventor 2021",
+            "2021",
+            "٢٥.٢.١",
+        ] {
+            let input = json!({"input": {"format": "inventor_part"}, "source_version": version});
+            let counts = serde_json::to_value(report(&input)).unwrap();
+            assert_eq!(
+                counts["files"][0]["source_version_band"], "unknown",
+                "{version:?}"
+            );
+        }
+        let numbers = json!({"input": {"format": "inventor_part"}, "source_version": 25});
+        let counts = serde_json::to_value(report(&numbers)).unwrap();
+        assert_eq!(counts["files"][0]["source_version_band"], "unknown");
+    }
+
+    #[test]
+    fn only_formats_with_a_reliable_version_get_a_band() {
+        for format in [
+            "fusion_archive",
+            "solidworks_part",
+            "freecad_document",
+            "step",
+            "nope",
+        ] {
+            let input = json!({"input": {"format": format}, "source_version": "25.2.1"});
+            let counts = serde_json::to_value(report(&input)).unwrap();
+            assert_eq!(
+                counts["files"][0]["source_version_band"], "unknown",
+                "{format}"
+            );
+        }
+        let input = json!({"input": {"format": "inventor_assembly"}, "source_version": "28.1.1"});
+        let counts = serde_json::to_value(report(&input)).unwrap();
+        assert_eq!(counts["files"][0]["source_version_band"], "inventor_2024");
+    }
+
+    #[test]
+    fn versions_split_counts_by_band_without_file_identity() {
+        let part = |version: &str| json!({"input": {"format": "inventor_part"}, "source_version": version});
+        let all = json!({"results": [part("25.0.0"), part("25.9.9"), part("26.0.0")]});
+        let counts = serde_json::to_value(report(&all)).unwrap();
+        let rows = counts["files"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["source_version_band"], "inventor_2021");
+        assert_eq!(rows[0]["count"], 2);
+        assert_eq!(rows[1]["source_version_band"], "inventor_2022");
     }
 
     #[test]

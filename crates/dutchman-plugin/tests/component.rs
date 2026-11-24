@@ -599,6 +599,11 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         );
         assert!(store.data().calls > 0);
         assert_eq!(store.data().progress.last(), Some(&1.0));
+        assert!(
+            store.data().progress.windows(2).all(|w| w[0] <= w[1]),
+            "{fixture}: progress must never go back: {:?}",
+            store.data().progress
+        );
         eprintln!(
             "{fixture}: matched CLI document and body payloads ({} streamed reads): {summary}",
             store.data().calls

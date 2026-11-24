@@ -368,6 +368,7 @@ Explicit output paths keep their given extension. The container format stays `so
 |---|---|
 | `ok` | `true` when the design was written with no unplaced parts. An output can be written with `ok: false` and partial verification when occurrence positions could not be read; the conversion CLI returns exit status 1. See `completeness`. |
 | `estimate` | Quick pre-read estimate, including on memory refusals: `peak_bytes` and `seconds` are unsigned integers; `seconds_exact` is an additive fractional-second elapsed estimate (`seconds` is its ceiling); time bands apply to `seconds_exact`; `band` is the legacy shared heuristic (`0.5` means ±50%); `memory_band` is the separate relative RAM band and `time_band` is a relative time band or `null` when uncalibrated. `band` remains the shared compatibility field; current phase models use their total-memory envelope there, while older combined models retain their heuristic. `null` when unavailable. No design is decoded; a Fusion archive's designs are read one at a time for their own directories. Calibrated on measured conversions (see [Choosing what to keep](presets.md)). Measured formats add independent read, conversion and checking costs; other formats keep their combined heuristic. |
+| `source_version` | The version of the program that saved the input file, as `major.minor.revision` numbers, read from the file's own numeric record. Recorded for Inventor files only (the `RSeDb` database's saving-application version; the newest when a file holds several; Inventor's major number is its release year minus 1996, so `25` is 2021). Omitted for every other format and when the file states none. Only the input file's own version is recorded, never a part's or component's. This is not preflight's `scan.source_version`, which is always `null` today and is read before conversion. |
 | `threads` | `{requested, used}` records the per-part worker limit (`0`: automatic, `1`: serial) and the bounded maximum used across component slicing and SolidCraft preparation. Counts are limited by part count and available memory, and never below `1`. Present on SolidCraft writes and on assembly reads that reach component slicing, including inspection and other output formats; omitted for pre-read estimates and reads/writers with no part-worker stage. Batch entries and watch reports carry it within each conversion report. Native decoding stays serial. |
 | `solidcraft` | SolidCraft output only: `target` is the selected `x.y` minor; `found` is the discovered CLI release as `x.y.z`, or null when unavailable or not checked. `known_newest` is the newest known minor (`0.42`). `status` is `newer`, `too_old`, `older_loses_history`, `current`, or `none_found`. The history status requires an older installed release and a selected target whose writer gates retain less history than newest; `current` includes older releases with no gated history loss. Included even with verification off. When `found` is null, `search` says why: `outcome` (`not_found`, or `found_no_answer` when a CLI was found but did not report its version in time) and `places`, each `{"place", "outcome"}` for `SOLIDCRAFT_CLI`, `PATH`, `beside Dutchman` and the platform's install folders (`Program Files`, `Program Files (x86)`, `per-user install folder`, `Windows registry`, `Applications`, `user Applications`), with `outcome` `unset`, `set_but_missing`, `not_found`, `found` or `used`. This local report adds each `path` and the `cli` chosen; the [anonymous report](report-anon.md) does not. An explicit target wins; otherwise the supported found version capped at known newest, else built-in newest (0.42), is targeted. |
 | `choices` | `part_positions` is `smart` (default), `last-shown`, or `first-placed`. Smart admits current poses after checking touching joints, assembly bounds, and repeated inserted designs; last-shown uses available current poses; first-placed ignores later moves. Compatibility `stored_placements` is true only for first-placed. Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
@@ -549,9 +550,9 @@ asking for its body-producing feature to resolve first. Source storage order doe
 change replay order: the neutral ordinal controls it.
 
 SolidCraft version presentation uses minors: `solidcraft.target` and
-`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.47"`), changing their
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.48"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
-`"0.44.0"`). Status comparisons use minors, so all 0.47 patches are current; 0.48 is newer
+`"0.44.0"`). Status comparisons use minors, so all 0.48 patches are current; 0.49 is newer
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.
@@ -684,7 +685,7 @@ For older targets, `history.features[].reason` says
 line explains the blocker. `--solidcraft-version x.y.z` selects the target on `convert`,
 `convert-all`, and `watch`; it must be at least 0.18.2. By default the found verification
 CLI's version is used, even with `--no-verify`, else the newest release known at build
-time (currently 0.47). The supported rolling 14-day window is currently 0.40–0.47;
+time (currently 0.48). The supported rolling 14-day window is currently 0.40–0.48;
 older targets down to 0.18.2 retain the existing feature simplifications.
 When a written coil or flat entry-recess tip uses the newer mapping, the history line
 includes the actual target, such as `target SolidCraft 0.25 patch 1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip
@@ -835,8 +836,13 @@ components are unsigned 64-bit integers.
 | `features` | Aggregate rows with fixed `kind`, `outcome`, `reason`, and integer `count`. No feature names, ordinals, variants, selections or output IDs. |
 
 `source_format` uses the fixed input format identifiers defined above, plus `unknown`.
-`source_version_band` is `unknown`: conversion reports currently do not record the source
-version. It never guesses a version from a name or error message. `document` is `part`,
+`source_version_band` comes from the convert report's `source_version`, and only for
+Inventor files: `inventor_2016` through `inventor_2027` for the release year,
+`inventor_older` below 2016 and `inventor_newer` for the few versions after 2027 (file
+versions 32 to 40). A file version above 40 is treated as a damaged record, not a release. An
+assembly's band is the `.iam` file's own saving version, not its parts'. Every other format, and any
+Inventor file whose version is absent or is not three plain numbers, is `unknown`. It never
+guesses a version from a name or error message. `document` is `part`,
 `assembly`, or `unknown` when the format is not recognized, based on the recorded assembly or the fixed source-format category.
 `verification` is `verified`, `partial`, `differs`, `unverified`, `flattened`,
 `not_applicable`, or `unknown`.

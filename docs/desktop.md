@@ -232,7 +232,7 @@ Day or Night, and its **Output format** choice also offers a FreeCAD macro.
 The header’s SolidCraft status pill opens a small panel with **Target SolidCraft** and a
 notice explaining when the installed SolidCraft is newer than Dutchman knows, too old
 (before minor 0.18), or older and the selected target loses editable history. Only the last case suggests newer SolidCraft for more history;
-0.44 patch 1 through 0.47 currently need no such notice. The notice never blocks conversion.
+0.44 patch 1 through 0.48 currently need no such notice. The notice never blocks conversion.
 The pill shows the detected release, or **SolidCraft not found** with a download link in its
 panel. **Advanced > SolidCraft version…** opens the same panel. Narrow windows show only
 the version or **not found**, shorten **Update**, and put theme choices in a menu.
@@ -248,7 +248,7 @@ SolidCraft, or answers as a release older than 0.18.2, is refused with a message
 `solidcraft-cli` beside it. Without one, the panel says so: on Windows, the single-file SolidCraft
 download leaves it out, and the portable ZIP and the MSI installer include it.
 
-Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.47), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
+Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.48), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
 
 History checking stays on by default. Before a SolidCraft rebuild, Dutchman compares the
 memory needed for a second build with free memory, using what the design holds after
@@ -424,6 +424,16 @@ Windows copies have two update paths, using the versioned package and its `.sha2
 the same stable release. Nothing changes until the SHA-256 matches; a failed download or
 checksum check deletes the download and leaves the installed copy untouched. **Download**
 remains available for a manual install.
+The release check and the Windows and AppImage downloads give up on their own: up to 15 seconds
+for the host-name lookup and then up to 15 seconds for each connection attempt, and 30 seconds
+without a single byte arriving. The release check, the API fallback and the checksum file also
+have 20 seconds in total; the package download has no total limit, so a slow download that keeps
+moving is never cut. The Homebrew and Scoop hand-offs run those tools, which are only bounded
+by the 15-minute limit on their commands.
+Behind a firewall that blocks `github.com` or its download hosts, the update then stops with a
+plain message, leaves the installed copy untouched, and offers **Try
+again** and **Download manually**. Nothing retries by itself, and
+Dutchman can be closed while a download is still running.
 
 - **MSI: Install (closes Dutchman).** Detection requires the running executable at
   `%LOCALAPPDATA%\Programs\Dutchman\dutchman-gui.exe` and a matching `InstallDir` string in
