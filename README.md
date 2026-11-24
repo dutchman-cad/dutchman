@@ -19,7 +19,8 @@ See it first: [converted designs in your browser](https://dutchmancad.xyz/demo/)
 - **Linux AppImage** (0.2.10 and later): download `dutchman-<version>-x86_64.AppImage` (or `-aarch64`) from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest), run `chmod +x` on it, and run it. It works on any distribution and starts the desktop app. A launcher such as Gear Lever adds it to your menu and `PATH`; the command line programs are in it too ([how](docs/install.md#linux-the-appimage)).
 
 The Windows installer is unsigned. If SmartScreen says **Windows protected your PC**, click
-**More info**, then **Run anyway**. See [Windows first run](docs/install.md#windows-first-run).
+**More info**, then **Run anyway**. Windows 11's Smart App Control blocks it with no **Run anyway**
+button; see [Smart App Control](docs/install.md#smart-app-control).
 
 Release packages include local `skills/`, Markdown `docs/`, and an `AGENTS.md` explaining
 commands and saved reports ([locations and omitted images](docs/install.md#included-guidance)).
