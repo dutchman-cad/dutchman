@@ -663,14 +663,48 @@ fn a_tool_without_cutting_data_gets_placeholders_and_says_so() {
     assert!(near(f(d, "rpm"), 1000.0));
     assert!(near(f(d, "feed"), 100.0));
     assert!(near(f(d, "tip_angle"), 118.0));
-    let degraded: Vec<_> = c
-        .report
-        .losses()
+    let losses = c.report.losses();
+    let placeholders: Vec<_> = losses
+        .iter()
+        .filter(|l| l.detail.contains("placeholders"))
+        .collect();
+    assert_eq!(placeholders.len(), 1);
+    assert_eq!(
+        placeholders[0].severity,
+        Severity::Info,
+        "a tool with no presets lost nothing"
+    );
+    // The missing point angle is still an approximation.
+    let degraded: Vec<_> = losses
         .iter()
         .filter(|l| l.severity == Severity::Degraded)
         .collect();
     assert_eq!(degraded.len(), 1);
-    assert!(degraded[0].detail.contains("placeholders") && degraded[0].detail.contains("118"));
+    assert!(degraded[0].detail.contains("118"));
+}
+
+#[test]
+fn placeholders_for_presets_that_could_not_be_used_stay_degraded() {
+    let mut t = tool(
+        "drill",
+        "unusable",
+        geo(&[
+            ("DC", 5.0),
+            ("LCF", 30.0),
+            ("LB", 60.0),
+            ("SFDM", 5.0),
+            ("SIG", 118.0),
+        ]),
+    );
+    t["start-values"] = json!({"presets": [{"name": "empty"}]});
+    let c = convert_lib(&library(vec![t]));
+    let losses = c.report.losses();
+    let placeholders: Vec<_> = losses
+        .iter()
+        .filter(|l| l.detail.contains("placeholders"))
+        .collect();
+    assert_eq!(placeholders.len(), 1);
+    assert_eq!(placeholders[0].severity, Severity::Degraded);
 }
 
 #[test]
