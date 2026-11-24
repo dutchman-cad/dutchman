@@ -400,7 +400,7 @@ Large batches:
 - **Each file in its own process.** A file that takes longer than `--timeout SECONDS` (default
   900) or holds more than `--max-memory MB` (default `0`, no limit) is stopped and
   reported as failed. Any file also stops if the computer really runs low on memory, and the rest carry on. A file that crashes the converter fails alone.
-- **Carry on where you stopped.** `--journal FILE` records each file's result as it finishes.
+- **Carry on where you stopped.** `--journal FILE` records each file's result as it finishes. Its folder is made if it does not exist yet, as is `--report-anon`'s.
   Run the same command again and the files already recorded, unchanged since, are not
   converted again; their results come from the journal. Files another version of Dutchman
   recorded, or an older journal format (before 0.1.4), are converted again.

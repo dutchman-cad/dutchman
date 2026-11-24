@@ -1109,6 +1109,10 @@ impl Journal {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(io(err)),
         }
+        // The journal may sit in the output folder, which this run has not made yet.
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(io)?;
+        }
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

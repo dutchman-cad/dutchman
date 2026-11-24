@@ -361,7 +361,11 @@ fn write_run(
     };
     let save = |path: &Path, value: &Value| {
         let text = serde_json::to_string_pretty(value).map_err(|err| err.to_string())?;
-        std::fs::write(path, text + "\n").map_err(|err| format!("{}: {err}", path.display()))
+        let error = |err: std::io::Error| format!("{}: {err}", path.display());
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(error)?;
+        }
+        std::fs::write(path, text + "\n").map_err(error)
     };
     save(&request.path, &anon)?;
     if let Some(path) = &request.key {
