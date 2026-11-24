@@ -564,7 +564,7 @@ fn mesh_only_error(
 }
 
 /// What to tell the user when a STEP file's writer exported a design with nothing in it.
-pub const EMPTY_STEP_MESSAGE: &str = "This STEP file contains no shapes: it has a product but no solids, surfaces or curves, so the program that wrote it exported an empty design. Check the design has bodies, then export it again.";
+pub const EMPTY_STEP_MESSAGE: &str = "This STEP file contains no shapes: it has a product but no solids, surfaces or curves, so the program that wrote it exported an empty design. Check the design has bodies, then export it again; mesh bodies are not written to STEP, so for a design made of meshes convert its own file (a Fusion .f3d or .f3z) instead, or turn the meshes into solids first.";
 
 /// True when `bytes` is a STEP exchange text with a product and no geometric entity at all: no
 /// solid, shell, face, surface, curve, edge, vertex or tessellation. Presentation styles
