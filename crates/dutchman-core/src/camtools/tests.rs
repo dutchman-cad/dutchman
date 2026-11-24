@@ -1332,6 +1332,7 @@ fn generated_names_state_sizes_without_float_noise() {
         "flat end mill 1-1/2\" (library entry 1)"
     );
     assert_eq!(name("inches", 2.0), "flat end mill 2\" (library entry 1)");
+    assert_eq!(name("inches", 4.0), "flat end mill 4\" (library entry 1)");
     assert_eq!(name("inches", 0.3), "flat end mill 0.3\" (library entry 1)");
     assert_eq!(
         name("inches", 0.123_456_7),

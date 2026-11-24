@@ -119,12 +119,14 @@ fn looks_like_fusion(root: &Value) -> bool {
 fn decode_text(bytes: &[u8], partial: bool) -> Result<String, String> {
     let utf16 = |rest: &[u8], big: bool| {
         let units: Vec<u16> = rest
-            .chunks_exact(2)
-            .map(|p| {
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| {
                 if big {
-                    u16::from_be_bytes([p[0], p[1]])
+                    u16::from_be_bytes(pair)
                 } else {
-                    u16::from_le_bytes([p[0], p[1]])
+                    u16::from_le_bytes(pair)
                 }
             })
             .collect();

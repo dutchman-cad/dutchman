@@ -698,7 +698,8 @@ fn size_label(value: f64, unit: Unit) -> String {
     if nearest >= 1.0 && (sixty_fourths - nearest).abs() < 1e-6 * nearest.max(1.0) {
         let mut n = nearest as u64;
         let mut d = 64_u64;
-        while n % 2 == 0 {
+        // Stop at a denominator of 1: two inches is 128/64, whose numerator stays even.
+        while d > 1 && n.is_multiple_of(2) {
             n /= 2;
             d /= 2;
         }
