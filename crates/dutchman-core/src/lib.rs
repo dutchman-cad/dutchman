@@ -367,15 +367,7 @@ pub fn read_with_progress(
         report,
         &|format, path, report| {
             let model = decode_file(format, path, report, progress)?;
-            // Only the input itself states the version the volunteer's file was saved with,
-            // not a part or component found beside it.
-            if path == input
-                || matches!((path.canonicalize(), input.canonicalize()), (Ok(a), Ok(b)) if a == b)
-            {
-                if let Some(version) = source_version::of(&model.ir.native) {
-                    report.record_source_version(version);
-                }
-            }
+            source_version::record(report, path, input, &model.ir.native);
             // The codec owns Fusion archive members; do not count the whole archive as one.
             if format != Format::FusionMultiDocument {
                 if let Some(progress) = progress {

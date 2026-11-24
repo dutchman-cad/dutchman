@@ -243,7 +243,9 @@ impl VersionBand {
             29 => Self::Inventor2025,
             30 => Self::Inventor2026,
             31 => Self::Inventor2027,
-            32..=u8::MAX => Self::InventorNewer,
+            32..=40 => Self::InventorNewer,
+            // Far beyond any release: a damaged record, not a version.
+            41..=u8::MAX => Self::Unknown,
         }
     }
 
@@ -635,6 +637,8 @@ mod tests {
             assert_eq!(band(&format!("{major}.0.3")), format!("inventor_{year}"));
         }
         assert_eq!(band("32.0.0"), "inventor_newer");
+        assert_eq!(band("40.0.0"), "inventor_newer");
+        assert_eq!(band("41.0.0"), "unknown");
         assert_eq!(band("255.255.255"), "inventor_newer");
     }
 

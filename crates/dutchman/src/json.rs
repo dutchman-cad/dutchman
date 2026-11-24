@@ -2047,6 +2047,16 @@ mod tests {
     }
 
     #[test]
+    fn source_version_is_reported_only_when_the_file_records_it() {
+        let mut report = Report::default();
+        let none = Value::Object(success(CONVERT, json!({}), &report));
+        assert!(none.get("source_version").is_none());
+        report.record_source_version("25.2.1".to_owned());
+        let some = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(some["source_version"], "25.2.1");
+    }
+
+    #[test]
     fn a_single_part_reports_no_parts() {
         let mut report = Report::default();
         report.set_outcome(Outcome {
