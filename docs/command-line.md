@@ -382,7 +382,13 @@ file names and paths; keep them private. For an issue, request `--report-anon FI
 it, and share that report as [Troubleshooting](troubleshooting.md) shows. Files in the folders that are not in
 a format Dutchman knows (`notes.txt`, say) are skipped and counted at the end. The exit code is 0
 only when every file converted, else 1. `--jobs N` sets how many files
-convert at once (default: the machine's cores, at most 8). It takes the same options as
+convert at once (default: the machine's cores, at most 8). With more than one file at a
+time the batch schedules middle-out: the largest files (assemblies and multi-document
+archives first) start first, and a file starts only when its predicted peak memory fits the
+memory free now, less a margin of a quarter of it (at least 1 GiB), so small files fill the
+gaps around big ones. A file larger than all free memory still runs, alone. The report, the
+journal and the printed lines stay in input order, and `--jobs 1` converts in input order.
+It takes the same options as
 `convert`, and `--json` prints one `dutchman.convert-all/1` report holding a
 `dutchman.convert/1` report per file. One run converts at most 10,000 files and searches
 folders at most 32 levels deep.
