@@ -444,6 +444,9 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
             .is_none_or(|counts| counts.unplaced_count() == 0)),
     );
     out.insert("input".to_owned(), input);
+    if let Some(version) = report.source_version() {
+        out.insert("source_version".to_owned(), json!(version));
+    }
     if let Some((requested, used)) = report.threads() {
         out.insert(
             "threads".to_owned(),
