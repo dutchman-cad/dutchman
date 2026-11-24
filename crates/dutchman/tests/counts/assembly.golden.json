@@ -8,7 +8,7 @@
   "files": [
     {
       "source_format": "inventor_assembly",
-      "source_version_band": "unknown",
+      "source_version_band": "inventor_2021",
       "document": "assembly",
       "verification": "partial",
       "timing": "minutes",
