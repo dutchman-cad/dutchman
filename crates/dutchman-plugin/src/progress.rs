@@ -36,12 +36,21 @@ impl Progress {
         };
         // One atomic step, so two callers can never report out of order. Non-negative floats
         // order the same as their bit patterns.
-        self.last
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |bits| {
-                (fraction >= f32::from_bits(bits) + 0.01).then_some(fraction.to_bits())
-            })
-            .ok()
-            .map(|_| (fraction, message))
+        let mut seen = self.last.load(Ordering::Relaxed);
+        loop {
+            if fraction < f32::from_bits(seen) + 0.01 {
+                return None;
+            }
+            match self.last.compare_exchange_weak(
+                seen,
+                fraction.to_bits(),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Some((fraction, message)),
+                Err(now) => seen = now,
+            }
+        }
     }
 
     /// The main file is read; the parts of an assembly come next.
