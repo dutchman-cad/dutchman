@@ -152,3 +152,35 @@ fn convert_all_makes_the_folders_its_journal_and_report_go_in() {
     }
     assert!(std::fs::read_to_string(&journal).unwrap().lines().count() >= 1);
 }
+
+#[test]
+fn convert_makes_the_folders_of_a_full_anonymous_report_and_its_key() {
+    let folder = tempfile::tempdir().unwrap();
+    let source = folder.path().join("private-design.f3d");
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d"),
+        &source,
+    )
+    .unwrap();
+    let report = folder.path().join("shared/report.json");
+    let key = folder.path().join("private/key.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .args(["convert", "--no-verify", "--report-anon"])
+        .arg(&report)
+        .arg("--report-key")
+        .arg(&key)
+        .arg(&source)
+        .arg(folder.path().join("output.sc"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_str(&std::fs::read_to_string(report).unwrap()).unwrap();
+    assert_eq!(report["schema"], "dutchman.report-anon/1");
+    let key: Value = serde_json::from_str(&std::fs::read_to_string(key).unwrap()).unwrap();
+    assert!(key["salt"].is_string());
+}
