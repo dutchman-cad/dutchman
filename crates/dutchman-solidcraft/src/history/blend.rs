@@ -1699,21 +1699,21 @@ pub(crate) fn candidates(
                     })
                 })
             });
-            if !alone {
-                continue;
-            }
-            for (b, _, at) in picked {
-                let name = bodies.get(b).map(|(name, _)| name.clone())?;
-                if let Some(selection) = selections.iter_mut().find(|s| s.body == name) {
-                    selection.points.push(at);
-                } else {
-                    selections.push(Selection {
-                        body: name,
-                        points: vec![at],
-                    });
+            // Skip only this combination; the advance below must still run.
+            if alone {
+                for (b, _, at) in picked {
+                    let name = bodies.get(b).map(|(name, _)| name.clone())?;
+                    if let Some(selection) = selections.iter_mut().find(|s| s.body == name) {
+                        selection.points.push(at);
+                    } else {
+                        selections.push(Selection {
+                            body: name,
+                            points: vec![at],
+                        });
+                    }
                 }
+                out.push(selections);
             }
-            out.push(selections);
         }
         // The next combination, the last input edge turning fastest.
         let mut position = choice.len();
