@@ -680,12 +680,13 @@ fn claim(document: &mut Value) -> Claimed {
         }
         None
     };
-    // Bodies a visible, unsuppressed link inside an Assembly places, by object.
+    // Bodies an unsuppressed link inside an Assembly places, by object. A hidden link still
+    // places its Body (hidden), so the original is not placed again; a suppressed one places
+    // nothing.
     let mut placed: BTreeSet<String> = BTreeSet::new();
     for row in rows {
         if scope(row) != Some("local")
             || row.get("link").is_none()
-            || row.get("visible").and_then(Value::as_bool) == Some(false)
             || row.get("suppressed").and_then(Value::as_bool) == Some(true)
         {
             continue;
