@@ -243,7 +243,7 @@ pub fn assembly_references(
     let value = serde_json::to_value(&model.ir.model.occurrences)
         .map_err(|err| Error::Decode(format!("cannot read assembly references: {err}")))?;
     let finder = locate::Finder::new(search);
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = assembly::input_folder(input);
     let mut references: std::collections::BTreeSet<_> = value
         .as_array()
         .into_iter()

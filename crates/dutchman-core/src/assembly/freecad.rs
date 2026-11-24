@@ -55,7 +55,7 @@ pub(super) fn resolve(
             "the assembly places over {MAX_PLACEMENTS} components"
         )));
     }
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = input_folder(input);
     let wire =
         serde_json::to_value(&model.ir.model).map_err(|err| Error::Decode(err.to_string()))?;
     let rows = wire

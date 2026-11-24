@@ -481,10 +481,7 @@ pub(crate) fn resolve(
     }
     occurrences.sort_by_key(|row| row.get("ordinal").and_then(Value::as_u64));
 
-    let folder = input
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+    let folder = input_folder(input);
     let mut parts: Vec<Model> = Vec::new();
     let mut identities = Vec::new();
     // Each file read, once: its part, or the stage and reason it could not be read.
@@ -737,6 +734,15 @@ pub fn local_assembly_with_positions(
 #[cfg(test)]
 fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, String> {
     local_components_with(model, &BTreeMap::new())
+}
+
+/// The folder an assembly's part files are looked for in first: the input's own folder, or the
+/// current folder for a bare file name (whose `parent()` is an empty path, not `None`).
+pub(crate) fn input_folder(input: &Path) -> &Path {
+    input
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
 }
 
 type ExternalParts = BTreeMap<String, Result<(usize, std::rc::Rc<Model>), LeftOut>>;
@@ -3758,6 +3764,17 @@ mod tests {
                  project folder {}",
                 crate::locate::tests::absolute_for_tests(project.dir.path()).display()
             )]
+        );
+    }
+
+    #[test]
+    fn a_bare_file_name_looks_for_its_parts_in_the_current_folder() {
+        assert_eq!(input_folder(Path::new("A01a.SLDASM")), Path::new("."));
+        assert_eq!(input_folder(Path::new("./A01a.SLDASM")), Path::new("."));
+        assert_eq!(input_folder(Path::new("sub/A01a.SLDASM")), Path::new("sub"));
+        assert_eq!(
+            input_folder(Path::new("/abs/A01a.SLDASM")),
+            Path::new("/abs")
         );
     }
 
