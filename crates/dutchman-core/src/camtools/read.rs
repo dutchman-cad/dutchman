@@ -43,7 +43,7 @@ pub fn is_library(path: &Path) -> bool {
     if file.take(MAX_BYTES).read_to_end(&mut bytes).is_err() {
         return false;
     }
-    serde_json::from_slice::<Value>(&bytes)
+    serde_json::from_slice::<Value>(without_bom(&bytes))
         .ok()
         .is_some_and(|root| looks_like_fusion(&root))
 }
@@ -57,13 +57,26 @@ fn looks_like_fusion(root: &Value) -> bool {
         Value::Array(a) => a.as_slice(),
         _ => return false,
     };
+    // Fusion exports tools and holders side by side, and a holder states neither a `unit` nor a
+    // `geometry` in every export, so each entry only needs a `type`; the file is a library when
+    // at least one entry is a holder or has a tool's `geometry` or `unit`.
     !entries.is_empty()
         && entries.iter().all(|e| {
+            e.as_object()
+                .is_some_and(|o| o.get("type").is_some_and(Value::is_string))
+        })
+        && entries.iter().any(|e| {
             e.as_object().is_some_and(|o| {
-                o.get("type").is_some_and(Value::is_string)
-                    && (o.contains_key("geometry") || o.contains_key("unit"))
+                o.get("type").and_then(Value::as_str) == Some("holder")
+                    || o.contains_key("geometry")
+                    || o.contains_key("unit")
             })
         })
+}
+
+/// `bytes` without a leading UTF-8 byte order mark, which Windows editors add to JSON.
+fn without_bom(bytes: &[u8]) -> &[u8] {
+    bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes)
 }
 
 /// Reads the library at `path`.
@@ -93,7 +106,7 @@ pub fn read(path: &Path) -> Result<Contents, String> {
         read_json(&text, &name, &mut contents)?;
     }
     if contents.tools.is_empty() && contents.holders == 0 {
-        return Err("the library holds no tools".into());
+        return Err("this library holds no tools".into());
     }
     Ok(contents)
 }
@@ -145,8 +158,8 @@ fn read_archive(path: &Path, into: &mut Contents) -> Result<(), String> {
 
 /// Adds the tools of one JSON document.
 pub(super) fn read_json(text: &[u8], source: &str, into: &mut Contents) -> Result<(), String> {
-    let root: Value =
-        serde_json::from_slice(text).map_err(|e| format!("{source} is not valid JSON: {e}"))?;
+    let root: Value = serde_json::from_slice(without_bom(text))
+        .map_err(|e| format!("{source} is not valid JSON: {e}"))?;
     let entries: Vec<Value> = match root {
         Value::Object(mut o) => match o.remove("data") {
             Some(Value::Array(a)) => a,

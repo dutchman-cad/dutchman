@@ -1271,3 +1271,80 @@ fn a_dovetail_whose_neck_meets_its_flank_is_taken_with_the_shoulder_as_the_neck(
     assert!((d["shank_d"].as_f64().unwrap() - 3.175).abs() < 1e-6);
     assert!((d["shank_len"].as_f64().unwrap() - 23.9395).abs() < 1e-6);
 }
+
+#[test]
+fn generated_names_state_sizes_without_float_noise() {
+    let name = |unit: &str, dc: f64| {
+        let mut t = tool("flat end mill", "x", geo(&[("DC", dc), ("LCF", 10.0)]));
+        t["unit"] = json!(unit);
+        t.as_object_mut().unwrap().remove("description");
+        map::map_tool(&t, 0).name
+    };
+    assert_eq!(
+        name("inches", 0.062_499_999_999_999_99),
+        "flat end mill 1/16\" (library entry 1)"
+    );
+    assert_eq!(
+        name("inches", 0.0625),
+        "flat end mill 1/16\" (library entry 1)"
+    );
+    assert_eq!(
+        name("inches", 0.1875),
+        "flat end mill 3/16\" (library entry 1)"
+    );
+    assert_eq!(name("inches", 0.5), "flat end mill 1/2\" (library entry 1)");
+    assert_eq!(
+        name("inches", 1.5),
+        "flat end mill 1-1/2\" (library entry 1)"
+    );
+    assert_eq!(name("inches", 2.0), "flat end mill 2\" (library entry 1)");
+    assert_eq!(name("inches", 0.3), "flat end mill 0.3\" (library entry 1)");
+    assert_eq!(
+        name("inches", 0.123_456_7),
+        "flat end mill 0.1235\" (library entry 1)"
+    );
+    assert_eq!(
+        name("millimeters", 6.0),
+        "flat end mill 6 mm (library entry 1)"
+    );
+    assert_eq!(
+        name("millimeters", 6.35),
+        "flat end mill 6.35 mm (library entry 1)"
+    );
+    assert_eq!(
+        name("millimeters", 3.175_000_000_000_000_4),
+        "flat end mill 3.175 mm (library entry 1)"
+    );
+    assert_eq!(
+        name("millimeters", 2.123_456),
+        "flat end mill 2.123 mm (library entry 1)"
+    );
+}
+
+#[test]
+fn a_library_json_is_recognised_with_holders_and_a_byte_order_mark() {
+    let dir = tempfile::tempdir().unwrap();
+    let mixed = dir.path().join("mixed.json");
+    let lib = json!({"data": [
+        {"type": "holder", "description": "BT30"},
+        tool("drill", "d", geo(&[("DC", 5.0), ("LCF", 30.0)])),
+    ]});
+    std::fs::write(&mixed, lib.to_string()).unwrap();
+    assert!(is_library(&mixed));
+    let bom = dir.path().join("bom.json");
+    let mut bytes = b"\xEF\xBB\xBF".to_vec();
+    bytes.extend_from_slice(lib.to_string().as_bytes());
+    std::fs::write(&bom, bytes).unwrap();
+    assert!(is_library(&bom));
+    assert_eq!(written(&convert_path(&bom).unwrap()).len(), 1);
+    let holders = dir.path().join("holders.json");
+    std::fs::write(
+        &holders,
+        json!({"data": [{"type": "holder", "description": "BT30"}]}).to_string(),
+    )
+    .unwrap();
+    assert!(is_library(&holders));
+    let plain = dir.path().join("plain.json");
+    std::fs::write(&plain, json!({"data": [{"id": 1}, {"id": 2}]}).to_string()).unwrap();
+    assert!(!is_library(&plain));
+}

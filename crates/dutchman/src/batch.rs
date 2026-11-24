@@ -915,9 +915,7 @@ fn search(
             search(root, &path, depth + 1, out, skipped, include, left);
         } else if meta.is_file()
             && Format::from_path(&path).is_none()
-            && !path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("tools"))
+            && !crate::tool_library::is_library(&path)
         {
             *skipped.entry(extension_of(&path)).or_insert(0) += 1;
         } else if meta.is_file() {

@@ -120,6 +120,8 @@ pub struct Converted {
     pub text: Option<String>,
     /// Tool entries in the library (holders excluded).
     pub tools_read: usize,
+    /// Holder entries in the library, which are not tools and are not written.
+    pub holders: usize,
     /// Tools in the `.camtools`.
     pub tools_written: usize,
     /// Everything not carried across.
@@ -225,6 +227,7 @@ pub fn convert(contents: &Contents) -> Converted {
     Converted {
         text,
         tools_read: contents.tools.len(),
+        holders: contents.holders,
         tools_written: tools.len(),
         report,
     }

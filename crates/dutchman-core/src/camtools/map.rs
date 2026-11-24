@@ -605,7 +605,7 @@ pub(super) fn map_tool(tool: &Value, index: usize) -> Mapped {
         "millimeters" | "millimetres" | "mm" => 1.0,
         "inches" | "inch" | "in" => 25.4,
         other => {
-            out.name = fallback_name(tool, &type_word, index);
+            out.name = fallback_name(tool, &type_word, index, &unit);
             out.result = Err(format!(
                 "its unit \"{other}\" is neither millimeters nor inches"
             ));
@@ -620,7 +620,7 @@ pub(super) fn map_tool(tool: &Value, index: usize) -> Mapped {
     let description = src.text("description");
     out.name = description
         .clone()
-        .unwrap_or_else(|| fallback_name(tool, &type_word, index));
+        .unwrap_or_else(|| fallback_name(tool, &type_word, index, &unit));
     src.mark("type".into());
     src.mark("unit".into());
     let kind = match plan(&type_word) {
@@ -650,12 +650,14 @@ pub(super) fn map_tool(tool: &Value, index: usize) -> Mapped {
     out
 }
 
-fn fallback_name(tool: &Value, type_word: &str, index: usize) -> String {
+fn fallback_name(tool: &Value, type_word: &str, index: usize, unit: &str) -> String {
+    let inch = matches!(unit, "inches" | "inch" | "in");
     let dia = tool
         .get("geometry")
         .and_then(|g| g.get("DC"))
         .and_then(number)
-        .map(|d| format!(" {d}"))
+        .filter(|d| d.is_finite())
+        .map(|d| format!(" {}", size_label(d, inch)))
         .unwrap_or_default();
     let base = if type_word.is_empty() {
         "tool"
@@ -663,6 +665,47 @@ fn fallback_name(tool: &Value, type_word: &str, index: usize) -> String {
         type_word
     };
     format!("{base}{dia} (library entry {})", index.saturating_add(1))
+}
+
+/// A size for a generated tool name, without float noise: an inch size as a common fraction
+/// (up to 64ths) where it is one, else at most 4 decimals; a millimetre size at most 3 decimals.
+/// Trailing zeros are trimmed.
+fn size_label(value: f64, inch: bool) -> String {
+    if !inch {
+        return format!("{} mm", trimmed(value, 3));
+    }
+    let sixty_fourths = value * 64.0;
+    let nearest = sixty_fourths.round();
+    if nearest >= 1.0 && (sixty_fourths - nearest).abs() < 1e-6 * nearest.max(1.0) {
+        let mut n = nearest as u64;
+        let mut d = 64_u64;
+        while n % 2 == 0 {
+            n /= 2;
+            d /= 2;
+        }
+        let (whole, rest) = (n / d, n % d);
+        return match (whole, rest) {
+            (w, 0) => format!("{w}\""),
+            (0, r) => format!("{r}/{d}\""),
+            (w, r) => format!("{w}-{r}/{d}\""),
+        };
+    }
+    format!("{}\"", trimmed(value, 4))
+}
+
+/// `value` with at most `places` decimals, trailing zeros (and a bare point) trimmed.
+fn trimmed(value: f64, places: usize) -> String {
+    let text = format!("{value:.places$}");
+    let text = if text.contains('.') {
+        text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    } else {
+        text
+    };
+    if text == "-0" {
+        "0".to_owned()
+    } else {
+        text
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1079,10 +1122,16 @@ fn cutting_data(
             def.turning = lead.and_then(|i| turning.get(i).copied().flatten());
         }
         None => {
-            approximations.push(
+            let text =
                 "no cutting data in the library: 1000 rpm and 100 mm/min were written as placeholders; set real values in CamCraft"
-                    .into(),
-            );
+                    .to_owned();
+            // A tool the source gives no presets has lost nothing: that is a note. Presets the
+            // source did give and the mapping could not use are a change, so they stay degraded.
+            if presets.is_empty() {
+                notes.push(text);
+            } else {
+                approximations.push(text);
+            }
             def.rpm = if def.kind.spindleless() { 0.0 } else { 1000.0 };
             def.feed = 100.0;
             def.material_group = "all".into();

@@ -113,10 +113,7 @@ pub fn convert(input_path: &Path, output: &Path, replace: bool) -> Value {
         report.insert(
             "error".to_owned(),
             json!({
-                "message": format!(
-                    "none of the {} tools in the library can be written to a .camtools (CamCraft refuses an empty library); the losses say why",
-                    converted.tools_read
-                ),
+                "message": no_tools_message(&converted),
                 "stage": dutchman_core::Stage::Map.id(),
                 "upstream": Value::Null,
             }),
@@ -144,4 +141,17 @@ pub fn convert(input_path: &Path, output: &Path, replace: bool) -> Value {
 
 fn input_of(report: &serde_json::Map<String, Value>) -> Value {
     report.get("input").cloned().unwrap_or(Value::Null)
+}
+
+/// Why nothing was written: no tool in the library, or none that CamCraft can hold.
+fn no_tools_message(converted: &camtools::Converted) -> String {
+    match (converted.tools_read, converted.holders) {
+        (0, 0) => "this library holds no tools".to_owned(),
+        (0, holders) => {
+            format!("this library holds only holders ({holders}), no tools to convert")
+        }
+        (read, _) => format!(
+            "none of the {read} tools in the library can be written to a .camtools (CamCraft refuses an empty library); the losses say why"
+        ),
+    }
 }
