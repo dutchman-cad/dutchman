@@ -424,8 +424,12 @@ Windows copies have two update paths, using the versioned package and its `.sha2
 the same stable release. Nothing changes until the SHA-256 matches; a failed download or
 checksum check deletes the download and leaves the installed copy untouched. **Download**
 remains available for a manual install.
-Every network step of an update gives up on its own: 15 seconds to look up and reach GitHub,
-and 30 seconds without a single byte arriving (a slow download that keeps moving is never cut).
+The release check and the Windows and AppImage downloads give up on their own: up to 15 seconds
+for the host-name lookup and then up to 15 seconds for each connection attempt, and 30 seconds
+without a single byte arriving. The release check, the API fallback and the checksum file also
+have 20 seconds in total; the package download has no total limit, so a slow download that keeps
+moving is never cut. The Homebrew and Scoop hand-offs run those tools, which are only bounded
+by the 15-minute limit on their commands.
 Behind a firewall that blocks `github.com` or its download hosts, the update then stops with a
 plain message, leaves the installed copy untouched, and offers **Try
 again** and **Download manually**. Nothing retries by itself, and

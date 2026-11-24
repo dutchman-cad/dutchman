@@ -1,5 +1,6 @@
 use super::*;
 use std::io::Cursor;
+use std::time::Duration;
 
 fn package(missing: bool) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -266,11 +267,12 @@ fn a_verified_appimage_replaces_the_running_file_and_a_bad_checksum_does_not() {
 mod blocked_network {
     use super::*;
     use std::net::TcpListener;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     const TIMEOUTS: Timeouts = Timeouts {
         connect: Duration::from_secs(1),
         stall: Duration::from_secs(1),
+        total: None,
     };
 
     /// How a local server treats the package request.
@@ -282,6 +284,8 @@ mod blocked_network {
         Stalls,
         /// Nothing listens.
         Refuses,
+        /// Sends part of the body and closes the connection.
+        Truncates,
     }
 
     /// Serves a valid checksum, then treats the package as `mode` says. Returns the port.
@@ -320,6 +324,11 @@ mod blocked_network {
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len()
                     );
+                } else if matches!(mode, Mode::Truncates) {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\npartial"
+                    );
                 } else if matches!(mode, Mode::Stalls) {
                     let _ = write!(
                         stream,
@@ -337,6 +346,13 @@ mod blocked_network {
 
     /// Runs a whole update against the local server and checks it ends clearly and in time.
     fn run(mode: Mode) {
+        let error = run_failing(mode);
+        assert_eq!(error, UNREACHABLE);
+        assert!(error.contains("unchanged"));
+    }
+
+    /// Fails an update against the local server and returns the error; checks time and files.
+    fn run_failing(mode: Mode) -> String {
         let bytes = package(false);
         let port = serve(mode, bytes);
         let root = tempfile::tempdir().unwrap();
@@ -360,8 +376,6 @@ mod blocked_network {
             "took {:?}",
             started.elapsed()
         );
-        assert_eq!(error, UNREACHABLE);
-        assert!(error.contains("unchanged"));
         for name in PROGRAMS {
             assert_eq!(
                 std::fs::read_to_string(installed.join(name)).unwrap(),
@@ -372,6 +386,7 @@ mod blocked_network {
             std::fs::read(installed.join("settings.txt")).unwrap(),
             b"keep"
         );
+        error
     }
 
     #[test]
@@ -387,5 +402,13 @@ mod blocked_network {
     #[test]
     fn a_refused_connection_ends_in_the_clear_message() {
         run(Mode::Refuses);
+    }
+
+    #[test]
+    fn a_connection_that_drops_midway_says_so_not_firewall() {
+        let error = run_failing(Mode::Truncates);
+        assert_ne!(error, UNREACHABLE);
+        assert!(error.contains("interrupted"), "{error}");
+        assert!(error.contains("unchanged"));
     }
 }

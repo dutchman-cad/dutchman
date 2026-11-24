@@ -46,8 +46,30 @@ fn allowed_url(url: &str) -> bool {
 /// Said whenever GitHub cannot be reached or stops answering; the installed copy is untouched.
 pub(super) const UNREACHABLE: &str = "The update could not be downloaded: GitHub did not answer in time or the connection was blocked (a firewall or proxy may be in the way). Your installed Dutchman is unchanged. Use the manual download link to get the new version.";
 
+/// Downloads up to this size are checksums and the like, not packages.
+const SMALL_LIMIT: u64 = 64 * 1024;
+
+/// Said when a read or write timed out or no connection could be made.
+fn interrupted(detail: &dyn std::fmt::Display) -> String {
+    format!("The update download was interrupted ({detail}). Your installed Dutchman is unchanged. Use the manual download link to get the new version.")
+}
+
+fn timed_out(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+    )
+}
+
 pub(super) fn download(url: &str, limit: u64, out: &mut dyn Write) -> Result<(), String> {
-    download_with(url, limit, out, Timeouts::DEFAULT)
+    // The package has no total limit (a slow download that keeps moving must finish); small
+    // files such as the checksum also get a deadline for the whole request.
+    let timeouts = if limit <= SMALL_LIMIT {
+        Timeouts::SMALL
+    } else {
+        Timeouts::DEFAULT
+    };
+    download_with(url, limit, out, timeouts)
 }
 
 pub(super) fn download_with(
@@ -56,7 +78,6 @@ pub(super) fn download_with(
     out: &mut dyn Write,
     timeouts: Timeouts,
 ) -> Result<(), String> {
-    // No total limit: a slow download that keeps moving must finish.
     let agent = crate::update::agent(timeouts, 0);
     let mut url = url.to_owned();
     for _ in 0..6 {
@@ -77,7 +98,23 @@ pub(super) fn download_with(
                     "The update download was refused (HTTP {code}). Open the release page to download it manually."
                 ))
             }
-            Err(_) => return Err(UNREACHABLE.into()),
+            Err(ureq::Error::Transport(t)) => {
+                use std::error::Error;
+                // Only a failed lookup or connection and a timeout look like a block; a reset or
+                // a TLS error says what it was.
+                let blocked = matches!(
+                    t.kind(),
+                    ureq::ErrorKind::Dns | ureq::ErrorKind::ConnectionFailed
+                ) || t
+                    .source()
+                    .and_then(|s| s.downcast_ref::<std::io::Error>())
+                    .is_some_and(timed_out);
+                return Err(if blocked {
+                    UNREACHABLE.into()
+                } else {
+                    interrupted(&t)
+                });
+            }
         };
         if matches!(response.status(), 301 | 302 | 303 | 307 | 308) {
             url = response
@@ -93,8 +130,14 @@ pub(super) fn download_with(
         let mut buffer = [0; 64 * 1024];
         let mut count = 0u64;
         loop {
-            // A read that fails is the network stalling or dropping; a write that fails is the disk.
-            let n = reader.read(&mut buffer).map_err(|_| UNREACHABLE)?;
+            // A read that fails is the network; a write that fails is the disk.
+            let n = reader.read(&mut buffer).map_err(|e| {
+                if timed_out(&e) {
+                    UNREACHABLE.to_owned()
+                } else {
+                    interrupted(&e)
+                }
+            })?;
             if n == 0 {
                 break;
             }
