@@ -10,9 +10,9 @@ merge queue runs the full matrix once per group. Pushes to `main` keep their exi
 1. Refresh the SolidCraft window alongside the cadmpeg pin. `WINDOW_OLDEST` records the
    exact oldest release from the rolling 14-day window, never below the internal
    `OLDEST_SOLIDCRAFT` floor (0.18.2). `NEWEST_SOLIDCRAFT` names only the newest known
-   minor, currently `[0, 46]`; a patch release requires no Dutchman constant or docs update.
+   minor, currently `[0, 47]`; a patch release requires no Dutchman constant or docs update.
    Choose the oldest release and newest minor from SolidCraft's release dates, then run
-   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.40.0 0.46` with a read-only GitHub token.
+   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.40.0 0.47` with a read-only GitHub token.
    The script reads the authenticated GitHub releases list, selects the highest published
    stable patch of that minor, and checks its checksum metadata. It prints the constants,
    the oldest checksum, and the newest minor's dynamic CI matrix entry. Copy the constants

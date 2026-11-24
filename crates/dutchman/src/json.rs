@@ -1472,21 +1472,21 @@ mod tests {
     #[test]
     fn installed_version_notices_are_pure_and_non_blocking() {
         for (found, status, notice) in [
-            (Some("0.47.0"), "newer", Some("SolidCraft 0.47 is newer than this Dutchman knows. Designs are written for 0.46 and open fine in 0.47.")),
+            (Some("0.48.0"), "newer", Some("SolidCraft 0.48 is newer than this Dutchman knows. Designs are written for 0.47 and open fine in 0.48.")),
             (Some("0.17.9"), "too_old", Some("SolidCraft 0.17 is too old to open Dutchman's designs. Install a newer SolidCraft to open them.")),
             (Some("0.18.1"), "current", None),
-            (Some("0.46.9"), "current", None),
+            (Some("0.47.9"), "current", None),
             (Some("0.24.0"), "older_loses_history", Some("Designs are written for SolidCraft 0.24, the version you have. A newer SolidCraft keeps more of their history.")),
             (Some("0.25.1"), "older_loses_history", Some("Designs are written for SolidCraft 0.25, the version you have. A newer SolidCraft keeps more of their history.")),
             (Some("0.26.0"), "older_loses_history", Some("Designs are written for SolidCraft 0.26, the version you have. A newer SolidCraft keeps more of their history.")),
             (Some("0.27.1"), "older_loses_history", Some("Designs are written for SolidCraft 0.27, the version you have. A newer SolidCraft keeps more of their history.")),
-            (Some("0.46.2"), "current", None),
+            (Some("0.47.0"), "current", None),
             (Some("0.18.2"), "older_loses_history", Some("Designs are written for SolidCraft 0.18, the version you have. A newer SolidCraft keeps more of their history.")),
             (None, "none_found", None),
         ] {
             let mut report = json!({"solidcraft": solidcraft_values(None, found.map(str::to_owned))});
             assert_eq!(report["solidcraft"]["status"], status);
-            assert_eq!(report["solidcraft"]["known_newest"], "0.46");
+            assert_eq!(report["solidcraft"]["known_newest"], "0.47");
             assert_eq!(solidcraft_notice(&report).as_deref(), notice);
             report["error"] = json!({"message": "conversion failed"});
             assert!(solidcraft_notice(&report).is_none());
@@ -1499,7 +1499,7 @@ mod tests {
     #[test]
     fn cli_version_lines_are_normalized_like_the_writer() {
         for (line, version) in [
-            ("solidcraft-cli 0.46.2", Some("0.46.2")),
+            ("solidcraft-cli 0.47.0", Some("0.47.0")),
             ("solidcraft-cli v0.26.0-beta", Some("0.26.0")),
             ("solidcraft-cli 0.25", Some("0.25.0")),
             ("not a version", None),
@@ -1521,7 +1521,7 @@ mod tests {
         conversion_choices(&mut report, Path::new("missing.ipt"), &options);
         assert_eq!(
             report["solidcraft"],
-            json!({"target": "0.25", "found": null, "known_newest": "0.46", "status": "none_found"})
+            json!({"target": "0.25", "found": null, "known_newest": "0.47", "status": "none_found"})
         );
     }
 
@@ -1550,7 +1550,7 @@ mod tests {
         assert_eq!(writer.resolved_version(), target);
         assert_eq!(
             solidcraft_info(&options).unwrap(),
-            json!({"target": "0.25", "found": null, "known_newest": "0.46", "status": "none_found"})
+            json!({"target": "0.25", "found": null, "known_newest": "0.47", "status": "none_found"})
         );
         assert!(options.reported_solidcraft_version().is_none());
         assert!(!dir.path().join("solidcraft-cli.spawned").exists());
@@ -1558,20 +1558,20 @@ mod tests {
 
     #[test]
     fn solidcraft_versions_report_target_found_and_absence() {
-        let target = "0.46.2".parse().unwrap();
+        let target = "0.47.0".parse().unwrap();
         for (found, line) in [
             (
                 Some("0.26.0".to_owned()),
-                "Target SolidCraft 0.46 (found 0.26.0)",
+                "Target SolidCraft 0.47 (found 0.26.0)",
             ),
             (
-                Some("0.46.1".to_owned()),
-                "Target SolidCraft 0.46 (found 0.46.1)",
+                Some("0.47.1".to_owned()),
+                "Target SolidCraft 0.47 (found 0.47.1)",
             ),
-            (None, "Target SolidCraft 0.46 (none found)"),
+            (None, "Target SolidCraft 0.47 (none found)"),
         ] {
             let report = json!({"solidcraft": solidcraft_values(Some(target), found.clone())});
-            assert_eq!(report["solidcraft"]["target"], "0.46");
+            assert_eq!(report["solidcraft"]["target"], "0.47");
             assert_eq!(report["solidcraft"]["found"], json!(found));
             assert_eq!(solidcraft_line(&report).as_deref(), Some(line));
             let mut refused = report.clone();
@@ -1582,7 +1582,7 @@ mod tests {
             solidcraft_values(None, Some("0.26.0".into()))["target"],
             "0.26"
         );
-        assert_eq!(solidcraft_values(None, None)["target"], "0.46");
+        assert_eq!(solidcraft_values(None, None)["target"], "0.47");
         for to in [
             crate::OutputFormat::Freecad,
             crate::OutputFormat::Fcstd,

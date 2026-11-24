@@ -553,11 +553,11 @@ When a partial history is checked against the source's stored bodies, each kept 
 sit where the source has it: within the larger of 1 mm and 2% of its box diagonal when the
 source's position is approximate, or 0.5 mm and 1% when it is exact.
 
-Dutchman targets SolidCraft 0.46 by default with the writer capabilities available in 0.45 and
-keeps design format 23, as for earlier targets. SolidCraft 0.46 opens every earlier
-design format. Saving in SolidCraft 0.46 upgrades a design to format 64 (drawing format 3);
-SolidCraft 0.45 asks to update before opening that saved design. Dutchman does not write
-drawings or require format 64. Explicit older targets keep their existing output.
+Dutchman targets SolidCraft 0.47 by default with the writer capabilities available in 0.46 and
+keeps design format 23, as for earlier targets. SolidCraft 0.47 opens every earlier
+design format. Saving in SolidCraft 0.47 upgrades a design to format 65 (drawing format 5);
+SolidCraft 0.46 opens that saved design with a warning about the newer format. Dutchman does not write
+drawings or require format 65. Explicit older targets keep their existing output.
 
 Converted assemblies embed their parts and STEP blobs in the design container; they do
 not link back to the source part files. SolidCraft's requirement (since 0.45) to use Update Links
