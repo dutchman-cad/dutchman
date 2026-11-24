@@ -1211,16 +1211,24 @@ mod linked_bodies {
     }
 
     #[test]
-    fn a_hidden_or_suppressed_link_places_nothing() {
-        for (key, value) in [("visible", json!(false)), ("suppressed", json!(true))] {
-            let mut document = plain("Assembly::AssemblyObject");
-            occurrence_mut(&mut document, "i#ring")[key] = value;
-            let claimed = claim(&mut document);
-            assert_eq!(claimed.dropped, 1, "{key}");
-            assert!(placed(&document).contains(&"c#Body001"), "{key}");
-            assert!(!placed(&document).contains(&"c#Body"), "{key}");
-            assert_eq!(owner(&document, "Revolution2"), None, "{key}");
-        }
+    fn a_suppressed_link_places_nothing() {
+        let mut document = plain("Assembly::AssemblyObject");
+        occurrence_mut(&mut document, "i#ring")["suppressed"] = json!(true);
+        let claimed = claim(&mut document);
+        assert_eq!(claimed.dropped, 1);
+        assert!(placed(&document).contains(&"c#Body001"));
+        assert!(!placed(&document).contains(&"c#Body"));
+        assert_eq!(owner(&document, "Revolution2"), None);
+    }
+
+    #[test]
+    fn a_hidden_link_still_places_its_body() {
+        let mut document = plain("Assembly::AssemblyObject");
+        occurrence_mut(&mut document, "i#ring")["visible"] = json!(false);
+        let claimed = claim(&mut document);
+        assert_eq!(claimed.dropped, 2);
+        assert!(!placed(&document).contains(&"c#Body001"));
+        assert_eq!(owner(&document, "Revolution2"), Some("d#Body001"));
     }
 
     #[test]
