@@ -18,6 +18,7 @@ native geometry, the plugin checks bounded archive indexes and the desktop app's
 memory/time estimate. It retains a conservative 520 MB peak-memory estimate ceiling and
 a five-minute time estimate ceiling, and links to the [Dutchman app download](https://github.com/dutchman-cad/dutchman/releases/latest).
 The guest's actual memory limit is 2048 MiB; the lower estimate ceiling also bounds conversion work.
+The module itself declares that 2048 MiB maximum and reserves a 16 MiB stack, so hosts that cannot impose a limit, such as web browsers, enforce the same ceiling.
 The app can convert larger designs and save a `.sc` to open in SolidCraft. Compressed inner archive checks are bounded to 16 MiB in total; larger checks also
 direct you to the app. The estimate is
 approximate; it is not a guarantee that every smaller design fits. SolidCraft 0.45's importer
