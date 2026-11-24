@@ -154,6 +154,16 @@ jobs:
     runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
+      # A flyer runner's reused workspace can hold a clone missing objects it claims
+      # ("remote did not send all necessary objects"); start that workspace clean.
+      - name: Clear a corrupt reused workspace
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/.git" ] && ! git -C "$GITHUB_WORKSPACE" fsck --connectivity-only --no-progress >/dev/null 2>&1; then
+            echo "::warning::corrupt git workspace on $RUNNER_NAME; clearing it before checkout"
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi
       - uses: actions/checkout@v7
       # Self-hosted runners use the toolchain their owner keeps current (checked, never installed).
       - uses: dtolnay/rust-toolchain@stable
@@ -223,6 +233,16 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       # Keep the low-space fallback for older images without deleting 19 GiB on every run.
+      # A flyer runner's reused workspace can hold a clone missing objects it claims
+      # ("remote did not send all necessary objects"); start that workspace clean.
+      - name: Clear a corrupt reused workspace
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/.git" ] && ! git -C "$GITHUB_WORKSPACE" fsck --connectivity-only --no-progress >/dev/null 2>&1; then
+            echo "::warning::corrupt git workspace on $RUNNER_NAME; clearing it before checkout"
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi
       - uses: actions/checkout@v7
       - name: Check free disk space
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
@@ -376,6 +396,16 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
+      # A flyer runner's reused workspace can hold a clone missing objects it claims
+      # ("remote did not send all necessary objects"); start that workspace clean.
+      - name: Clear a corrupt reused workspace
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/.git" ] && ! git -C "$GITHUB_WORKSPACE" fsck --connectivity-only --no-progress >/dev/null 2>&1; then
+            echo "::warning::corrupt git workspace on $RUNNER_NAME; clearing it before checkout"
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         if: runner.environment == 'github-hosted'
@@ -545,6 +575,16 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       # Debug=0 jobs on current images have ample disk; clean only smaller images.
+      # A flyer runner's reused workspace can hold a clone missing objects it claims
+      # ("remote did not send all necessary objects"); start that workspace clean.
+      - name: Clear a corrupt reused workspace
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/.git" ] && ! git -C "$GITHUB_WORKSPACE" fsck --connectivity-only --no-progress >/dev/null 2>&1; then
+            echo "::warning::corrupt git workspace on $RUNNER_NAME; clearing it before checkout"
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi
       - uses: actions/checkout@v7
       - name: Check free disk space
         if: runner.environment == 'github-hosted'
