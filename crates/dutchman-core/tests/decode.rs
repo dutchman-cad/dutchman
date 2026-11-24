@@ -494,6 +494,8 @@ fn a_step_file_with_a_product_and_no_shapes_says_it_is_an_empty_export() {
     assert!(matches!(err, Error::EmptyExport(_)), "{err}");
     assert_eq!(err.kind(), "decode");
     assert_eq!(err.cause(), Some("empty_export"));
+    // Counted as the file's own problem (stage input), not as a reader failure.
+    assert_eq!(err.stage(), dutchman_core::Stage::Input);
     assert_eq!(
         err.to_string(),
         "This STEP file contains no shapes: it has a product but no solids, surfaces or curves, so the program that wrote it exported an empty design. Check the design has bodies, then export it again."

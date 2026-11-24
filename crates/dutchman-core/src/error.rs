@@ -81,10 +81,10 @@ impl Error {
             | Error::UnknownFormat { .. }
             | Error::OutputExists { .. }
             | Error::WrongOutputExtension { .. }
-            | Error::Assembly(_) => Stage::Input,
-            Error::NotSupportedYet { .. } | Error::Decode(_) | Error::EmptyExport(_) => {
-                Stage::Decode
-            }
+            | Error::Assembly(_)
+            // An empty export is the file itself, not something the reader failed at.
+            | Error::EmptyExport(_) => Stage::Input,
+            Error::NotSupportedYet { .. } | Error::Decode(_) => Stage::Decode,
             Error::NoGeometry(_) | Error::Checks { .. } => Stage::Project,
             Error::Encode(_) | Error::Restate(_) => Stage::Write,
         }
