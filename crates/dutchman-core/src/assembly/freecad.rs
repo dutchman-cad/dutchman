@@ -753,6 +753,10 @@ fn claim(document: &mut Value) -> Claimed {
         }
     }
     let mut set: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // A Body's own row belongs to that Body.
+    for (id, body) in &body_of {
+        set.entry(id.clone()).or_default().insert(body.clone());
+    }
     // What the Body rows state themselves (a Body listing its features), then what the
     // features state (a feature listing its Body).
     for feature in features {
