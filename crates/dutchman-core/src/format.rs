@@ -15,6 +15,7 @@ pub enum Format {
     CreoPart,
     NxPart,
     CreoView,
+    AlibrePart,
     Rhino,
     Acis,
     Step,
@@ -40,7 +41,7 @@ pub enum Format {
 
 impl Format {
     /// Every recognised format.
-    pub const ALL: [Format; 24] = [
+    pub const ALL: [Format; 25] = [
         Self::FusionArchive,
         Self::FusionMultiDocument,
         Self::InventorPart,
@@ -52,6 +53,7 @@ impl Format {
         Self::CreoPart,
         Self::NxPart,
         Self::CreoView,
+        Self::AlibrePart,
         Self::Rhino,
         Self::Acis,
         Self::Step,
@@ -105,6 +107,12 @@ impl Format {
             Self::CreoPart => ("creo_part", "prt", "Creo part (.prt, .prt.N)", "Creo"),
             Self::NxPart => ("nx_part", "prt", "NX part (.prt)", "NX"),
             Self::CreoView => ("creo_view", "pvz", "Creo View (.pvz)", "Creo View"),
+            Self::AlibrePart => (
+                "alibre_part",
+                "AD_PRT",
+                "Alibre Design part (.AD_PRT)",
+                "Alibre Design",
+            ),
             Self::Rhino => ("rhino", "3dm", "Rhino (.3dm)", "Rhino"),
             Self::Acis => ("acis", "sat", "ACIS (.sat, .sab, .smt, .smb)", "ACIS"),
             Self::Step => ("step", "step", "STEP (.step, .stp)", "STEP"),
@@ -178,6 +186,7 @@ impl Format {
             Self::CreoPart => &["prt", "prt.N"],
             Self::NxPart | Self::UnclassifiedPart => &["prt"],
             Self::CreoView => &["pvz"],
+            Self::AlibrePart => &["AD_PRT"],
             Self::Rhino => &["3dm"],
             Self::Acis => &["sat", "sab", "smt", "smb"],
             Self::Step => &["step", "stp"],
@@ -219,6 +228,7 @@ impl Format {
             Self::CreoPart => Some("creo"),
             Self::NxPart => Some("nx"),
             Self::CreoView => Some("pvz"),
+            Self::AlibrePart => Some("alibre"),
             Self::Rhino => Some("rhino"),
             Self::Acis => Some("sat"),
             Self::Step => Some("step"),

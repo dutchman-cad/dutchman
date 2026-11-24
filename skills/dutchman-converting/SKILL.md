@@ -1,6 +1,6 @@
 ---
 name: dutchman-converting
-description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, NX, Creo View, Rhino, ACIS, STEP or offline Onshape bundle) turned into a SolidCraft design (.sc) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including IGES and Creo), converting one file or a folder, checking the result in SolidCraft, explaining losses in plain words, and making private minimum reproductions of failures.
+description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, NX, Creo View, Alibre Design, Rhino, ACIS, STEP or offline Onshape bundle) turned into a SolidCraft design (.sc) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including IGES and Creo), converting one file or a folder, checking the result in SolidCraft, explaining losses in plain words, and making private minimum reproductions of failures.
 ---
 
 Onshape history dependencies follow consumed operands in their stored order. Deterministic
@@ -343,7 +343,7 @@ workers, reduced for dense parts or a large retained preparation queue.
 Call `formats` for the installed build's formats, status `words` and `converts`.
 Its `level` adds cadmpeg's published headline (`L0`–`L9`), or `null` when none is
 published; reader status still determines whether conversion can be attempted.
-Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, NX, Creo View, Rhino, ACIS, STEP and offline Onshape bundles
+Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, NX, Creo View, Alibre Design, Rhino, ACIS, STEP and offline Onshape bundles
 can convert geometry. Creo and NX parts are identified by contents
 (they share `.prt`); both convert their geometry, without feature history. SolidWorks
 assemblies are recognized without a reader. `input.words` appears on

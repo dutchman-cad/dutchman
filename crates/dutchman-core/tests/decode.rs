@@ -210,6 +210,11 @@ fn recognises_all_format_extensions_and_shared_part_contents() {
         ("nx.prt", b"SPLMSSTR", Format::NxPart),
         ("nx.prt.3", b"SPLMSSTR", Format::NxPart),
         ("x.pvz", b"PK\x03\x04", Format::CreoView),
+        (
+            "x.AD_PRT",
+            b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+            Format::AlibrePart,
+        ),
         ("x.3dm", b"3D Geometry File Format       80", Format::Rhino),
         ("x.sat", b"700 0 0 0\n", Format::Acis),
         ("x.sab", b"ACIS BinaryFile", Format::Acis),
