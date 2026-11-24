@@ -14,9 +14,11 @@ that are tool libraries) with its other inputs, writing `<name>.camtools` at the
 `.json` files are counted as skipped.
 
 - **Input:** a `.tools` export (a zip holding JSON) or a `.json` export. A `.json` file is taken as a
-  tool library when it holds a `data` list (or a bare list) of entries that each name a `type`,
-  at least one of them a holder or a tool with `geometry` or `unit`; a leading byte order mark is
-  fine. Any other `.json` is not touched. A `.json` library converts exactly like a `.tools` one:
+  tool library when it is an object with a `data` list (named in its first 8 KB) in which every
+  entry is a holder (`type` `holder`) or a Fusion tool (a string `type` and a `geometry` object with
+  a Fusion size such as `DC`, or a `unit` beside `start-values`, `post-process`, `BMC` or `guid`),
+  with at least one entry. A bare list is not taken. UTF-8 and UTF-16 (with their byte order mark)
+  are read. Any other `.json` is not touched. A `.json` library converts exactly like a `.tools` one:
   `dutchman library.json`, `dutchman convert library.json -o tools.camtools`, and in `convert-all`.
   A `.tools` archive with several JSON files is read as one library, in file-name order.
 - **Output:** `.camtools`, CamCraft's `camcraft-tools` file, lengths in millimetres. The tool library

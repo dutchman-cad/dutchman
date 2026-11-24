@@ -605,7 +605,7 @@ pub(super) fn map_tool(tool: &Value, index: usize) -> Mapped {
         "millimeters" | "millimetres" | "mm" => 1.0,
         "inches" | "inch" | "in" => 25.4,
         other => {
-            out.name = fallback_name(tool, &type_word, index, &unit);
+            out.name = fallback_name(tool, &type_word, index);
             out.result = Err(format!(
                 "its unit \"{other}\" is neither millimeters nor inches"
             ));
@@ -620,7 +620,7 @@ pub(super) fn map_tool(tool: &Value, index: usize) -> Mapped {
     let description = src.text("description");
     out.name = description
         .clone()
-        .unwrap_or_else(|| fallback_name(tool, &type_word, index, &unit));
+        .unwrap_or_else(|| fallback_name(tool, &type_word, index));
     src.mark("type".into());
     src.mark("unit".into());
     let kind = match plan(&type_word) {
@@ -650,14 +650,22 @@ pub(super) fn map_tool(tool: &Value, index: usize) -> Mapped {
     out
 }
 
-fn fallback_name(tool: &Value, type_word: &str, index: usize, unit: &str) -> String {
-    let inch = matches!(unit, "inches" | "inch" | "in");
+fn fallback_name(tool: &Value, type_word: &str, index: usize) -> String {
+    let unit = match tool
+        .get("unit")
+        .and_then(Value::as_str)
+        .map(|u| u.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("inches" | "inch" | "in") => Unit::Inch,
+        Some("millimeters" | "millimetres" | "mm") => Unit::Mm,
+        _ => Unit::Unstated,
+    };
     let dia = tool
         .get("geometry")
         .and_then(|g| g.get("DC"))
         .and_then(number)
-        .filter(|d| d.is_finite())
-        .map(|d| format!(" {}", size_label(d, inch)))
+        .map(|d| format!(" {}", size_label(d, unit)))
         .unwrap_or_default();
     let base = if type_word.is_empty() {
         "tool"
@@ -667,12 +675,23 @@ fn fallback_name(tool: &Value, type_word: &str, index: usize, unit: &str) -> Str
     format!("{base}{dia} (library entry {})", index.saturating_add(1))
 }
 
+/// The unit a tool states its sizes in, for naming it.
+#[derive(Clone, Copy)]
+enum Unit {
+    Inch,
+    Mm,
+    /// No unit, or one that is neither: the size is printed bare.
+    Unstated,
+}
+
 /// A size for a generated tool name, without float noise: an inch size as a common fraction
-/// (up to 64ths) where it is one, else at most 4 decimals; a millimetre size at most 3 decimals.
-/// Trailing zeros are trimmed.
-fn size_label(value: f64, inch: bool) -> String {
-    if !inch {
-        return format!("{} mm", trimmed(value, 3));
+/// (up to 64ths) where it is one, else at most 4 decimals; a millimetre size at most 3 decimals;
+/// a size in no known unit at most 4 decimals and no unit word. Trailing zeros are trimmed.
+fn size_label(value: f64, unit: Unit) -> String {
+    match unit {
+        Unit::Mm => return format!("{} mm", trimmed(value, 3)),
+        Unit::Unstated => return trimmed(value, 4),
+        Unit::Inch => {}
     }
     let sixty_fourths = value * 64.0;
     let nearest = sixty_fourths.round();
@@ -695,7 +714,17 @@ fn size_label(value: f64, inch: bool) -> String {
 
 /// `value` with at most `places` decimals, trailing zeros (and a bare point) trimmed.
 fn trimmed(value: f64, places: usize) -> String {
-    let text = format!("{value:.places$}");
+    let text = trim_zeros(format!("{value:.places$}"));
+    if text != "0" || value == 0.0 || !value.is_finite() {
+        return text;
+    }
+    // A size that rounds to nothing keeps two significant digits instead of reading as 0.
+    let digits = (-value.abs().log10()).ceil().clamp(0.0, 12.0) as usize + 1;
+    trim_zeros(format!("{value:.digits$}"))
+}
+
+/// `text` without trailing zeros after a decimal point, and without a bare point or a `-0`.
+fn trim_zeros(text: String) -> String {
     let text = if text.contains('.') {
         text.trim_end_matches('0').trim_end_matches('.').to_owned()
     } else {

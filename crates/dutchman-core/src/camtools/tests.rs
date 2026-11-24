@@ -1382,3 +1382,79 @@ fn a_library_json_is_recognised_with_holders_and_a_byte_order_mark() {
     std::fs::write(&plain, json!({"data": [{"id": 1}, {"id": 2}]}).to_string()).unwrap();
     assert!(!is_library(&plain));
 }
+
+fn json_file(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, bytes).unwrap();
+    path
+}
+
+#[test]
+fn only_a_list_of_holders_and_tools_makes_a_json_a_library() {
+    let dir = tempfile::tempdir().unwrap();
+    let feature = json!({"type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 2]}});
+    let report_row = json!({"type": "row", "unit": "mm"});
+    let real = tool("drill", "d", geo(&[("DC", 5.0), ("LCF", 30.0)]));
+    for (name, lib) in [
+        ("geo.json", json!({"data": [feature.clone()]})),
+        ("report.json", json!({"data": [report_row.clone()]})),
+        (
+            "mixed-in.json",
+            json!({"data": [real.clone(), feature.clone()]}),
+        ),
+        ("bare.json", json!([real.clone()])),
+        ("no-data.json", json!({"tools": [real.clone()]})),
+    ] {
+        let path = json_file(dir.path(), name, lib.to_string().as_bytes());
+        assert!(!is_library(&path), "{name} is not a tool library");
+    }
+    // A real-shaped export: holders first, then tools.
+    let holders_first = json!({"data": [
+        {"type": "holder", "description": "BT30", "unit": "millimeters", "segments": []},
+        {"type": "holder", "description": "BT40"},
+        real,
+    ], "version": 22});
+    let path = json_file(
+        dir.path(),
+        "real.json",
+        holders_first.to_string().as_bytes(),
+    );
+    assert!(is_library(&path));
+    let converted = convert_path(&path).unwrap();
+    assert_eq!((converted.tools_read, converted.holders), (1, 2));
+}
+
+#[test]
+fn a_json_library_in_utf16_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = json!({"data": [tool("drill", "wide", geo(&[("DC", 5.0), ("LCF", 30.0)]))]});
+    let text = lib.to_string();
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let mut little = vec![0xFF, 0xFE];
+    little.extend(units.iter().flat_map(|u| u.to_le_bytes()));
+    let mut big = vec![0xFE, 0xFF];
+    big.extend(units.iter().flat_map(|u| u.to_be_bytes()));
+    for (name, bytes) in [("le.json", little), ("be.json", big)] {
+        let path = json_file(dir.path(), name, &bytes);
+        assert!(is_library(&path), "{name}");
+        assert_eq!(written(&convert_path(&path).unwrap())[0].0, "wide");
+    }
+    let broken = json_file(dir.path(), "odd.json", &[0xFF, 0xFE, 0x7B]);
+    assert!(!is_library(&broken));
+}
+
+#[test]
+fn a_json_is_sniffed_before_it_is_parsed() {
+    let dir = tempfile::tempdir().unwrap();
+    // Not an object, or no "data" in the first KB: refused without a full parse (the tail is
+    // not even valid JSON).
+    let mut later = b"{\"pad\": \"".to_vec();
+    later.extend(vec![b'x'; 20_000]);
+    later.extend(b"\", \"data\": [ not json");
+    assert!(!is_library(&json_file(dir.path(), "late.json", &later)));
+    assert!(!is_library(&json_file(
+        dir.path(),
+        "list.json",
+        b"  [ \"data\" ]"
+    )));
+}
