@@ -207,13 +207,13 @@ RUN set -eu; \
 USER 1000:1000
 ```
 
-Then build it in that folder, with the SolidCraft 0.48.0 archive for x86_64 here, and use
+Then build it in that folder, with the SolidCraft 0.48.1 archive for x86_64 here, and use
 `dutchman` as before:
 
 ```sh
 docker build -t dutchman \
-  --build-arg SOLIDCRAFT_VERSION=0.48.0 \
-  --build-arg SOLIDCRAFT_SHA256=788d0b99c3fdf91974247b754d45b40fd35c301b43b2275bbd40ed531daf51a6 .
+  --build-arg SOLIDCRAFT_VERSION=0.48.1 \
+  --build-arg SOLIDCRAFT_SHA256=0781bd71de0a67a4bf98ad9e2cc8aa5248d3b6e7db2b7f1dfae7f426555d8b67 .
 ```
 
 It takes about a minute and adds about 550 MB. Build again after each `docker pull` to update
