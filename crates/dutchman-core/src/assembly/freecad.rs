@@ -570,7 +570,7 @@ struct Claimed {
 fn claim_linked_bodies(model: &mut Model, report: &mut Report) {
     let Ok(mut document) = serde_json::to_value(&model.ir) else {
         report.push(
-            Severity::Warning,
+            Severity::Degraded,
             "assembly",
             "the FreeCAD document could not be read back; the history of the Bodies its \
              Assembly links is not mapped"
@@ -580,7 +580,7 @@ fn claim_linked_bodies(model: &mut Model, report: &mut Report) {
     };
     let claimed = claim(&mut document);
     for warning in &claimed.warnings {
-        report.push(Severity::Warning, "assembly", warning.clone());
+        report.push(Severity::Degraded, "assembly", warning.clone());
     }
     if claimed.dropped == 0 && claimed.owned == 0 {
         return;
@@ -589,7 +589,7 @@ fn claim_linked_bodies(model: &mut Model, report: &mut Report) {
     // cadmpeg is third-party code; a panic in it is a reason, not a crash.
     let Ok(Ok(ir)) = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text)) else {
         report.push(
-            Severity::Warning,
+            Severity::Degraded,
             "assembly",
             "the FreeCAD document did not survive attributing features to the Bodies its \
              Assembly links; their history is not mapped and the original Bodies stay placed"
