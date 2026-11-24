@@ -498,7 +498,7 @@ fn a_step_file_with_a_product_and_no_shapes_says_it_is_an_empty_export() {
     assert_eq!(err.stage(), dutchman_core::Stage::Input);
     assert_eq!(
         err.to_string(),
-        "This STEP file contains no shapes: it has a product but no solids, surfaces or curves, so the program that wrote it exported an empty design. Check the design has bodies, then export it again; mesh bodies are not written to STEP, so for a design made of meshes convert its own file (a Fusion .f3d or .f3z) instead, or turn the meshes into solids first."
+        "This STEP file contains no shapes: it has a product but no solids, surfaces or curves, so the program that wrote it exported an empty design. Check the design has bodies, then export it again; mesh bodies are not written to STEP, so turn a design's meshes into solid bodies before exporting (in Fusion: Mesh > Modify > Convert Mesh), or export the mesh as STL and open that in SolidCraft directly."
     );
     assert!(err
         .to_string()
