@@ -45,8 +45,12 @@ as well as the visible final shape.
   A PartDesign Body that an Assembly container links from its own document converts once, in
   the link's component at the link's placement, with its own history (sketches, pads, pockets,
   revolutions) mapped and checked like a standalone Body's. The document's original Body,
-  which the link already places, is not placed again; a Body no Assembly link places stays
-  placed as stored. The report says how many original Bodies were folded into their links.
+  which a visible, unsuppressed Assembly link places (also through a link to a link), is not
+  placed again; a Body no such link places, or that a Part container places, stays placed as
+  stored. The report says how many original Bodies were folded into their links. When a
+  feature of a Body cannot be told from another Body's (a Boolean or a sketch used by two
+  Bodies), the report names it as a warning and that Body stays as stored, without its
+  history. Sketches and datums no feature uses are named in the report too.
 - **Grounded joints** hold their part fixed to the design where it is stored, as a rigid
   joint to the design; the assembly's revolute and slider joints keep their motion.
   Assembly-workbench joints use the same mapping as Fusion joints when cadmpeg resolves

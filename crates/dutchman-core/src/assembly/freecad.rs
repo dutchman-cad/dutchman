@@ -559,6 +559,8 @@ struct Claimed {
     dropped: usize,
     /// Features given to the Body they build.
     owned: usize,
+    /// What could not be attributed, for the report.
+    warnings: Vec<String>,
 }
 
 /// The Bodies a FreeCAD Assembly links place through those links: each Body keeps its own
@@ -567,15 +569,32 @@ struct Claimed {
 /// feature is given to the Body it depends on, and a sketch to the Body whose features use it.
 fn claim_linked_bodies(model: &mut Model, report: &mut Report) {
     let Ok(mut document) = serde_json::to_value(&model.ir) else {
+        report.push(
+            Severity::Warning,
+            "assembly",
+            "the FreeCAD document could not be read back; the history of the Bodies its \
+             Assembly links is not mapped"
+                .to_owned(),
+        );
         return;
     };
     let claimed = claim(&mut document);
-    if claimed == Claimed::default() {
+    for warning in &claimed.warnings {
+        report.push(Severity::Warning, "assembly", warning.clone());
+    }
+    if claimed.dropped == 0 && claimed.owned == 0 {
         return;
     }
     let text = document.to_string();
     // cadmpeg is third-party code; a panic in it is a reason, not a crash.
     let Ok(Ok(ir)) = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text)) else {
+        report.push(
+            Severity::Warning,
+            "assembly",
+            "the FreeCAD document did not survive attributing features to the Bodies its \
+             Assembly links; their history is not mapped and the original Bodies stay placed"
+                .to_owned(),
+        );
         return;
     };
     model.ir = ir;
@@ -590,6 +609,21 @@ fn claim_linked_bodies(model: &mut Model, report: &mut Report) {
             ),
         );
     }
+}
+
+/// The object a feature row stands for, by its name.
+fn feature_name(feature: &Value) -> String {
+    feature
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            feature
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| id.rsplit('#').next().unwrap_or(id))
+        })
+        .unwrap_or("unnamed")
+        .to_owned()
 }
 
 fn claim(document: &mut Value) -> Claimed {
@@ -608,10 +642,52 @@ fn claim(document: &mut Value) -> Claimed {
         .iter()
         .filter_map(|row| Some((row.get("id")?.as_str()?, row)))
         .collect();
-    // Definitions a link inside an Assembly places, by definition id.
-    let mut linked: BTreeSet<String> = BTreeSet::new();
+    let definitions = listed(document.pointer("/model/product_definitions"));
+    let object_of: BTreeMap<&str, &str> = definitions
+        .iter()
+        .filter_map(|row| Some((row.get("id")?.as_str()?, row.get("native_ref")?.as_str()?)))
+        .collect();
+    let definition_of: BTreeMap<&str, &str> = object_of
+        .iter()
+        .map(|(definition, object)| (*object, *definition))
+        .collect();
+    let is_body = |object: &str| {
+        types
+            .get(object)
+            .is_some_and(|kind| kind == "PartDesign::Body")
+    };
+    // The Body a link ends at: a link to a link is followed to the object it finally shows.
+    let target = |start: &str| -> Option<String> {
+        let mut definition = start.to_owned();
+        for _ in 0..MAX_DEPTH {
+            let object = *object_of.get(definition.as_str())?;
+            if is_body(object) {
+                return Some(object.to_owned());
+            }
+            if types.get(object).map(String::as_str) != Some("App::Link") {
+                return None;
+            }
+            definition = rows
+                .iter()
+                .find(|row| {
+                    scope(row) == Some("local")
+                        && row.get("link").is_some()
+                        && row.get("native_ref").and_then(Value::as_str) == Some(object)
+                })?
+                .pointer("/prototype/definition")?
+                .as_str()?
+                .to_owned();
+        }
+        None
+    };
+    // Bodies a visible, unsuppressed link inside an Assembly places, by object.
+    let mut placed: BTreeSet<String> = BTreeSet::new();
     for row in rows {
-        if scope(row) != Some("local") || row.get("link").is_none() {
+        if scope(row) != Some("local")
+            || row.get("link").is_none()
+            || row.get("visible").and_then(Value::as_bool) == Some(false)
+            || row.get("suppressed").and_then(Value::as_bool) == Some(true)
+        {
             continue;
         }
         let in_assembly = row
@@ -621,49 +697,35 @@ fn claim(document: &mut Value) -> Claimed {
             .and_then(|parent| parent.get("native_ref")?.as_str())
             .and_then(|object| types.get(object))
             .is_some_and(|kind| kind == "Assembly::AssemblyObject");
-        if let (true, Some(definition)) = (
+        if let (true, Some(body)) = (
             in_assembly,
-            row.pointer("/prototype/definition").and_then(Value::as_str),
+            row.pointer("/prototype/definition")
+                .and_then(Value::as_str)
+                .and_then(target),
         ) {
-            linked.insert(definition.to_owned());
+            placed.insert(body);
         }
     }
-    if linked.is_empty() {
+    if placed.is_empty() {
         return claimed;
     }
-    // The Body object each linked definition stands for.
-    let bodies: BTreeMap<String, String> = listed(document.pointer("/model/product_definitions"))
-        .iter()
-        .filter_map(|row| {
-            let id = row.get("id")?.as_str()?;
-            let object = row.get("native_ref")?.as_str()?;
-            (linked.contains(id)
-                && types
-                    .get(object)
-                    .is_some_and(|kind| kind == "PartDesign::Body"))
-            .then(|| (object.to_owned(), id.to_owned()))
-        })
-        .collect();
-    if bodies.is_empty() {
-        return claimed;
-    }
-    // Ownership of features: a Body's own feature, then whatever depends on an owned feature,
-    // then the sketches only that Body's features use.
+    // Which Body each feature belongs to, over every Body of the document, so a feature
+    // reaching into another Body is seen even when that Body is not linked.
     let features = listed(document.pointer("/model/features"));
-    let mut owner: BTreeMap<String, String> = BTreeMap::new();
-    for feature in features {
-        let (Some(id), Some(object)) = (
-            feature.get("id").and_then(Value::as_str),
-            feature.get("native_ref").and_then(Value::as_str),
-        ) else {
-            continue;
-        };
-        if feature.get("source_tag").and_then(Value::as_str) == Some("PartDesign::Body") {
-            if let Some(definition) = bodies.get(object) {
-                owner.insert(id.to_owned(), definition.clone());
-            }
-        }
-    }
+    let tag = |feature: &Value| -> String {
+        feature
+            .get("source_tag")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                feature
+                    .get("native_ref")
+                    .and_then(Value::as_str)
+                    .and_then(|object| types.get(object).map(String::as_str))
+            })
+            .unwrap_or("")
+            .to_owned()
+    };
+    let id_of = |feature: &Value| feature.get("id").and_then(Value::as_str).map(str::to_owned);
     let depends = |feature: &Value| -> Vec<String> {
         listed(feature.get("dependencies"))
             .iter()
@@ -671,54 +733,139 @@ fn claim(document: &mut Value) -> Claimed {
             .map(str::to_owned)
             .collect()
     };
-    loop {
-        let before = owner.len();
-        for feature in features {
-            let Some(id) = feature.get("id").and_then(Value::as_str) else {
-                continue;
-            };
-            if owner.contains_key(id) {
-                continue;
+    // Body feature id -> its Body object.
+    let mut body_of: BTreeMap<String, String> = BTreeMap::new();
+    // Features by kind: PartDesign features take part in the dependency walk, sketches only
+    // by who uses them.
+    let mut modelled: Vec<&Value> = Vec::new();
+    let mut sketches: Vec<&Value> = Vec::new();
+    for feature in features {
+        let Some(id) = id_of(feature) else { continue };
+        let kind = tag(feature);
+        if kind == "PartDesign::Body" {
+            if let Some(object) = feature.get("native_ref").and_then(Value::as_str) {
+                body_of.insert(id, object.to_owned());
             }
-            let owners: BTreeSet<&String> = depends(feature)
-                .iter()
-                .filter_map(|dependency| owner.get(dependency))
-                .collect();
-            if let [only] = owners.into_iter().collect::<Vec<_>>().as_slice() {
-                owner.insert(id.to_owned(), (*only).clone());
+        } else if kind.starts_with("PartDesign::") {
+            modelled.push(feature);
+        } else if kind.starts_with("Sketcher::") {
+            sketches.push(feature);
+        }
+    }
+    let mut set: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // What the Body rows state themselves (a Body listing its features), then what the
+    // features state (a feature listing its Body).
+    for feature in features {
+        let Some(body) = id_of(feature).and_then(|id| body_of.get(&id)) else {
+            continue;
+        };
+        for member in depends(feature) {
+            set.entry(member).or_default().insert(body.clone());
+        }
+    }
+    for feature in modelled.iter().chain(&sketches) {
+        let Some(id) = id_of(feature) else { continue };
+        for dependency in depends(feature) {
+            if let Some(body) = body_of.get(&dependency) {
+                set.entry(id.clone()).or_default().insert(body.clone());
             }
         }
-        if owner.len() == before {
+    }
+    // PartDesign features follow the features they build on; a sketch's own attachments say
+    // nothing about the Body that uses it.
+    loop {
+        let mut changed = false;
+        for feature in &modelled {
+            let Some(id) = id_of(feature) else { continue };
+            let mut bodies = set.get(&id).cloned().unwrap_or_default();
+            for dependency in depends(feature) {
+                if modelled
+                    .iter()
+                    .any(|row| id_of(row).as_ref() == Some(&dependency))
+                {
+                    bodies.extend(set.get(&dependency).into_iter().flatten().cloned());
+                }
+            }
+            if bodies.len() > set.get(&id).map_or(0, BTreeSet::len) {
+                set.insert(id, bodies);
+                changed = true;
+            }
+        }
+        if !changed {
             break;
         }
     }
-    // A feature the Body's features use and no other Body does: its sketch.
-    let mut users: BTreeMap<String, BTreeSet<Option<String>>> = BTreeMap::new();
-    for feature in features {
-        let id = feature.get("id").and_then(Value::as_str).unwrap_or("");
+    // A sketch belongs to the Body whose features use it.
+    for feature in &modelled {
+        let Some(id) = id_of(feature) else { continue };
+        let bodies = set.get(&id).cloned().unwrap_or_default();
         for dependency in depends(feature) {
-            users
-                .entry(dependency)
-                .or_default()
-                .insert(owner.get(id).cloned());
-        }
-    }
-    let mut sketches: Vec<(String, String)> = Vec::new();
-    for feature in features {
-        let Some(id) = feature.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        if owner.contains_key(id) || feature.get("product_definition").is_some() {
-            continue;
-        }
-        if let Some(users) = users.get(id) {
-            let owners: Vec<&Option<String>> = users.iter().collect();
-            if let [Some(only)] = owners.as_slice() {
-                sketches.push((id.to_owned(), only.clone()));
+            if sketches
+                .iter()
+                .any(|row| id_of(row).as_ref() == Some(&dependency))
+            {
+                set.entry(dependency)
+                    .or_default()
+                    .extend(bodies.iter().cloned());
             }
         }
     }
-    owner.extend(sketches);
+    let ambiguous: BTreeSet<String> = modelled
+        .iter()
+        .chain(&sketches)
+        .filter_map(|feature| id_of(feature))
+        .filter(|id| set.get(id).is_some_and(|bodies| bodies.len() > 1))
+        .collect();
+    let name_of_feature: BTreeMap<String, String> = features
+        .iter()
+        .filter_map(|feature| Some((id_of(feature)?, feature_name(feature))))
+        .collect();
+    let named = |ids: &mut dyn Iterator<Item = &String>| -> String {
+        ids.map(|id| format!("\"{}\"", name_of_feature.get(id).unwrap_or(id)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    // A Body whose history cannot be attributed with certainty keeps today's behaviour:
+    // its original Body stays placed and its features stay unowned.
+    let mut clean: BTreeMap<String, String> = BTreeMap::new();
+    for object in &placed {
+        let Some(definition) = definition_of.get(object.as_str()) else {
+            continue;
+        };
+        let doubtful: Vec<&String> = ambiguous
+            .iter()
+            .filter(|id| set.get(*id).is_some_and(|bodies| bodies.contains(object)))
+            .collect();
+        if doubtful.is_empty() {
+            clean.insert(object.clone(), (*definition).to_owned());
+        } else {
+            let name = features
+                .iter()
+                .find(|feature| feature.get("native_ref").and_then(Value::as_str) == Some(object))
+                .map_or_else(|| object.clone(), feature_name);
+            claimed.warnings.push(format!(
+                "Body \"{name}\" is placed through its Assembly link as stored: features {} \
+                 belong to more than one Body, so its history is not mapped",
+                named(&mut doubtful.into_iter())
+            ));
+        }
+    }
+    let unused: Vec<&String> = modelled
+        .iter()
+        .chain(&sketches)
+        .filter_map(|feature| id_of(feature))
+        .filter(|id| set.get(id).is_none_or(BTreeSet::is_empty))
+        .filter_map(|id| name_of_feature.get_key_value(&id).map(|(key, _)| key))
+        .collect();
+    if !unused.is_empty() && !clean.is_empty() {
+        claimed.warnings.push(format!(
+            "features {} are used by no Body, so no part carries them",
+            named(&mut unused.into_iter())
+        ));
+    }
+    if clean.is_empty() {
+        return claimed;
+    }
     if let Some(rows) = document
         .pointer_mut("/model/features")
         .and_then(Value::as_array_mut)
@@ -727,7 +874,10 @@ fn claim(document: &mut Value) -> Claimed {
             let Some(definition) = feature
                 .get("id")
                 .and_then(Value::as_str)
-                .and_then(|id| owner.get(id))
+                .and_then(|id| set.get(id))
+                .filter(|bodies| bodies.len() == 1)
+                .and_then(|bodies| bodies.iter().next())
+                .and_then(|body| clean.get(body))
                 .cloned()
             else {
                 continue;
@@ -739,7 +889,7 @@ fn claim(document: &mut Value) -> Claimed {
         }
     }
     // The document's own Body, once a link places it: what the original Body would add is a
-    // second copy of the same part.
+    // second copy of the same part. A Body a Part container places stays where it is.
     let parents: BTreeSet<String> = listed(document.pointer("/model/occurrences"))
         .iter()
         .filter_map(|row| {
@@ -756,14 +906,15 @@ fn claim(document: &mut Value) -> Claimed {
         rows.retain(|row| {
             let original = scope(row) == Some("local")
                 && row.get("link").is_none()
+                && row.pointer("/parent/kind").and_then(Value::as_str) == Some("root")
                 && row
                     .get("native_ref")
                     .and_then(Value::as_str)
-                    .is_some_and(|object| bodies.contains_key(object))
+                    .is_some_and(|object| clean.contains_key(object))
                 && row
                     .pointer("/prototype/definition")
                     .and_then(Value::as_str)
-                    .is_some_and(|definition| bodies.values().any(|body| body == definition))
+                    .is_some_and(|definition| clean.values().any(|body| body == definition))
                 && !row
                     .get("id")
                     .and_then(Value::as_str)
@@ -907,5 +1058,217 @@ mod linked_bodies {
             .unwrap()
             .iter()
             .any(|row| row["id"] == "c#Body"));
+    }
+
+    /// The same two Bodies as [`document`] without the sketch both of them use.
+    fn plain(container: &str) -> Value {
+        let mut document = document(container);
+        let features = document["model"]["features"].as_array_mut().unwrap();
+        features.retain(|row| row["id"] != "Shared");
+        for row in features {
+            let dependencies = row["dependencies"].as_array_mut().unwrap();
+            if row["id"] == "Pad4" {
+                *dependencies = vec![json!("Pad3"), json!("Body")];
+            }
+            if row["id"] == "Revolution3" {
+                *dependencies = vec![json!("Revolution2"), json!("Body001")];
+            }
+        }
+        document
+    }
+
+    fn add_feature(document: &mut Value, id: &str, tag: &str, dependencies: &[&str]) {
+        document["model"]["features"].as_array_mut().unwrap().push(
+            json!({"id": id, "native_ref": format!("o#{id}"), "source_tag": tag,
+                   "dependencies": dependencies}),
+        );
+    }
+
+    fn occurrence_mut<'a>(document: &'a mut Value, id: &str) -> &'a mut Value {
+        document["model"]["occurrences"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["id"] == id)
+            .unwrap()
+    }
+
+    fn placed(document: &Value) -> Vec<&str> {
+        document["model"]["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["id"].as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_sketch_two_bodies_use_leaves_both_bodies_as_stored() {
+        let mut document = plain("Assembly::AssemblyObject");
+        add_feature(&mut document, "Shared", "Sketcher::SketchObject", &[]);
+        add_feature(
+            &mut document,
+            "Pad5",
+            "PartDesign::Pad",
+            &["Shared", "Pad3", "Body"],
+        );
+        add_feature(
+            &mut document,
+            "Revolution4",
+            "PartDesign::Revolution",
+            &["Shared", "Revolution3", "Body001"],
+        );
+        let before = document["model"]["occurrences"].clone();
+        let claimed = claim(&mut document);
+        assert_eq!((claimed.dropped, claimed.owned), (0, 0));
+        assert_eq!(document["model"]["occurrences"], before);
+        assert_eq!(owner(&document, "Pad2"), None);
+        assert_eq!(claimed.warnings.len(), 2, "{:?}", claimed.warnings);
+        assert!(claimed
+            .warnings
+            .iter()
+            .all(|text| text.contains("\"Shared\"")));
+        assert!(
+            claimed.warnings[0].contains("Body \"Body\""),
+            "{:?}",
+            claimed.warnings
+        );
+    }
+
+    #[test]
+    fn a_boolean_across_two_bodies_is_named_and_keeps_both_bodies() {
+        let mut document = plain("Assembly::AssemblyObject");
+        add_feature(
+            &mut document,
+            "Boolean",
+            "PartDesign::Boolean",
+            &["Pad4", "Revolution3"],
+        );
+        let claimed = claim(&mut document);
+        assert_eq!((claimed.dropped, claimed.owned), (0, 0));
+        assert_eq!(claimed.warnings.len(), 2);
+        assert!(claimed
+            .warnings
+            .iter()
+            .all(|text| text.contains("\"Boolean\"")));
+        assert!(placed(&document).contains(&"c#Body"));
+        assert!(placed(&document).contains(&"c#Body001"));
+    }
+
+    #[test]
+    fn a_sketch_goes_to_the_body_that_uses_it_not_the_one_it_is_attached_to() {
+        let mut document = plain("Assembly::AssemblyObject");
+        // Attached to a face of the first Body's Pad, used by the second Body's Pad.
+        add_feature(
+            &mut document,
+            "Sketch9",
+            "Sketcher::SketchObject",
+            &["Pad4"],
+        );
+        add_feature(
+            &mut document,
+            "Pad9",
+            "PartDesign::Pad",
+            &["Sketch9", "Revolution3", "Body001"],
+        );
+        let claimed = claim(&mut document);
+        assert_eq!(claimed.dropped, 2);
+        assert!(claimed.warnings.is_empty(), "{:?}", claimed.warnings);
+        assert_eq!(owner(&document, "Sketch9"), Some("d#Body001"));
+        assert_eq!(owner(&document, "Pad9"), Some("d#Body001"));
+        assert_eq!(owner(&document, "Pad4"), Some("d#Body"));
+    }
+
+    #[test]
+    fn a_sketch_nothing_uses_is_reported_and_the_rest_is_still_claimed() {
+        let mut document = plain("Assembly::AssemblyObject");
+        add_feature(&mut document, "Orphan", "Sketcher::SketchObject", &[]);
+        let claimed = claim(&mut document);
+        assert_eq!(claimed.dropped, 2);
+        assert_eq!(owner(&document, "Orphan"), None);
+        assert_eq!(claimed.warnings.len(), 1);
+        assert!(claimed.warnings[0].contains("\"Orphan\""));
+    }
+
+    #[test]
+    fn a_body_that_lists_its_features_owns_them() {
+        let mut document = plain("Assembly::AssemblyObject");
+        let features = document["model"]["features"].as_array_mut().unwrap();
+        for row in features.iter_mut() {
+            match row["id"].as_str().unwrap() {
+                "Body" => row["dependencies"] = json!(["Sketch1", "Pad2"]),
+                "Pad2" => row["dependencies"] = json!(["Sketch1"]),
+                _ => {}
+            }
+        }
+        claim(&mut document);
+        assert_eq!(owner(&document, "Pad2"), Some("d#Body"));
+        assert_eq!(owner(&document, "Sketch1"), Some("d#Body"));
+        // Pad3 still builds on Pad2 and lists its Body.
+        assert_eq!(owner(&document, "Pad3"), Some("d#Body"));
+    }
+
+    #[test]
+    fn a_hidden_or_suppressed_link_places_nothing() {
+        for (key, value) in [("visible", json!(false)), ("suppressed", json!(true))] {
+            let mut document = plain("Assembly::AssemblyObject");
+            occurrence_mut(&mut document, "i#ring")[key] = value;
+            let claimed = claim(&mut document);
+            assert_eq!(claimed.dropped, 1, "{key}");
+            assert!(placed(&document).contains(&"c#Body001"), "{key}");
+            assert!(!placed(&document).contains(&"c#Body"), "{key}");
+            assert_eq!(owner(&document, "Revolution2"), None, "{key}");
+        }
+    }
+
+    #[test]
+    fn a_link_to_a_link_places_the_body_it_finally_shows() {
+        let mut document = plain("Assembly::AssemblyObject");
+        document["native"]["fcstd"]["objects"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "o#alias", "type_name": "App::Link"}));
+        document["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "d#alias", "native_ref": "o#alias"}));
+        let ring = occurrence_mut(&mut document, "i#ring");
+        ring["prototype"]["definition"] = json!("d#alias");
+        let mut alias = ring.clone();
+        alias["id"] = json!("c#alias");
+        alias["native_ref"] = json!("o#alias");
+        alias["prototype"]["definition"] = json!("d#Body001");
+        alias["parent"] = json!({"kind": "root"});
+        document["model"]["occurrences"]
+            .as_array_mut()
+            .unwrap()
+            .push(alias);
+        let claimed = claim(&mut document);
+        assert_eq!(claimed.dropped, 2);
+        assert_eq!(owner(&document, "Revolution2"), Some("d#Body001"));
+        assert!(!placed(&document).contains(&"c#Body001"));
+    }
+
+    #[test]
+    fn a_body_a_part_container_places_stays_placed() {
+        let mut document = plain("Assembly::AssemblyObject");
+        document["native"]["fcstd"]["objects"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "o#Part", "type_name": "App::Part"}));
+        document["model"]["occurrences"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "c#Part", "native_ref": "o#Part", "ordinal": 0, "scale": [1, 1, 1],
+                "prototype": {"kind": "local", "definition": "d#Part"},
+                "parent": {"kind": "root"}}));
+        occurrence_mut(&mut document, "c#Body")["parent"] =
+            json!({"kind": "occurrence", "occurrence": "c#Part"});
+        let claimed = claim(&mut document);
+        assert_eq!(claimed.dropped, 1);
+        assert!(placed(&document).contains(&"c#Body"));
+        assert!(!placed(&document).contains(&"c#Body001"));
+        assert_eq!(owner(&document, "Pad2"), Some("d#Body"));
     }
 }
