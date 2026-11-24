@@ -1064,12 +1064,11 @@ mod linked_bodies {
         let features = document["model"]["features"].as_array_mut().unwrap();
         features.retain(|row| row["id"] != "Shared");
         for row in features {
-            let dependencies = row["dependencies"].as_array_mut().unwrap();
             if row["id"] == "Pad4" {
-                *dependencies = vec![json!("Pad3"), json!("Body")];
+                row["dependencies"] = json!(["Pad3", "Body"]);
             }
             if row["id"] == "Revolution3" {
-                *dependencies = vec![json!("Revolution2"), json!("Body001")];
+                row["dependencies"] = json!(["Revolution2", "Body001"]);
             }
         }
         document
