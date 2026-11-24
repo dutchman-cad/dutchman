@@ -639,7 +639,7 @@ mod tests {
         assert_eq!(band("32.0.0"), "inventor_newer");
         assert_eq!(band("40.0.0"), "inventor_newer");
         assert_eq!(band("41.0.0"), "unknown");
-        assert_eq!(band("255.255.255"), "inventor_newer");
+        assert_eq!(band("255.255.255"), "unknown");
     }
 
     #[test]
