@@ -17,6 +17,46 @@ mod msi;
 mod scoop;
 mod windows;
 
+/// The message shown when GitHub cannot be reached during a download.
+pub(super) fn unreachable_message() -> &'static str {
+    windows::UNREACHABLE
+}
+
+/// Marks a job as only downloading until finished or dropped (also on a panic), so Dutchman
+/// may close without losing anything.
+struct Downloading(Arc<AtomicBool>);
+impl Downloading {
+    fn start(flag: &Arc<AtomicBool>) -> Self {
+        flag.store(true, Ordering::SeqCst);
+        Self(flag.clone())
+    }
+    fn finish(&self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+impl Drop for Downloading {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+type Fetch<'a> = dyn Fn(&str, u64, &mut dyn std::io::Write) -> Result<(), String> + 'a;
+
+/// Wraps a fetch so the download phase ends once the package itself has been fetched: what
+/// follows (SHA-256 check, replacing files) must not be interrupted by closing.
+fn ending_download<'a>(
+    guard: &'a Downloading,
+    inner: &'a Fetch<'a>,
+) -> impl Fn(&str, u64, &mut dyn std::io::Write) -> Result<(), String> + 'a {
+    move |url, limit, out| {
+        let result = inner(url, limit, out);
+        if !url.ends_with(".sha256") {
+            guard.finish();
+        }
+        result
+    }
+}
+
 pub(super) fn windows_startup(install: &Install) -> Option<scoop::Failure> {
     if matches!(install, Install::Msi(_)) {
         msi::startup()
@@ -580,6 +620,10 @@ impl Job {
     pub fn downloading(&self) -> bool {
         self.downloading.load(Ordering::SeqCst)
     }
+    /// Whether a close request must wait: work is under way and is not just a download.
+    pub fn blocks_close(&self) -> bool {
+        self.busy() && !self.downloading()
+    }
     pub fn snapshot(&self) -> Progress {
         self.progress
             .lock()
@@ -645,12 +689,10 @@ impl Job {
         let result = std::thread::Builder::new()
             .name("windows-download".into())
             .spawn(move || {
-                let fetch = |url: &str, limit: u64, out: &mut dyn std::io::Write| {
-                    downloading.store(true, Ordering::SeqCst);
-                    let result = windows::download(url, limit, out);
-                    downloading.store(false, Ordering::SeqCst);
-                    result
-                };
+                // True for the whole download (checksum and package), cleared before the
+                // verification and install, and cleared if this thread panics.
+                let guard = Downloading::start(&downloading);
+                let fetch = ending_download(&guard, &windows::download);
                 let result = windows::prepare(&install, &tag, &fetch).and_then(|package| {
                     if let Some(package) = package {
                         *prepared
