@@ -34,17 +34,19 @@ impl Progress {
         } else {
             0.0
         };
-        let last = f32::from_bits(self.last.load(Ordering::Relaxed));
-        if fraction < last + 0.01 {
-            return None;
-        }
-        self.last.store(fraction.to_bits(), Ordering::Relaxed);
-        Some((fraction, message))
+        // One atomic step, so two callers can never report out of order. Non-negative floats
+        // order the same as their bit patterns.
+        self.last
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |bits| {
+                (fraction >= f32::from_bits(bits) + 0.01).then_some(fraction.to_bits())
+            })
+            .ok()
+            .map(|_| (fraction, message))
     }
 
     /// The main file is read; the parts of an assembly come next.
     pub(crate) fn file_read(&self) -> Option<(f32, String)> {
-        self.step(PARTS_FROM, "Reading the parts".into())
+        self.step(PARTS_FROM, "Reading the design".into())
     }
 
     /// One more part of an assembly was read.
