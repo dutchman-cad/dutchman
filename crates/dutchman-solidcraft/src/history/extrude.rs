@@ -731,7 +731,7 @@ pub(super) fn look(color: &Value) -> Option<Value> {
 
 /// A length as a SolidCraft expression.
 fn mm(length: f64) -> String {
-    format!("{length} mm")
+    format!("{} mm", super::helpers::clean(length))
 }
 
 #[cfg(test)]

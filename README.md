@@ -3,7 +3,7 @@
   <img alt="Dutchman Convert" src="assets/logo/dutchman-lockup-night.png#gh-dark-mode-only" width="252">
 </h1>
 
-Converts Fusion, Inventor, SolidWorks, FreeCAD, CATIA, NX, Rhino, Creo View, ACIS, STEP, and offline Onshape bundles into SolidCraft designs, keeping editable features where they map.
+Converts Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo, NX, Rhino, Creo View, ACIS, STEP, and offline Onshape bundles into SolidCraft designs, keeping editable features where they map.
 
 <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=Dutchman%20Convert%20in%20Day%20theme%3A%20a%20CC0%20FreeCAD%20bracket%20converted%2C%20with%20its%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="Dutchman Convert in Day theme: a CC0 FreeCAD bracket converted, with its mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png#gh-light-mode-only" width="100%"></a>
 <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-night.png&alt=Dutchman%20Convert%20in%20Night%20theme%3A%20the%20same%20CC0%20bracket%20conversion%20and%20its%20result%20card"><img alt="Dutchman Convert in Night theme: the same CC0 bracket conversion and its result card" src="docs/images/readme-result-night.png#gh-dark-mode-only" width="100%"></a>
@@ -19,7 +19,8 @@ See it first: [converted designs in your browser](https://dutchmancad.xyz/demo/)
 - **Linux AppImage** (0.2.10 and later): download `dutchman-<version>-x86_64.AppImage` (or `-aarch64`) from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest), run `chmod +x` on it, and run it. It works on any distribution and starts the desktop app. A launcher such as Gear Lever adds it to your menu and `PATH`; the command line programs are in it too ([how](docs/install.md#linux-the-appimage)).
 
 The Windows installer is unsigned. If SmartScreen says **Windows protected your PC**, click
-**More info**, then **Run anyway**. See [Windows first run](docs/install.md#windows-first-run).
+**More info**, then **Run anyway**. Windows 11's Smart App Control blocks it with no **Run anyway**
+button; see [Smart App Control](docs/install.md#smart-app-control).
 
 Release packages include local `skills/`, Markdown `docs/`, and an `AGENTS.md` explaining
 commands and saved reports ([locations and omitted images](docs/install.md#included-guidance)).
@@ -126,7 +127,7 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 | SolidWorks assembly | `.sldasm` | Reads geometry | L3 | Placed parts and sub-assemblies, read from their files in the project |
 | FreeCAD document | `.FCStd` | Reads geometry | L5 | Geometry and components; feature history and joints when they map |
 | CATIA part | `.CATPart` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
-| Creo part | `.prt`, `.prt.N` | Opens, no geometry yet | L1 | Not yet |
+| Creo part | `.prt`, `.prt.N` | Reads geometry | L1 | Geometry; solids and surfaces SolidCraft can import |
 | NX part | `.prt` | Reads geometry | L1 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Creo View | `.pvz` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Rhino | `.3dm` | Reads geometry | L2 | Geometry through STEP; solids and surfaces SolidCraft can import |
@@ -134,6 +135,7 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 | STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Onshape bundle | `.onshape-bundle` | Reads geometry | – | One offline Part Studio; geometry and editable history where features map |
 | IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
+| Circuit board | `.PcbDoc` | Reads geometry with the electronics module | – | Placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately) |
 | Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
 
 FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
@@ -143,7 +145,7 @@ Fusion tool libraries (`.tools`, `.json`) also convert to CamCraft's `.camtools`
 Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
-Designs open in SolidCraft 0.18.2 to 0.48; 0.48 is the newest known target.
+Designs open in SolidCraft 0.18.2 to 0.49; 0.49 is the newest known target.
 
 A design Dutchman can't finish reading is stopped after 20 minutes with no progress (60 in all); in a Fusion `.f3z` archive it's left out and named, and the rest converts. Set `DUTCHMAN_DESIGN_TIME_LIMIT` to more minutes to give a large design longer.
 
