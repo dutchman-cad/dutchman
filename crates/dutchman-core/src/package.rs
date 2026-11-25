@@ -117,7 +117,11 @@ struct OverlayEntry {
     #[serde(default)]
     part: Option<String>,
     #[serde(default)]
+    side: Option<String>,
+    #[serde(default)]
     z: Option<f64>,
+    #[serde(default)]
+    thickness: Option<f64>,
     #[serde(default)]
     color: Option<String>,
     #[serde(default)]
@@ -843,6 +847,7 @@ fn overlays(
 ) {
     let mut points_left = MAX_OVERLAY_POINTS;
     let mut work_left = MAX_RING_WORK;
+    let mut faces_left = MAX_SOLID_FACES;
     for value in list {
         let entry: OverlayEntry = match serde_json::from_value(value.clone()) {
             Ok(entry) => entry,
@@ -946,6 +951,18 @@ fn overlays(
             );
             continue;
         };
+        let thickness = match entry.thickness {
+            None => None,
+            Some(0.0) => None,
+            Some(t) if t.is_finite() && t > 0.0 && t <= 1.0 => Some(t),
+            Some(t) => {
+                dropped(
+                    report,
+                    format!("its thickness {t} is not a number above 0 up to 1 mm; it is left out"),
+                );
+                continue;
+            }
+        };
         if entry.areas.len() > MAX_AREAS {
             dropped(
                 report,
@@ -1002,7 +1019,37 @@ fn overlays(
             );
             continue;
         }
-        let text = sheet_step(&entry.name, z * scale, &areas, color, transparency);
+        let z = z * scale;
+        let cost = areas
+            .iter()
+            .map(prism_faces)
+            .fold(0usize, usize::saturating_add);
+        let solid = match thickness {
+            Some(t) if cost <= faces_left => {
+                faces_left -= cost;
+                Some(t)
+            }
+            Some(_) => {
+                report.push_at(
+                    Stage::Input,
+                    Severity::Degraded,
+                    subject.clone(),
+                    format!(
+                        "its thickness would pass the package's limit of {MAX_SOLID_FACES} solid \
+                         faces ({cost} more needed, {faces_left} left); it is drawn as a sheet"
+                    ),
+                );
+                None
+            }
+            None => None,
+        };
+        let text = match solid {
+            Some(t) if entry.side.as_deref() == Some("bottom") => {
+                solid_step(&entry.name, z - t, z, &areas, color, transparency)
+            }
+            Some(t) => solid_step(&entry.name, z, z + t, &areas, color, transparency),
+            None => sheet_step(&entry.name, z, &areas, color, transparency),
+        };
         let mut scratch = Report::default();
         let model = crate::read_bytes(
             Format::Step,
@@ -1473,9 +1520,9 @@ impl Step {
         self.add(format!("EDGE_LOOP('',({}))", ids.join(",")))
     }
 
-    /// The file: `shape` is the entity name of the shape representation, `body` the entity that
-    /// holds the geometry, `styled` the styled items to put in a presentation of it.
-    fn finish(mut self, name: &str, shape: &str, body: usize, styled: &[usize]) -> String {
+    /// The file: `shape` is the entity name of the shape representation, `bodies` the entities
+    /// that hold the geometry, `styled` the styled items to put in a presentation of it.
+    fn finish(mut self, name: &str, shape: &str, bodies: &[usize], styled: &[usize]) -> String {
         let origin = self.placement([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
         let length = self.add("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) )".into());
         let angle = self.add("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )".into());
@@ -1491,7 +1538,11 @@ impl Step {
              GLOBAL_UNIT_ASSIGNED_CONTEXT((#{length},#{angle},#{solid_angle})) \
              REPRESENTATION_CONTEXT('Context #1','3D Context with UNIT and UNCERTAINTY') )"
         ));
-        let representation = self.add(format!("{shape}('',(#{origin},#{body}),#{context})"));
+        let items: Vec<String> = std::iter::once(origin)
+            .chain(bodies.iter().copied())
+            .map(|i| format!("#{i}"))
+            .collect();
+        let representation = self.add(format!("{shape}('',({}),#{context})", items.join(",")));
         let app = self.add("APPLICATION_CONTEXT('automotive design')".into());
         self.add(format!(
             "APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,#{app})"
@@ -1591,6 +1642,27 @@ fn sheet_step(
         "SHELL_BASED_SURFACE_MODEL({},(#{shell}))",
         text(name)
     ));
+    finish_painted(
+        w,
+        name,
+        "MANIFOLD_SURFACE_SHAPE_REPRESENTATION",
+        &[model],
+        &faces,
+        rgb,
+        transparency,
+    )
+}
+
+/// The file for `bodies`, each of `faces` painted `rgb` (and, when given, with `transparency`).
+fn finish_painted(
+    mut w: Step,
+    name: &str,
+    shape: &str,
+    bodies: &[usize],
+    faces: &[usize],
+    rgb: [f64; 3],
+    transparency: Option<f64>,
+) -> String {
     let colour = w.add(format!(
         "COLOUR_RGB('',{},{},{})",
         real(rgb[0]),
@@ -1615,11 +1687,132 @@ fn sheet_step(
             w.add(format!("STYLED_ITEM('',(#{style}),#{face})"))
         })
         .collect();
-    w.finish(
+    w.finish(name, shape, bodies, &styled)
+}
+
+/// The most faces the thick overlays of one package may add together.
+const MAX_SOLID_FACES: usize = 250_000;
+
+/// The faces one area costs as a prism: top, bottom, and one side for each edge of every loop.
+fn prism_faces(area: &Area) -> usize {
+    area.holes
+        .iter()
+        .map(Vec::len)
+        .fold(area.outer.len(), usize::saturating_add)
+        .saturating_add(2)
+}
+
+/// An overlay as STEP with a thickness: one closed solid for each area, between heights `low`
+/// and `high`, all in one shape. Every prism has a top face (normal +z) and a bottom face (-z),
+/// each bounded by the area's loops, and one planar side face for each loop edge with the
+/// normal pointing out of the solid. Every face is coloured `rgb`.
+fn solid_step(
+    name: &str,
+    low: f64,
+    high: f64,
+    areas: &[Area],
+    rgb: [f64; 3],
+    transparency: Option<f64>,
+) -> String {
+    let mut w = Step::default();
+    let mut faces = Vec::new();
+    for area in areas {
+        let mut prism = Vec::new();
+        let top_frame = w.placement([0.0, 0.0, high], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+        let top_plane = w.add(format!("PLANE('',#{top_frame})"));
+        let bottom_frame = w.placement([0.0, 0.0, low], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0]);
+        let bottom_plane = w.add(format!("PLANE('',#{bottom_frame})"));
+        let mut top_bounds = Vec::new();
+        let mut bottom_bounds = Vec::new();
+        for (n, ring) in std::iter::once(&area.outer)
+            .chain(area.holes.iter())
+            .enumerate()
+        {
+            let count = ring.len();
+            let up = |p: &[f64; 2]| [p[0], p[1], high];
+            let down = |p: &[f64; 2]| [p[0], p[1], low];
+            let top_v: Vec<usize> = ring.iter().map(|p| w.vertex(up(p))).collect();
+            let bottom_v: Vec<usize> = ring.iter().map(|p| w.vertex(down(p))).collect();
+            let mut top_e = Vec::new();
+            let mut bottom_e = Vec::new();
+            let mut rise_e = Vec::new();
+            for (i, (p, q)) in ring.iter().zip(ring.iter().cycle().skip(1)).enumerate() {
+                let next = (i + 1) % count;
+                if let (Some(&t0), Some(&t1), Some(&b0), Some(&b1)) = (
+                    top_v.get(i),
+                    top_v.get(next),
+                    bottom_v.get(i),
+                    bottom_v.get(next),
+                ) {
+                    top_e.push(w.edge(t0, t1, up(p), up(q)));
+                    bottom_e.push(w.edge(b0, b1, down(p), down(q)));
+                }
+                if let (Some(&b0), Some(&t0)) = (bottom_v.get(i), top_v.get(i)) {
+                    rise_e.push(w.edge(b0, t0, down(p), up(p)));
+                }
+            }
+            let kind = if n == 0 {
+                "FACE_OUTER_BOUND"
+            } else {
+                "FACE_BOUND"
+            };
+            let top_loop = w.edge_loop(&top_e.iter().map(|e| (*e, true)).collect::<Vec<_>>());
+            top_bounds.push(format!("#{}", w.add(format!("{kind}('',#{top_loop},.T.)"))));
+            let bottom_loop = w.edge_loop(
+                &bottom_e
+                    .iter()
+                    .rev()
+                    .map(|e| (*e, false))
+                    .collect::<Vec<_>>(),
+            );
+            bottom_bounds.push(format!(
+                "#{}",
+                w.add(format!("{kind}('',#{bottom_loop},.T.)"))
+            ));
+            for (i, (p, q)) in ring.iter().zip(ring.iter().cycle().skip(1)).enumerate() {
+                let next = (i + 1) % count;
+                let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+                let len = dx.hypot(dy);
+                let frame = w.placement(
+                    down(p),
+                    [dy / len, -dx / len, 0.0],
+                    [dx / len, dy / len, 0.0],
+                );
+                let plane = w.add(format!("PLANE('',#{frame})"));
+                if let (Some(&b), Some(&r1), Some(&t), Some(&r0)) = (
+                    bottom_e.get(i),
+                    rise_e.get(next),
+                    top_e.get(i),
+                    rise_e.get(i),
+                ) {
+                    let side_loop = w.edge_loop(&[(b, true), (r1, true), (t, false), (r0, false)]);
+                    let bound = w.add(format!("FACE_OUTER_BOUND('',#{side_loop},.T.)"));
+                    prism.push(w.add(format!("ADVANCED_FACE('',(#{bound}),#{plane},.T.)")));
+                }
+            }
+        }
+        prism.push(w.add(format!(
+            "ADVANCED_FACE('',({}),#{top_plane},.T.)",
+            top_bounds.join(",")
+        )));
+        prism.push(w.add(format!(
+            "ADVANCED_FACE('',({}),#{bottom_plane},.T.)",
+            bottom_bounds.join(",")
+        )));
+        faces.extend(prism);
+    }
+    // One shell holds every prism: the lumps are one body.
+    let ids: Vec<String> = faces.iter().map(|f| format!("#{f}")).collect();
+    let shell = w.add(format!("CLOSED_SHELL('',({}))", ids.join(",")));
+    let solid = w.add(format!("MANIFOLD_SOLID_BREP({},#{shell})", text(name)));
+    finish_painted(
+        w,
         name,
-        "MANIFOLD_SURFACE_SHAPE_REPRESENTATION",
-        model,
-        &styled,
+        "ADVANCED_BREP_SHAPE_REPRESENTATION",
+        &[solid],
+        &faces,
+        rgb,
+        transparency,
     )
 }
 
@@ -1688,7 +1881,7 @@ mod tests {
         let ids: Vec<String> = face_ids.iter().map(|f| format!("#{f}")).collect();
         let shell = w.add(format!("CLOSED_SHELL('',({}))", ids.join(",")));
         let brep = w.add(format!("MANIFOLD_SOLID_BREP({},#{shell})", text(name)));
-        w.finish(name, "ADVANCED_BREP_SHAPE_REPRESENTATION", brep, &[])
+        w.finish(name, "ADVANCED_BREP_SHAPE_REPRESENTATION", &[brep], &[])
     }
 
     fn package(name: &str) -> PathBuf {
@@ -2460,6 +2653,188 @@ mod tests {
             .placements
             .iter()
             .any(|p| p.name.as_deref() == Some("Mask bad")));
+    }
+
+    fn step_of(assembly: &Assembly, name: &str) -> String {
+        let p = assembly
+            .placements
+            .iter()
+            .find(|p| p.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("no overlay {name}"));
+        assembly.parts[p.part].source_step.clone().unwrap()
+    }
+
+    /// Every edge of the file is walked exactly twice, once each way: a closed manifold.
+    fn assert_closed_manifold(step: &str) {
+        let mut walks: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+        for line in step.lines() {
+            let Some(at) = line.find("ORIENTED_EDGE('',*,*,#") else {
+                continue;
+            };
+            let rest = &line[at + "ORIENTED_EDGE('',*,*,#".len()..];
+            let (id, sense) = rest.split_once(',').unwrap();
+            let entry = walks.entry(id.to_owned()).or_default();
+            if sense.starts_with(".T.") {
+                entry.0 += 1;
+            } else {
+                entry.1 += 1;
+            }
+        }
+        assert!(!walks.is_empty());
+        assert!(walks.values().all(|w| *w == (1, 1)), "{walks:?}");
+    }
+
+    fn thick(name: &str, side: &str, thickness: Value, areas: Value) -> Value {
+        let mut o = overlay(name, areas);
+        o["side"] = json!(side);
+        o["thickness"] = thickness;
+        o
+    }
+
+    fn holed() -> Value {
+        json!([{"outer": square(5.0), "holes": [[[1.0, 1.0], [1.0, 4.0], [4.0, 4.0], [4.0, 1.0]]]}])
+    }
+
+    #[test]
+    fn a_thick_overlay_is_one_closed_solid_with_a_prism_for_each_area() {
+        let dir = package("thick");
+        write_models(&dir);
+        let m = manifest(json!({"overlays": [thick("Copper", "top", json!(0.035), holed())]}));
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        let part = &assembly.parts[assembly
+            .placements
+            .iter()
+            .find(|p| p.name.as_deref() == Some("Copper"))
+            .unwrap()
+            .part];
+        assert_eq!(part.ir.geometry.bodies.len(), 1, "one body");
+        assert_eq!(part.ir.geometry.faces.len(), 2 + 4 + 4);
+        let step = step_of(&assembly, "Copper");
+        assert_eq!(step.matches("MANIFOLD_SOLID_BREP(").count(), 1);
+        assert_eq!(step.matches("SHELL_BASED_SURFACE_MODEL").count(), 0);
+        assert_closed_manifold(&step);
+        // Top at z + t, bottom at z.
+        assert!(step.contains("CARTESIAN_POINT('',(0.,0.,1.636))"));
+        assert!(step.contains("CARTESIAN_POINT('',(0.,0.,1.601))"));
+        assert!(step.contains("COLOUR_RGB('',0.05,0.45,0.22)"));
+        assert!(report
+            .losses()
+            .iter()
+            .all(|l| l.severity != Severity::Dropped));
+    }
+
+    #[test]
+    fn two_areas_of_a_thick_overlay_are_two_lumps_of_one_body() {
+        let dir = package("lumps");
+        write_models(&dir);
+        let areas = json!([
+            {"outer": square(2.0), "holes": []},
+            {"outer": [[5.0, 5.0], [7.0, 5.0], [7.0, 7.0], [5.0, 7.0]], "holes": []},
+        ]);
+        let (model, _) = read(
+            &dir,
+            &manifest(json!({"overlays": [thick("Lumps", "top", json!(0.1), areas)]})),
+        );
+        let assembly = model.unwrap().assembly.unwrap();
+        let part = &assembly.parts[assembly
+            .placements
+            .iter()
+            .find(|p| p.name.as_deref() == Some("Lumps"))
+            .unwrap()
+            .part];
+        assert_eq!(part.ir.geometry.bodies.len(), 1);
+        assert_eq!(part.ir.geometry.faces.len(), 12);
+        assert_closed_manifold(&step_of(&assembly, "Lumps"));
+    }
+
+    #[test]
+    fn a_bottom_overlay_extrudes_downward() {
+        let dir = package("bottom");
+        write_models(&dir);
+        let m = manifest(
+            json!({"overlays": [thick("Copper bottom", "bottom", json!(0.035), holed())]}),
+        );
+        let (model, _) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        let step = step_of(&assembly, "Copper bottom");
+        assert!(step.contains("CARTESIAN_POINT('',(0.,0.,1.601))"));
+        assert!(step.contains("CARTESIAN_POINT('',(0.,0.,1.566))"));
+        assert!(!step.contains("1.636"));
+        assert_closed_manifold(&step);
+    }
+
+    #[test]
+    fn a_thickness_out_of_range_refuses_that_overlay_by_name() {
+        let dir = package("thick-range");
+        write_models(&dir);
+        let m = manifest(json!({"overlays": [
+            thick("Too thick", "top", json!(1.5), holed()),
+            thick("Negative", "top", json!(-0.1), holed()),
+            thick("Fine", "top", json!(1.0), holed()),
+        ]}));
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert!(mentions(
+            &report,
+            Severity::Dropped,
+            "overlay \"Too thick\""
+        ));
+        assert!(mentions(&report, Severity::Dropped, "overlay \"Negative\""));
+        assert!(mentions(&report, Severity::Dropped, "thickness"));
+        let names: Vec<_> = assembly
+            .placements
+            .iter()
+            .filter_map(|p| p.name.as_deref())
+            .collect();
+        assert!(!names.contains(&"Too thick") && !names.contains(&"Negative"));
+        assert!(names.contains(&"Fine"));
+    }
+
+    #[test]
+    fn over_the_face_budget_an_overlay_is_a_sheet_with_a_note() {
+        let dir = package("thick-budget");
+        write_models(&dir);
+        // Each square prism costs 6 faces: 42,000 of them pass 250,000.
+        let areas: Vec<Value> = (0..42_000u32)
+            .map(|i| {
+                let (x, y) = (f64::from(i % 200) * 2.0, f64::from(i / 200) * 2.0);
+                json!({"outer": [[x, y], [x + 1.0, y], [x + 1.0, y + 1.0], [x, y + 1.0]], "holes": []})
+            })
+            .collect();
+        let m = manifest(json!({"overlays": [
+            thick("Huge", "top", json!(0.035), Value::Array(areas)),
+            thick("Small", "top", json!(0.035), holed()),
+        ]}));
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert!(mentions(&report, Severity::Degraded, "overlay \"Huge\""));
+        assert!(mentions(&report, Severity::Degraded, "drawn as a sheet"));
+        let step = step_of(&assembly, "Huge");
+        assert!(step.contains("OPEN_SHELL") && !step.contains("MANIFOLD_SOLID_BREP"));
+        // The budget is the package's: a later small overlay still gets its solid.
+        assert!(step_of(&assembly, "Small").contains("MANIFOLD_SOLID_BREP"));
+    }
+
+    #[test]
+    fn a_missing_or_zero_thickness_is_the_sheet_as_before() {
+        let dir = package("thick-none");
+        write_models(&dir);
+        let mut zero = thick("Zero", "top", json!(0.0), holed());
+        zero["thickness"] = json!(0);
+        let (model, report) = read(
+            &dir,
+            &manifest(json!({"overlays": [overlay("Plain", holed()), zero]})),
+        );
+        let assembly = model.unwrap().assembly.unwrap();
+        for name in ["Plain", "Zero"] {
+            let step = step_of(&assembly, name);
+            assert!(step.contains("OPEN_SHELL"), "{name}");
+            assert!(!step.contains("MANIFOLD_SOLID_BREP"), "{name}");
+            assert_eq!(sheet_faces(&assembly, name), 1);
+        }
+        assert!(!mentions(&report, Severity::Dropped, "overlay"));
+        assert!(!mentions(&report, Severity::Degraded, "thickness"));
     }
 
     #[test]

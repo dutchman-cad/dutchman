@@ -393,3 +393,64 @@ fn the_cli_reads_the_board_colour_and_mask_opacity_back() {
     );
     assert!(looks[0]["faces"].as_array().unwrap().is_empty(), "{looks}");
 }
+
+#[test]
+fn a_thick_overlay_is_a_closed_solid_of_the_expected_volume() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("board.step"), cube_step()).unwrap();
+    let hole = json!([[1.0, 1.0], [1.0, 4.0], [4.0, 4.0], [4.0, 1.0]]);
+    let outer = json!([[0.0, 0.0], [5.0, 0.0], [5.0, 5.0], [0.0, 5.0]]);
+    let manifest = json!({
+        "schema": PARTS_SCHEMA,
+        "models": [{"id": "board", "file": "board.step"}],
+        "parts": [{"name": "Board", "model": "board"}],
+        "overlays": [
+            {"name": "Copper top", "kind": "copper", "side": "top", "part": "Board", "z": 2.0,
+             "thickness": 0.035, "areas": [{"outer": outer, "holes": [hole]}]},
+            {"name": "Copper bottom", "kind": "copper", "side": "bottom", "part": "Board",
+             "z": -2.0, "thickness": 0.05, "areas": [{"outer": outer, "holes": []}]},
+        ],
+    });
+    let (bytes, report) = write(dir.path(), manifest.to_string().as_bytes());
+    assert!(
+        report
+            .losses()
+            .iter()
+            .all(|loss| loss.severity != dutchman_core::Severity::Dropped),
+        "{:?}",
+        report.losses()
+    );
+    let Some(cli) = cli() else {
+        eprintln!("skipped: set SOLIDCRAFT_CLI to check the solids");
+        return;
+    };
+    let bodies = evaluate(&cli, &bytes);
+    let find = |what: &str| {
+        let found: Vec<&Value> = bodies
+            .iter()
+            .filter(|b| b["name"].as_str().is_some_and(|n| n.contains(what)))
+            .collect();
+        assert_eq!(found.len(), 1, "{what}: {bodies:?}");
+        found[0]
+    };
+    // (25 - 9) mm2 times 0.035 mm, and 25 mm2 times 0.05 mm: the top prism spans z 2 to 2.035,
+    // the bottom one z -2.05 to -2.
+    for (what, want, faces) in [
+        ("Copper top", 16.0 * 0.035, 10),
+        ("Copper bottom", 25.0 * 0.05, 6),
+    ] {
+        let body = find(what);
+        assert_eq!(body["closed"], json!(true), "{what}: {body}");
+        assert_eq!(body["faces"], json!(faces), "{what}: {body}");
+        let volume = body["volume_mm3"].as_f64().unwrap();
+        assert!(
+            (volume - want).abs() < 1e-6,
+            "{what}: volume {volume}, want {want}: {body}"
+        );
+    }
+    let top = find("Copper top");
+    assert!((top["bbox"]["min"][2].as_f64().unwrap() - 2.0).abs() < 1e-9);
+    assert!((top["bbox"]["max"][2].as_f64().unwrap() - 2.035).abs() < 1e-9);
+    let bottom = find("Copper bottom");
+    assert!((bottom["bbox"]["max"][2].as_f64().unwrap() + 2.0).abs() < 1e-9);
+}
