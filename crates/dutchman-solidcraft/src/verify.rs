@@ -498,10 +498,9 @@ pub(crate) mod tests_force {
 }
 
 impl VersionGate {
-    /// The first release that supports the capability; `None` while none does.
-    fn minimum(self) -> Option<SolidCraftVersion> {
-        Some(match self {
-            Self::UnifiedThread => return None,
+    fn minimum(self) -> SolidCraftVersion {
+        match self {
+            Self::UnifiedThread => SolidCraftVersion::UNRELEASED,
             Self::MoveBody => SolidCraftVersion::V0_45_0,
             Self::LinkedDesign => SolidCraftVersion::V0_44_0,
             Self::ThinExtrude => SolidCraftVersion::V0_44_0,
@@ -517,7 +516,7 @@ impl VersionGate {
             Self::RemoveBody => SolidCraftVersion::V0_40_0,
             Self::ScopedBodies => SolidCraftVersion::V0_44_0,
             Self::ClosedCircleBlend | Self::SpatialHoleLocations => SolidCraftVersion::V0_44_1,
-        })
+        }
     }
 
     /// Whether this target can write the gated representation.
@@ -526,7 +525,7 @@ impl VersionGate {
         if self == Self::UnifiedThread && tests_force::unified_thread() {
             return true;
         }
-        self.minimum().is_some_and(|minimum| target >= minimum)
+        target >= self.minimum()
     }
 }
 
@@ -619,6 +618,10 @@ impl SolidCraftVersion {
 
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
+
+    /// Stands for a release that does not exist yet: above every real version, so a gate set to
+    /// it is never supported.
+    pub const UNRELEASED: Self = Self([u64::MAX, 0, 0]);
 
     /// First release that stores a tapped hole's `thread_class`.
     pub const V0_43_0: Self = Self([0, 43, 0]);
