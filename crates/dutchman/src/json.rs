@@ -1868,8 +1868,9 @@ mod tests {
         source.record_missing_inserted_designs(&["Washer".into(), "Nut".into()]);
         let report = Value::Object(success(CONVERT, json!({"path":"assembly.f3d"}), &source));
         let sentence = "2 inserted components come from other Fusion designs that this .f3d \
-                        doesn't contain; export the assembly as a Fusion Archive (.f3z) to \
-                        bring them along.";
+                        doesn't contain; convert the whole export folder (or its zip) so the \
+                        inserted designs come along, or export the assembly as a Fusion \
+                        Archive (.f3z) from Fusion's File > Export.";
         assert!(report["verification"]["reason"]
             .as_str()
             .unwrap()
