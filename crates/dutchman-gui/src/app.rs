@@ -1149,7 +1149,8 @@ impl App {
         if !job.search.also.contains(&folder) {
             job.search.also.push(folder);
         }
-        let job = self.retry_job(job.clone());
+        let job = job.clone();
+        let job = self.retry_job(job);
         self.pending = Some(PendingRun {
             options: self.options.clone(),
             kind: RunKind::Retry {
