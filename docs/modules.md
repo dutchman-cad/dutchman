@@ -79,13 +79,14 @@ geometry and hands over finished areas.
 - `part` is the `name` of the part the overlay is drawn on. The overlay takes that part's transform, so `areas` and
   `z` are in the part's own frame. An overlay naming no part in the package is dropped, with a note.
 - `z` is the height of the overlay's face in the part's frame, in the package's unit.
-- `thickness` is optional, in mm, with 0 < `thickness` <= 1. With it, the overlay is one solid body: each area extruded
+- `thickness` is optional, in mm, with 0 < `thickness` <= 1. With it, the overlay is solid: each area extruded
   from `z` away from the part (up when `side` is `top`, or missing; down when `side` is `bottom`) by `thickness`,
   holes included. Without it, or at 0, the overlay is a zero-thickness sheet at `z`, as before. A value out of range
   refuses that overlay by name, and the rest converts.
-- Areas in one overlay never overlap or touch. The module unites them first, so one overlay is one body with many
-  lumps. Each area becomes a closed prism: a top face, a bottom face, and one planar side face for each edge of its
-  outer loop and of every hole, all with outward normals.
+- Areas in one overlay never overlap or touch. Each area becomes its own closed prism, a solid with a top face, a
+  bottom face, and one planar side face for each edge of its outer loop and of every hole, all with outward normals.
+  The prisms of one overlay are one part with one look, and each keeps its own volume. SolidCraft names the first
+  `Body (<overlay>)` and the others `Body (2)`, `Body (3)` and so on.
 - The module sets the stacking through `z`. Dutchman moves nothing.
 - Dutchman caps the faces of all thick overlays in a package at 250,000 (each extruded area costs 2 plus its edge count,
   holes included). An overlay that would pass the cap is drawn as a sheet, with a `Degraded` note naming it.
@@ -110,7 +111,7 @@ geometry and hands over finished areas.
 Loops of one area may touch at a single point (a hole touching the outer loop, or two holes touching). Points closer
 than 1e-6 mm are one point.
 
-Each overlay becomes one body named after it: a sheet with one planar face per area, or, with a `thickness`, a solid.
+Each overlay becomes one body named after it: a sheet with one planar face per area, or, with a `thickness`, a solid for each area.
 Colour and opacity apply to every face of either.
 
 ### Limits and safety

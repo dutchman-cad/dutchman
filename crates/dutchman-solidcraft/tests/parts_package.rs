@@ -400,6 +400,7 @@ fn a_thick_overlay_is_a_closed_solid_of_the_expected_volume() {
     std::fs::write(dir.path().join("board.step"), cube_step()).unwrap();
     let hole = json!([[1.0, 1.0], [1.0, 4.0], [4.0, 4.0], [4.0, 1.0]]);
     let outer = json!([[0.0, 0.0], [5.0, 0.0], [5.0, 5.0], [0.0, 5.0]]);
+    let island = json!([[10.0, 10.0], [12.0, 10.0], [12.0, 12.0], [10.0, 12.0]]);
     let manifest = json!({
         "schema": PARTS_SCHEMA,
         "models": [{"id": "board", "file": "board.step"}],
@@ -409,6 +410,9 @@ fn a_thick_overlay_is_a_closed_solid_of_the_expected_volume() {
              "thickness": 0.035, "areas": [{"outer": outer, "holes": [hole]}]},
             {"name": "Copper bottom", "kind": "copper", "side": "bottom", "part": "Board",
              "z": -2.0, "thickness": 0.05, "areas": [{"outer": outer, "holes": []}]},
+            {"name": "Copper pour", "kind": "copper", "side": "top", "part": "Board", "z": 3.0,
+             "thickness": 0.1,
+             "areas": [{"outer": outer, "holes": [hole]}, {"outer": island, "holes": []}]},
         ],
     });
     let (bytes, report) = write(dir.path(), manifest.to_string().as_bytes());
@@ -453,6 +457,23 @@ fn a_thick_overlay_is_a_closed_solid_of_the_expected_volume() {
     assert!((top["bbox"]["max"][2].as_f64().unwrap() - 2.035).abs() < 1e-9);
     let bottom = find("Copper bottom");
     assert!((bottom["bbox"]["max"][2].as_f64().unwrap() + 2.0).abs() < 1e-9);
+    // Two areas, (25 - 9) and 4 mm2, each 0.1 mm thick, are two solids: every lump keeps its
+    // volume, so the design holds the board (a 10 mm cube) and the sum of area times thickness
+    // of every overlay.
+    assert_eq!(bodies.len(), 5, "{bodies:?}");
+    assert!(
+        bodies.iter().all(|b| b["closed"] == json!(true)),
+        "{bodies:?}"
+    );
+    let total: f64 = bodies
+        .iter()
+        .map(|b| b["volume_mm3"].as_f64().unwrap())
+        .sum();
+    let want = 1000.0 + 16.0 * 0.035 + 25.0 * 0.05 + (16.0 + 4.0) * 0.1;
+    assert!(
+        (total - want).abs() < 1e-6,
+        "volume {total}, want {want}: {bodies:?}"
+    );
 }
 
 #[test]

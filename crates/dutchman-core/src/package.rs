@@ -1800,7 +1800,7 @@ fn prism_faces(area: &Area) -> usize {
 }
 
 /// An overlay as STEP with a thickness: one closed solid for each area, between heights `low`
-/// and `high`, all in one shape. Every prism has a top face (normal +z) and a bottom face (-z),
+/// and `high`, all in one shape (so one part, one look). Every prism has a top face (normal +z) and a bottom face (-z),
 /// each bounded by the area's loops, and one planar side face for each loop edge with the
 /// normal pointing out of the solid. Every face is coloured `rgb`.
 fn solid_step(
@@ -1813,6 +1813,7 @@ fn solid_step(
 ) -> String {
     let mut w = Step::default();
     let mut faces = Vec::new();
+    let mut solids = Vec::new();
     for area in areas {
         let mut prism = Vec::new();
         let top_frame = w.placement([0.0, 0.0, high], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
@@ -1896,17 +1897,23 @@ fn solid_step(
             "ADVANCED_FACE('',({}),#{bottom_plane},.T.)",
             bottom_bounds.join(",")
         )));
+        // One solid for each area: a shell holding two disconnected lumps is read with the
+        // later lumps as voids, which takes their volume away.
+        let ids: Vec<String> = prism.iter().map(|f| format!("#{f}")).collect();
+        let shell = w.add(format!("CLOSED_SHELL('',({}))", ids.join(",")));
+        let label = if areas.len() > 1 {
+            format!("{name} ({})", solids.len().saturating_add(1))
+        } else {
+            name.to_owned()
+        };
+        solids.push(w.add(format!("MANIFOLD_SOLID_BREP({},#{shell})", text(&label))));
         faces.extend(prism);
     }
-    // One shell holds every prism: the lumps are one body.
-    let ids: Vec<String> = faces.iter().map(|f| format!("#{f}")).collect();
-    let shell = w.add(format!("CLOSED_SHELL('',({}))", ids.join(",")));
-    let solid = w.add(format!("MANIFOLD_SOLID_BREP({},#{shell})", text(name)));
     finish_painted(
         w,
         name,
         "ADVANCED_BREP_SHAPE_REPRESENTATION",
-        &[solid],
+        &solids,
         &faces,
         rgb,
         transparency,
@@ -2822,7 +2829,7 @@ mod tests {
     }
 
     #[test]
-    fn two_areas_of_a_thick_overlay_are_two_lumps_of_one_body() {
+    fn two_areas_of_a_thick_overlay_are_two_solids_of_one_part() {
         let dir = package("lumps");
         write_models(&dir);
         let areas = json!([
@@ -2840,7 +2847,7 @@ mod tests {
             .find(|p| p.name.as_deref() == Some("Lumps"))
             .unwrap()
             .part];
-        assert_eq!(part.ir.geometry.bodies.len(), 1);
+        assert_eq!(part.ir.geometry.bodies.len(), 2, "one solid for each area");
         assert_eq!(part.ir.geometry.faces.len(), 12);
         assert_closed_manifold(&step_of(&assembly, "Lumps"));
     }
