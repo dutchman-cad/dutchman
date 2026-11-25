@@ -553,6 +553,12 @@ mod tests {
             .filter(|f| f.can_convert())
         {
             for extension in format.extensions() {
+                // `prt.N` stands for a numbered save such as `part.prt.3`.
+                let extension = if *extension == "prt.N" {
+                    "prt.3"
+                } else {
+                    *extension
+                };
                 assert!(
                     matches!(
                         classify(vec![], &format!("https://example.test/part.{extension}")),

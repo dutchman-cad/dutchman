@@ -255,6 +255,18 @@ pub(crate) fn onshape_step(
     })
 }
 
+/// What to say when cadmpeg read a file but found no body in it. Creo parts keep much of their
+/// geometry in features cadmpeg does not resolve yet, so they point to a STEP export.
+pub(crate) fn no_geometry_message(format: Format) -> String {
+    let mut message = format!("no geometry could be read from this {} file", format.name());
+    if format == Format::CreoPart {
+        message.push_str(
+            "; Dutchman reads only the Creo features it can resolve to a solid. Export a STEP file from Creo and convert that instead",
+        );
+    }
+    message
+}
+
 /// Full drawing decode uses the same detector, limits, validation and panic guard. A
 /// geometry-only retry would discard the drawing graph, so its errors are returned directly.
 pub(crate) fn drawings(
@@ -437,10 +449,7 @@ fn decode_unguarded(
         if format == Format::Step && step_holds_no_shapes(bytes) {
             return Err(Error::EmptyExport(EMPTY_STEP_MESSAGE.to_owned()));
         }
-        return Err(Error::Decode(format!(
-            "no geometry could be read from this {} file",
-            format.name()
-        )));
+        return Err(Error::Decode(no_geometry_message(format)));
     }
     report.extend_from_cadmpeg(&decode_report.losses);
     if format == Format::FreeCadDocument {
@@ -1315,6 +1324,15 @@ pub(crate) fn preflight_codec(prefix: &[u8]) -> Option<&'static str> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_creo_part_with_no_body_points_to_a_step_export() {
+        let creo = super::no_geometry_message(Format::CreoPart);
+        assert!(creo.starts_with("no geometry could be read from this Creo part"));
+        assert!(creo.contains("Export a STEP file from Creo"), "{creo}");
+        let other = super::no_geometry_message(Format::CatiaPart);
+        assert!(!other.contains("STEP"), "{other}");
+    }
 
     #[test]
     fn step_shape_scan_tells_empty_from_geometry() {

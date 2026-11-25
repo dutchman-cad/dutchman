@@ -394,7 +394,7 @@ Explicit output paths keep their given extension. The container format stays `so
 | `completeness` | For an assembly or a single design with unreadable local occurrence positions: `placed` counts placements with geometry and assembly holders of children; `placed_empty` counts placements of leaf parts with no bodies. Empty leaves no longer inflate `placed`. `unplaced` maps part names to occurrence counts whose positions were assumed or could not be decoded, including children that depend on such a parent. These do not count in `placed` or `placed_empty`. `placements` is `placed + placed_empty + sum(unplaced values) + sum(left_out.count)`. Such conversions use `verification.status: "partial"` with a plain explanation; `ok` is `false` when parts are unplaced, even though output was written. Counts include every recorded placement through placed sub-assemblies, each as often as placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part without unreadable local occurrences. For a flattened single design, overlapping reader counts use the largest count under `Local components with unreadable positions`; this is a conservative count because the reader cannot bind those carriers to distinct occurrences. Decoded bodies absent from every written component occurrence appear in `left_out` at stage `map`, counted once per body, with loss code `dutchman/assembly.bodies-without-occurrences`. |
 | `joints` | For an assembly whose joints were written: how many of each kind, `{"revolute": 5, "rigid": 1}` (kinds `revolute`, `slider`, `rigid`). Grounded joints count as `rigid`, fixing their occurrence to the design at its stored placement. Absent when none were. |
 | `names` | Every name the conversion met, sorted: the paths and folders it read from, and the names the design gives its parts, components, bodies, features, sketches, parameters and properties. For tools that take names out of a report before it is shared (the anonymous report does); absent when there were none. |
-| `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is a stable cadmpeg or Dutchman loss code when available, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
+| `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is a stable cadmpeg or Dutchman loss code when available, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). `summary` is one plain sentence for the person who opens the design: what is missing or different and, when there is something to do, what to do; for a note without a plain sentence it is the `message`. `shown_by_default` is `false` for notes that change nothing the person sees (records STEP has no place for, a placement statistic or any other count of nothing); the app, plugin and command line leave those out of their default view, and the app's Details, and keep them in the saved full log or behind `--verbose`. Every note stays in `losses`, and `code`, `subject` and `message` are unchanged. |
 
 An empty leaf retains its component and joints and adds a `Degraded` loss whose
 `subject` is `part N`, using the anonymous catalog number from `diagnose` and `--part`.
@@ -755,7 +755,7 @@ A failure carries `"ok": false`, `input` and `error`, and exits 1:
 ```json
 {"schema": "dutchman.convert/1", "ok": false,
  "input": {"path": "part.prt", "format": "creo_part", "format_name": "Creo part (.prt, .prt.N)"},
- "error": {"message": "Creo part (.prt, .prt.N): reading geometry is not supported yet. …",
+ "error": {"message": "cannot read this design: no geometry could be read from this Creo part (.prt, .prt.N) file; … Export a STEP file from Creo and convert that instead",
            "stage": "decode", "upstream": "cadmpeg"}}
 ```
 
@@ -1038,8 +1038,8 @@ of a particular file. This additive field retains `dutchman.formats/1`.
 `extensions` lists all accepted suffixes without dots (`prt.N` denotes a numbered save);
 the existing `extension` remains the preferred suffix.
 Dutchman attempts conversion when the format reads geometry and its codec is available in
-this build. Creo opens without geometry support; SolidWorks assemblies and
-unclassified `.prt` files are recognised without readers. Reader status does not promise
+this build. SolidWorks assemblies and unclassified `.prt` files are recognised
+without readers. Reader status does not promise
 that a particular file will convert or that every feature will map.
 `--quiet` suppresses only the text volunteer invitation after a conversion run; JSON
 reports contain neither that invitation nor status prose outside the report.

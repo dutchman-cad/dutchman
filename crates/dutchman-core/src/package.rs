@@ -443,6 +443,7 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
         report,
     );
 
+    drop_unplaced_parts(&mut assembly);
     if assembly.placements.is_empty() {
         return Err(refuse(
             "the package places no parts Dutchman could read".to_owned(),
@@ -465,6 +466,33 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
         assembly: Some(assembly),
         source_step: None,
     })
+}
+
+/// Removes the parts no placement uses, such as a model every placement painted with its own
+/// colour: written as a component with no occurrence, SolidCraft 0.46 and 0.47 still draw its
+/// uncoloured body over the coloured copy's.
+fn drop_unplaced_parts(assembly: &mut Assembly) {
+    let used: BTreeSet<usize> = assembly.placements.iter().map(|p| p.part).collect();
+    if used.len() == assembly.parts.len() {
+        return;
+    }
+    let mut next = BTreeMap::new();
+    let (mut parts, mut definitions, mut identities) = (Vec::new(), Vec::new(), Vec::new());
+    for (old, part) in std::mem::take(&mut assembly.parts).into_iter().enumerate() {
+        if !used.contains(&old) {
+            continue;
+        }
+        next.insert(old, parts.len());
+        parts.push(part);
+        definitions.push(assembly.definitions.get(old).cloned().flatten());
+        identities.push(assembly.identities.get(old).cloned().flatten());
+    }
+    for placement in &mut assembly.placements {
+        placement.part = next.get(&placement.part).copied().unwrap_or(placement.part);
+    }
+    assembly.parts = parts;
+    assembly.definitions = definitions;
+    assembly.identities = identities;
 }
 
 /// A copy of part `index` whose bodies carry the colour `text`, as appearance bindings, the way
@@ -516,8 +544,8 @@ fn colour_variant(
 }
 
 /// Gives every body of `part` the colour `rgb` with opacity `alpha` as one appearance and a
-/// binding per body, replacing its other body bindings, so the writer records the look by body.
-/// The faces' own colours take the same opacity, so a STEP restated from them keeps it. `key`
+/// binding per body, replacing its other body and face bindings, so the writer records the look by body.
+/// The faces' and bodies' own colours are cleared, so the binding alone gives the look. `key`
 /// names the appearance and its bindings.
 fn bind_body_colour(part: &mut Model, rgb: [f64; 3], alpha: f64, key: &str) -> Result<(), String> {
     let key = if alpha < 1.0 {
@@ -530,6 +558,7 @@ fn bind_body_colour(part: &mut Model, rgb: [f64; 3], alpha: f64, key: &str) -> R
         !matches!(
             binding.target.entity,
             cadmpeg_ir::appearance::AppearanceTarget::Body(_)
+                | cadmpeg_ir::appearance::AppearanceTarget::Face(_)
         )
     });
     if !part
@@ -569,13 +598,13 @@ fn bind_body_colour(part: &mut Model, rgb: [f64; 3], alpha: f64, key: &str) -> R
             Err(err) => return Err(format!("its colour cannot be recorded: {err}")),
         }
     }
-    if alpha < 1.0 {
-        for face in &mut part.ir.geometry.faces {
-            face.color = face.color.and_then(|c| c.with_alpha(alpha)).or(face.color);
-        }
-        for body in &mut part.ir.geometry.bodies {
-            body.color = body.color.and_then(|c| c.with_alpha(alpha)).or(body.color);
-        }
+    // The binding is the one source of the look. A colour left on a face would be written as a
+    // face look of its own beside the body's, which paints those faces unlike the rest.
+    for face in &mut part.ir.geometry.faces {
+        face.color = None;
+    }
+    for body in &mut part.ir.geometry.bodies {
+        body.color = None;
     }
     Ok(())
 }
@@ -2316,6 +2345,57 @@ mod tests {
             .losses()
             .iter()
             .all(|l| l.severity != Severity::Dropped));
+    }
+
+    #[test]
+    fn every_face_of_an_overlay_faces_the_same_way_and_takes_the_look_from_its_binding() {
+        let dir = package("normals");
+        write_models(&dir);
+        let hole = json!([[1.0, 1.0], [1.0, 4.0], [4.0, 4.0], [4.0, 1.0]]);
+        let island = json!([[2.0, 2.0], [3.0, 2.0], [3.0, 3.0], [2.0, 3.0]]);
+        let m = one_area_overlay(json!([
+            {"outer": square(5.0), "holes": [hole]},
+            {"outer": island, "holes": []},
+            {"outer": [[7.0, 7.0], [9.0, 7.0], [9.0, 9.0]], "holes": []},
+        ]));
+        let (model, _) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        let sheet = assembly
+            .placements
+            .iter()
+            .find(|p| p.name.as_deref() == Some("Copper top"))
+            .unwrap();
+        let part = &assembly.parts[sheet.part];
+        let step = part.source_step.as_deref().unwrap();
+        let faces: Vec<&str> = step
+            .lines()
+            .filter(|l| l.contains("ADVANCED_FACE"))
+            .collect();
+        assert_eq!(faces.len(), 3);
+        // One plane, +z, and the same face sense for each.
+        let tail = |l: &str| l.rsplit_once(",#").map(|(_, t)| t.to_owned()).unwrap();
+        assert!(faces.iter().all(|f| tail(f) == tail(faces[0])), "{faces:?}");
+        assert!(faces[0].ends_with(",.T.);"), "{faces:?}");
+        // The look is the binding's alone: no face or body carries a colour of its own.
+        assert!(part.ir.geometry.faces.iter().all(|f| f.color.is_none()));
+        assert!(part.ir.geometry.bodies.iter().all(|b| b.color.is_none()));
+        assert_eq!(part.ir.model.appearance_bindings.len(), 1);
+    }
+
+    #[test]
+    fn a_model_every_part_paints_is_not_kept_unplaced() {
+        let dir = package("unplaced");
+        write_models(&dir);
+        let mut m = manifest(json!({}));
+        m["parts"][0]["color"] = json!("#c8b27a");
+        let (model, _) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        for placement in &assembly.placements {
+            assert!(placement.part < assembly.parts.len());
+        }
+        let used: std::collections::BTreeSet<_> =
+            assembly.placements.iter().map(|p| p.part).collect();
+        assert_eq!(used.len(), assembly.parts.len(), "a part no one places");
     }
 
     #[test]

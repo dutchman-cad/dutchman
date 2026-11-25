@@ -139,8 +139,10 @@ fn a_package_becomes_components_occurrences_and_overlay_sheets() {
     if let Some(cli) = cli() {
         let bodies = evaluate(&cli, &bytes);
         let named: Vec<&str> = bodies.iter().filter_map(|b| b["name"].as_str()).collect();
-        assert!(named.contains(&"Copper top"), "{named:?}");
-        assert!(named.contains(&"Silkscreen top"), "{named:?}");
+        // SolidCraft names an imported body `Body (<component>)`.
+        let has = |what: &str| named.iter().any(|name| name.contains(what));
+        assert!(has("Copper top"), "{named:?}");
+        assert!(has("Silkscreen top"), "{named:?}");
         // Board, two resistors, and the two overlay sheets.
         assert_eq!(bodies.len(), 5, "{bodies:?}");
     }
@@ -335,4 +337,59 @@ fn an_island_inside_a_pours_hole_is_written_as_its_own_face() {
     let mut text = String::new();
     std::io::Read::read_to_string(&mut archive.by_name(blob).unwrap(), &mut text).unwrap();
     assert_eq!(text.matches("ADVANCED_FACE").count(), 2, "{text}");
+}
+
+/// SolidCraft's own account of the looks, on the CLI's version: the Board and the mask carry
+/// their colour and opacity on the body, with no face look painting over them.
+#[test]
+fn the_cli_reads_the_board_colour_and_mask_opacity_back() {
+    let Some(cli) = cli() else {
+        eprintln!("skipped: set {CLI_ENV} to a SolidCraft CLI");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("part.step"), cube_step()).unwrap();
+    let square = json!([[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]]);
+    let manifest = json!({
+        "schema": PARTS_SCHEMA,
+        "models": [{"id": "cube", "file": "part.step"}],
+        "parts": [{"name": "Board", "model": "cube", "color": "#c8b27a"}],
+        "overlays": [
+            {"name": "Mask", "kind": "mask", "part": "Board", "z": 1.0, "opacity": 0.85,
+             "color": "#1f7a3d", "areas": [{"outer": square, "holes": []}]},
+        ],
+    });
+    let (bytes, _) = write(dir.path(), manifest.to_string().as_bytes());
+    let design = dir.path().join("design.solidcraft");
+    std::fs::write(&design, &bytes).unwrap();
+    let script = dir.path().join("list.json");
+    std::fs::write(&script, r#"[{"command":"appearance.list","params":{}}]"#).unwrap();
+    let out = dir.path().join("looks.json");
+    let status = std::process::Command::new(&cli)
+        .arg("run")
+        .arg(&script)
+        .arg("--in")
+        .arg(&design)
+        .arg("--results")
+        .arg("--json-out")
+        .arg(&out)
+        .arg("--quiet")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let looks: Value = serde_json::from_str(&std::fs::read_to_string(out).unwrap()).unwrap();
+    let bodies = looks[0]["bodies"].as_object().unwrap();
+    assert!(
+        bodies
+            .values()
+            .any(|l| l["color"] == "#c8b27a" && l["opacity"] == 1.0),
+        "{bodies:?}"
+    );
+    assert!(
+        bodies.values().any(
+            |l| l["color"] == "#1f7a3d" && (l["opacity"].as_f64().unwrap() - 0.85).abs() < 0.01
+        ),
+        "{bodies:?}"
+    );
+    assert!(looks[0]["faces"].as_array().unwrap().is_empty(), "{looks}");
 }

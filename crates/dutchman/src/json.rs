@@ -137,10 +137,83 @@ pub fn fixtures_pitch<'a>(reports: impl IntoIterator<Item = &'a Value>) -> Optio
     Some(format!("Want to help Dutchman read {programs} better? If you have {programs}, you can make a few small test files from short recipes: {FIXTURES_URL} or type /volunteer in our Discord ({DISCORD_URL}). Got a file that converts wrong? Please drop it, with a STEP export of the exact same design, in a DM to Dutchy in our Discord."))
 }
 
-/// One loss of a report as the text reports print it, `LEVEL: SUBJECT: MESSAGE`, with the
-/// message cut to its first sentence unless `verbose`; and whether it was cut.
+/// What "unverified" means for an editable history, said next to the word in the app: not a
+/// quality warning, but what was and was not checked, and how to check it.
+pub const UNVERIFIED_MEANING_APP: &str = "Unverified means this history was written without SolidCraft replaying it and comparing the result with the original shape. It is not a warning that the history is wrong. To check it, turn on \"Check feature history in SolidCraft\" and use Add matching STEP with a STEP export of the same design.";
+
+/// [`UNVERIFIED_MEANING_APP`] as the command line says it.
+pub const UNVERIFIED_MEANING_CLI: &str = "Unverified means this history was written without SolidCraft replaying it and comparing the result with the original shape. It is not a warning that the history is wrong. To check it, run again without --no-verify, with a STEP export of the same design beside the file.";
+
+/// The explanation to print next to an editable history that was not checked, when `report`
+/// has one: a history kept whole or in part whose rebuild SolidCraft did not compare with the
+/// original shape.
+pub fn unverified_history(report: &Value, command_line: bool) -> Option<&'static str> {
+    let status = report
+        .pointer("/verification/status")
+        .and_then(Value::as_str);
+    let unchecked = match report.get("mode").and_then(Value::as_str) {
+        Some("history") => matches!(status, None | Some("unverified")),
+        Some("partial_history") => matches!(status, Some("unverified" | "partial")),
+        _ => false,
+    };
+    (unchecked && report.get("ok").and_then(Value::as_bool) == Some(true)).then_some(
+        if command_line {
+            UNVERIFIED_MEANING_CLI
+        } else {
+            UNVERIFIED_MEANING_APP
+        },
+    )
+}
+
+/// How a loss reads in the default view: its plain sentence (see `dutchman_core::PLAIN_NOTES`)
+/// and whether the default view shows it at all. A loss the table does not cover keeps its
+/// message and stays shown.
+pub fn plain_view(loss: &Value) -> dutchman_core::PlainView {
+    let field = |name: &str| loss.get(name).and_then(Value::as_str).unwrap_or("");
+    let severity = match field("level") {
+        "Dropped" => Severity::Dropped,
+        "Degraded" => Severity::Degraded,
+        _ => Severity::Info,
+    };
+    dutchman_core::plain_view(
+        severity,
+        loss.get("code").and_then(Value::as_str),
+        field("subject"),
+        field("message"),
+    )
+}
+
+/// Whether the default view shows a loss: everything except notes that change nothing the
+/// person sees.
+pub fn is_shown(loss: &Value) -> bool {
+    plain_view(loss).shown
+}
+
+/// A report's losses as the default text view lists them: all of them with `verbose`, else
+/// without the notes that change nothing.
+pub fn listed_losses(report: &Value, verbose: bool) -> Vec<Value> {
+    report
+        .get("losses")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|loss| verbose || is_shown(loss))
+        .cloned()
+        .collect()
+}
+
+/// One loss of a report as the text reports print it. With `verbose` it is the raw
+/// `LEVEL: SUBJECT: MESSAGE`; otherwise a note the table covers leads with its plain sentence,
+/// `LEVEL: SENTENCE`, and any other has its message cut to the first sentence. Also whether it
+/// was cut.
 pub fn loss_line(loss: &Value, verbose: bool) -> (String, bool) {
     let field = |name: &str| loss.get(name).and_then(Value::as_str).unwrap_or("");
+    if !verbose {
+        let view = plain_view(loss);
+        if view.rewritten {
+            return (format!("{}: {}", field("level"), view.summary), true);
+        }
+    }
     let (message, cut) = if verbose {
         (field("message").to_owned(), false)
     } else {
@@ -160,10 +233,14 @@ pub fn loss_lines(losses: &[Value], verbose: bool) -> Vec<(String, bool)> {
     }
     let mut groups: BTreeMap<(String, String, String), usize> = BTreeMap::new();
     let mut rows: Vec<(&Value, String, usize)> = Vec::new();
-    for loss in losses {
+    for loss in losses.iter().filter(|loss| is_shown(loss)) {
         let field = |name| loss.get(name).and_then(Value::as_str).unwrap_or("");
         let message = field("message");
-        let normalized = if field("subject").rsplit(": ").next() == Some("appearance") {
+        let view = plain_view(loss);
+        let view_rewritten = view.rewritten;
+        let normalized = if view.rewritten {
+            view.summary
+        } else if field("subject").rsplit(": ").next() == Some("appearance") {
             message
                 .strip_prefix("Appearance binding ")
                 .and_then(|binding| binding.split_once(" is left out: "))
@@ -172,9 +249,10 @@ pub fn loss_lines(losses: &[Value], verbose: bool) -> Vec<(String, bool)> {
         } else {
             message.to_owned()
         };
+        let subject = if view_rewritten { "" } else { field("subject") };
         let key = (
             field("level").to_owned(),
-            field("subject").to_owned(),
+            subject.to_owned(),
             normalized.clone(),
         );
         if let Some(row) = groups.get(&key).and_then(|index| rows.get_mut(*index)) {
@@ -188,6 +266,9 @@ pub fn loss_lines(losses: &[Value], verbose: bool) -> Vec<(String, bool)> {
         .map(|(loss, message, count)| {
             if count == 1 {
                 loss_line(loss, false)
+            } else if plain_view(loss).rewritten {
+                let level = loss.get("level").and_then(Value::as_str).unwrap_or("");
+                (format!("{level}: {message} ({count} notes)"), true)
             } else {
                 let mut summary = loss.clone();
                 if let Some(fields) = summary.as_object_mut() {
@@ -261,15 +342,25 @@ fn component_of(loss: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// A report's losses by component: the design's own first, then the components with the most
-/// that matters (Dropped, then Degraded), then by name.
+/// A report's losses by component, every note: the design's own first, then the components
+/// with the most that matters (Dropped, then Degraded), then by name.
 pub fn components(report: &Value) -> Vec<Component<'_>> {
+    components_of(report, true)
+}
+
+/// [`components`] without the notes the default view leaves out.
+pub fn shown_components(report: &Value) -> Vec<Component<'_>> {
+    components_of(report, false)
+}
+
+fn components_of(report: &Value, every_note: bool) -> Vec<Component<'_>> {
     let mut by_file: BTreeMap<Option<String>, Component<'_>> = BTreeMap::new();
     for loss in report
         .get("losses")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
+        .filter(|loss| every_note || is_shown(loss))
     {
         let file = component_of(loss);
         let component = by_file.entry(file.clone()).or_insert_with(|| Component {
@@ -345,7 +436,7 @@ const COMPONENTS_SHOWN: usize = 15;
 /// A report's losses in a few lines, by component: `the design: 2 Degraded`, then
 /// `pin.ipt: history flattened (…); 1 Dropped`, most that matters first.
 pub fn grouped_lines(report: &Value) -> Vec<String> {
-    let components = components(report);
+    let components = shown_components(report);
     let total: usize = components.iter().map(|c| c.losses.len()).sum();
     let mut lines = vec![format!(
         "losses: {total} in {} component{}",
@@ -386,7 +477,7 @@ pub fn full_log(report: &Value, line: &str) -> String {
 
 /// What the text reports say once when they cut a note short.
 pub const CUT_NOTE: &str =
-    "repeated notes are grouped and long notes shortened; --verbose prints every note in full";
+    "notes are summarised in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full";
 
 /// A report of a run that stopped with `message`, at the input stage (the file, or how it
 /// was asked for).
@@ -1117,6 +1208,13 @@ pub fn losses(report: &Report) -> Value {
         .losses()
         .iter()
         .map(|loss| {
+            let message = dutchman_core::clean_refusal(&loss.detail);
+            let view = dutchman_core::plain_view(
+                loss.severity,
+                loss.code.as_deref(),
+                &loss.subject,
+                &message,
+            );
             json!({
                 "level": match loss.severity {
                     Severity::Info => "Info",
@@ -1125,9 +1223,11 @@ pub fn losses(report: &Report) -> Value {
                 },
                 "code": loss.code,
                 "subject": loss.subject,
-                "message": dutchman_core::clean_refusal(&loss.detail),
+                "message": message,
                 "stage": loss.stage.id(),
                 "upstream": loss.upstream(),
+                "summary": view.summary,
+                "shown_by_default": view.shown,
             })
         })
         .collect()
@@ -2431,6 +2531,150 @@ mod output_link_tests {
             for key in ["schema", "ok", "input", "mode", "verification", "history"] {
                 assert_eq!(fields[key], expected[index][key]);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod plain_note_tests {
+    use super::*;
+
+    fn note(level: &str, code: Option<&str>, subject: &str, message: &str) -> Value {
+        json!({"level": level, "code": code, "subject": subject, "message": message})
+    }
+
+    fn issue_926_report() -> Value {
+        json!({"ok": true, "losses": [
+            note("Degraded", Some("inventor/source.kernel-history-unclosed"),
+                "inventor/source.kernel-history-unclosed",
+                "The kernel carrier's delta_state chain does not frame or close; features have no history states."),
+            note("Degraded", Some("inventor/rse.segment-pair-untyped"),
+                "inventor/rse.segment-pair-untyped",
+                "Retained 1 structurally paired RSe segment(s) without record semantics."),
+            note("Info", None, "part positions",
+                "0 parts placed as last shown in the original program (0 directly bound, 0 holders derived from displayed children), 0 at current poses, 0 as first placed (smart); first-placement reasons: 0 without a current pose, 0 ambiguous, 0 unsupported, 0 joint checks, 0 bounds checks, 0 inserted-design checks; 0 holder conflicts"),
+            note("Info", Some("step/native.source-record-omitted"),
+                "step/native.source-record-omitted",
+                "67 source-native record(s) were not represented in STEP"),
+            note("Info", Some("f3d/new.thing"), "f3d/new.thing", "Words nobody has translated."),
+        ]})
+    }
+
+    #[test]
+    fn the_default_text_view_leads_with_plain_sentences_and_leaves_out_no_effect_notes() {
+        let report = issue_926_report();
+        let lines: Vec<String> = loss_lines(report["losses"].as_array().unwrap(), false)
+            .into_iter()
+            .map(|(line, _)| line)
+            .collect();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("Degraded: This part's feature history couldn't be read"));
+        assert!(!lines[0].contains("delta_state"));
+        // A note the table does not cover keeps its own text.
+        assert_eq!(
+            lines[1],
+            "Info: f3d/new.thing: Words nobody has translated."
+        );
+        assert_eq!(listed_losses(&report, false).len(), 2);
+    }
+
+    #[test]
+    fn verbose_prints_every_note_raw() {
+        let report = issue_926_report();
+        let losses = listed_losses(&report, true);
+        assert_eq!(losses.len(), 5);
+        let lines: Vec<String> = loss_lines(&losses, true)
+            .into_iter()
+            .map(|(line, _)| line)
+            .collect();
+        assert!(lines[0].contains(
+            "inventor/source.kernel-history-unclosed: The kernel carrier's delta_state chain"
+        ));
+        assert!(lines[3].contains("step/native.source-record-omitted: 67 source-native"));
+    }
+
+    #[test]
+    fn the_json_report_keeps_every_note_and_adds_a_summary() {
+        let mut report = Report::default();
+        report.push_coded(
+            Severity::Degraded,
+            "inventor/source.kernel-history-unclosed",
+            "inventor/source.kernel-history-unclosed",
+            "The kernel carrier's delta_state chain does not frame or close",
+        );
+        report.push_coded(
+            Severity::Info,
+            "step/native.source-record-omitted",
+            "step/native.source-record-omitted",
+            "67 source-native record(s) were not represented in STEP",
+        );
+        report.push(Severity::Info, "joints", "3 joints kept");
+        let rows = losses(&report);
+        let rows = rows.as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        // The existing fields are unchanged.
+        assert_eq!(
+            rows[0]["message"],
+            "The kernel carrier's delta_state chain does not frame or close"
+        );
+        assert_eq!(rows[0]["code"], "inventor/source.kernel-history-unclosed");
+        assert_eq!(rows[0]["level"], "Degraded");
+        assert!(rows[0]["summary"]
+            .as_str()
+            .unwrap()
+            .starts_with("This part's feature history couldn't be read"));
+        assert_eq!(rows[0]["shown_by_default"], true);
+        assert_eq!(rows[1]["shown_by_default"], false);
+        // No row covers it: the summary is its own message.
+        assert_eq!(rows[2]["summary"], "3 joints kept");
+        assert_eq!(rows[2]["shown_by_default"], true);
+    }
+
+    #[test]
+    fn many_notes_group_by_component_without_the_hidden_ones() {
+        let mut list: Vec<Value> = (0..14)
+            .map(|n| {
+                note(
+                    "Info",
+                    Some("step/native.source-record-omitted"),
+                    "x",
+                    &format!("{n} records"),
+                )
+            })
+            .collect();
+        list.push(note(
+            "Degraded",
+            Some("f3d/new.thing"),
+            "f3d/new.thing",
+            "Words.",
+        ));
+        let report = json!({"ok": true, "losses": list});
+        assert_eq!(listed_losses(&report, false).len(), 1);
+        assert_eq!(listed_losses(&report, true).len(), 15);
+        assert_eq!(grouped_lines(&report)[0], "losses: 1 in 1 component");
+        assert_eq!(components(&report)[0].losses.len(), 15);
+    }
+
+    #[test]
+    fn an_unchecked_history_says_what_unverified_means_and_how_to_check() {
+        let unchecked =
+            json!({"ok": true, "mode": "history", "verification": {"status": "unverified"}});
+        let app = unverified_history(&unchecked, false).unwrap();
+        assert!(app.contains("Check feature history in SolidCraft"));
+        assert!(app.contains("not a warning that the history is wrong"));
+        assert!(app.contains("STEP export of the same design"));
+        let cli = unverified_history(&unchecked, true).unwrap();
+        assert!(cli.contains("--no-verify") && cli.contains("STEP export"));
+        // No status at all is unchecked too.
+        assert!(unverified_history(&json!({"ok": true, "mode": "history"}), false).is_some());
+        for report in [
+            json!({"ok": true, "mode": "history", "verification": {"status": "verified"}}),
+            json!({"ok": true, "mode": "history", "verification": {"status": "differs"}}),
+            json!({"ok": true, "mode": "import"}),
+            json!({"ok": false, "mode": "history"}),
+        ] {
+            assert!(unverified_history(&report, false).is_none(), "{report}");
         }
     }
 }

@@ -339,8 +339,7 @@ Its `level` adds cadmpeg's published headline (`L0`–`L9`), or `null` when none
 published; reader status still determines whether conversion can be attempted.
 Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, NX, Creo View, Rhino, ACIS, STEP and offline Onshape bundles
 can convert geometry. Creo and NX parts are identified by contents
-(they share `.prt`); NX parts convert their geometry, without feature history, and Creo
-parts currently open without geometry, so their conversion is refused. SolidWorks
+(they share `.prt`); both convert their geometry, without feature history. SolidWorks
 assemblies are recognised without a reader. `input.words` appears on
 conversion successes and failures. Reader status describes capability; the actual
 history and verification report says what the file kept. CLI `--quiet` hides the volunteer
@@ -367,8 +366,9 @@ For anything else, don't try workarounds such as renaming the file. Tell the use
   and unreadable occurrences are left out and reported. Unavailable referenced configurations
   fall back to the saved active configuration with a Degraded loss. Suppressed and mirrored
   components follow cadmpeg's loss notes.
-- **Creo**: reading geometry is not supported yet.
-  Suggest exporting STEP from the program that made the design and converting that.
+- **Creo**: only the features cadmpeg resolves to a solid are read. When none do, the
+  conversion fails with "no geometry could be read"; suggest exporting STEP from Creo and
+  converting that.
 - **Inventor assemblies (`.iam`)** convert, but need their part files next to the assembly
   (or at the paths it stores). If parts are missing, the report lists them as `Dropped`.
 

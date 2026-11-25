@@ -218,6 +218,16 @@ original where the history stops (0 bodies where it has 1). The final shape is c
 rebuilt features before editing them." In an assembly it gives how many parts. The JSON report has
 the loss `history/body-mismatch`.
 
+Each note on a result card leads with one plain sentence: what is missing or different and, when
+there is something to do, what to do. Notes that change nothing you see (records STEP has no place
+for, a placement statistic of nothing) are left out and not counted, and so is a note that is only
+a count of nothing. **Details**, under the notes, holds the code and message Dutchman wrote for
+each note listed above it, for a bug report. **Save the full log…** saves every note, including
+those the card leaves out. A note Dutchman has no plain sentence for yet keeps its own words. When an
+editable history was written without being checked, the card says what "unverified" means: SolidCraft
+did not replay it and compare the result with the original shape, which is not a warning that it
+is wrong; turn on **Check feature history in SolidCraft** and use **Add matching STEP** to check it.
+
 Expanded **Losses** lists wrap long feature ids inside their result card. Ordinary text
 wraps at spaces.
 
