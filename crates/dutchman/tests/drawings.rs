@@ -1,6 +1,13 @@
 //! Drawing files: every one is accepted and gets a report; FreeCAD TechDraw pages become a
 //! SolidCraft drawing. Inputs are synthetic or FreeCAD fixtures made for this project.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
