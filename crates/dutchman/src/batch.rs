@@ -47,6 +47,9 @@ pub struct Job {
     pub output: PathBuf,
     /// Whether an existing design at `output` is replaced.
     pub replace: bool,
+    /// The name the design was planned under, when a design already there that Dutchman did not
+    /// make from this file kept it, and `output` is the numbered name used instead.
+    pub requested: Option<PathBuf>,
     /// Where an assembly's part files are looked for: in the folder given that holds the
     /// file as its project, unless the options name one.
     pub search: PartSearch,
@@ -132,14 +135,38 @@ fn assign_free_names(jobs: &mut [Job], skip: &[usize]) {
             continue;
         }
         let planned = job.output.clone();
+        let input = job.input.clone();
         let taken = |path: &Path| {
-            dutchman_core::safe_output::slot_taken(path)
-                || (path != planned.as_path() && claimed.contains(&key(path)))
+            (path != planned.as_path() && claimed.contains(&key(path)))
+                || crate::mark::slot(path, &input) == crate::mark::Slot::Taken
         };
         let free = dutchman_core::safe_output::next_free(&planned, &taken);
         claimed.insert(key(&free));
+        // A design Dutchman made from this same file, untouched since, is replaced as the
+        // normal re-convert; anything else keeps its name and this one is numbered.
+        job.replace = crate::mark::slot(&free, &input) == crate::mark::Slot::Ours;
+        job.requested = (free != planned).then_some(planned);
         job.output = free;
     }
+}
+
+/// The names of the designs already in `out_dir` that a run of `inputs` with `options` would
+/// replace and that Dutchman did not make from the file that replaces them: the files the
+/// desktop app asks about before it replaces anything.
+pub fn unmade_outputs(inputs: &[PathBuf], out_dir: &Path, options: &ConvertOptions) -> Vec<String> {
+    let Plan { mut jobs, .. } = plan(inputs, out_dir);
+    prepare_options(&mut jobs, options);
+    jobs.iter()
+        .filter(|job| job.output.try_exists().unwrap_or(false))
+        .filter(|job| !crate::mark::made_from(&job.output, &job.input))
+        .map(|job| {
+            job.output
+                .strip_prefix(out_dir)
+                .unwrap_or(&job.output)
+                .display()
+                .to_string()
+        })
+        .collect()
 }
 
 /// Converts every file `inputs` names or holds into `out_dir` as `settings` say, writing
@@ -464,6 +491,14 @@ pub fn full_log(report: &Value) -> String {
 
 /// One file's line of the text reports: what it became, or why it failed.
 pub fn line(result: &Value) -> String {
+    let base = line_of(result);
+    match result.pointer("/output/note").and_then(Value::as_str) {
+        Some(note) => format!("{base}\n           {note}"),
+        None => base,
+    }
+}
+
+fn line_of(result: &Value) -> String {
     let input = result
         .pointer("/input/path")
         .and_then(Value::as_str)
@@ -700,6 +735,7 @@ fn plan_with_limit(
                 input: path,
                 output,
                 replace,
+                requested: None,
                 search: PartSearch {
                     threads: 0,
                     part_positions: dutchman_core::PartPositions::Smart,
@@ -1357,12 +1393,30 @@ pub fn convert_job(job: &Job, writer: &(dyn Writer + Sync)) -> Value {
     }
 }
 
+/// Says in the report of `job` that its design was saved under a numbered name because the one
+/// planned held a file Dutchman did not make from this input.
+fn note_numbered(job: &Job, report: &mut Value) {
+    let Some(requested) = &job.requested else {
+        return;
+    };
+    if let Some(output) = report.get_mut("output").and_then(Value::as_object_mut) {
+        output.insert(
+            "requested_path".into(),
+            json!(requested.display().to_string()),
+        );
+        output.insert(
+            "note".into(),
+            json!(crate::mark::numbered_note(requested, &job.output)),
+        );
+    }
+}
+
 fn convert_options_job_with_progress(
     job: &Job,
     options: &ConvertOptions,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
-    let result = match make_folder(job) {
+    let mut result = match make_folder(job) {
         Some(failure) => failure,
         None => crate::convert_options_with_progress(
             &job.input,
@@ -1373,6 +1427,7 @@ fn convert_options_job_with_progress(
             on_progress,
         ),
     };
+    note_numbered(job, &mut result);
     with_fallback(job, result, |fallback| {
         convert_options_job_with_progress(fallback, options, on_progress)
     })
@@ -1464,6 +1519,7 @@ fn convert_isolated_job_with_stop(
         worker::convert_isolated_with_stop(program, job, options, limits, stop, on_progress)
     });
     report::conversion_choices(&mut report, &job.input, options);
+    note_numbered(job, &mut report);
     if let Some(fields) = report.as_object_mut() {
         fields.insert(
             "elapsed_ms".into(),
@@ -1504,6 +1560,7 @@ mod tests {
             input: PathBuf::from(name),
             output: PathBuf::from(format!("{name}.sc")),
             replace: true,
+            requested: None,
             search: PartSearch::default(),
         }
     }
@@ -1667,6 +1724,7 @@ mod tests {
                 input: input.clone(),
                 output: dir.path().join(format!("synthetic-{index}.sc")),
                 replace: true,
+                requested: None,
                 search: PartSearch::default(),
             })
             .collect();
@@ -2206,6 +2264,7 @@ mod tests {
             input: PathBuf::from(name),
             output: dir.path().join(name).with_extension("sc"),
             replace: false,
+            requested: None,
             search: PartSearch::default(),
         };
         let mut jobs = vec![job("a.f3d"), job("b.f3d"), job("c.f3d"), job("a (2).f3d")];

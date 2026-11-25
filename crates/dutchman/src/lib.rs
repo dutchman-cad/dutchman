@@ -24,6 +24,7 @@ pub mod formats;
 pub mod investigate;
 pub mod issue;
 pub mod json;
+pub mod mark;
 pub mod mcp;
 pub mod onshape;
 pub mod preflight;
@@ -416,6 +417,34 @@ pub struct PreparedWriter {
     memory_stop: bool,
     check_history_memory: bool,
     history_check_bytes: Option<u64>,
+    /// The source and options the "made by Dutchman" record of a `.sc` names.
+    made: Option<(PathBuf, Value, String)>,
+}
+
+impl PreparedWriter {
+    /// Writes the design, then adds the mark to it when it is a SolidCraft design: a stamp that
+    /// cannot be added leaves the design as written (it is then simply not marked).
+    fn write_marked(
+        &self,
+        model: &Model,
+        out: &mut dyn std::io::Write,
+        report: &mut Report,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> Result<(), Error> {
+        let Some((input, options, target)) = &self.made else {
+            return self.write_unmarked(model, out, report, progress);
+        };
+        use std::io::Write as _;
+        let mut bytes = Vec::new();
+        self.write_unmarked(model, &mut bytes, report, progress)?;
+        let stamped = mark::Made::of(input, options.clone(), target.clone())
+            .and_then(|made| mark::stamp(&bytes, &made).ok());
+        out.write_all(stamped.as_deref().unwrap_or(&bytes))
+            .map_err(|source| Error::Io {
+                path: PathBuf::new(),
+                source,
+            })
+    }
 }
 
 impl Writer for PreparedWriter {
@@ -444,6 +473,18 @@ impl Writer for PreparedWriter {
     }
 
     fn write_with_progress(
+        &self,
+        model: &Model,
+        out: &mut dyn std::io::Write,
+        report: &mut Report,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> Result<(), Error> {
+        self.write_marked(model, out, report, progress)
+    }
+}
+
+impl PreparedWriter {
+    fn write_unmarked(
         &self,
         model: &Model,
         out: &mut dyn std::io::Write,
@@ -571,6 +612,15 @@ impl ConvertOptions {
                 ));
             }
         }
+        let mark_target = solidcraft
+            .as_ref()
+            .and_then(|info| info.get("target"))
+            .map(|target| {
+                target
+                    .as_str()
+                    .map_or_else(|| target.to_string(), str::to_owned)
+            })
+            .unwrap_or_default();
         PreparedWriter {
             usual_stages,
             writer: options.output_writer(),
@@ -586,7 +636,23 @@ impl ConvertOptions {
                 && !self.no_verify
                 && self.to == OutputFormat::Solidcraft,
             memory_stop,
+            made: (self.to == OutputFormat::Solidcraft)
+                .then(|| (input.to_path_buf(), self.mark_options(), mark_target)),
         }
+    }
+
+    /// The options of this conversion that the mark records.
+    fn mark_options(&self) -> Value {
+        json!({
+            "preset": format!("{:?}", self.preset).to_lowercase(),
+            "import_only": self.import_only,
+            "no_sketches": self.no_sketches,
+            "no_joints": self.no_joints,
+            "verify": !self.no_verify,
+            "stand_up": self.stand_up,
+            "part_positions": format!("{:?}", self.effective_part_positions()).to_lowercase(),
+            "stored_placements": self.stored_placements,
+        })
     }
 
     fn preflight(&self, input: &Path, available: Option<u64>) -> PreparedWriter {
@@ -597,6 +663,16 @@ impl ConvertOptions {
         };
         self.prepare_writer(input, note)
     }
+}
+
+/// Sends a file a conversion replaces to the trash or recycle bin; where there is none, keeps it
+/// beside the new one as `name.replaced-<time>.sc`. Set `DUTCHMAN_NO_TRASH` to always keep it
+/// beside the new one.
+fn retire_to_trash(path: &Path) -> std::io::Result<()> {
+    if std::env::var_os("DUTCHMAN_NO_TRASH").is_none() && trash::delete(path).is_ok() {
+        return Ok(());
+    }
+    dutchman_core::safe_output::keep_as_replaced(path)
 }
 
 /// Where to write the design `output`: itself when `replace` is set or nothing is in its slot
@@ -689,6 +765,7 @@ fn convert_prepared(
     progress: &dutchman_core::Progress<'_>,
     writer: PreparedWriter,
 ) -> Value {
+    dutchman_core::safe_output::set_retire(retire_to_trash);
     let converted = match options.part {
         Some(part) => dutchman_core::convert_part_with_progress(
             input, output, &writer, replace, search, part, progress,
@@ -746,6 +823,7 @@ pub fn convert(
     replace: bool,
     search: &PartSearch,
 ) -> Value {
+    dutchman_core::safe_output::set_retire(retire_to_trash);
     match dutchman_core::convert_traced(input, output, writer, replace, search, &mut |_| {}) {
         Ok(report) => convert_success(input, output, &report),
         Err(err) => json::error(json::CONVERT, json::input(input), &err),
@@ -761,6 +839,7 @@ pub fn convert_with_progress(
     search: &PartSearch,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
+    dutchman_core::safe_output::set_retire(retire_to_trash);
     let progress = dutchman_core::Progress::new(on_progress);
     match dutchman_core::convert_with_progress(input, output, writer, replace, search, &progress) {
         Ok(report) => convert_success(input, output, &report),

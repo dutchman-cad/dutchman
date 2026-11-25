@@ -809,14 +809,15 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
             "fits": estimate.zip(available).map(|(e, free)| e.peak_bytes <= free),
         }));
     }
-    let output = crate::resolve_output(&path(arguments, "output")?, options.replace);
+    let (output, replaces) =
+        crate::mark::place(&input, &path(arguments, "output")?, options.replace);
     // A unit test's own program is not a converter.
     #[cfg(test)]
     return Ok(crate::convert_options_with_progress(
         &input,
         &output,
         &options,
-        options.replace,
+        options.replace || replaces,
         &options.part_search(),
         &|_| {},
     ));
@@ -830,7 +831,8 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
             fallback: None,
             input,
             output,
-            replace: options.replace,
+            replace: options.replace || replaces,
+            requested: None,
             search: options.part_search(),
         };
         let limits = crate::worker::Limits {

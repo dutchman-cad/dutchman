@@ -47,6 +47,7 @@ impl TestCommand for Command {
 
 fn dutchman(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .env("DUTCHMAN_NO_TRASH", "1")
         .args(args)
         .test_output()
         .unwrap()
@@ -1107,11 +1108,23 @@ fn an_existing_design_is_never_replaced() {
         .unwrap()
         .starts_with(b"PK"));
 
-    // The same again keeps both: the next free number.
+    // The design Dutchman made from this file, untouched since, is replaced as a normal
+    // re-convert: no (3) piles up, and the old one is kept beside it (never destroyed).
+    let first = std::fs::read(dir.join("cube (2).sc")).unwrap();
     let out = dutchman(&["convert", "--no-verify", &cube, output.to_str().unwrap()]);
     assert_eq!(out.status.code(), Some(0));
-    assert!(dir.join("cube (3).sc").is_file());
+    assert!(!dir.join("cube (3).sc").exists());
     assert!(dir.join("cube (2).sc").is_file());
+    assert_eq!(std::fs::read(&output).unwrap(), b"SENTINEL");
+    assert!(
+        std::fs::read_dir(&dir).unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("cube (2).replaced-")),
+        "the replaced design is kept"
+    );
+    let _ = first;
 
     // `--no-clobber` is what happens anyway.
     let out = dutchman(&[
@@ -1122,9 +1135,22 @@ fn an_existing_design_is_never_replaced() {
         output.to_str().unwrap(),
     ]);
     assert_eq!(out.status.code(), Some(0));
-    assert!(dir.join("cube (4).sc").is_file());
+    assert!(!dir.join("cube (3).sc").exists());
     assert_eq!(std::fs::read(&output).unwrap(), b"SENTINEL");
 
+    // A design made from another file is never taken for this one's: it is numbered past.
+    let other = fixture("generated_unit_cube.f3d");
+    let out = dutchman(&[
+        "convert",
+        "--no-verify",
+        &other,
+        dir.join("cube (2).sc").to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(dir.join("cube (2) (2).sc").is_file());
+
+    // A design saved by hand after Dutchman wrote it is not Dutchman's to replace.
+    // (A file with no mark, such as an older Dutchman's, is the same case: see the mark tests.)
     // Only `--replace` replaces.
     let out = dutchman(&[
         "convert",
@@ -1135,7 +1161,7 @@ fn an_existing_design_is_never_replaced() {
     ]);
     assert_eq!(out.status.code(), Some(0));
     assert_ne!(std::fs::read(&output).unwrap(), b"SENTINEL");
-    assert!(!dir.join("cube (5).sc").exists());
+    assert!(!dir.join("cube (3).sc").exists());
     let help = dutchman(&["convert", "--help"]);
     let help = String::from_utf8_lossy(&help.stdout);
     assert!(help.contains("--replace"), "{help}");
@@ -1174,17 +1200,18 @@ fn an_existing_design_is_never_replaced() {
     assert!(out_dir.join("synthetic_cube (2).sc").is_file());
     assert!(out_dir.join("generated_unit_cube.sc").is_file());
 
-    // Running it again keeps every output of the first run, and adds the next free names.
-    let kept = std::fs::read(out_dir.join("generated_unit_cube.sc")).unwrap();
+    // Running it again replaces what the first run made from the same files, and still keeps
+    // the file that was there.
     let report = run_all(&[]);
     assert_eq!(report["failed"], 0, "{report}");
     assert!(out_dir.join("synthetic_cube (2).sc").is_file());
-    assert!(out_dir.join("synthetic_cube (3).sc").is_file());
-    assert!(out_dir.join("generated_unit_cube (2).sc").is_file());
+    assert!(!out_dir.join("synthetic_cube (3).sc").exists());
+    assert!(!out_dir.join("generated_unit_cube (2).sc").exists());
     assert_eq!(
-        std::fs::read(out_dir.join("generated_unit_cube.sc")).unwrap(),
-        kept
+        std::fs::read(out_dir.join("synthetic_cube.sc")).unwrap(),
+        b"SENTINEL"
     );
+    assert!(out_dir.join("generated_unit_cube.sc").is_file());
 
     // `--replace` replaces what is at the planned names, and writes nothing new.
     let report = run_all(&["--replace"]);
@@ -4162,4 +4189,113 @@ fn stand_up_cli_flags_control_occurrence_transform() {
             [0.0, 0.0, 0.0, 1.0],
         ])
     );
+}
+
+/// The mark a design carries survives SolidCraft opening and saving it, and a design SolidCraft
+/// saved is no longer Dutchman's to replace. Skipped where there is no SolidCraft CLI.
+#[test]
+fn the_mark_survives_a_solidcraft_save() {
+    let cli = std::env::var_os("SOLIDCRAFT_CLI").unwrap_or_else(|| "solidcraft-cli".into());
+    if Command::new(&cli).arg("--help").test_output().is_err() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let cube = fixture("synthetic_cube.ipt");
+    let design = dir.path().join("cube.sc");
+    let out = dutchman(&["convert", "--no-verify", &cube, design.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+    let mark = dutchman::mark::read(&design).unwrap();
+    assert!(mark.untouched);
+    assert!(dutchman::mark::made_from(
+        &design,
+        std::path::Path::new(&cube)
+    ));
+    let saved = dir.path().join("saved.sc");
+    let run = Command::new(&cli)
+        .args([
+            "run",
+            "--in",
+            design.to_str().unwrap(),
+            "--save",
+            saved.to_str().unwrap(),
+            "--quiet",
+        ])
+        .test_output()
+        .unwrap();
+    if !run.status.success() {
+        return;
+    }
+    // SolidCraft opens the marked design without a word about it.
+    let opened = Command::new(&cli)
+        .args(["eval", design.to_str().unwrap(), "--quiet"])
+        .test_output()
+        .unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&opened.stdout),
+        String::from_utf8_lossy(&opened.stderr)
+    );
+    assert!(!said.contains("newer SolidCraft"), "{said}");
+    assert!(!said.to_lowercase().contains("warning"), "{said}");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(!said.contains("newer SolidCraft"), "{said}");
+    let after = dutchman::mark::read(&saved).expect("the mark survives a SolidCraft save");
+    assert_eq!(after.source_path_sha256, mark.source_path_sha256);
+    assert!(!after.untouched);
+    assert!(!dutchman::mark::made_from(
+        &saved,
+        std::path::Path::new(&cube)
+    ));
+}
+
+/// A design with no mark (an older Dutchman's, or one made by hand) is never replaced, and the
+/// new one says why it was numbered.
+#[test]
+fn a_design_without_a_mark_is_kept_and_the_note_says_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let cube = fixture("synthetic_cube.ipt");
+    let design = dir.path().join("cube.sc");
+    std::fs::write(&design, b"made before Dutchman marked its designs").unwrap();
+    let out = dutchman(&["convert", "--no-verify", &cube, design.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        std::fs::read(&design).unwrap(),
+        b"made before Dutchman marked its designs"
+    );
+    assert!(dir.path().join("cube (2).sc").is_file());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(
+            "cube.sc already existed and wasn't made from this file, so saved as cube (2).sc"
+        ),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The same source converted again replaces its own earlier design in place.
+#[test]
+fn converting_the_same_file_again_replaces_its_own_design() {
+    let dir = tempfile::tempdir().unwrap();
+    let cube = fixture("synthetic_cube.ipt");
+    let design = dir.path().join("cube.sc");
+    for _ in 0..3 {
+        let out = dutchman(&["convert", "--no-verify", &cube, design.to_str().unwrap()]);
+        assert_eq!(out.status.code(), Some(0));
+    }
+    assert!(!dir.path().join("cube (2).sc").exists());
+    let kept = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter(|e| {
+            e.as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".replaced-")
+        })
+        .count();
+    assert_eq!(kept, 2, "each replaced design is kept beside the new one");
 }

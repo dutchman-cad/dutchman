@@ -387,6 +387,86 @@ fn designs_convert_from_the_window() {
 }
 
 #[test]
+fn an_existing_file_in_the_output_folder_is_kept_and_the_new_design_is_numbered() {
+    let out = tempfile::tempdir().unwrap();
+    std::fs::write(out.path().join("synthetic_cube.sc"), b"MY OWN DESIGN").unwrap();
+    std::fs::write(
+        out.path().join("synthetic_cube.report.json"),
+        b"MY OWN REPORT",
+    )
+    .unwrap();
+    let mut harness = harness();
+    harness
+        .state_mut()
+        .add_inputs([fixture("synthetic_cube.ipt")]);
+    harness.state_mut().set_out_dir(out.path().to_path_buf());
+    harness.state_mut().set_verify(false);
+    convert(&mut harness);
+    assert_eq!(harness.state().rows()[0].status, Status::Converted);
+    assert_eq!(
+        std::fs::read(out.path().join("synthetic_cube.sc")).unwrap(),
+        b"MY OWN DESIGN"
+    );
+    assert_eq!(
+        std::fs::read(out.path().join("synthetic_cube.report.json")).unwrap(),
+        b"MY OWN REPORT"
+    );
+    assert!(out.path().join("synthetic_cube (2).sc").is_file());
+    assert!(out.path().join("synthetic_cube (2).report.json").is_file());
+}
+
+/// Replacing is asked once, and the question names only the files Dutchman did not make from
+/// the files being converted. "Replace" replaces them; "Cancel" keeps them and numbers.
+#[test]
+fn replacing_asks_once_and_lists_only_files_dutchman_did_not_make() {
+    std::env::set_var("DUTCHMAN_NO_TRASH", "1");
+    for replace in [true, false] {
+        let out = tempfile::tempdir().unwrap();
+        let mut harness = harness();
+        harness.state_mut().add_inputs([
+            fixture("generated_unit_cube.f3d"),
+            fixture("synthetic_cube.ipt"),
+        ]);
+        harness.state_mut().set_out_dir(out.path().to_path_buf());
+        harness.state_mut().set_verify(false);
+        convert(&mut harness);
+        // One of the two is now a design the person made themselves.
+        std::fs::write(out.path().join("synthetic_cube.sc"), b"MY OWN DESIGN").unwrap();
+        harness.get_by_label("Advanced").click_accesskit();
+        harness.run_steps(8);
+        harness
+            .get_by_label("Replace existing files")
+            .click_accesskit();
+        harness.run_steps(8);
+        harness.get_by_label("Convert").click_accesskit();
+        harness.run_steps(8);
+        assert!(harness
+            .query_by_label("Replace 1 file you made yourself?")
+            .is_some());
+        assert!(harness.query_by_label("synthetic_cube.sc").is_some());
+        assert!(harness.query_by_label("generated_unit_cube.sc").is_none());
+        harness
+            .get_by_label(if replace { "Replace" } else { "Cancel" })
+            .click_accesskit();
+        harness.step();
+        wait_for_conversion(&mut harness);
+        assert!(harness
+            .query_by_label("Replace 1 file you made yourself?")
+            .is_none());
+        let mine = std::fs::read(out.path().join("synthetic_cube.sc")).unwrap();
+        if replace {
+            assert_ne!(mine, b"MY OWN DESIGN");
+            assert!(!out.path().join("synthetic_cube (2).sc").exists());
+        } else {
+            assert_eq!(mine, b"MY OWN DESIGN");
+            assert!(out.path().join("synthetic_cube (2).sc").is_file());
+        }
+        // The design made from its own file is replaced in place, never numbered.
+        assert!(!out.path().join("generated_unit_cube (2).sc").exists());
+    }
+}
+
+#[test]
 fn the_format_list_shows_headlines_beside_reader_status() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 1800.0))
@@ -3640,7 +3720,7 @@ fn assert_main_screen_in_view(h: &mut Harness<'_, App>, size: [f32; 2]) {
         "Feature history",
         "Joints",
         "Output format",
-        "Replace designs already in the output folder",
+        "Replace existing files",
         "Open diagnostics folder",
         "RESULTS",
         "Open in SolidCraft",

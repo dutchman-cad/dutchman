@@ -113,11 +113,19 @@ receive a numbered alternative.
 Folder runs keep the input tree under the selected output folder. For example,
 `in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`, with linked design companions
 and its `.report.json` beside it. Same-named designs in different subfolders stay
-separate. Repeating a run into the same selected folder never replaces a design that is
-there: each new design gets the next free name (`part (2).sc`), with its `.report.json`
-beside it, unless **Replace designs already in the output folder** is ticked (it is off by
-default). Identical linked companions are reused, and edited companions are kept with a
-conflict report.
+separate. Every design Dutchman writes carries a small "made by Dutchman" record: its version, the
+source file's name, a checksum of the source, the options and the time. Repeating a run into the
+same selected folder replaces a design Dutchman made from the same file when nothing has changed
+since (a normal re-convert, no copies pile up); any other file already there is kept, and the new
+design gets the next free name (`part (2).sc`) with its `.report.json` beside it. The result says
+so: "part.sc already existed and wasn't made from this file, so saved as part (2).sc".
+
+**Replace existing files** (Advanced, off by default) lets a run replace any file at the planned
+names. Before it does, one question lists the files Dutchman did not make from these files:
+"Replace 1 file you made yourself?". **Replace** goes ahead; **Cancel** keeps them and saves
+under numbered names. A replaced file goes to the trash (or stays beside the new one as
+`name.replaced-<time>.sc`). Identical linked companions are reused, and edited companions are kept
+with a conflict report.
 
 ZIP projects unpack into a private temporary folder, limited to 10,000 entries and 4 GiB
 of extracted data. Paths outside the project are refused and symbolic links are skipped.

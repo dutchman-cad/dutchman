@@ -23,11 +23,21 @@ pub fn save(output: &Path, report: &Value) -> Result<(), String> {
         if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
         }
-        let mut bytes = serde_json::to_vec_pretty(report)?;
+        let mut marked = report.clone();
+        if let (Some(fields), Some(input)) = (
+            marked.as_object_mut(),
+            report.pointer("/input/path").and_then(Value::as_str),
+        ) {
+            fields.insert(
+                "generator".to_owned(),
+                crate::mark::report_mark(Path::new(input)),
+            );
+        }
+        let mut bytes = serde_json::to_vec_pretty(&marked)?;
         bytes.push(b'\n');
         // This report belongs to the design just written in its own slot, so it replaces the
         // one an earlier attempt left there.
-        dutchman_core::safe_output::write(&target, &bytes, true)?;
+        dutchman_core::safe_output::write_own(&target, &bytes)?;
         Ok(())
     };
     write().map_err(|err| format!("Could not save the local report at {}: {err}. Check the folder's permissions and free space.", target.display()))

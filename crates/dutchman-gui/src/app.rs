@@ -198,6 +198,11 @@ pub struct App {
     /// What this session wrote at each output path: its size and modified time then. A design is
     /// converted again over its own file only while the file is still exactly that.
     written: std::collections::BTreeMap<PathBuf, (u64, std::time::SystemTime)>,
+    /// The files already in the output folder that Dutchman did not make from the files being
+    /// converted, while the window asks whether to replace them.
+    replace_confirm: Option<Vec<String>>,
+    /// The answer to that question for the run about to start.
+    replace_choice: Option<bool>,
     /// Keep an explicit UI preview independent of the installed CLI.
     solidcraft_preview: bool,
     /// Where the search for `solidcraft-cli` looked, when it found none.
@@ -524,6 +529,8 @@ impl App {
             checker: dutchman_solidcraft::usable_cli(&checking_with),
             solidcraft_open: false,
             written: std::collections::BTreeMap::new(),
+            replace_confirm: None,
+            replace_choice: None,
             solidcraft_preview: false,
             search_note,
             header_bottom: 72.0,
@@ -1449,11 +1456,25 @@ impl App {
         let Some(out_dir) = self.out_dir.clone() else {
             return;
         };
+        let mut options = self.options.clone();
+        if options.replace && self.replace_choice.is_none() {
+            // Replacing is the user's explicit choice, but a file they made themselves is only
+            // replaced after one question that names it.
+            let files = dutchman::batch::unmade_outputs(&self.inputs, &out_dir, &options);
+            if !files.is_empty() {
+                self.replace_confirm = Some(files);
+                return;
+            }
+        }
+        if self.replace_choice == Some(false) {
+            options.replace = false;
+        }
+        self.replace_choice = None;
         self.batch_report_key = None;
         self.batch_report_finished = false;
         self.batch_report_saved = None;
         self.pending = Some(PendingRun {
-            options: self.options.clone(),
+            options,
             kind: RunKind::Batch {
                 inputs: self.inputs.clone(),
                 out_dir,
@@ -2230,6 +2251,7 @@ impl App {
         self.consent.poll();
         self.updater.report_ids = self.consent.ids.clone();
         self.solidcraft_window(ctx);
+        self.replace_window(ctx);
         if let Some(link) = self
             .onshape
             .window(ctx, self.header_bottom, !self.running())
@@ -2472,6 +2494,48 @@ impl App {
                 // Search again: SolidCraft may have been installed, or been slow to start.
                 self.set_solidcraft_cli(self.options.solidcraft.clone());
             }
+        }
+    }
+
+    /// The one question before replacing: which of the files already there Dutchman did not make
+    /// from the files being converted. Cancelling keeps them and saves under numbered names.
+    fn replace_window(&mut self, ctx: &egui::Context) {
+        let Some(files) = self.replace_confirm.clone() else {
+            return;
+        };
+        let mut answer = None;
+        egui::Window::new("Replace files you made yourself")
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .collapsible(false)
+            .resizable(false)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                let many = files.len() != 1;
+                ui.label(format!(
+                    "Replace {} {} you made yourself?",
+                    files.len(),
+                    if many { "files" } else { "file" }
+                ));
+                for name in files.iter().take(5) {
+                    ui.label(name);
+                }
+                if files.len() > 5 {
+                    ui.label(format!("and {} more", files.len() - 5));
+                }
+                ui.label("Dutchman did not make these from the files being converted. A replaced file goes to the trash.");
+                ui.horizontal(|ui| {
+                    if ui.button("Replace").clicked() {
+                        answer = Some(true);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        answer = Some(false);
+                    }
+                });
+            });
+        if let Some(replace) = answer {
+            self.replace_confirm = None;
+            self.replace_choice = Some(replace);
+            self.start(ctx);
         }
     }
 
@@ -3000,7 +3064,7 @@ impl App {
                 side_by_side(ui, wide, |ui| {
                     let mut replace = self.options.replace;
                     if ui
-                        .checkbox(&mut replace, "Replace designs already in the output folder")
+                        .checkbox(&mut replace, "Replace existing files")
                         .changed()
                     {
                         self.options.replace = replace;

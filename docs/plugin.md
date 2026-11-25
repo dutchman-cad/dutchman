@@ -9,7 +9,8 @@ It implements SolidCraft's importer interface: the `craft:plugin@0.1.0` package,
 `importer-plugin` (capabilities `formats@0.1` and `evaluate@0.1`). It needs SolidCraft 0.44 or
 newer. SolidCraft's manifest has no minimum host version field; 0.43 and older serve only
 `commands@0.1`, so they refuse the manifest's capabilities at install, before any code runs. SolidCraft opens the result as a new unsaved
-design; the plugin never modifies the active design. `wit/craft-plugin.wit` is a copy of
+design; the plugin never modifies the active design and writes no file at all, so it has no
+"Replace existing files" option: nothing it converts can replace a file on disk. `wit/craft-plugin.wit` is a copy of
 SolidCraft's `crates/craft-plugin/wit/plugin.wit`. No host checkout is needed to build or
 test this component.
 
