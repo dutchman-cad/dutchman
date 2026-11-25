@@ -2737,7 +2737,7 @@ impl<'a> Layouts<'a> {
                         self.classify(child, children, external, depth + 1),
                         // A malformed placement never matches; the build reports it.
                         transform(child).unwrap_or([[f64::NAN; 4]; 3]),
-                        child.get("visible").and_then(Value::as_bool) == Some(false),
+                        occurrence_hidden(child, false),
                     )
                 })
                 .collect()
@@ -8105,6 +8105,35 @@ mod tests {
 
     fn inside(key: u32) -> Value {
         json!({"kind": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")})
+    }
+
+    #[test]
+    fn layouts_separate_a_suppressed_child_from_a_shown_one() {
+        // Two insertions of one component: its child is suppressed in one and shown in the
+        // other. They are different layouts, not copies.
+        let mut suppressed = placed(2, "block", inside(0), 0.0);
+        suppressed["suppressed"] = json!(true);
+        let mut shown = placed(5, "block", inside(3), 0.0);
+        shown["suppressed"] = json!(false);
+        let rows = [
+            placed(0, "frame", root(), 0.0),
+            suppressed,
+            placed(3, "frame", root(), 50.0),
+            shown,
+        ];
+        let mut children: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+        children
+            .entry(rows[0]["id"].as_str().unwrap())
+            .or_default()
+            .push(&rows[1]);
+        children
+            .entry(rows[2]["id"].as_str().unwrap())
+            .or_default()
+            .push(&rows[3]);
+        let mut layouts = Layouts::default();
+        let a = layouts.classify(&rows[0], &children, &ExternalParts::new(), 0);
+        let b = layouts.classify(&rows[2], &children, &ExternalParts::new(), 0);
+        assert_ne!(a, b);
     }
 
     #[test]
