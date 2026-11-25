@@ -65,6 +65,9 @@ pub enum Error {
     /// The model was read but holds no geometry the target can take.
     #[error("cannot convert this design: {0}")]
     NoGeometry(String),
+    /// An optional module, a separate program, failed to read the file.
+    #[error("{0}")]
+    Module(String),
     /// cadmpeg could not restate the model as STEP for the target.
     #[error("cannot convert this design: {0}")]
     Restate(String),
@@ -84,7 +87,7 @@ impl Error {
             | Error::Assembly(_)
             // An empty export is the file itself, not something the reader failed at.
             | Error::EmptyExport(_) => Stage::Input,
-            Error::NotSupportedYet { .. } | Error::Decode(_) => Stage::Decode,
+            Error::NotSupportedYet { .. } | Error::Decode(_) | Error::Module(_) => Stage::Decode,
             Error::NoGeometry(_) | Error::Checks { .. } => Stage::Project,
             Error::Encode(_) | Error::Restate(_) => Stage::Write,
         }
@@ -121,6 +124,7 @@ fn not_supported(format: Format) -> String {
             "Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import)."
                 .to_owned()
         }
+        Format::ModuleBoard => crate::module::missing_message(),
         // Built without the `freecad` feature.
         Format::FreeCadDocument => {
             format!(
@@ -163,6 +167,7 @@ impl Error {
             Self::MemoryBudget(_) => "memory_budget",
             Self::Encode(_) => "encode",
             Self::Assembly(_) => "assembly",
+            Self::Module(_) => "module",
             Self::NoGeometry(_) => "no_geometry",
             Self::Restate(_) => "restate",
         }

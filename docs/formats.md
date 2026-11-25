@@ -25,6 +25,7 @@ The **Designs** input row shows only the plain reader status.
 | STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Onshape bundle | `.onshape-bundle` | Reads geometry | – | One offline Part Studio; geometry and editable history where features map |
 | IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
+| Circuit board | `.PcbDoc` | Reads geometry with the electronics module | – | Placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately) |
 | Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
 
 FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
@@ -46,6 +47,10 @@ Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro
 - Inputs without a geometry reader are refused with exit 1. IGES (`.igs`, `.iges`) is
   refused before decoding, in single files and folders alike: "Dutchman doesn't convert
   IGES yet: open it in SolidCraft directly (File > Import)."
+- Circuit boards are read by the optional electronics module, a separate program,
+  `dutchman-electronics`. The module lists the extensions it reads (`.PcbDoc` today); Dutchman
+  recognises `.PcbDoc` even without it and then says to install the module. See
+  [Optional modules](modules.md#how-dutchman-finds-and-runs-a-module).
 - A recognised format whose geometry has no solids or surfaces SolidCraft can import says so.
 
 ## Onshape bundles

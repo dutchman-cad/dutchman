@@ -20,13 +20,15 @@ pub enum Format {
     Step,
     OnshapeBundle,
     Iges,
+    /// A circuit board file, read by the optional electronics module.
+    ModuleBoard,
     /// A shared part suffix whose contents do not identify Creo or NX.
     UnclassifiedPart,
 }
 
 impl Format {
     /// Every recognised format.
-    pub const ALL: [Format; 17] = [
+    pub const ALL: [Format; 18] = [
         Self::FusionArchive,
         Self::FusionMultiDocument,
         Self::InventorPart,
@@ -43,6 +45,7 @@ impl Format {
         Self::Step,
         Self::OnshapeBundle,
         Self::Iges,
+        Self::ModuleBoard,
         Self::UnclassifiedPart,
     ];
 
@@ -94,6 +97,12 @@ impl Format {
                 "Onshape",
             ),
             Self::Iges => ("iges", "iges", "IGES (.igs, .iges)", "IGES"),
+            Self::ModuleBoard => (
+                "module_board",
+                "PcbDoc",
+                "Circuit board (.PcbDoc)",
+                "Circuit board",
+            ),
             Self::UnclassifiedPart => (
                 "unclassified_part",
                 "prt",
@@ -130,6 +139,8 @@ impl Format {
             Self::Step => &["step", "stp"],
             Self::OnshapeBundle => &["onshape-bundle"],
             Self::Iges => &["igs", "iges"],
+            // The fallback: with the module installed, `dutchman-electronics info` lists them all.
+            Self::ModuleBoard => crate::module::FALLBACK_EXTENSIONS,
         }
     }
     /// Human-readable format name.
@@ -146,7 +157,7 @@ impl Format {
             Self::FusionArchive | Self::FusionMultiDocument => Some("f3d"),
             Self::InventorPart | Self::InventorAssembly => Some("inventor"),
             Self::SolidWorksPart | Self::SolidWorksAssembly => Some("sldprt"),
-            Self::UnclassifiedPart => None,
+            Self::UnclassifiedPart | Self::ModuleBoard => None,
             Self::FreeCadDocument => Some("fcstd"),
             Self::CatiaPart => Some("catia"),
             Self::CreoPart => Some("creo"),
@@ -171,6 +182,11 @@ impl Format {
         self.registry_id()
     }
 
+    /// Whether the geometry is read by an optional module, a separate program.
+    pub fn needs_module(self) -> bool {
+        self == Self::ModuleBoard
+    }
+
     /// cadmpeg's published headline, in its format-support ladder wording.
     pub fn headline_level(self) -> Option<String> {
         cadmpeg_registry::headline_level(self.registry_id()?)
@@ -186,7 +202,9 @@ impl Format {
 
     /// Plain words for the reader's current capability.
     pub fn words(self) -> &'static str {
-        if self == Self::Iges {
+        if self == Self::ModuleBoard {
+            "reads geometry with the electronics module"
+        } else if self == Self::Iges {
             "open it in SolidCraft directly"
         } else if self.reads_geometry() {
             "reads geometry"
@@ -199,6 +217,9 @@ impl Format {
 
     /// Whether this build can attempt geometry conversion.
     pub fn can_convert(self) -> bool {
+        if self.needs_module() {
+            return crate::module::installed();
+        }
         self.codec_id().is_some() && self.reads_geometry()
     }
 
@@ -272,10 +293,13 @@ impl Format {
         if ext.eq_ignore_ascii_case("prt") || Self::part_revision(path).is_some() {
             return Some(crate::decode::detect_part(path).unwrap_or(Self::UnclassifiedPart));
         }
-        Self::ALL.into_iter().find(|f| {
-            f.extensions()
-                .iter()
-                .any(|suffix| ext.eq_ignore_ascii_case(suffix))
-        })
+        Self::ALL
+            .into_iter()
+            .find(|f| {
+                f.extensions()
+                    .iter()
+                    .any(|suffix| ext.eq_ignore_ascii_case(suffix))
+            })
+            .or_else(|| crate::module::reads_extension(ext).then_some(Self::ModuleBoard))
     }
 }

@@ -17,6 +17,7 @@ mod hidden;
 mod input_edges;
 mod locate;
 mod memory;
+pub mod module;
 mod names;
 #[cfg(feature = "onshape")]
 mod onshape;
@@ -550,6 +551,15 @@ fn decode_file(
     }
     if let Some(progress) = progress {
         progress.stage(Stage::Input);
+    }
+    if format.needs_module() {
+        names::saw_path(input, report);
+        check_input(input)?;
+        if let Some(progress) = progress {
+            progress.stage(Stage::Decode);
+        }
+        let model = module::read(input, report)?;
+        return source::finish_decoded(format, model, false, report);
     }
     let input_name = input.file_name().map(|name| name.to_string_lossy());
     let opening = progress.map(|p| p.step(StepKind::Opening, input_name.as_deref(), None, None));
