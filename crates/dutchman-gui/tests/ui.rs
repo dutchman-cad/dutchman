@@ -6510,9 +6510,12 @@ fn up_axis_screenshots() {
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(ThemePreference::Light);
         harness.state_mut().add_inputs([input]);
+        // Neutral paths and checker, so the image shows nothing of this machine.
+        harness.state_mut().set_checker_for_test(true);
+        harness.state_mut().preview_solidcraft(Some("0.46.2"));
         harness
             .state_mut()
-            .set_out_dir(work.path().join("converted"));
+            .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
         wait_for_estimate(&mut harness);
         harness.get_by_label("Advanced").click_accesskit();
         harness.run_steps(8);
