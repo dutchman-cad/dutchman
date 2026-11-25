@@ -641,8 +641,8 @@ targets keep the original final geometry with a named version refusal.
 
 Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
 secondary numeric values. ISO metric table designations tolerate decimal rounding and
-floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
-separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
+floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, and a Unified thread is written once a
+SolidCraft release supports Unified Thread designations; until then it is reported. See
 [cosmetic threads](history.md) for details.
 
 Separate modeled Thread features keep their helical shape in the imported final geometry

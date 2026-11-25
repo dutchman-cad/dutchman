@@ -194,8 +194,8 @@ faces without input surface geometry. Unspecified modeled construction, when an 
 can be placed, adds a Degraded loss explaining that only the cosmetic annotation is kept.
 Cosmetic thread contradictions name the designation’s nominal dimensions and secondary numeric
 values. Decimal rounding and floating-point conversion noise are accepted for metric labels.
-A matching UNC/UNF designation reports the separate SolidCraft cosmetic Thread limitation
-instead of a numeric conflict. These use the existing loss fields; no report schema or field changes.
+A matching UNC/UNF designation is written as a Unified Thread on a SolidCraft release with
+Unified thread support, and reports that missing support instead of a numeric conflict until then. These use the existing loss fields; no report schema or field changes.
 When reached in the timeline, a `cosmetic_thread` feature with `modeled: true` adds a
 Degraded loss with code `history/modeled-thread-retained`.
 Its `detail` includes the source designation when available and explains that hand,
