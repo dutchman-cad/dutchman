@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn an_installed_but_not_started_exporter_gets_the_switch_on_steps() {
-        let mut h = harness(state(true, Presence::Absent, Some("0.4.0"), Install::Idle));
+        let mut h = harness(state(true, Presence::Absent, Some("0.4.1"), Install::Idle));
         h.run_steps(4);
         h.get_by_label("The Fusion exporter is installed, but not switched on");
         h.get_by_label_contains("Shift+S");
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn a_newer_release_is_only_mentioned() {
-        let mut s = state(true, Presence::Absent, Some("0.4.0"), Install::Idle);
+        let mut s = state(true, Presence::Absent, Some("0.4.1"), Install::Idle);
         s.installer.set_latest("0.4.2");
         let mut h = harness(s);
         h.run_steps(4);
