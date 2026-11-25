@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 base64 = { version = "0.22", optional = true }
 flate2 = { version = "1", optional = true }
+dutchman-launcher.workspace = true
 cadmpeg-core.workspace = true
 cadmpeg-codec-f3d.workspace = true
 cadmpeg-ir.workspace = true

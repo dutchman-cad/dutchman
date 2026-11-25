@@ -91,7 +91,7 @@ fn header_harness(width: f32, theme: ThemePreference, update: bool) -> Harness<'
         .with_size(egui::vec2(width, 680.0))
         .build_eframe(|cc| test_app(cc));
     h.ctx.set_theme(theme);
-    h.state_mut().preview_solidcraft(Some("0.48.9"));
+    h.state_mut().preview_solidcraft(Some("0.49.9"));
     if update {
         h.state_mut()
             .updater
@@ -122,11 +122,11 @@ fn assert_header_fits(h: &Harness<'_, App>, width: f32, update: bool, theme: &st
     let narrow = width - 64.0 < 850.0;
     let mut labels = vec!["Settings", "Report a problem"];
     let found = h
-        .query_by_label(if narrow { "0.48" } else { "SolidCraft 0.48" })
+        .query_by_label(if narrow { "0.49" } else { "SolidCraft 0.49" })
         .is_some();
     labels.push(match (narrow, found) {
-        (true, true) => "0.48",
-        (false, true) => "SolidCraft 0.48",
+        (true, true) => "0.49",
+        (false, true) => "SolidCraft 0.49",
         (true, false) => "not found",
         (false, false) => "SolidCraft not found",
     });
@@ -260,7 +260,7 @@ fn header_version_screenshots() {
                 .with_size(egui::vec2(1280.0, 800.0))
                 .build_eframe(|cc| test_app(cc));
             harness.ctx.set_theme(theme);
-            harness.state_mut().preview_solidcraft(Some("0.48.0"));
+            harness.state_mut().preview_solidcraft(Some("0.49.0"));
             harness.run_steps(8);
             let title = baseline_of(&harness, "Dutchman Convert", dutchman_gui::theme::title());
             let small = baseline_of(
@@ -667,13 +667,13 @@ fn screenshots() {
             "A newer release is available: the Update pill in the header.",
         );
         for (found, case, update, width) in [
-            (Some("0.48.9"), "current", false, 1120.0),
-            (Some("0.49.0"), "newer", false, 1120.0),
-            (Some("0.49.0"), "newer-update", true, 1120.0),
+            (Some("0.49.9"), "current", false, 1120.0),
+            (Some("0.50.0"), "newer", false, 1120.0),
+            (Some("0.50.0"), "newer-update", true, 1120.0),
             (Some("0.17.9"), "too-old", false, 1120.0),
             (Some("0.24.0"), "older-history", false, 1120.0),
             (None, "none-found", false, 1120.0),
-            (Some("0.49.0"), "narrow", true, 760.0),
+            (Some("0.50.0"), "narrow", true, 760.0),
         ] {
             let mut preview = Harness::builder()
                 .with_size(egui::vec2(width, 680.0))
@@ -717,7 +717,7 @@ fn screenshots() {
                     "too-old" => "is too old to open Dutchman's designs",
                     "older-history" => "A newer SolidCraft keeps more of their history.",
                     "none-found" => "SolidCraft not found. Install SolidCraft",
-                    _ => "SolidCraft 0.48 is installed.",
+                    _ => "SolidCraft 0.49 is installed.",
                 })
                 .is_some());
             let file = format!("00-solidcraft-{case}-{name}.png");
@@ -1015,7 +1015,7 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
     harness.state_mut().set_out_dir(dir.path().join("out"));
     harness.run_steps(8);
     assert!(harness
-        .query_by_label("Creo .prt: opens, no geometry yet")
+        .query_by_label("Creo .prt: reads geometry")
         .is_some());
     assert!(harness.query_by_label("NX .prt: reads geometry").is_some());
     convert(&mut harness);
@@ -1116,13 +1116,13 @@ fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
         return;
     }
     for (found, expected) in [
-        (Some("0.49.0"), "is newer than this Dutchman knows"),
+        (Some("0.50.0"), "is newer than this Dutchman knows"),
         (Some("0.17.9"), "is too old to open Dutchman's designs"),
         (
             Some("0.24.0"),
             "A newer SolidCraft keeps more of their history.",
         ),
-        (Some("0.48.0"), "SolidCraft 0.48 is installed."),
+        (Some("0.49.0"), "SolidCraft 0.49 is installed."),
         (None, "SolidCraft not found. Install SolidCraft"),
     ] {
         let mut harness = Harness::builder()
@@ -1189,10 +1189,10 @@ fn solidcraft_panel_takes_a_chosen_cli_and_explains_the_app_alone() {
         .query_by_label_contains("Found the SolidCraft app")
         .is_none());
 
-    script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.48.0");
+    script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.49.0");
     harness.state_mut().choose_solidcraft_cli(&app);
     harness.run_steps(8);
-    assert!(harness.query_by_label("SolidCraft 0.48").is_some());
+    assert!(harness.query_by_label("SolidCraft 0.49").is_some());
     assert!(harness.query_by_label("Find automatically").is_some());
     assert!(harness
         .query_by_label_contains("the portable ZIP and the MSI")
@@ -2987,6 +2987,82 @@ fn converted_report_screenshots() {
     std::fs::write(dir.join("index.md"), index).unwrap();
 }
 
+/// The plain notes on a card with a Degraded note and an "unverified" history, Details closed and
+/// open, Day and Night, with neutral paths. Needs a GPU renderer; set DUTCHMAN_GUI_SCREENSHOTS.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the plain notes; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn plain_notes_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, titles) in [
+        ("english", None),
+        (
+            "german",
+            Some([
+                "Unserem Discord-Server beitreten".to_owned(),
+                "Dutchy eine Direktnachricht senden".to_owned(),
+                "Bitte einen STEP-Export hinzufügen".to_owned(),
+            ]),
+        ),
+    ] {
+        *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = titles;
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let docs = PathBuf::from("/Users/demo/Documents");
+            let mut harness = screenshot_harness(theme);
+            harness.set_size(egui::vec2(1280.0, 800.0));
+            harness.state_mut().set_checker_for_test(true);
+            harness.state_mut().preview_solidcraft(Some("0.46.2"));
+            harness.state_mut().set_out_dir(docs.join("Converted"));
+            let mut report = developer_notes_report();
+            report["mode"] = serde_json::json!("history");
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: docs.join("Cube.ipt"),
+                    output: Some(docs.join("Converted").join("Cube.sc")),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(report),
+                });
+            harness.run_steps(8);
+            harness.get_by_label_contains("Losses:").click_accesskit();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("plain-notes-{language}"),
+                name,
+                "Plain notes, Details closed.",
+            );
+            harness.get_by_label("Details").click_accesskit();
+            harness.run_steps(8);
+            // The results column scrolls; bring its last button into view so the whole list shows.
+            harness
+                .get_by_label_contains("Report this file")
+                .scroll_to_me();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("plain-notes-details-{language}"),
+                name,
+                "Plain notes, Details open.",
+            );
+        }
+    }
+    *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = None;
+    std::fs::write(dir.join("plain-notes.md"), index).unwrap();
+}
+
 /// A synthetic Fusion tool library: `kinds` are the Fusion tool types, one tool each.
 #[cfg(feature = "test-support")]
 fn synthetic_tool_library(kinds: &[&str]) -> String {
@@ -3140,7 +3216,7 @@ fn tool_library_screenshots() {
                 let mut harness = screenshot_harness(theme);
                 harness.set_size(egui::vec2(1280.0, 800.0));
                 harness.state_mut().set_checker_for_test(true);
-                harness.state_mut().preview_solidcraft(Some("0.48.0"));
+                harness.state_mut().preview_solidcraft(Some("0.49.0"));
                 harness.state_mut().add_inputs([input.clone()]);
                 harness.state_mut().set_out_dir(docs.join("Converted"));
                 harness.state_mut().set_project_summary_for_test(&summary);
@@ -3424,7 +3500,7 @@ fn fit_harness_for(
         .with_size(egui::vec2(size[0], size[1]))
         .build_eframe(|cc| test_app(cc));
     harness.ctx.set_theme(theme);
-    harness.state_mut().preview_solidcraft(Some("0.48.9"));
+    harness.state_mut().preview_solidcraft(Some("0.49.9"));
     // A fixed checker, so no path of the machine running the test is shown.
     #[cfg(feature = "test-support")]
     harness.state_mut().set_checker_for_test(true);
@@ -3921,7 +3997,7 @@ fn solidcraft_window_screenshots() {
             "{window:?} outside {viewport:?}"
         );
         let texts: &[&str] = if found {
-            &["SolidCraft 0.48 is installed."]
+            &["SolidCraft 0.49 is installed."]
         } else {
             &[
                 "SolidCraft not found.",
@@ -4141,7 +4217,7 @@ fn running_step_screenshots() {
     ] {
         for seconds in [0, 61, 120, 121] {
             let mut harness = screenshot_harness(theme);
-            harness.state_mut().preview_solidcraft(Some("0.48.0"));
+            harness.state_mut().preview_solidcraft(Some("0.49.0"));
             harness.state_mut().set_checker_for_test(true);
             harness
                 .state_mut()
@@ -4206,7 +4282,7 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
             .with_size(egui::vec2(width, 800.0))
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
-        harness.state_mut().preview_solidcraft(Some("0.48.0"));
+        harness.state_mut().preview_solidcraft(Some("0.49.0"));
         harness.state_mut().set_checker_for_test(true);
         let rows = (0..1293)
             .map(|index| {
@@ -4720,7 +4796,7 @@ mod paste_inputs {
                 let mut h = window(true);
                 h.ctx.set_theme(theme);
                 h.state_mut().set_checker_for_test(true);
-                h.state_mut().preview_solidcraft(Some("0.48.0"));
+                h.state_mut().preview_solidcraft(Some("0.49.0"));
                 h.state_mut()
                     .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
                 h.state_mut().set_verify(false);
@@ -5141,7 +5217,7 @@ fn a_running_card_shows_the_feature_and_the_measured_note() {
     ] {
         for measured in [false, true] {
             let mut harness = screenshot_harness(theme);
-            harness.state_mut().preview_solidcraft(Some("0.48.1"));
+            harness.state_mut().preview_solidcraft(Some("0.49.1"));
             harness.state_mut().set_checker_for_test(true);
             harness
                 .state_mut()
@@ -5315,7 +5391,7 @@ fn report_flow_case_screenshots() {
             .with_size(size)
             .build_eframe(|cc| test_app(cc));
         h.ctx.set_theme(ThemePreference::Light);
-        h.state_mut().preview_solidcraft(Some("0.48.1"));
+        h.state_mut().preview_solidcraft(Some("0.49.1"));
         h.state_mut().set_checker_for_test(true);
         h.state_mut().set_file_manager(|_| Ok(()));
         h.state_mut().set_out_dir(work.path().join("converted"));
@@ -5806,6 +5882,253 @@ fn a_single_result_keeps_reporting_close_below_output() {
     }
 }
 
+/// The notes of a small Inventor part as issue 926 quotes them: one that matters, three that
+/// change nothing the person sees (internal records, a statistic of nothing), and a closing line.
+#[cfg(feature = "test-support")]
+fn developer_notes_report() -> serde_json::Value {
+    serde_json::json!({"ok": true, "mode": "import", "losses": [
+        {"level": "Degraded", "code": "inventor/source.kernel-history-unclosed",
+         "subject": "inventor/source.kernel-history-unclosed", "stage": "decode",
+         "message": "The kernel carrier's delta_state chain does not frame or close; features have no history states."},
+        {"level": "Degraded", "code": "inventor/rse.segment-pair-untyped",
+         "subject": "inventor/rse.segment-pair-untyped", "stage": "decode",
+         "message": "Retained 1 structurally paired RSe segment(s) without record semantics."},
+        {"level": "Info", "code": null, "subject": "part positions", "stage": "map",
+         "message": "0 parts placed as last shown in the original program (0 directly bound, 0 holders derived from displayed children), 0 at current poses, 0 as first placed (smart); first-placement reasons: 0 without a current pose, 0 ambiguous, 0 unsupported, 0 joint checks, 0 bounds checks, 0 inserted-design checks; 0 holder conflicts"},
+        {"level": "Info", "code": "step/attribute.source-record-not-written",
+         "subject": "step/attribute.source-record-not-written", "stage": "write",
+         "message": "7 source attribute record(s) were not written to STEP"},
+        {"level": "Info", "code": "step/native.source-record-omitted",
+         "subject": "step/native.source-record-omitted", "stage": "write",
+         "message": "67 source-native record(s) were not represented in STEP"},
+        {"level": "Info", "code": null, "subject": "history", "stage": "map",
+         "message": "flattened: the design carries no feature history"}
+    ]})
+}
+
+#[cfg(feature = "test-support")]
+fn developer_notes_row() -> dutchman_gui::app::Row {
+    dutchman_gui::app::Row {
+        input: PathBuf::from("synthetic_cube.ipt"),
+        output: Some(PathBuf::from("converted/synthetic_cube.sc")),
+        status: Status::Converted,
+        progress: None,
+        job: None,
+        size: None,
+        report: Some(developer_notes_report()),
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn notes_lead_with_a_plain_sentence_and_the_raw_codes_sit_behind_details() {
+    let mut harness = harness();
+    harness
+        .state_mut()
+        .preview_result_for_test(developer_notes_row());
+    harness.run_steps(8);
+    harness.get_by_label_contains("Losses:").click_accesskit();
+    harness.run_steps(8);
+    // The note that matters leads with a plain sentence; the raw words are not on the card.
+    assert!(harness
+        .query_by_label_contains("feature history couldn't be read")
+        .is_some());
+    assert!(harness.query_by_label_contains("delta_state").is_none());
+    // Notes that change nothing are not listed, and are not counted.
+    assert!(harness
+        .query_by_label_contains("source-native record")
+        .is_none());
+    assert!(harness.query_by_label_contains("0 parts placed").is_none());
+    assert!(harness
+        .query_by_label("Losses: 1 Info, 1 Degraded")
+        .is_some());
+    // Details holds the raw words of the listed note, and nothing else.
+    harness.get_by_label("Details").click_accesskit();
+    harness.run_steps(8);
+    assert!(harness.query_by_label_contains("delta_state").is_some());
+    assert!(harness
+        .query_by_label_contains("step/native.source-record-omitted")
+        .is_none());
+    assert!(harness
+        .query_by_label_contains("step/attribute.source-record-not-written")
+        .is_none());
+    assert!(harness
+        .query_by_label_contains("rse.segment-pair-untyped")
+        .is_none());
+    assert!(harness.query_by_label_contains("0 parts placed").is_none());
+    // The notes that change nothing are in the full log.
+    assert!(harness.query_by_label("Save the full log…").is_some());
+}
+
+/// Before/after evidence of the Results card with these notes. Needs a GPU renderer:
+/// `DUTCHMAN_GUI_SCREENSHOTS=<dir> DUTCHMAN_SHOT_PREFIX=after cargo test -p dutchman-gui
+/// --features test-support --test ui -- --ignored notes_card_screenshots`.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders with a GPU; set DUTCHMAN_GUI_SCREENSHOTS and DUTCHMAN_SHOT_PREFIX"]
+fn notes_card_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    let prefix = std::env::var("DUTCHMAN_SHOT_PREFIX").unwrap_or_else(|_| "after".into());
+    std::fs::create_dir_all(&dir).unwrap();
+    for (theme, name) in [
+        (ThemePreference::Light, "light"),
+        (ThemePreference::Dark, "dark"),
+    ] {
+        let mut harness = screenshot_harness(theme);
+        harness.set_size(egui::vec2(760.0, 760.0));
+        harness
+            .state_mut()
+            .preview_result_for_test(developer_notes_row());
+        harness.run_steps(8);
+        harness.get_by_label_contains("Losses:").click_accesskit();
+        harness.run_steps(8);
+        let mut index = String::new();
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            &format!("{prefix}-notes"),
+            name,
+            "",
+        );
+        // Only the new card has a Details toggle.
+        if harness.query_by_label("Details").is_some() {
+            harness.get_by_label("Details").click_accesskit();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("{prefix}-notes-details"),
+                name,
+                "",
+            );
+        }
+    }
+}
+
+/// Import-note screenshots for the plain-sentence change: one finished conversion with several
+/// notes (some that matter, some that change nothing), English names and long German names, Day
+/// and Night, 1280x800. Run once per build under test with DUTCHMAN_SHOT_PREFIX=before|after.
+/// Needs a GPU renderer; set DUTCHMAN_GUI_SCREENSHOTS to a folder.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders with a GPU; set DUTCHMAN_GUI_SCREENSHOTS and DUTCHMAN_SHOT_PREFIX"]
+fn import_notes_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    let prefix = std::env::var("DUTCHMAN_SHOT_PREFIX").unwrap_or_else(|_| "after".into());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (variant, file, part, bolt) in [
+        (
+            "english",
+            "Bracket.f3d",
+            "Cover plate",
+            "Cylinder head screw",
+        ),
+        (
+            "german",
+            "Getriebegehäuse_Abdeckplatte_Rückseite_Ausführung_B.f3d",
+            "Getriebegehäuse_Abdeckplatte_Rückseite_Ausführung_B",
+            "Schraubenverbindung Zylinderkopfschraube",
+        ),
+    ] {
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let docs = PathBuf::from("/Users/demo/Documents");
+            let mut harness = screenshot_harness(theme);
+            harness.set_size(egui::vec2(1280.0, 800.0));
+            harness.state_mut().set_checker_for_test(true);
+            harness.state_mut().preview_solidcraft(Some("0.49.1"));
+            harness.state_mut().set_out_dir(docs.join("Converted"));
+            let output = docs.join("Converted").join(file.replace(".f3d", ".sc"));
+            let report = serde_json::json!({
+                "ok": true, "mode": "history",
+                "history": {"mapped": 5, "total": 6},
+                "losses": [
+                {"level": "Degraded", "code": "history/body-fallback-imported",
+                 "subject": format!("{part}: Extrude 3"), "stage": "map",
+                 "message": format!("Extrude 3 of {part} could not be rebuilt from its sketch; the stored body was imported")},
+                {"level": "Degraded", "code": "f3d/material.not-transferred",
+                 "subject": bolt, "stage": "map",
+                 "message": format!("Materials and appearances of {bolt} were not transferred")},
+                {"level": "Degraded", "code": "history/rebuild-failed",
+                 "subject": format!("{bolt}: Fillet 1"), "stage": "verify",
+                 "message": "SolidCraft could not rebuild the feature"},
+                {"level": "Info", "code": "dutchman/appearance.redundant-face",
+                 "subject": part, "stage": "map",
+                 "message": "A face colour equal to its body colour was not written"},
+                {"level": "Info", "code": "history/body-scope-confirmed",
+                 "subject": format!("{part}: Extrude 3"), "stage": "map",
+                 "message": "The bodies this feature acts on were confirmed"},
+                {"level": "Info", "code": "f3d/source.unindexed-records-retained",
+                 "subject": "f3d/source.unindexed-records-retained", "stage": "decode",
+                 "message": "Retained 3 unindexed record(s) without record semantics."},
+                {"level": "Info", "code": null, "subject": "part positions", "stage": "map",
+                 "message": "0 parts placed as last shown in the original program (0 directly bound), 0 at current poses, 0 as first placed (smart); 0 holder conflicts"},
+                {"level": "Info", "code": "step/attribute.source-record-not-written",
+                 "subject": "step/attribute.source-record-not-written", "stage": "write",
+                 "message": "7 source attribute record(s) were not written to STEP"},
+                {"level": "Info", "code": "step/native.source-record-omitted",
+                 "subject": "step/native.source-record-omitted", "stage": "write",
+                 "message": "67 source-native record(s) were not represented in STEP"}
+            ]});
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: docs.join(file),
+                    output: Some(output),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(report),
+                });
+            harness.run_steps(8);
+            if harness.query_by_label_contains("Losses:").is_some() {
+                harness.get_by_label_contains("Losses:").click_accesskit();
+                harness.run_steps(8);
+            }
+            if harness
+                .query_by_label_contains("Report this file")
+                .is_some()
+            {
+                harness
+                    .get_by_label_contains("Report this file")
+                    .scroll_to_me();
+                harness.run_steps(8);
+            }
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("import-notes-{prefix}-{variant}"),
+                name,
+                "Results card, Details closed.",
+            );
+            // Only the new card has a Details toggle.
+            if harness.query_by_label("Details").is_some() {
+                harness.get_by_label("Details").click_accesskit();
+                harness.run_steps(8);
+                // The card's header and buttons stay in view: scroll the panel to the top.
+                harness.get_by_label("Open in SolidCraft").scroll_to_me();
+                harness.run_steps(8);
+                shot(
+                    &mut harness,
+                    &dir,
+                    &mut index,
+                    &format!("import-notes-{prefix}-{variant}-details"),
+                    name,
+                    "Results card, Details open.",
+                );
+            }
+        }
+    }
+    std::fs::write(dir.join(format!("import-notes-{prefix}.md")), index).unwrap();
+}
+
 #[cfg(feature = "test-support")]
 #[path = "../../dutchman/tests/support/net.rs"]
 mod test_support;
@@ -5928,7 +6251,7 @@ fn step_cards_screenshots() {
                     .build_eframe(|cc| test_app(cc));
                 harness.ctx.set_theme(theme);
                 harness.state_mut().set_checker_for_test(true);
-                harness.state_mut().preview_solidcraft(Some("0.48.0"));
+                harness.state_mut().preview_solidcraft(Some("0.49.0"));
                 harness.state_mut().set_out_dir(docs.join("Converted"));
                 if state == "finished" {
                     harness
@@ -6000,7 +6323,7 @@ fn report_buttons_screenshots() {
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
         harness.state_mut().set_checker_for_test(true);
-        harness.state_mut().preview_solidcraft(Some("0.48.0"));
+        harness.state_mut().preview_solidcraft(Some("0.49.0"));
         harness.state_mut().set_out_dir(docs.join("Converted"));
         harness
             .state_mut()
@@ -6040,7 +6363,7 @@ fn report_buttons_screenshots() {
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
         harness.state_mut().set_checker_for_test(true);
-        harness.state_mut().preview_solidcraft(Some("0.48.0"));
+        harness.state_mut().preview_solidcraft(Some("0.49.0"));
         harness
             .state_mut()
             .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));

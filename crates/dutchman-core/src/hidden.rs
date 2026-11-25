@@ -140,7 +140,12 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
     // FreeCAD hides what a hidden container holds. Other formats say each body's and each
     // occurrence's own visibility, and the assembly writer keeps hidden occurrences hidden.
     let freecad = document.pointer("/native/fcstd").is_some();
-    let visibility_changed = freecad && propagate_visibility(&mut document);
+    let concealed = if freecad {
+        propagate_visibility(&mut document)
+    } else {
+        BTreeSet::new()
+    };
+    let visibility_changed = !concealed.is_empty();
     let owned: BTreeSet<&str> = listed(document.pointer("/model/product_definitions"))
         .iter()
         .flat_map(|definition| listed(definition.get("bodies")))
@@ -166,13 +171,10 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
     if (hidden == 0 && !visibility_changed) || (!fusion && hidden == bodies.len()) {
         return Ok(None);
     }
-    crate::input_edges::preserve(&mut document, &model.ir);
-    let mut geometry_home = document
-        .get_mut("geometry")
-        .ok_or("the model is malformed")?
-        .take();
-    let wire = geometry_home
-        .as_object_mut()
+    let edges = crate::input_edges::plan(&document, &model.ir);
+    let wire = document
+        .get("geometry")
+        .and_then(Value::as_object)
         .ok_or("the model is malformed")?;
     let tessellations = listed(document.pointer("/model/tessellations"));
     let shown_rows: Vec<&Value> = listed(wire.get("bodies"))
@@ -249,37 +251,24 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
         .filter(|id| !reached.contains(**id))
         .map(|id| (*id).to_owned())
         .collect();
-    for (arena, values) in wire.iter_mut() {
-        let Some(values) = values.as_array_mut() else {
-            continue;
-        };
-        values.retain(|row| {
-            let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
-            if arena == "bodies" {
-                !hidden_ids.contains(id)
-            } else {
-                !unreached.contains(id)
+    let ir = {
+        let keep = |id: &str| !unreached.contains(id);
+        let mut ir = model.ir.clone();
+        for occurrence in &mut ir.model.occurrences {
+            if concealed.contains(occurrence.id.as_str()) {
+                occurrence.visible = Some(false);
             }
+        }
+        crate::input_edges::apply(&mut ir, edges)?;
+        ir.geometry
+            .bodies
+            .retain(|body| !hidden_ids.contains(body.id.as_str()));
+        crate::ir_retain::retain_geometry(&mut ir.geometry, &keep);
+        ir.model.tessellations.retain(|row| {
+            !unreached.contains(cadmpeg_ir::schema::ArenaRecord::record_identity(row))
         });
-    }
-    if let Some(rows) = document
-        .pointer_mut("/model/tessellations")
-        .and_then(Value::as_array_mut)
-    {
-        rows.retain(|row| {
-            !row.get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| unreached.contains(id))
-        });
-    }
-    if let Some(home) = document.get_mut("geometry") {
-        *home = geometry_home;
-    }
-    // cadmpeg is third-party code; a panic in it is a reason, not a crash.
-    let text = document.to_string();
-    let ir = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text))
-        .map_err(|_| "cadmpeg failed unexpectedly on the shown bodies".to_owned())?
-        .map_err(|err| format!("the shown bodies do not stand alone: {err}"))?;
+        ir
+    };
     Ok(Some((
         Model {
             ir,
@@ -412,7 +401,7 @@ fn concealed_occurrences<'a>(
     concealed
 }
 
-fn propagate_visibility(document: &mut Value) -> bool {
+fn propagate_visibility(document: &mut Value) -> BTreeSet<String> {
     let objects = hidden_objects(document);
     let concealed: BTreeSet<String> =
         concealed_occurrences(document.get("model").unwrap_or(&Value::Null), &objects)
@@ -423,19 +412,23 @@ fn propagate_visibility(document: &mut Value) -> bool {
         .pointer_mut("/model/occurrences")
         .and_then(Value::as_array_mut)
     else {
-        return false;
+        return BTreeSet::new();
     };
-    let mut changed = false;
+    let mut changed = BTreeSet::new();
     for occurrence in occurrences {
-        if occurrence
+        let Some(id) = occurrence
             .get("id")
             .and_then(Value::as_str)
-            .is_some_and(|id| concealed.contains(id))
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        if concealed.contains(id.as_str())
             && occurrence.get("visible").and_then(Value::as_bool) != Some(false)
         {
             if let Some(fields) = occurrence.as_object_mut() {
                 fields.insert("visible".to_owned(), Value::Bool(false));
-                changed = true;
+                changed.insert(id);
             }
         }
     }
@@ -831,7 +824,7 @@ mod tests {
         }}});
         assert!(hidden_bodies(&document, &document["model"]).is_empty());
         let mut shown_link = document.clone();
-        assert!(propagate_visibility(&mut shown_link));
+        assert!(!propagate_visibility(&mut shown_link).is_empty());
         assert_eq!(
             shown_link["model"]["occurrences"][0]["visible"],
             json!(false)

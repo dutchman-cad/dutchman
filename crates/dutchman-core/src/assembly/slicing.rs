@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{value::RawValue, Value};
 
 /// The arena of history bodies: bodies only an earlier history state holds.
@@ -104,19 +104,11 @@ impl<'a> Row<'a> {
                 .map_err(|err| err.to_string()),
         }
     }
-
-    pub fn selected(self) -> Selected<'a> {
-        match self {
-            Self::Value(value) => Selected::Value(Cow::Borrowed(value)),
-            Self::Packed(value) => Selected::Packed(value),
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct Entry<'a> {
     pub arena: &'a str,
-    pub ordinal: usize,
     pub row: Row<'a>,
 }
 
@@ -125,13 +117,9 @@ pub(super) struct Index<'a> {
     pub rows: BTreeMap<String, Entry<'a>>,
     /// Unordered children whose v11 wire stores only the parent pointer.
     pub children: BTreeMap<String, Vec<String>>,
-    pub arenas: Vec<&'a str>,
     /// Reverse presentation edges, shared by all component slices. Ids are
     /// complete identities, including instance scope; suffixes are not aliases.
     pub bindings: BTreeMap<&'a str, Vec<&'a Value>>,
-    // Decoded models have unique ids. Preserve the old selection behavior for callers
-    // passing an in-progress model with duplicate ids: follow the last, emit all.
-    pub duplicates: Vec<(String, Entry<'a>)>,
     /// `body_centers` lists that features of more than one definition carry. Such a list
     /// can't be the state of each owning component, so a component's slice leaves it out.
     pub shared_centers: BTreeSet<&'a str>,
@@ -192,18 +180,14 @@ impl<'a> Index<'a> {
             document,
             rows: BTreeMap::new(),
             children: BTreeMap::new(),
-            arenas: Vec::new(),
             bindings,
-            duplicates: Vec::new(),
             shared_centers,
             nests: BTreeMap::new(),
         }
     }
 
     fn insert(&mut self, id: String, entry: Entry<'a>) {
-        if let Some(previous) = self.rows.insert(id.clone(), entry) {
-            self.duplicates.push((id, previous));
-        }
+        self.rows.insert(id, entry);
     }
 
     pub fn packed(source: &Packed<'a>, document: &'a Value) -> Result<Self, String> {
@@ -217,8 +201,7 @@ impl<'a> Index<'a> {
         }
         let mut index = Self::new(document);
         for (&arena, rows) in source.geometry.iter().chain(&source.model) {
-            index.arenas.push(arena);
-            for (ordinal, row) in rows.iter().enumerate() {
+            for row in rows.iter() {
                 let identity: Identity =
                     serde_json::from_str(row.get()).map_err(|err| err.to_string())?;
                 if let Some(id) = identity.id {
@@ -242,7 +225,6 @@ impl<'a> Index<'a> {
                         id,
                         Entry {
                             arena,
-                            ordinal,
                             row: Row::Packed(row),
                         },
                     );
@@ -263,8 +245,7 @@ impl<'a> Index<'a> {
             .ok_or("the geometry is malformed")?;
         let mut index = Self::new(document);
         for (arena, values) in geometry.iter().chain(model) {
-            index.arenas.push(arena);
-            for (ordinal, row) in values.as_array().into_iter().flatten().enumerate() {
+            for row in values.as_array().into_iter().flatten() {
                 if let Some(id) = row.get("id").and_then(Value::as_str) {
                     if arena == HISTORY_BODIES {
                         for field in ["produced_by", "consumed_by"] {
@@ -293,7 +274,6 @@ impl<'a> Index<'a> {
                         id.to_owned(),
                         Entry {
                             arena,
-                            ordinal,
                             row: Row::Value(row),
                         },
                     );
@@ -302,19 +282,4 @@ impl<'a> Index<'a> {
         }
         Ok(index)
     }
-}
-
-#[derive(Serialize)]
-#[serde(untagged)]
-pub(super) enum Selected<'a> {
-    Packed(&'a RawValue),
-    Value(Cow<'a, Value>),
-}
-
-#[derive(Serialize)]
-pub(super) struct Part<'a> {
-    #[serde(flatten)]
-    pub fields: serde_json::Map<String, Value>,
-    pub geometry: BTreeMap<&'a str, Vec<Selected<'a>>>,
-    pub model: BTreeMap<&'a str, Vec<Selected<'a>>>,
 }

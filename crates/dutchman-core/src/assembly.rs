@@ -3627,118 +3627,14 @@ fn slice(
             keep.insert(id, ());
         }
     }
-    // Visit just the reached rows, then restore their original order within each arena.
-    // No component rebuilds a global index or scans the complete geometry again.
-    let mut selected: BTreeMap<&str, Vec<(usize, slicing::Selected<'_>)>> = slices
-        .arenas
-        .iter()
-        .map(|arena| (*arena, Vec::new()))
-        .collect();
-    for entry in keep.keys().filter_map(|id| rows.get(*id)).chain(
-        slices
-            .duplicates
-            .iter()
-            .filter_map(|(id, entry)| keep.contains_key(id.as_str()).then_some(entry)),
-    ) {
-        let row = if entry.arena == "features" {
-            let mut row = entry.row.value()?.into_owned();
-            if let Some(fields) = row.as_object_mut() {
-                // A sketch feature carried in from another component is this one's now.
-                if fields
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| carried_features.contains(id))
-                {
-                    match definition {
-                        Some(id) => {
-                            fields.insert("product_definition".to_owned(), Value::from(id));
-                        }
-                        None => {
-                            fields.remove("product_definition");
-                        }
-                    }
-                }
-                // A predecessor outside this slice is not part of its timeline.
-                if fields
-                    .get("regeneration_parent")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| !keep.contains_key(id))
-                {
-                    fields.remove("regeneration_parent");
-                }
-                if let Some(ids) = fields.get_mut("dependencies").and_then(Value::as_array_mut) {
-                    ids.retain(|id| id.as_str().is_some_and(|id| keep.contains_key(id)));
-                }
-                if let Some(properties) = fields
-                    .get_mut("source_properties")
-                    .and_then(Value::as_object_mut)
-                {
-                    if properties
-                        .get("body_centers")
-                        .and_then(Value::as_str)
-                        .is_some_and(|centers| slices.shared_centers.contains(centers))
-                    {
-                        properties.remove("body_centers");
-                    }
-                }
-            }
-            slicing::Selected::Value(std::borrow::Cow::Owned(row))
-        } else if entry.arena == "sketches" && !carried.is_empty() {
-            let mut row = entry.row.value()?.into_owned();
-            let moved = row
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|id| carried.get(id))
-                .copied();
-            if let Some(by) = moved {
-                if let Some(frame) = row.pointer_mut("/placement/frame") {
-                    move_frame(frame, &by).ok_or("a carried sketch's plane is malformed")?;
-                }
-            }
-            slicing::Selected::Value(std::borrow::Cow::Owned(row))
-        } else {
-            entry.row.selected()
-        };
-        selected
-            .entry(entry.arena)
-            .or_default()
-            .push((entry.ordinal, row));
-    }
-    let (geometry, reduced) = selected
-        .into_iter()
-        .map(|(arena, mut rows)| {
-            rows.sort_by_key(|(ordinal, _)| *ordinal);
-            (arena, rows.into_iter().map(|(_, row)| row).collect())
-        })
-        .partition::<BTreeMap<_, _>, _>(|(arena, _)| {
-            cadmpeg_ir::document::ArenaName::parse(arena)
-                .is_some_and(|name| name.home() == cadmpeg_ir::document::ArenaHome::Geometry)
-        });
-    // The document's other fields, without copying its model or native records: those are
-    // the bulk of a large archive, and each part would otherwise copy them once.
-    let mut fields: serde_json::Map<String, Value> = document
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter(|(key, _)| {
-            key.as_str() != "model" && key.as_str() != "geometry" && key.as_str() != "native"
-        })
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    // A component slice is a fragment: its document root can lie outside it.
-    fields.insert("fragment".to_owned(), Value::Bool(true));
-    // V11 requires the native home even when the slice deliberately retains no records.
-    fields.insert("native".to_owned(), serde_json::json!({}));
-    let part = slicing::Part {
-        fields,
-        geometry,
-        model: reduced,
-    };
-    // cadmpeg is third-party code; a panic in it is a reason, not a crash.
-    let text = serde_json::to_string(&part).map_err(|err| err.to_string())?;
-    let ir = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text))
-        .map_err(|_| "cadmpeg failed unexpectedly on a component's geometry".to_owned())?
-        .map_err(|err| format!("a component's geometry does not stand alone: {err}"))?;
+    let ir = typed_part(
+        model,
+        slices,
+        &keep,
+        &carried,
+        &carried_features,
+        definition,
+    )?;
     Ok(Model {
         ir,
         fidelity: None,
@@ -3747,6 +3643,76 @@ fn slice(
         assembly: None,
         source_step: None,
     })
+}
+
+/// The component's document: `keep`'s rows of `model`, in their order, with the history edits a
+/// slice makes, and the document's other fields whole. Native records are left out.
+fn typed_part(
+    model: &Model,
+    slices: &slicing::Index<'_>,
+    keep: &BTreeMap<&str, ()>,
+    carried: &BTreeMap<String, Placement3x4>,
+    carried_features: &BTreeSet<String>,
+    definition: Option<&str>,
+) -> Result<cadmpeg_ir::CadIr, String> {
+    let kept = |id: &str| keep.contains_key(id);
+    let source = &model.ir;
+    let mut ir = cadmpeg_ir::CadIr::empty();
+    // A component slice is a fragment: its document root can lie outside it.
+    ir.fragment = true;
+    ir.repro.clone_from(&source.repro);
+    ir.source.clone_from(&source.source);
+    ir.tolerances = source.tolerances;
+    // The design records of the rows kept: every other record of the design stays with the
+    // design it came from, rather than being copied into each of its components.
+    ir.design = crate::ir_retain::design(&source.design, &kept);
+    ir.process = source.process.clone();
+    ir.geometry = crate::ir_retain::geometry(&source.geometry, &kept);
+    ir.model = crate::ir_retain::model(&source.model, &kept)?;
+    for feature in &mut ir.model.features {
+        edit_feature(feature, slices, &kept, carried_features, definition)?;
+    }
+    if !carried.is_empty() {
+        for sketch in &mut ir.model.sketches {
+            let Some(by) = carried.get(sketch.id.as_str()) else {
+                continue;
+            };
+            let moved = move_placement(sketch.placement, by);
+            sketch.placement = moved.ok_or("a carried sketch's plane is malformed")?;
+        }
+    }
+    ir.set_scope(source.scope())
+        .map_err(|err| err.to_string())?;
+    Ok(ir)
+}
+
+/// What a component's slice changes in a feature it keeps.
+fn edit_feature(
+    feature: &mut cadmpeg_ir::features::Feature,
+    slices: &slicing::Index<'_>,
+    kept: &dyn Fn(&str) -> bool,
+    carried_features: &BTreeSet<String>,
+    definition: Option<&str>,
+) -> Result<(), String> {
+    // A sketch feature carried in from another component is this one's now.
+    if carried_features.contains(feature.id.as_str()) {
+        feature.product_definition = match definition {
+            Some(id) => Some(
+                cadmpeg_ir::ids::ProductDefinitionId::mint(id).map_err(|err| err.to_string())?,
+            ),
+            None => None,
+        };
+    }
+    // A predecessor outside this slice is not part of its timeline.
+    feature.dependencies.retain(|id| kept(id.as_str()));
+    if feature
+        .source_properties
+        .get("body_centers")
+        .is_some_and(|centers| slices.shared_centers.contains(centers.as_str()))
+    {
+        feature.source_properties.remove("body_centers");
+    }
+    Ok(())
 }
 
 /// The sketch a feature builds, when it builds one.
@@ -3807,28 +3773,28 @@ fn single_world(occurrences: &[Value], definition: Option<&str>) -> Option<Place
     None
 }
 
-/// `frame` (a sketch placement's `origin`, `normal` and `u_axis`) moved by `by`.
-fn move_frame(frame: &mut Value, by: &Placement3x4) -> Option<()> {
-    let read = |value: &Value| -> Option<[f64; 3]> {
-        Some([
-            value.get("x")?.as_f64()?,
-            value.get("y")?.as_f64()?,
-            value.get("z")?.as_f64()?,
-        ])
-    };
-    let apply = |[x, y, z]: [f64; 3], translate: bool| -> Value {
+/// A resolved sketch placement (its `origin`, `normal` and `u_axis`) moved by `by`; `None` for
+/// an unresolved one, or when the moved plane is no longer a plane.
+fn move_placement(
+    placement: cadmpeg_ir::sketches::SketchPlacement,
+    by: &Placement3x4,
+) -> Option<cadmpeg_ir::sketches::SketchPlacement> {
+    let (origin, normal, u_axis) = placement.resolved()?;
+    let apply = |[x, y, z]: [f64; 3], translate: bool| {
         let at = |[a, b, c, t]: [f64; 4]| a * x + b * y + c * z + if translate { t } else { 0.0 };
         let [first, second, third] = *by;
-        serde_json::json!({"x": at(first), "y": at(second), "z": at(third)})
+        [at(first), at(second), at(third)]
     };
-    let origin = read(frame.get("origin")?)?;
-    let normal = read(frame.get("normal")?)?;
-    let u_axis = read(frame.get("u_axis")?)?;
-    let fields = frame.as_object_mut()?;
-    fields.insert("origin".to_owned(), apply(origin, true));
-    fields.insert("normal".to_owned(), apply(normal, false));
-    fields.insert("u_axis".to_owned(), apply(u_axis, false));
-    Some(())
+    let (origin, normal, u_axis) = (origin.get(), normal.get(), u_axis.get());
+    let [ox, oy, oz] = apply([origin.x, origin.y, origin.z], true);
+    let [nx, ny, nz] = apply([normal.x, normal.y, normal.z], false);
+    let [ux, uy, uz] = apply([u_axis.x, u_axis.y, u_axis.z], false);
+    cadmpeg_ir::sketches::SketchPlacement::try_resolved(
+        cadmpeg_ir::math::Point3::new(ox, oy, oz),
+        cadmpeg_ir::math::Vector3::new(nx, ny, nz),
+        cadmpeg_ir::math::Vector3::new(ux, uy, uz),
+    )
+    .ok()
 }
 
 /// The file name in a stored path, whichever separators the saving machine used.
