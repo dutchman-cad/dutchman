@@ -195,6 +195,9 @@ pub struct App {
     /// The SolidCraft CLI that checks histories when nothing else is chosen, if one is found.
     checker: Result<PathBuf, dutchman_solidcraft::NoCli>,
     solidcraft_open: bool,
+    /// What this session wrote at each output path: its size and modified time then. A design is
+    /// converted again over its own file only while the file is still exactly that.
+    written: std::collections::BTreeMap<PathBuf, (u64, std::time::SystemTime)>,
     /// Keep an explicit UI preview independent of the installed CLI.
     solidcraft_preview: bool,
     /// Where the search for `solidcraft-cli` looked, when it found none.
@@ -236,6 +239,12 @@ struct EstimateKey {
 struct PendingRun {
     options: ConvertOptions,
     kind: RunKind,
+}
+
+/// The size and modified time of the file at `path`.
+fn file_stamp(path: &Path) -> Option<(u64, std::time::SystemTime)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.len(), metadata.modified().ok()?))
 }
 
 enum RunKind {
@@ -514,6 +523,7 @@ impl App {
             has_app: platform::has_solidcraft_app(),
             checker: dutchman_solidcraft::usable_cli(&checking_with),
             solidcraft_open: false,
+            written: std::collections::BTreeMap::new(),
             solidcraft_preview: false,
             search_note,
             header_bottom: 72.0,
@@ -1139,7 +1149,7 @@ impl App {
         if !job.search.also.contains(&folder) {
             job.search.also.push(folder);
         }
-        let job = job.clone();
+        let job = self.retry_job(job.clone());
         self.pending = Some(PendingRun {
             options: self.options.clone(),
             kind: RunKind::Retry {
@@ -1148,6 +1158,23 @@ impl App {
             },
         });
         self.start_checked(ctx);
+    }
+
+    /// `job` set to convert again: over the file this session wrote at its output name when that
+    /// file is still exactly as written, else to the next free name, so a file the user changed or
+    /// put there since is never replaced.
+    fn retry_job(&self, mut job: Job) -> Job {
+        job.replace = false;
+        if job.output.try_exists().unwrap_or(true) {
+            if file_stamp(&job.output)
+                .is_some_and(|now| self.written.get(&job.output) == Some(&now))
+            {
+                job.replace = true;
+            } else {
+                job.output = dutchman_core::safe_output::free_slot(&job.output);
+            }
+        }
+        job
     }
 
     /// The anonymous report of the file of the row at `index`, its id in it, and its convert
@@ -1858,6 +1885,16 @@ impl App {
                             row.status = Status::NotStarted;
                             row.report = None;
                         } else {
+                            if let Some((path, stamp)) = report
+                                .get("ok")
+                                .filter(|ok| **ok == Value::Bool(true))
+                                .and_then(|_| report.pointer("/output/path"))
+                                .and_then(Value::as_str)
+                                .map(PathBuf::from)
+                                .and_then(|path| file_stamp(&path).map(|stamp| (path, stamp)))
+                            {
+                                self.written.insert(path, stamp);
+                            }
                             row.status = if report.get("ok") == Some(&Value::Bool(true)) {
                                 Status::Converted
                             } else {
