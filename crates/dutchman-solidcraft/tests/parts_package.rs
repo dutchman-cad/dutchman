@@ -424,6 +424,17 @@ fn a_thick_overlay_is_a_closed_solid_of_the_expected_volume() {
         "{:?}",
         report.losses()
     );
+    // An overlay with one area needs no join; the pour's two areas are joined into one body.
+    let joins: Vec<Value> = document(&bytes)["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["type"] == "combine")
+        .cloned()
+        .collect();
+    assert_eq!(joins.len(), 1, "{joins:?}");
+    assert_eq!(joins[0]["operation"], json!("join"));
+    assert_eq!(joins[0]["tools"].as_array().unwrap().len(), 1);
     let Some(cli) = cli() else {
         eprintln!("skipped: set SOLIDCRAFT_CLI to check the solids");
         return;
@@ -457,10 +468,13 @@ fn a_thick_overlay_is_a_closed_solid_of_the_expected_volume() {
     assert!((top["bbox"]["max"][2].as_f64().unwrap() - 2.035).abs() < 1e-9);
     let bottom = find("Copper bottom");
     assert!((bottom["bbox"]["max"][2].as_f64().unwrap() + 2.0).abs() < 1e-9);
-    // Two areas, (25 - 9) and 4 mm2, each 0.1 mm thick, are two solids: every lump keeps its
-    // volume, so the design holds the board (a 10 mm cube) and the sum of area times thickness
-    // of every overlay.
-    assert_eq!(bodies.len(), 5, "{bodies:?}");
+    // Two areas, (25 - 9) and 4 mm2, each 0.1 mm thick, are two solids in one body, the
+    // overlay's: every piece keeps its volume, so the design holds the board (a 10 mm cube) and
+    // the sum of area times thickness of every overlay.
+    assert_eq!(bodies.len(), 4, "{bodies:?}");
+    let pour = find("Copper pour");
+    assert_eq!(pour["faces"], json!(10 + 6), "{pour}");
+    assert!((pour["volume_mm3"].as_f64().unwrap() - 20.0 * 0.1).abs() < 1e-6);
     assert!(
         bodies.iter().all(|b| b["closed"] == json!(true)),
         "{bodies:?}"

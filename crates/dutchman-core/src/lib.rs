@@ -79,6 +79,10 @@ pub struct Model {
     /// The input file's text when it is a STEP file whose geometry is used unchanged: writers
     /// hand it on as it is instead of restating the decoded model as STEP.
     pub source_step: Option<String>,
+    /// Whether a writer puts the part's solids in one body. A circuit board's overlay is one
+    /// closed solid per area, and its plating one per plated hole: each is one thing to the
+    /// person, so SolidCraft holds each as one body of several pieces, not a body per piece.
+    pub merge_bodies: bool,
 }
 
 impl Model {

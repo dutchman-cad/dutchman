@@ -795,6 +795,7 @@ mod tests {
             source_file: None,
             assembly: None,
             source_step: None,
+            merge_bodies: false,
         }
     }
 
@@ -1099,6 +1100,7 @@ mod tests {
                 source_file: None,
                 assembly: None,
                 source_step: None,
+                merge_bodies: false,
             },
             &mut current,
             crate::PartPositions::LastShown,
@@ -1118,6 +1120,7 @@ mod tests {
                 source_file: None,
                 assembly: None,
                 source_step: None,
+                merge_bodies: false,
             },
             &mut stored,
             crate::PartPositions::FirstPlaced,

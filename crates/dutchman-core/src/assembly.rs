@@ -3483,6 +3483,7 @@ fn slice(
         source_file: model.source_file.clone(),
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     })
 }
 
@@ -3688,6 +3689,7 @@ mod tests {
                 name: name.trim_end_matches(".iam").to_owned(),
                 source_file: Some(name),
                 source_step: None,
+                merge_bodies: false,
                 assembly: None,
             })
         }
@@ -4994,6 +4996,7 @@ mod tests {
             source_file: None,
             assembly: None,
             source_step: None,
+            merge_bodies: false,
         }
     }
 

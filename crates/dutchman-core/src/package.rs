@@ -468,6 +468,12 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
                 ),
             );
         }
+        // The plating is one tube per plated hole: SolidCraft holds them as one body.
+        if entry.name == "Plating" {
+            if let Some(part) = assembly.parts.get_mut(index) {
+                part.merge_bodies = true;
+            }
+        }
         // The first part of a name is the one an overlay on that name follows.
         placed.entry(entry.name.clone()).or_insert(transform);
         assembly.placements.push(Placement {
@@ -511,6 +517,7 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
         source_file: None,
         assembly: Some(assembly),
         source_step: None,
+        merge_bodies: false,
     })
 }
 
@@ -797,6 +804,8 @@ fn read_model(
         |name| PathBuf::from(name.to_owned()),
     );
     let model = crate::read_bytes(Format::Step, &name, &bytes, &mut scratch);
+    // The package says where each part goes: a model read on its own is not placed by a guess.
+    scratch.forget_part_positions();
     report.append_prefixed(scratch, &subject);
     match model {
         Ok(mut model) => {
@@ -1154,11 +1163,14 @@ fn overlays(
             text.as_bytes(),
             &mut scratch,
         );
+        scratch.forget_part_positions();
         report.append_prefixed(scratch, &subject);
         match model {
             Ok(mut model) => {
                 model.name = clip(&entry.name, 200);
                 model.source_file = None;
+                // One closed solid per area is one overlay to the person; sheets stay apart.
+                model.merge_bodies = solid.is_some();
                 // The look goes in as body bindings, which the writer reads when it restates the part.
                 let opacity = transparency.map_or(1.0, |t| 1.0 - t);
                 let hex = format!(
@@ -2076,6 +2088,13 @@ mod tests {
         assert!(mentions(&report, Severity::Info, "made by a test"));
         assert!(mentions(&report, Severity::Degraded, "turned"));
         assert!(report.completeness().is_some_and(|c| c.is_complete()));
+        // The package states every part's place, so no model is placed by a guess.
+        assert!(report.placement_assumptions().is_empty());
+        assert!(report.part_positions().is_none());
+        assert!(report
+            .losses()
+            .iter()
+            .all(|l| !l.subject.ends_with("part positions")));
     }
 
     #[test]
