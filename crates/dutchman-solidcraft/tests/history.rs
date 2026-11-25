@@ -2703,7 +2703,7 @@ fn helical_sweeps_keep_the_profile_axis_law_hand_and_operation() {
                     // A cut or intersection works on a body an earlier feature built.
                     let first = usize::from(op != "join");
                     if first == 1 {
-                        let base = serde_json::to_value(
+                        let base = dutchman_core::ir_wire::to_value(
                             &cube_with_history(10.0, first_profile(), None).ir,
                         )
                         .unwrap();
@@ -7086,7 +7086,7 @@ fn compatibility_floor_blocks_composite_chains_but_keeps_single_stages() {
         assert!(types(&document)
             .iter()
             .any(|(kind, _)| kind == "mirror" || kind == "pattern"));
-        let mut wire = serde_json::to_value(&patterned(layout.clone()).ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&patterned(layout.clone()).ir).unwrap();
         wire["model"]["features"]
             .as_array_mut()
             .unwrap()
@@ -7366,8 +7366,8 @@ fn path_pattern(whole_sketch: bool) -> Model {
         .iter_mut()
         .find(|f| f["id"] == "f3d:model:feature#2")
         .unwrap();
-    *block = serde_json::to_value(&cube_with_history(10.0, first_profile(), None).ir).unwrap()
-        ["model"]["features"][1]
+    *block = dutchman_core::ir_wire::to_value(&cube_with_history(10.0, first_profile(), None).ir)
+        .unwrap()["model"]["features"][1]
         .clone();
     block["ordinal"] = json!(2);
     let path = if whole_sketch {
@@ -18752,6 +18752,7 @@ fn an_unprojected_design_only_history_is_refused_instead_of_silently_mapping_not
             "id": "test:design:feature#stored",
             "definition": {"operation": {"kind": "stored", "value": {
                 "bodies": ["synthetic:cube:body#0"],
+                "tessellations": [],
                 "origin": {"kind": "base"}
             }}}
         }))
@@ -19111,7 +19112,7 @@ fn a_design_history_stops_at_a_first_feature_that_is_not_projected() {
     let native = design_feature(
         1,
         "Vendor step",
-        json!({"kind": "native", "value": {"kind": "vendor", "native_options": {}, "source_settings": {}}}),
+        json!({"kind": "native", "value": {"kind": "test:vendor", "native_options": {}, "source_settings": {}}}),
     );
     let block = design_feature(
         2,

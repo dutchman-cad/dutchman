@@ -7424,7 +7424,7 @@ mod tests {
             connector_at(0, &[], facing(at([-20.0, 0.0, 0.0], 0.0)))
         )]);
         let mut wire =
-            serde_json::to_value(&with_joints(model.clone(), joints.clone()).ir).unwrap();
+            crate::ir_wire::to_value(&with_joints(model.clone(), joints.clone()).ir).unwrap();
         wire["native"]["f3d"]["design_component_occurrences"] = json!([
             {"id": "f3d:Design/BulkStream.dat:design-component-occurrence#7",
              "current_pose": {"carrier_record_index": 9, "transform": at([12.0, 0.0, 0.0], 0.0)}},
@@ -7436,7 +7436,13 @@ mod tests {
         let (assembly, notes) = local_components(&posed).unwrap().unwrap();
         let frame = world_at(&assembly, &[0]).unwrap();
         assert!(near(&frame, &at([120.0, 0.0, 0.0], 0.0)), "{frame:?}");
-        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert_eq!(
+            notes.len(),
+            1,
+            "{notes:?} joints={} {:?}",
+            posed.ir.model.assembly_joints.len(),
+            assembly.joints
+        );
         // A decoder-bound display pose works without any native current pose,
         // survives compact metadata extraction, and outranks this touching joint
         // (1 mm from where the joint puts the frame, so its blocks stay in the model's extent).

@@ -317,4 +317,24 @@ mod tests {
             assert!(populated.contains(arena), "no fixture holds {arena}");
         }
     }
+
+    /// Assembly joints, which the wire omits and placements depend on, survive any number of
+    /// passes through the document.
+    #[test]
+    fn assembly_joints_survive_repeated_passes() {
+        let root = serde_json::json!({"operand": {"container": {"kind": "root"},
+            "object": "root:origin", "subelements": []},
+            "frame": crate::placement::IDENTITY, "detached": false});
+        let mut ir = cadmpeg_ir::examples::unit_cube().unwrap();
+        ir.model.assembly_joints = serde_json::from_value(serde_json::json!([
+            {"id": "f3d:model:joint#1", "operands": {"kind": "pair", "value":
+                {"kind": {"kind": "fixed"}, "connectors": [root, root]}},
+             "suppressed": false, "drives": []}]))
+        .unwrap();
+        assert_eq!(ir.model.assembly_joints.len(), 1);
+        let once = from_value(to_value(&ir).unwrap()).unwrap();
+        let twice = from_str(&to_string(&once).unwrap()).unwrap();
+        assert_eq!(arenas(&once), arenas(&ir));
+        assert_eq!(arenas(&twice), arenas(&ir));
+    }
 }
