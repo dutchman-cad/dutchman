@@ -6516,7 +6516,7 @@ fn up_axis_screenshots() {
         wait_for_estimate(&mut harness);
         harness.get_by_label("Advanced").click_accesskit();
         harness.run_steps(8);
-        harness.get_by_label("Automatic");
+        harness.get_by_value("Automatic");
         shot(
             &mut harness,
             &dir,
