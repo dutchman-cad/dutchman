@@ -6392,3 +6392,68 @@ fn report_buttons_screenshots() {
     }
     std::fs::write(dir.join("report-buttons.md"), index).unwrap();
 }
+
+/// A synthetic drawing file whose sheets are not decoded yet: the Results card reports it.
+#[test]
+#[ignore = "renders the drawing result cards with a GPU; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn drawing_screenshots() {
+    if std::env::var_os("DUTCHMAN_DRAWING_SCREENSHOT_CHILD").is_none() {
+        let state = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "drawing_screenshots"])
+            .env("DUTCHMAN_DRAWING_SCREENSHOT_CHILD", "1")
+            .env("HOME", state.path())
+            .env("LOCALAPPDATA", state.path())
+            .env("XDG_STATE_HOME", state.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let mut index = String::new();
+    // The app has no German text yet: the German set shows a long German file name.
+    for (language, name) in [
+        ("en", "Frame-assembly.idw"),
+        (
+            "de",
+            "Zeichnung-Rahmenbaugruppe-Seitenwand-Ueberarbeitung-Fertigung.dwg",
+        ),
+    ] {
+        let input = work.path().join(name);
+        let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        if name.ends_with(".dwg") {
+            bytes = b"AC1032\0\0\0\0\0\0\0".to_vec();
+        }
+        bytes.extend([0_u8; 64]);
+        std::fs::write(&input, bytes).unwrap();
+        for (theme, mode) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().add_inputs([input.clone()]);
+            harness
+                .state_mut()
+                .set_out_dir(work.path().join(format!("{language}-{mode}")));
+            harness.state_mut().set_verify(false);
+            convert(&mut harness);
+            assert_eq!(harness.state().rows()[0].status, Status::Failed);
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("drawing-not-decoded-{language}"),
+                mode,
+                "A drawing file that is accepted and reported as not decoded yet.",
+            );
+        }
+    }
+    std::fs::write(dir.join("drawings.md"), index).unwrap();
+}
