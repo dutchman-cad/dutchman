@@ -144,7 +144,7 @@ Fusion tool libraries (`.tools`, `.json`) also convert to CamCraft's `.camtools`
 Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
-Designs open in SolidCraft 0.18.2 to 0.48; 0.48 is the newest known target.
+Designs open in SolidCraft 0.18.2 to 0.49; 0.49 is the newest known target.
 
 A design Dutchman can't finish reading is stopped after 20 minutes with no progress (60 in all); in a Fusion `.f3z` archive it's left out and named, and the rest converts. Set `DUTCHMAN_DESIGN_TIME_LIMIT` to more minutes to give a large design longer.
 
