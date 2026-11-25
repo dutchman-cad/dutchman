@@ -27,10 +27,10 @@ fn native_options_and_structured_report() {
     assert_eq!(details["schema"], "dutchman.plugin.report/2");
     assert!(details["shape_check"]["result"] != "Checked against the original shape");
     // The default is automatic, and a design whose source states no up axis keeps its axes.
-    assert!(matches!(Options::default().up_axis, UpAxis::Auto));
+    assert!(matches!(Options::default().up_axis, crate::UpAxis::Auto));
     assert!(matches!(
         serde_json::from_str::<Options>("{}").unwrap().up_axis,
-        UpAxis::Auto
+        crate::UpAxis::Auto
     ));
     let (kept, kept_report) = run(r#"{"up_axis":"as_is"}"#);
     assert_eq!(document(&kept), document(&design));

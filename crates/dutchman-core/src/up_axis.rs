@@ -191,22 +191,24 @@ impl UpAxisReport {
 
     /// The report's JSON object.
     pub fn json(&self) -> Value {
-        let mut out = json!({
-            "found": self.found.axis.name(),
-            "origin": self.found.origin.name(),
-        });
+        let mut out = serde_json::Map::new();
+        out.insert("found".to_owned(), json!(self.found.axis.name()));
+        out.insert("origin".to_owned(), json!(self.found.origin.name()));
         if let Some(reason) = &self.found.reason {
-            out["reason"] = json!(reason);
+            out.insert("reason".to_owned(), json!(reason));
         }
         if let Some((mode, stood_up)) = self.applied {
-            out["mode"] = json!(mode.name());
-            out["applied"] = json!(if stood_up { "stood_up" } else { "kept_axes" });
-            out["summary"] = json!(mode.sentence(&self.found));
+            out.insert("mode".to_owned(), json!(mode.name()));
+            out.insert(
+                "applied".to_owned(),
+                json!(if stood_up { "stood_up" } else { "kept_axes" }),
+            );
+            out.insert("summary".to_owned(), json!(mode.sentence(&self.found)));
         }
         if let Some(note) = &self.disagreement {
-            out["disagreement"] = json!(note);
+            out.insert("disagreement".to_owned(), json!(note));
         }
-        out
+        Value::Object(out)
     }
 }
 
