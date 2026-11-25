@@ -395,10 +395,13 @@ mod tests {
                 Vec::new(),
             )
             .unwrap()
-            .with_source_object(Some(serde_json::from_value(json!({
-                "format":"sldprt", "object_id":"synthetic-object", "name":"Synthetic display name",
-                "instance_path":["Synthetic Folder/Synthetic Part"]
-            })).unwrap())),
+            .with_source_object(Some(
+                serde_json::from_value(json!({
+                    "format":"sldprt", "object_id":"synthetic-object",
+                    "instance_path":["Synthetic Folder/Synthetic Part"]
+                }))
+                .unwrap(),
+            )),
         );
         for (key, target) in [
             (
@@ -430,7 +433,6 @@ mod tests {
             &mut Vec::new(),
         )
         .unwrap();
-        assert!(report.names().contains("Synthetic display name"));
         assert!(report.names().contains("Synthetic Part"));
         assert!(result.ir.model.tessellations.is_empty());
         assert_eq!(result.ir.model.appearance_bindings.len(), 1);

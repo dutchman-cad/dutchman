@@ -86,6 +86,7 @@ struct Omitted {
 /// The document `value` states, with the arenas [`to_value`] adds read back as typed records.
 /// A document that holds none of them reads as `CadIr::from_json` reads it.
 pub fn from_value(mut value: Value) -> Result<CadIr, String> {
+    sort_arenas(&mut value);
     let mut taken = Map::new();
     let mut parents = Vec::new();
     let mut sketches_of: Vec<(String, Vec<SketchId>)> = Vec::new();
@@ -167,6 +168,28 @@ pub fn from_value(mut value: Value) -> Result<CadIr, String> {
         }
     }
     Ok(ir)
+}
+
+/// CADIR states each arena in id order and the reader refuses a document that does not. A
+/// document assembled by editing rows of another (appending a copy of a part, say) is put in
+/// that order first; the rows themselves are not touched.
+fn sort_arenas(value: &mut Value) {
+    for home in ["geometry", "model", "design", "process"] {
+        let Some(arenas) = value.get_mut(home).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        for rows in arenas.values_mut() {
+            let Some(rows) = rows.as_array_mut() else {
+                continue;
+            };
+            if rows
+                .iter()
+                .all(|row| row.get("id").is_some_and(Value::is_string))
+            {
+                rows.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+            }
+        }
+    }
 }
 
 /// [`from_value`], from text.

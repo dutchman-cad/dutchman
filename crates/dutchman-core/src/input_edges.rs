@@ -513,7 +513,7 @@ mod tests {
     }
 
     fn selection(ir: &cadmpeg_ir::CadIr) -> Value {
-        let mut wire = crate::ir_wire::to_value(&ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(ir).unwrap();
         let body = wire["geometry"]["bodies"][0]["id"].clone();
         let edge = wire["geometry"]["edges"][0]["id"].clone();
         wire["geometry"].get_mut("bodies").unwrap()[0]["visible"] = json!(false);

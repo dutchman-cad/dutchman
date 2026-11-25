@@ -47,7 +47,9 @@ pub fn topology(model: &Model) -> Vec<Value> {
         .faces
         .iter()
         .enumerate()
-        .filter(|(_, face)| face.loops.stated().next().is_none() && surfaces.contains(&face.surface))
+        .filter(|(_, face)| {
+            face.loops.stated().next().is_none() && surfaces.contains(&face.surface)
+        })
         .filter_map(|(index, face)| {
             let region = shells.get(&face.shell)?;
             let body = bodies.get(regions.get(region)?)?;
