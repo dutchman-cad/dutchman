@@ -721,6 +721,64 @@ fn converting_again_never_overwrites_a_file_changed_since_it_was_written() {
     assert!(out.path().join("synthetic_cube (2).sc").is_file());
 }
 
+/// The "Replace existing files" setting and the question before it replaces a file the person made,
+/// at 1280x800, Day and Night. The app has no German text yet, so there is no German set.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn replace_existing_files_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    std::env::set_var("DUTCHMAN_NO_TRASH", "1");
+    let mut index = String::new();
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        let out = tempfile::tempdir().unwrap();
+        std::fs::write(out.path().join("synthetic_cube.sc"), b"MY OWN DESIGN").unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        harness.ctx.set_theme(theme);
+        harness
+            .state_mut()
+            .add_inputs([fixture("synthetic_cube.ipt")]);
+        harness.state_mut().set_out_dir(out.path().to_path_buf());
+        harness.state_mut().set_verify(false);
+        harness.run_steps(8);
+        harness.get_by_label("Advanced").click_accesskit();
+        harness.run_steps(8);
+        harness
+            .get_by_label("Replace existing files")
+            .scroll_to_me();
+        harness.run_steps(8);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "replace-setting-off",
+            name,
+            "Advanced: Replace existing files, off by default",
+        );
+        harness
+            .get_by_label("Replace existing files")
+            .click_accesskit();
+        harness.run_steps(8);
+        harness.get_by_label("Convert").click_accesskit();
+        harness.run_steps(8);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "replace-confirmation",
+            name,
+            "One question names the file Dutchman did not make; Cancel keeps it",
+        );
+    }
+    std::fs::write(dir.join("replace-existing-files.md"), index).unwrap();
+}
+
 #[test]
 fn adding_a_design_selects_an_output_folder() {
     let mut harness = harness();
