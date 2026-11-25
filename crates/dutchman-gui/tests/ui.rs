@@ -286,6 +286,81 @@ fn header_version_screenshots() {
     std::fs::write(dir.join("header-version.md"), index).unwrap();
 }
 
+/// The Export from Fusion window's first half at 1280x800, Day and Night. No name a person
+/// chose appears in these screens (only the exporter's own text and version numbers), so there
+/// is no long-German-name set; the app has no translations.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn fusion_install_screenshots() {
+    use dutchman_gui::fusion_export::agent::{Agent, Presence};
+    use dutchman_gui::fusion_export::install::Step;
+    use dutchman_gui::fusion_export::installer::Install;
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    let agent = || Agent {
+        jobs_dir: "/Users/someone/.cad-export/jobs".into(),
+        features: vec!["export".into(), "cancel".into()],
+        version: "0.4.0".into(),
+        busy: None,
+        job: None,
+        fusion_version: Some("2.0.21508".into()),
+        pid: Some(41237),
+        updated: None,
+    };
+    let cases = [
+        (
+            "fusion-1-not-found",
+            Presence::Absent,
+            Install::Idle,
+            "The exporter was not found: one button installs it.",
+        ),
+        (
+            "fusion-2-installing",
+            Presence::Absent,
+            Install::Running(Step::Downloading),
+            "Installing: downloading the pinned release.",
+        ),
+        (
+            "fusion-3-switch-on",
+            Presence::Absent,
+            Install::Done("0.4.0".into()),
+            "Installed: the steps to switch it on once in Fusion, while Dutchman keeps waiting.",
+        ),
+        (
+            "fusion-4-running",
+            Presence::Running(agent()),
+            Install::Idle,
+            "The exporter is running in Fusion.",
+        ),
+        (
+            "fusion-5-busy",
+            Presence::Unresponsive(agent()),
+            Install::Idle,
+            "Fusion is busy: the heartbeat is stale but Fusion is still running.",
+        ),
+    ];
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        for (state, presence, step, description) in &cases {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().preview_solidcraft(Some("0.47.0"));
+            harness
+                .state_mut()
+                .preview_fusion(true, presence.clone(), None, step.clone());
+            harness.run_steps(8);
+            shot(&mut harness, &dir, &mut index, state, name, description);
+        }
+    }
+    std::fs::write(dir.join("fusion-install.md"), index).unwrap();
+}
+
 #[test]
 fn designs_convert_from_the_window() {
     let out = tempfile::tempdir().unwrap();
@@ -1270,7 +1345,7 @@ fn update_window_stays_clear_of_the_header_controls() {
     for width in [520.0, 900.0, 1440.0] {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(width, 900.0))
-            .build_eframe(|cc| App::new(cc));
+            .build_eframe(|cc| test_app(cc));
         harness
             .state_mut()
             .updater
@@ -1329,7 +1404,7 @@ fn update_window_stays_clear_of_the_header_controls() {
 fn update_notes_open_at_the_top_each_time() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(900.0, 760.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     let long: String = (1..=60)
         .map(|n| format!("Line number {n} of the notes.\n\n"))
         .collect();

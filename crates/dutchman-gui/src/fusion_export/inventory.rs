@@ -133,7 +133,7 @@ impl Inventory {
 
     /// Reads `inventory.json`. Only Fusion designs (`.f3d`) are offered.
     pub fn read(path: &Path) -> Result<Self, String> {
-        let text = super::agent_min::read_small(path, MAX_FILE)
+        let text = super::agent::read_small(path, MAX_FILE)
             .map_err(|why| format!("Cannot read the list of your Fusion designs: {why}."))?
             .ok_or("The Fusion exporter did not write the list of your designs.")?;
         let value: Value = serde_json::from_str(&text)

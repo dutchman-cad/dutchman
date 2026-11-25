@@ -506,7 +506,7 @@ app's quarantine attribute and its user-approved flag without changing them. The
 retries a blocked check when its window regains focus or you start a conversion.
 
 On Linux it needs a desktop session (X11 or Wayland with OpenGL); the file dialogs use the
-desktop portal, and dropping files works without it.
+desktop portal, reached through the system's libdbus, and dropping files works without it.
 
 ## What the update check sends
 

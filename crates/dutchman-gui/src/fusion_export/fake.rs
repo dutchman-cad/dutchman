@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::agent_min::Agent;
+use super::agent::Agent;
 use super::job::{atomic_write, iso_now, validate};
 
 pub const FEATURES: &[&str] = &[
@@ -96,7 +96,7 @@ impl FakeAddin {
     }
 
     pub fn agent(&self) -> Agent {
-        super::agent_min::read_minimal(&super::agent_min::agent_file(&self.cad)).unwrap()
+        super::agent::read_minimal(&super::agent::agent_file(&self.cad)).unwrap()
     }
 
     /// Ids of job files nobody has claimed (no status file yet), oldest name first.

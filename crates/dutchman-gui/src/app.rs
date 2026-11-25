@@ -641,6 +641,19 @@ impl App {
         }
     }
 
+    /// Shows the Export from Fusion window in a given state, for tests and screenshots.
+    #[doc(hidden)]
+    pub fn preview_fusion(
+        &mut self,
+        offered: bool,
+        presence: crate::fusion_export::agent::Presence,
+        installed: Option<&str>,
+        step: crate::fusion_export::installer::Install,
+    ) {
+        self.fusion_export
+            .preview_install(offered, presence, installed, step);
+    }
+
     /// Supplies a saved account for UI previews without contacting Onshape.
     #[doc(hidden)]
     pub fn preview_onshape(&mut self, user: Option<&str>) {
@@ -3183,7 +3196,8 @@ impl App {
                         egui::Button::new("Export from Fusion…"),
                     )
                     .on_hover_text(
-                        "Ask the Fusion exporter in your Fusion to export designs, then convert them",
+                        "Ask the Fusion exporter in your Fusion to export designs, then convert them. \
+                         If the exporter is missing, you can install it from here",
                     )
                     .clicked()
             {

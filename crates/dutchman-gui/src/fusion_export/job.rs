@@ -10,7 +10,7 @@ use std::time::Duration;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
-use super::agent_min::Agent;
+use super::agent::Agent;
 
 /// The name this program gives itself in a job (shown in the exporter's log).
 pub const REQUESTER: &str = "Dutchman Convert";
@@ -44,7 +44,7 @@ impl Kind {
 
 /// `2026-11-23T09:31:00+00:00` for now.
 pub fn iso_now() -> String {
-    iso_at(super::agent_min::now_secs())
+    iso_at(super::agent::now_secs())
 }
 
 /// The same for a time in seconds since 1970.
@@ -393,9 +393,9 @@ impl Status {
 
 /// The job's status; `None` while the exporter has not claimed it yet.
 pub fn read_status(jobs_dir: &Path, id: &str) -> Option<Status> {
-    let text = super::agent_min::read_small(
+    let text = super::agent::read_small(
         &jobs_dir.join(format!("{id}.status.json")),
-        super::agent_min::SMALL_FILE,
+        super::agent::SMALL_FILE,
     )
     .ok()??;
     Status::from_value(&serde_json::from_str(&text).ok()?)

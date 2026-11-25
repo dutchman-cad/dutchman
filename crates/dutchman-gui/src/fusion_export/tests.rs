@@ -565,7 +565,7 @@ fn the_time_is_iso_8601_with_an_offset() {
 
 // ---- the review's findings ----
 
-use super::agent_min::{self, Found, Liveness};
+use super::agent::{self, Found, Liveness};
 use super::inventory;
 
 fn jobs_left(addin: &FakeAddin) -> usize {
@@ -653,12 +653,12 @@ fn a_jobs_folder_outside_cad_export_is_refused() {
     let (dir, addin) = setup();
     let elsewhere = dir.path().join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
-    let file = agent_min::agent_file(&addin.cad);
+    let file = agent::agent_file(&addin.cad);
     let mut agent: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     agent["jobs_dir"] = json!(elsewhere.to_string_lossy());
     std::fs::write(&file, agent.to_string()).unwrap();
-    assert!(matches!(agent_min::read(&file), Found::Invalid(_)));
-    assert!(agent_min::read_minimal(&file).is_none());
+    assert!(matches!(agent::read(&file), Found::Invalid(_)));
+    assert!(agent::read_minimal(&file).is_none());
     let (mut panel, ctx) = panel_for(dir.path());
     wait_for(&mut panel, &ctx, "a look", |p| p.last_agent_check.is_some());
     assert_eq!(panel.stage(), Stage::NoAgent);
@@ -675,7 +675,7 @@ fn a_jobs_folder_outside_cad_export_is_refused() {
     // A relative or parent-pointing jobs_dir is no better.
     agent["jobs_dir"] = json!(addin.cad.join("jobs/../../elsewhere").to_string_lossy());
     std::fs::write(&file, agent.to_string()).unwrap();
-    assert!(matches!(agent_min::read(&file), Found::Invalid(_)));
+    assert!(matches!(agent::read(&file), Found::Invalid(_)));
 }
 
 #[cfg(unix)]
@@ -685,11 +685,11 @@ fn links_and_oversized_files_are_not_read() {
     let secret = dir.path().join("secret.json");
     std::fs::write(&secret, "{}").unwrap();
     // A linked agent file.
-    let file = agent_min::agent_file(&addin.cad);
+    let file = agent::agent_file(&addin.cad);
     let real = dir.path().join("real-agent.json");
     std::fs::rename(&file, &real).unwrap();
     std::os::unix::fs::symlink(&real, &file).unwrap();
-    assert!(matches!(agent_min::read(&file), Found::Invalid(_)));
+    assert!(matches!(agent::read(&file), Found::Invalid(_)));
     std::fs::remove_file(&file).unwrap();
     std::fs::rename(&real, &file).unwrap();
     // A linked and an oversized status file.
@@ -697,10 +697,10 @@ fn links_and_oversized_files_are_not_read() {
     std::os::unix::fs::symlink(&secret, &status).unwrap();
     assert!(job::read_status(&addin.jobs_dir(), "a").is_none());
     std::fs::remove_file(&status).unwrap();
-    let big = vec![b' '; agent_min::SMALL_FILE as usize + 1];
+    let big = vec![b' '; agent::SMALL_FILE as usize + 1];
     std::fs::write(&status, &big).unwrap();
     assert!(job::read_status(&addin.jobs_dir(), "a").is_none());
-    assert!(agent_min::read_small(&status, agent_min::SMALL_FILE).is_err());
+    assert!(agent::read_small(&status, agent::SMALL_FILE).is_err());
     // A linked inventory.
     let listing = dir.path().join("inventory.json");
     std::os::unix::fs::symlink(&secret, &listing).unwrap();
@@ -782,44 +782,44 @@ fn a_deep_path_or_too_many_designs_get_a_plain_message() {
 
 #[test]
 fn the_heartbeat_rule_never_takes_a_stale_heartbeat_alone_as_gone() {
-    let agent = |updated: Option<i64>, pid: Option<u32>| agent_min::Agent {
+    let agent = |updated: Option<i64>, pid: Option<u32>| agent::Agent {
         jobs_dir: PathBuf::new(),
         features: vec![],
         version: String::new(),
         pid,
         updated,
+        busy: None,
+        job: None,
+        fusion_version: None,
     };
     let now = 1_000_000;
     assert_eq!(
-        agent_min::liveness(&agent(Some(now - 59), Some(1)), now, |_| false),
+        agent::liveness(&agent(Some(now - 59), Some(1)), now, &|_| false),
         Liveness::Running
     );
     assert_eq!(
-        agent_min::liveness(&agent(Some(now - 61), Some(1)), now, |_| true),
+        agent::liveness(&agent(Some(now - 61), Some(1)), now, &|_| true),
         Liveness::Busy
     );
     assert_eq!(
-        agent_min::liveness(&agent(Some(now - 61), Some(1)), now, |_| false),
+        agent::liveness(&agent(Some(now - 61), Some(1)), now, &|_| false),
         Liveness::Gone
     );
     assert_eq!(
-        agent_min::liveness(&agent(None, None), now, |_| true),
+        agent::liveness(&agent(None, None), now, &|_| true),
         Liveness::Gone
     );
+    assert_eq!(agent::parse_time("1970-01-02T00:00:00+00:00"), Some(86_400));
+    assert_eq!(agent::parse_time("1970-01-01T01:00:00+01:00"), Some(0));
     assert_eq!(
-        agent_min::parse_iso("1970-01-02T00:00:00+00:00"),
-        Some(86_400)
-    );
-    assert_eq!(agent_min::parse_iso("1970-01-01T01:00:00+01:00"), Some(0));
-    assert_eq!(
-        agent_min::parse_iso("2026-11-23T09:30:11.004000+00:00"),
+        agent::parse_time("2026-11-23T09:30:11.004000+00:00"),
         Some(1_795_426_211)
     );
     assert_eq!(
-        agent_min::parse_iso(&job::iso_at(1_795_426_211)),
+        agent::parse_time(&job::iso_at(1_795_426_211)),
         Some(1_795_426_211)
     );
-    assert_eq!(agent_min::parse_iso("nonsense"), None);
+    assert_eq!(agent::parse_time("nonsense"), None);
 }
 
 /// A panel with an export running against an exporter that never answers.
@@ -853,7 +853,7 @@ fn an_exporter_that_is_gone_for_a_minute_ends_the_wait_with_a_plain_message() {
     });
     assert_eq!(jobs_left(&addin), 1);
     // Fusion closes: its agent file goes away.
-    std::fs::remove_file(agent_min::agent_file(&addin.cad)).unwrap();
+    std::fs::remove_file(agent::agent_file(&addin.cad)).unwrap();
     wait_for(&mut panel, &ctx, "giving up", |p| {
         p.stage() == Stage::Finished
     });
@@ -874,12 +874,7 @@ fn an_exporter_that_is_gone_for_a_minute_ends_the_wait_with_a_plain_message() {
 #[test]
 fn a_stale_heartbeat_with_a_living_fusion_keeps_waiting() {
     let (dir, addin) = setup();
-    addin.announce_at(
-        FEATURES,
-        None,
-        &job::iso_at(agent_min::now_secs() - 600),
-        4242,
-    );
+    addin.announce_at(FEATURES, None, &job::iso_at(agent::now_secs() - 600), 4242);
     let (mut panel, ctx) = waiting_export(dir.path(), &addin, |env| {
         env.give_up = Duration::from_millis(100);
         env.pid_alive = |_| true;
@@ -939,7 +934,7 @@ fn fusion_closing_while_the_picker_is_open_is_noticed_before_an_export() {
         p.stage() == Stage::Picking
     });
     drop(service);
-    std::fs::remove_file(agent_min::agent_file(&addin.cad)).unwrap();
+    std::fs::remove_file(agent::agent_file(&addin.cad)).unwrap();
     pick_all(&mut panel);
     panel.export_picked();
     assert_eq!(panel.stage(), Stage::Picking);
@@ -983,4 +978,150 @@ fn the_search_result_is_kept_until_the_text_changes() {
     panel.shown = inventory.matching_ids(&panel.query);
     panel.shown_query = Some(panel.query.clone());
     assert_eq!(panel.shown.len(), 1);
+}
+
+// The hand-off between the find-and-install part and the job side, in the one window.
+
+use egui_kittest::kittest::Queryable;
+use egui_kittest::Harness;
+
+/// The window of a panel, polled like the app does each frame.
+fn window_of(panel: Panel) -> Harness<'static, Panel> {
+    Harness::builder()
+        .with_size(eframe::egui::vec2(700.0, 700.0))
+        .build_state(
+            |ctx, panel: &mut Panel| {
+                panel.poll(ctx);
+                let _ = panel.window(ctx, 0.0);
+            },
+            panel,
+        )
+}
+
+/// Steps the window until `ready` holds.
+fn step_until(h: &mut Harness<'static, Panel>, what: &str, ready: impl Fn(&Panel) -> bool) {
+    let started = Instant::now();
+    while !ready(h.state()) {
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "timed out waiting for {what}"
+        );
+        std::thread::sleep(FAST);
+        h.step();
+    }
+    h.run_steps(2);
+}
+
+#[test]
+fn without_an_exporter_the_window_offers_the_install_and_goes_on_when_it_appears() {
+    let (dir, addin) = setup();
+    std::fs::remove_file(agent::agent_file(&addin.cad)).unwrap();
+    let (mut panel, _) = panel_for(dir.path());
+    panel.open = true;
+    let mut h = window_of(panel);
+    step_until(&mut h, "a first look", |p| p.last_agent_check.is_some());
+    assert_eq!(h.state().stage(), Stage::NoAgent);
+    h.get_by_label("Install the Fusion exporter");
+    h.get_by_label("The Fusion exporter was not found");
+    assert_eq!(jobs_left(&addin), 0, "nothing is asked of Fusion yet");
+    // Fusion starts with the exporter on: the window carries on with the list by itself.
+    addin.announce(FEATURES, None);
+    let _service = Service::spawn(addin.clone(), sample_inventory(false), Ending::done(), FAST);
+    step_until(&mut h, "the list", |p| p.stage() == Stage::Picking);
+    assert!(h.query_by_label("Install the Fusion exporter").is_none());
+    assert!(h
+        .query_by_label("The Fusion exporter was not found")
+        .is_none());
+    h.get_by_label("Search");
+}
+
+#[test]
+fn fusion_busy_is_waited_for_and_no_job_is_written_until_it_answers() {
+    let (dir, addin) = setup();
+    addin.announce_at(
+        FEATURES,
+        None,
+        &job::iso_at(agent::now_secs() - 600),
+        std::process::id(),
+    );
+    let (mut panel, _) = panel_for(dir.path());
+    panel.open = true;
+    let mut h = window_of(panel);
+    step_until(&mut h, "a first look", |p| p.last_agent_check.is_some());
+    h.run_steps(3);
+    assert_eq!(h.state().stage(), Stage::NoAgent);
+    h.get_by_label("Fusion is busy");
+    assert!(h.query_by_label("Install the Fusion exporter").is_none());
+    assert_eq!(jobs_left(&addin), 0);
+    // The heartbeat comes back.
+    addin.announce(FEATURES, None);
+    let _service = Service::spawn(addin.clone(), sample_inventory(false), Ending::done(), FAST);
+    step_until(&mut h, "the list", |p| p.stage() == Stage::Picking);
+}
+
+#[test]
+fn an_agent_file_that_cannot_be_used_is_said_in_the_window_beside_the_install() {
+    let (dir, addin) = setup();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let file = agent::agent_file(&addin.cad);
+    let mut agent_json: Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    agent_json["jobs_dir"] = json!(elsewhere.to_string_lossy());
+    std::fs::write(&file, agent_json.to_string()).unwrap();
+    let (mut panel, _) = panel_for(dir.path());
+    panel.open = true;
+    let mut h = window_of(panel);
+    step_until(&mut h, "a first look", |p| p.agent_problem.is_some());
+    h.get_by_label_contains("outside your .cad-export");
+    h.get_by_label("Install the Fusion exporter");
+    assert_eq!(h.state().stage(), Stage::NoAgent);
+}
+
+#[test]
+fn a_missing_download_in_the_window_says_so_plainly_and_nothing_hangs() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut stream = stream;
+            let mut buf = [0u8; 2048];
+            let _ = std::io::Read::read(&mut stream, &mut buf);
+            let _ = std::io::Write::write_all(
+                &mut stream,
+                b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nnot found",
+            );
+        }
+    });
+    let (dir, addin) = setup();
+    std::fs::remove_file(agent::agent_file(&addin.cad)).unwrap();
+    let addins = tempfile::tempdir().unwrap();
+    let (mut panel, _) = panel_for(dir.path());
+    panel.open = true;
+    panel
+        .installer_mut()
+        .set_install_options(super::install::Options {
+            version: "0.4.0".into(),
+            zip_url: format!("http://127.0.0.1:{port}/FusionBulkExport-0.4.0.zip"),
+            sha256: "00".repeat(32),
+            addins: addins.path().to_path_buf(),
+            connect_timeout: Duration::from_secs(2),
+            stall_timeout: Duration::from_secs(2),
+            deadline: Duration::from_secs(20),
+            allow_http: true,
+        });
+    let mut h = window_of(panel);
+    step_until(&mut h, "a first look", |p| p.last_agent_check.is_some());
+    h.get_by_label("Install the Fusion exporter").click();
+    step_until(&mut h, "the answer", |p| {
+        !matches!(
+            p.installer.state(),
+            super::installer::Install::Idle | super::installer::Install::Running(_)
+        )
+    });
+    h.get_by_label_contains("not published yet");
+    h.get_by_label_contains("project page");
+    h.get_by_label("Install the Fusion exporter");
+    assert_eq!(h.state().stage(), Stage::NoAgent);
+    assert_eq!(std::fs::read_dir(addins.path()).unwrap().count(), 0);
 }

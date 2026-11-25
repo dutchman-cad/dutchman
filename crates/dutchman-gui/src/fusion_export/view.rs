@@ -42,17 +42,16 @@ impl Panel {
         convert
     }
 
+    /// No exporter has announced itself: what is missing, and the one-click install.
     fn no_agent_ui(&mut self, ui: &mut egui::Ui) {
-        ui.label("Dutchman asks the Fusion exporter, an add-in inside your Fusion, to export the designs you choose, with everything they insert.");
-        ui.add_space(theme::SPACE_2);
-        ui.horizontal(|ui| {
-            ui.spinner();
-            ui.label("Waiting for the Fusion exporter. Open Fusion with the exporter switched on; this carries on by itself.");
-        });
-        if let Some(problem) = &self.agent_problem {
-            let p = theme::palette(ui);
-            ui.label(RichText::new(problem).color(p.danger));
-        }
+        let cad_dir = self.env.cad_dir.clone();
+        self.installer.ui(
+            ui,
+            self.offered,
+            &self.presence,
+            cad_dir,
+            self.env.pid_alive,
+        );
     }
 
     fn list_failed_ui(&mut self, ui: &mut egui::Ui) {
@@ -178,6 +177,9 @@ impl Panel {
                 self.list_designs();
             }
         });
+        if let Some(agent) = &self.agent {
+            self.installer.newer_note(ui, &agent.version);
+        }
         if self.inventory.is_none() {
             self.inventory = Some(inventory);
         }

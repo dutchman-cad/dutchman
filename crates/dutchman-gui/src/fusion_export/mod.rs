@@ -2,16 +2,26 @@
 //! inside their Fusion to export them (job protocol 1), follows its progress, and converts
 //! the export folder like any other input.
 //!
-//! This part owns the job side: the inventory job and the design picker, the export job and
-//! its progress, Stop, cleanup and the plain-words errors. Finding and installing the
-//! exporter belong to other pieces; this one takes the exporter as an [`agent_min::Agent`].
-pub mod agent_min;
+//! One window, one [`Panel`]. While no exporter has announced itself (Stage::NoAgent) it shows
+//! the find-and-install part ([`installer`]): what is missing, a one-click install, and the one
+//! step the person does in Fusion. Once the exporter announces itself it carries on with the
+//! job side: the inventory job and the design picker, the export job and its progress, Stop,
+//! cleanup and the plain-words errors. The protocol is in the exporter's `docs/job-protocol.md`.
+pub mod agent;
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod fake;
+pub mod install;
+pub mod installer;
 pub mod inventory;
 pub mod job;
 mod view;
+
+/// The one place in Dutchman's public text that names the exporter's project; everywhere else it
+/// is "the Fusion exporter".
+pub const PROJECT_NAME: &str = "Lifeboat's Fusion exporter";
+/// The exporter's project page.
+pub const PROJECT_URL: &str = "https://github.com/cad-lifeboat/fusion-bulk-export";
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -20,7 +30,8 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agent_min::Agent;
+use agent::{Agent, Presence};
+use installer::Installer;
 use inventory::Inventory;
 use job::{Kind, Next, Status, Update};
 
@@ -51,10 +62,10 @@ impl Env {
         .map(PathBuf::from)
         .unwrap_or_default();
         Self {
-            cad_dir: agent_min::cad_export_dir(),
+            cad_dir: agent::cad_export_dir(),
             work_dir: home.join("Dutchman Fusion exports"),
             poll: Duration::from_millis(500),
-            pid_alive: agent_min::pid_alive_system,
+            pid_alive: agent::pid_alive_system,
             give_up: Duration::from_secs(60),
             no_answer: Duration::from_secs(120),
         }
@@ -116,6 +127,9 @@ pub struct Panel {
     env: Env,
     stage: Stage,
     agent: Option<Agent>,
+    /// What the agent folder said when it was last looked at.
+    presence: Presence,
+    installer: Installer,
     /// Why the agent file is not used, when it is not.
     agent_problem: Option<String>,
     last_agent_check: Option<Instant>,
@@ -153,6 +167,8 @@ impl Panel {
             env: Env::system(),
             stage: Stage::NoAgent,
             agent: None,
+            presence: Presence::Absent,
+            installer: Installer::new(),
             agent_problem: None,
             last_agent_check: None,
             last_watch: None,
@@ -184,12 +200,38 @@ impl Panel {
     /// Points the panel at another home and shows the entry on any system (tests and
     /// screenshots only).
     pub(crate) fn preview(&mut self, env: Env) {
-        let offered = true;
+        let mut installer = Installer::new();
+        installer.preview(None, installer::Install::Idle);
         *self = Self {
             env,
-            offered,
+            offered: true,
+            installer,
             ..Self::new()
         };
+    }
+
+    /// Shows the find-and-install part in a given state, without looking at this computer
+    /// (tests and screenshots only). Nothing is read in the background.
+    pub(crate) fn preview_install(
+        &mut self,
+        offered: bool,
+        presence: Presence,
+        installed: Option<&str>,
+        step: installer::Install,
+    ) {
+        self.open = true;
+        self.offered = offered;
+        self.stage = Stage::NoAgent;
+        self.presence = presence;
+        self.installer.preview(installed, step);
+        // Looking at the real agent folder would replace the state shown.
+        self.last_agent_check = Some(Instant::now() + Duration::from_secs(3600));
+    }
+
+    /// The install button and what it has done (tests only).
+    #[doc(hidden)]
+    pub fn installer_mut(&mut self) -> &mut Installer {
+        &mut self.installer
     }
 
     /// Shows the entry on any system (tests only).
@@ -209,49 +251,47 @@ impl Panel {
     pub(crate) fn toggle(&mut self) {
         self.open = !self.open;
         self.last_agent_check = None;
+        if !self.open {
+            self.installer.halt();
+        }
     }
 
-    fn agent_file(&self) -> Option<PathBuf> {
-        self.env.cad_dir.as_deref().map(agent_min::agent_file)
+    /// What the agent folder says now, with the heartbeat rule applied.
+    fn look(&mut self) -> Presence {
+        let presence = match self.env.cad_dir.as_deref() {
+            Some(cad) => agent::presence_in(cad, agent::now_secs(), &self.env.pid_alive),
+            None => Presence::Absent,
+        };
+        self.agent_problem = match &presence {
+            Presence::Invalid(why) => Some(why.clone()),
+            _ => None,
+        };
+        self.presence = presence.clone();
+        presence
     }
 
     /// The agent as it is now, with the heartbeat rule applied: `Err` says in plain words why
-    /// no job can go to it.
+    /// no job can go to it. Fusion busy (a stale heartbeat, a live process) still takes a job.
     fn fresh_agent(&mut self) -> Result<Agent, String> {
-        let not_running = "The Fusion exporter is not running. Open Fusion with the exporter switched on, then try again.".to_owned();
-        let Some(file) = self.agent_file() else {
-            return Err(not_running);
-        };
-        match agent_min::read(&file) {
-            agent_min::Found::Ready(agent) => {
-                self.agent_problem = None;
-                if agent_min::liveness(&agent, agent_min::now_secs(), self.env.pid_alive)
-                    == agent_min::Liveness::Gone
-                {
-                    Err(not_running)
-                } else {
-                    Ok(agent)
-                }
-            }
-            agent_min::Found::Invalid(why) => {
-                self.agent_problem = Some(why.clone());
-                Err(why)
-            }
-            agent_min::Found::Absent => Err(not_running),
+        match self.look() {
+            Presence::Running(agent) | Presence::Unresponsive(agent) => Ok(agent),
+            Presence::Invalid(why) => Err(why),
+            Presence::Absent | Presence::Gone => Err("The Fusion exporter is not running. Open Fusion with the exporter switched on, then try again.".to_owned()),
         }
     }
 
     /// Looks for the exporter while none is there. Its first appearance, with no list yet,
-    /// asks for the list; nothing else ever does that by itself.
+    /// asks for the list; nothing else ever does that by itself. While Fusion is busy (an old
+    /// heartbeat, the process still there) the window waits for it to answer.
     fn find_agent(&mut self) {
-        match self.fresh_agent() {
-            Ok(agent) => {
+        match self.look() {
+            Presence::Running(agent) => {
                 self.agent = Some(agent);
                 if self.stage == Stage::NoAgent && self.inventory.is_none() {
                     self.list_designs();
                 }
             }
-            Err(_) => self.agent = None,
+            _ => self.agent = None,
         }
     }
 
@@ -468,18 +508,12 @@ impl Panel {
     /// While a job waits: the heartbeat and process rule for the exporter, and the time the
     /// first status has taken.
     fn watch(&mut self) {
-        let Some(file) = self.agent_file() else {
+        if self.running.is_none() {
             return;
-        };
+        }
+        let alive = self.look().agent().is_some();
         let Some(running) = &self.running else {
             return;
-        };
-        let alive = match agent_min::read(&file) {
-            agent_min::Found::Ready(agent) => {
-                agent_min::liveness(&agent, agent_min::now_secs(), self.env.pid_alive)
-                    != agent_min::Liveness::Gone
-            }
-            _ => false,
         };
         let (gone, waited) = (running.gone_since, running.since.elapsed());
         let first_status_missing = running.status.is_none();
@@ -501,6 +535,9 @@ impl Panel {
     /// it is ready to convert.
     pub(crate) fn poll(&mut self, ctx: &eframe::egui::Context) -> Option<PathBuf> {
         self.repaint = Some(ctx.clone());
+        if self.open {
+            self.installer.start(ctx);
+        }
         if self.open
             && self.stage == Stage::NoAgent
             && self
