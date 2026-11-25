@@ -34,6 +34,7 @@ pub mod preflight;
 mod progress;
 pub mod progress_words;
 mod refusal;
+pub mod safe_output;
 pub mod source;
 mod source_errors;
 mod source_version;
@@ -909,25 +910,15 @@ fn companion_conflict(path: &Path) -> Error {
 
 /// Writes `bytes` to `output`; when `replace` is not set, only if no file is there.
 fn write_output(output: &Path, bytes: &[u8], replace: bool) -> Result<(), Error> {
-    use std::io::Write as _;
-    let io = |source| Error::Io {
-        path: output.to_path_buf(),
-        source,
-    };
-    if replace {
-        return std::fs::write(output, bytes).map_err(io);
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(output)
-        .map_err(|source| match source.kind() {
-            std::io::ErrorKind::AlreadyExists => Error::OutputExists {
-                path: output.to_path_buf(),
-            },
-            _ => io(source),
-        })?;
-    file.write_all(bytes).map_err(io)
+    safe_output::write(output, bytes, replace).map_err(|source| match source.kind() {
+        std::io::ErrorKind::AlreadyExists => Error::OutputExists {
+            path: output.to_path_buf(),
+        },
+        _ => Error::Io {
+            path: output.to_path_buf(),
+            source,
+        },
+    })
 }
 
 fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {

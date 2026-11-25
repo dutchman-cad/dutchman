@@ -271,7 +271,11 @@ fn run_loop(
                 )?;
                 continue;
             }
-            let output = &pending.job.output;
+            // Nothing already in the slot is replaced unless asked: the design gets the next free
+            // name instead, and the reports beside it the same number.
+            let numbered = (!command.options.replace)
+                .then(|| dutchman_core::safe_output::free_slot(&pending.job.output));
+            let output = numbered.as_ref().unwrap_or(&pending.job.output);
             let success = report.get("ok") == Some(&json!(true));
             let sidecar = output.with_extension(if success {
                 "report.json"
@@ -283,10 +287,9 @@ fn run_loop(
             } else {
                 vec![sidecar.clone()]
             };
-            let blocked = destinations.iter().any(|path| {
-                !owned_or_absent(state, out, path, &pending.relative)
-                    || command.options.no_clobber && path.exists()
-            });
+            let blocked = destinations
+                .iter()
+                .any(|path| !owned_or_absent(state, out, path, &pending.relative));
             let outcome = if blocked {
                 "skipped"
             } else {
@@ -359,7 +362,7 @@ fn run_loop(
         }
         if !stopping && (!command.once || !scanned) && Instant::now() >= next_scan {
             let mut plan = batch::plan_filtered(&[inbox.to_path_buf()], out, |path| !ignored(path));
-            batch::prepare(&mut plan.jobs, &command.options);
+            batch::prepare_options(&mut plan.jobs, &command.options);
             let mut seen = BTreeSet::new();
             for job in plan.jobs {
                 if stop.load(Ordering::Relaxed) {

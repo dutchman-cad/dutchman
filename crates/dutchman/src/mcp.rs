@@ -241,7 +241,7 @@ fn option_properties() -> Map<String, Value> {
         },
         "overwrite": {
             "type": "boolean",
-            "description": "Replace an existing .sc file at the output (default true). When false, an existing file is left alone and that file's conversion fails, saying so.",
+            "description": "Replace an existing .sc file at the output (default false). Without it an existing file is never replaced: the design is written to the next free name, `name (2).sc`, and the report says where.",
         },
         "solidcraft_version": {
             "type": "string",
@@ -344,7 +344,7 @@ fn tools() -> Value {
     convert.insert("dry_run".to_owned(), json!({"type": "boolean", "default": false, "description": "Return estimate, choices and fits from a quick pre-read, without decoding or writing. Output is optional."}));
     convert.insert(
         "output".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the .sc (legacy .solidcraft or .solvecraft) or .FCMacro file to write, matching to. An existing file there is replaced, unless overwrite is false. If supplied, diagnostics is also written at its specified path."}),
+        json!({"type": "string", "description": "Absolute path of the .sc (legacy .solidcraft or .solvecraft) or .FCMacro file to write, matching to. An existing file there is never replaced unless overwrite is true; the design is written to the next free numbered name instead. If supplied, diagnostics is also written at its specified path."}),
     );
     let mut all = option_properties();
     all.insert(
@@ -358,7 +358,7 @@ fn tools() -> Value {
     );
     all.insert(
         "out_dir".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Designs already there are replaced, unless overwrite is false. Converted designs are written only inside out_dir. If supplied, diagnostics, journal, report_anon, and report_key are also written at their specified paths."}),
+        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Designs already there are never replaced unless overwrite is true; a new design gets the next free numbered name. Converted designs are written only inside out_dir. If supplied, diagnostics, journal, report_anon, and report_key are also written at their specified paths."}),
     );
     all.insert(
         "jobs".to_owned(),
@@ -769,7 +769,8 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         no_memory_check: flag(arguments, "no_memory_check", false)?,
         no_verify: !flag(arguments, "verify", true)?,
         write_replay: false,
-        no_clobber: !flag(arguments, "overwrite", true)?,
+        replace: flag(arguments, "overwrite", false)?,
+        no_clobber: false,
         solidcraft,
         solidcraft_version,
         stand_up,
@@ -808,14 +809,14 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
             "fits": estimate.zip(available).map(|(e, free)| e.peak_bytes <= free),
         }));
     }
-    let output = path(arguments, "output")?;
+    let output = crate::resolve_output(&path(arguments, "output")?, options.replace);
     // A unit test's own program is not a converter.
     #[cfg(test)]
     return Ok(crate::convert_options_with_progress(
         &input,
         &output,
         &options,
-        !options.no_clobber,
+        options.replace,
         &options.part_search(),
         &|_| {},
     ));
@@ -829,7 +830,7 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
             fallback: None,
             input,
             output,
-            replace: !options.no_clobber,
+            replace: options.replace,
             search: options.part_search(),
         };
         let limits = crate::worker::Limits {
@@ -909,7 +910,7 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
     let mut anon = match optional("report_anon")? {
         Some(path) => Some(crate::anon::Request {
             counts,
-            path,
+            path: crate::resolve_file(path, options.replace),
             salt: match arguments.get("report_salt") {
                 None | Some(Value::Null) => None,
                 Some(Value::String(hex)) => Some(
@@ -917,7 +918,7 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
                 ),
                 Some(_) => return Err("report_salt must be 32 hex digits".to_owned()),
             },
-            key: optional("report_key")?,
+            key: optional("report_key")?.map(|key| crate::resolve_file(key, options.replace)),
         }),
         None if arguments.contains_key("report_salt") || arguments.contains_key("report_key") => {
             return Err("report_salt and report_key need report_anon".to_owned())

@@ -178,9 +178,9 @@ lists them. These external commands provide their own interfaces; the conversion
 and JSON reports described here retain their existing schemas.
 
 The full CLI also accepts `dutchman part.f3d` (or `dutchman convert part.f3d`) and derives
-the output beside the input from `--to`. An existing derived output is kept with exit 2;
-choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
-Explicit outputs retain their replacement behaviour. MCP output paths remain required except for `convert` with `dry_run: true`.
+the output beside the input from `--to`. An existing file is never replaced: the design is
+written to the next free name (`part (2).sc`), and `--replace` (or `--force`) replaces it.
+`--force` conflicts with `--no-clobber`, which does nothing now. MCP output paths remain required except for `convert` with `dry_run: true`.
 
 `dutchman convert --json`, `dutchman inspect --json` and `dutchman contents --json` print one JSON object on stdout. During reading and conversion, progress JSON lines are written to
 stderr unless `--quiet` is set. The `dutchman-mcp` server's tools return the same objects, as structured

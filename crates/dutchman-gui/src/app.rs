@@ -2961,12 +2961,12 @@ impl App {
                         });
                 });
                 side_by_side(ui, wide, |ui| {
-                    let mut replace = !self.options.no_clobber;
+                    let mut replace = self.options.replace;
                     if ui
                         .checkbox(&mut replace, "Replace designs already in the output folder")
                         .changed()
                     {
-                        self.options.no_clobber = !replace;
+                        self.options.replace = replace;
                     }
                     if ui.small_button("SolidCraft version…").clicked() {
                         self.solidcraft_open = true;

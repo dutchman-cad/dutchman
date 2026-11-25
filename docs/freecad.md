@@ -269,8 +269,8 @@ to 100 ASCII letters, digits, underscores, and hyphens; other characters become
 underscores and collisions get numeric suffixes, also on case-insensitive systems.
 A selected page with an explicit file path uses that exact path. An unselected
 file path supplies a base: `-o drawing.dxf` writes `drawing-Page.dxf`, etc.
-An output directory must already exist. Defaults need `--force` to overwrite;
-explicit outputs replace unless `--no-clobber` is set. All pages are encoded and
+An output directory must already exist. An existing page file is never replaced:
+the page takes the next free name (`part-Page (2).dxf`) unless `--replace` is set. All pages are encoded and
 existing outputs checked before publication; an I/O failure while publishing
 multiple files can leave earlier pages written. A document without a TechDraw
 page returns a clear error. Pages without a 3D body can be exported.
