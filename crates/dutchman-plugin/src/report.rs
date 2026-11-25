@@ -255,6 +255,35 @@ mod tests {
     }
 
     #[test]
+    fn fusion_configuration_and_dimension_notes_lead_with_their_whole_sentence() {
+        let mut report = Report::default();
+        for (code, message) in [
+            (
+                "f3d/configuration.active-row-unbound",
+                "1 Design configuration root record(s) were retained without an admitted active row of a unique table document.",
+            ),
+            (
+                "f3d/dimension.companion-untyped",
+                "2 payload-bearing Design dimension companion(s) were retained without a typed locus frame.",
+            ),
+        ] {
+            report.push_coded(Severity::Degraded, code, code, message);
+        }
+        let value = host(&report);
+        let items = value["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        for item in items {
+            let code = item["code"].as_str().unwrap();
+            let sentence = dutchman_core::row_for(Some(code), code, "")
+                .unwrap()
+                .sentence;
+            // Not clipped: the title is the whole sentence, and the raw message is the detail.
+            assert_eq!(item["title"], sentence, "{code}");
+            assert_ne!(item["message"], sentence, "{code}");
+        }
+    }
+
+    #[test]
     fn late_severe_losses_survive_item_and_byte_compaction() {
         let mut report = Report::default();
         for _ in 0..4096 {

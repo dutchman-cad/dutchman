@@ -130,6 +130,18 @@ pub const PLAIN_NOTES: &[PlainNote] = &[
         "Bodies that belong to configurations that aren't active were left out of the converted design.",
         Shown::Yes,
     ),
+    // Without the saved configuration Dutchman can't tell which bodies to leave out.
+    coded(
+        "f3d/configuration.active-row-unbound",
+        "The saved configuration couldn't be read, so bodies from other configurations may be included; check them.",
+        Shown::Yes,
+    ),
+    // A dimension without its position in the sketch isn't written to the converted sketch.
+    coded(
+        "f3d/dimension.companion-untyped",
+        "Some sketch dimensions couldn't be read and may be missing; add any you need again in SolidCraft.",
+        Shown::Yes,
+    ),
     // Records the reader kept or could not give a meaning to, and records STEP has no place for.
     // None of these changes the shape or the features.
     coded(
@@ -262,6 +274,32 @@ mod tests {
             .summary
             .starts_with("This part's feature history couldn't be read"));
         assert!(!history.summary.contains("delta_state"));
+    }
+
+    #[test]
+    fn fusion_configuration_and_dimension_notes_get_a_sentence() {
+        let configuration = view(
+            Some("f3d/configuration.active-row-unbound"),
+            "f3d/configuration.active-row-unbound",
+            "1 Design configuration root record(s) were retained without an admitted active row of a unique table document.",
+        );
+        assert!(configuration.shown && configuration.rewritten);
+        assert!(configuration
+            .summary
+            .starts_with("The saved configuration couldn't be read"));
+        let dimension = view(
+            Some("f3d/dimension.companion-untyped"),
+            "f3d/dimension.companion-untyped",
+            "2 payload-bearing Design dimension companion(s) were retained without a typed locus frame.",
+        );
+        assert!(dimension.shown && dimension.rewritten);
+        assert!(dimension.summary.starts_with("Some sketch dimensions"));
+        for note in [&configuration, &dimension] {
+            assert!(!note.summary.contains("record"), "{}", note.summary);
+            assert!(!note.summary.contains("companion"), "{}", note.summary);
+        }
+        // Their sibling codes say other things and keep their own words.
+        assert!(row_for(Some("f3d/configuration.member-unassigned"), "", "").is_none());
     }
 
     #[test]
