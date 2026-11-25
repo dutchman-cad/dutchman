@@ -1,0 +1,4 @@
+- [drawing-not-decoded-en-day.png](drawing-not-decoded-en-day.png) — A drawing file that is accepted and reported as not decoded yet.
+- [drawing-not-decoded-en-night.png](drawing-not-decoded-en-night.png) — A drawing file that is accepted and reported as not decoded yet.
+- [drawing-not-decoded-de-day.png](drawing-not-decoded-de-day.png) — A drawing file that is accepted and reported as not decoded yet.
+- [drawing-not-decoded-de-night.png](drawing-not-decoded-de-night.png) — A drawing file that is accepted and reported as not decoded yet.
