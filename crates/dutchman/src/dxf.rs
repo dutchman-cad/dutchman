@@ -108,9 +108,11 @@ fn run(
         }
         if !replace {
             // A page never replaces a file already there: it takes the next free number.
+            let own = path.clone();
             path = safe_output::next_free(&path, &|candidate| {
                 candidate.try_exists().unwrap_or(true)
-                    || paths.contains(&candidate.to_string_lossy().to_lowercase())
+                    || (candidate != own.as_path()
+                        && paths.contains(&candidate.to_string_lossy().to_lowercase()))
             });
             paths.insert(path.to_string_lossy().to_lowercase());
         }
