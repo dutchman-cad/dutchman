@@ -79,6 +79,23 @@ geometry and hands over finished areas.
 - `part` is the `name` of the part the overlay is drawn on. The overlay takes that part's transform, so `areas` and
   `z` are in the part's own frame. An overlay naming no part in the package is dropped, with a note.
 - `z` is the height of the overlay's face in the part's frame, in the package's unit.
+- `thickness` is optional, in mm, with 0 < `thickness` <= 1. With it, the overlay is solid: each area extruded
+  from `z` away from the part (up when `side` is `top`, or missing; down when `side` is `bottom`) by `thickness`,
+  holes included. Without it, or at 0, the overlay is a zero-thickness sheet at `z`, as before. A value out of range
+  refuses that overlay by name, and the rest converts.
+- Areas in one overlay never overlap or touch. Each area becomes its own closed prism, a solid with a top face, a
+  bottom face, and one planar side face for each edge of its outer loop and of every hole, all with outward normals.
+  The prisms of one overlay are one part with one look, and each keeps its own volume. SolidCraft names the first
+  `Body (<overlay>)` and the others `Body (2)`, `Body (3)` and so on.
+- The module sets the stacking through `z`. Dutchman moves nothing.
+- Dutchman caps the faces of all thick overlays in a package at 250,000 (each extruded area costs 2 plus its edge count,
+  holes included). An overlay that would pass the cap is drawn as a sheet, with a `Degraded` note naming it.
+- `metallic` and `roughness` are optional on every overlay and every part, each a number from 0 to 1. When given, they
+  are written into the body's appearance beside the colour (SolidCraft's PBR look: `metallic`, `roughness` clamped to
+  at least 0.045, and a fixed dielectric IOR of 1.5; a missing one of the pair is 0 for `metallic` and 0.5 for
+  `roughness`). A value out of range refuses that overlay or part by name. When both are missing nothing extra is
+  written. They go with a colour: on a part without `color`, and on an overlay with an `opacity` below 1, SolidCraft's
+  look cannot hold them and they are left out with a `Degraded` note.
 - `color` is optional, `#rrggbb` in sRGB. Without it: masked copper and mask are solder mask green, bare copper gold,
   silkscreen white. A value that is not `#rrggbb` refuses that overlay or part by name, and the rest converts.
 - `opacity` is optional and appears on `mask` only: a number from 0 to 1 (1 = opaque). Dutchman passes it through to
@@ -94,7 +111,8 @@ geometry and hands over finished areas.
 Loops of one area may touch at a single point (a hole touching the outer loop, or two holes touching). Points closer
 than 1e-6 mm are one point.
 
-Each overlay becomes one sheet body named after it, with one planar face per area.
+Each overlay becomes one body named after it: a sheet with one planar face per area, or, with a `thickness`, a solid for each area.
+Colour and opacity apply to every face of either.
 
 ### Limits and safety
 

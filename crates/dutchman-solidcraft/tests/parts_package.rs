@@ -393,3 +393,136 @@ fn the_cli_reads_the_board_colour_and_mask_opacity_back() {
     );
     assert!(looks[0]["faces"].as_array().unwrap().is_empty(), "{looks}");
 }
+
+#[test]
+fn a_thick_overlay_is_a_closed_solid_of_the_expected_volume() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("board.step"), cube_step()).unwrap();
+    let hole = json!([[1.0, 1.0], [1.0, 4.0], [4.0, 4.0], [4.0, 1.0]]);
+    let outer = json!([[0.0, 0.0], [5.0, 0.0], [5.0, 5.0], [0.0, 5.0]]);
+    let island = json!([[10.0, 10.0], [12.0, 10.0], [12.0, 12.0], [10.0, 12.0]]);
+    let manifest = json!({
+        "schema": PARTS_SCHEMA,
+        "models": [{"id": "board", "file": "board.step"}],
+        "parts": [{"name": "Board", "model": "board"}],
+        "overlays": [
+            {"name": "Copper top", "kind": "copper", "side": "top", "part": "Board", "z": 2.0,
+             "thickness": 0.035, "areas": [{"outer": outer, "holes": [hole]}]},
+            {"name": "Copper bottom", "kind": "copper", "side": "bottom", "part": "Board",
+             "z": -2.0, "thickness": 0.05, "areas": [{"outer": outer, "holes": []}]},
+            {"name": "Copper pour", "kind": "copper", "side": "top", "part": "Board", "z": 3.0,
+             "thickness": 0.1,
+             "areas": [{"outer": outer, "holes": [hole]}, {"outer": island, "holes": []}]},
+        ],
+    });
+    let (bytes, report) = write(dir.path(), manifest.to_string().as_bytes());
+    assert!(
+        report
+            .losses()
+            .iter()
+            .all(|loss| loss.severity != dutchman_core::Severity::Dropped),
+        "{:?}",
+        report.losses()
+    );
+    let Some(cli) = cli() else {
+        eprintln!("skipped: set SOLIDCRAFT_CLI to check the solids");
+        return;
+    };
+    let bodies = evaluate(&cli, &bytes);
+    let find = |what: &str| {
+        let found: Vec<&Value> = bodies
+            .iter()
+            .filter(|b| b["name"].as_str().is_some_and(|n| n.contains(what)))
+            .collect();
+        assert_eq!(found.len(), 1, "{what}: {bodies:?}");
+        found[0]
+    };
+    // (25 - 9) mm2 times 0.035 mm, and 25 mm2 times 0.05 mm: the top prism spans z 2 to 2.035,
+    // the bottom one z -2.05 to -2.
+    for (what, want, faces) in [
+        ("Copper top", 16.0 * 0.035, 10),
+        ("Copper bottom", 25.0 * 0.05, 6),
+    ] {
+        let body = find(what);
+        assert_eq!(body["closed"], json!(true), "{what}: {body}");
+        assert_eq!(body["faces"], json!(faces), "{what}: {body}");
+        let volume = body["volume_mm3"].as_f64().unwrap();
+        assert!(
+            (volume - want).abs() < 1e-6,
+            "{what}: volume {volume}, want {want}: {body}"
+        );
+    }
+    let top = find("Copper top");
+    assert!((top["bbox"]["min"][2].as_f64().unwrap() - 2.0).abs() < 1e-9);
+    assert!((top["bbox"]["max"][2].as_f64().unwrap() - 2.035).abs() < 1e-9);
+    let bottom = find("Copper bottom");
+    assert!((bottom["bbox"]["max"][2].as_f64().unwrap() + 2.0).abs() < 1e-9);
+    // Two areas, (25 - 9) and 4 mm2, each 0.1 mm thick, are two solids: every lump keeps its
+    // volume, so the design holds the board (a 10 mm cube) and the sum of area times thickness
+    // of every overlay.
+    assert_eq!(bodies.len(), 5, "{bodies:?}");
+    assert!(
+        bodies.iter().all(|b| b["closed"] == json!(true)),
+        "{bodies:?}"
+    );
+    let total: f64 = bodies
+        .iter()
+        .map(|b| b["volume_mm3"].as_f64().unwrap())
+        .sum();
+    let want = 1000.0 + 16.0 * 0.035 + 25.0 * 0.05 + (16.0 + 4.0) * 0.1;
+    assert!(
+        (total - want).abs() < 1e-6,
+        "volume {total}, want {want}: {bodies:?}"
+    );
+}
+
+#[test]
+fn metallic_and_roughness_reach_the_design_look_as_pbr() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("board.step"), cube_step()).unwrap();
+    let square = json!([[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]]);
+    let manifest = json!({
+        "schema": PARTS_SCHEMA,
+        "models": [{"id": "board", "file": "board.step"}],
+        "parts": [{"name": "Board", "model": "board", "color": "#c8b27a",
+                   "metallic": 0.0, "roughness": 0.5}],
+        "overlays": [
+            {"name": "Copper", "kind": "copper", "part": "Board", "z": 1.0,
+             "metallic": 0.0, "roughness": 0.45, "areas": [{"outer": square, "holes": []}]},
+            {"name": "Silk", "kind": "silkscreen", "part": "Board", "z": 1.0,
+             "areas": [{"outer": square, "holes": []}]},
+        ],
+    });
+    let (bytes, report) = write(dir.path(), manifest.to_string().as_bytes());
+    assert!(
+        report
+            .losses()
+            .iter()
+            .all(|loss| loss.severity != dutchman_core::Severity::Dropped),
+        "{:?}",
+        report.losses()
+    );
+    let doc = document(&bytes);
+    let bodies = doc["appearances"]["bodies"].as_object().unwrap();
+    let pbr_of = |what: &str| {
+        let found: Vec<&Value> = bodies
+            .iter()
+            .filter(|(name, _)| name.as_str() == what)
+            .map(|(_, look)| look)
+            .collect();
+        assert_eq!(found.len(), 1, "{what}: {bodies:?}");
+        found[0]["pbr"].clone()
+    };
+    assert_eq!(
+        pbr_of("Body (Copper)"),
+        json!({"metallic": 0.0, "roughness": 0.45, "dielectric_ior": 1.5})
+    );
+    assert_eq!(
+        pbr_of("Body"),
+        json!({"metallic": 0.0, "roughness": 0.5, "dielectric_ior": 1.5})
+    );
+    assert!(pbr_of("Body (Silk)").is_null(), "no values, no pbr");
+    if let Some(cli) = cli() {
+        assert_eq!(evaluate(&cli, &bytes).len(), 3);
+    }
+}

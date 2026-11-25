@@ -1023,11 +1023,11 @@ impl Report {
             }
             format!(
                 "{count} inserted component{} {} from other Fusion designs that this .f3d \
-                 doesn't contain; export the assembly as a Fusion Archive (.f3z) to bring \
-                 {} along.",
+                 doesn't contain; convert the whole export folder (or its zip) so the \
+                 inserted designs come along, or export the assembly as a Fusion Archive \
+                 (.f3z) from Fusion's File > Export.",
                 if plural { "s" } else { "" },
                 if plural { "come" } else { "comes" },
-                if plural { "them" } else { "it" },
             )
         } else {
             let named = if names.iter().all(|name| name.is_empty()) {
@@ -1158,8 +1158,9 @@ mod tests {
             ]
         );
         let summary = "2 inserted components come from other Fusion designs that this .f3d \
-                       doesn't contain; export the assembly as a Fusion Archive (.f3z) to \
-                       bring them along.";
+                       doesn't contain; convert the whole export folder (or its zip) so the \
+                       inserted designs come along, or export the assembly as a Fusion Archive \
+                       (.f3z) from Fusion's File > Export.";
         let left_out = &report.completeness().unwrap().left_out;
         assert_eq!(
             (left_out[0].reason.as_str(), left_out[0].count),
@@ -1173,7 +1174,8 @@ mod tests {
         one.record_missing_inserted_designs(&["Washer".to_owned()]);
         assert!(one.losses().last().unwrap().detail.starts_with(
             "1 inserted component comes from other Fusion designs that this .f3d doesn't contain; \
-             export the assembly as a Fusion Archive (.f3z) to bring it along."
+             convert the whole export folder (or its zip) so the inserted designs come along, \
+             or export the assembly as a Fusion Archive (.f3z) from Fusion's File > Export."
         ));
     }
 

@@ -2130,7 +2130,8 @@ loss naming them, counted under `completeness.left_out`, and the design is `unve
 not all there, whatever the replay says.
 For a Fusion `.f3d` whose inserted components come from designs the file doesn't contain, each is a Dropped
 `inserted design <name>` loss and the summary reads "N inserted components come from other Fusion designs
-that this .f3d doesn't contain; export the assembly as a Fusion Archive (.f3z) to bring them along." (see
+that this .f3d doesn't contain; convert the whole export folder (or its zip) so the inserted designs come
+along, or export the assembly as a Fusion Archive (.f3z) from Fusion's File > Export." (see
 [fusion.md](fusion.md)). No field is added.
 The final opening check has its own time, at least 15 minutes, not what earlier checks left.
 Opening and geometry checks share a successful evaluation only for identical written bytes with the same SolidCraft evaluator; repaired designs are evaluated again.
