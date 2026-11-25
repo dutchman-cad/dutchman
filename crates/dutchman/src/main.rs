@@ -1747,12 +1747,13 @@ fn convert(
         for line in json::completeness_lines(&report) {
             println!("{line}");
         }
-        let losses = report
-            .get("losses")
-            .and_then(Value::as_array)
-            .map_or(&[][..], Vec::as_slice);
+        if let Some(meaning) = json::unverified_history(&report, true) {
+            println!("{meaning}");
+        }
+        // Notes that change nothing the person sees wait for --verbose.
+        let losses = json::listed_losses(&report, verbose);
         if verbose || losses.len() <= json::LISTED {
-            print_losses(losses, verbose);
+            print_losses(&losses, verbose);
         } else {
             for line in json::grouped_lines(&report) {
                 eprintln!("dutchman: {line}");

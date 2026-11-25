@@ -330,12 +330,14 @@ pub fn text(report: &Value, verbose: bool) -> String {
             out.push_str(&line);
             out.push('\n');
         }
-        let losses = result
-            .get("losses")
-            .and_then(Value::as_array)
-            .map_or(&[][..], Vec::as_slice);
+        if let Some(meaning) = report::unverified_history(result, true) {
+            out.push_str("           ");
+            out.push_str(meaning);
+            out.push('\n');
+        }
+        let losses = report::listed_losses(result, verbose);
         if verbose || losses.len() <= report::LISTED {
-            for loss in losses {
+            for loss in &losses {
                 let (line, shortened) = report::loss_line(loss, verbose);
                 cut |= shortened;
                 out.push_str("           ");

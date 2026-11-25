@@ -420,9 +420,9 @@ fn length(value: Option<&Value>, what: &str) -> Result<f64, String> {
 }
 
 fn number_text(value: f64) -> String {
-    format!("{value}")
+    super::helpers::clean(value)
 }
 
 fn mm(length: f64) -> String {
-    format!("{length} mm")
+    format!("{} mm", super::helpers::clean(length))
 }

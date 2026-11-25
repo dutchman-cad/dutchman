@@ -240,16 +240,14 @@ converted  solidworks_cube.sldprt -> cube.sc (geometry without history)
 dutchman: Degraded: sldprt/source.dialect-unverified: the document carries no swSolidWorks swVersion declaration, so no declared identity was verified. …
 dutchman: Degraded: sldprt/config.inferred-without-native: 1 configuration state(s) are inferred from geometry partitions without native configuration definitions.
 dutchman: Info: step/design.parametric-records-omitted: 1 parametric/design record(s) were not represented in STEP: configuration=1
-dutchman: Info: step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s) were not represented in STEP
-dutchman: Info: step/native.source-record-omitted: 1 source-native record(s) were not represented in STEP
 dutchman: Info: history: flattened: the design carries no feature history
-dutchman: (repeated notes are grouped and long notes shortened; --verbose prints every note in full)
+dutchman: (notes are summarised in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)
 Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 The synthetic SolidWorks cube lacks native version and configuration metadata, so those
 warnings are expected for this sample. The internal records omitted from STEP do not change
-its shape: the written geometry should be one 10 mm cube (1,000 mm³). The sample has no
+its shape (`--verbose` lists them): the written geometry should be one 10 mm cube (1,000 mm³). The sample has no
 editable feature history. Check the result in SolidCraft as [below](#open-the-result-in-solidcraft).
 
 The exit code is 0, and the first line, on stdout, says what was written where: here the
@@ -327,6 +325,18 @@ The desktop shows the same estimate in the file row and starts converting when y
 Convert; see [the desktop guide](desktop.md).
 
 ## Reading the loss report
+
+Each note leads with one plain sentence: what is missing or different, and what you can do
+about it. Notes that change nothing you see (records STEP has no place for, a placement
+statistic of nothing) are left out of the default view. `--verbose` prints every note as
+Dutchman wrote it, `LEVEL: SUBJECT: MESSAGE` with the code first in the subject, and the JSON
+report always keeps every note, with the sentence added as `summary`
+([JSON report](json.md)). A note without a plain sentence yet prints as before. The sentences
+live in one table, `PLAIN_NOTES` in `crates/dutchman-core/src/plain_notes.rs`. Beside an
+editable history that was not checked, the text report says what "unverified" means (SolidCraft
+did not replay it and compare the result with the original shape; it is not a warning that the
+history is wrong) and how to check it: run again without `--no-verify`, with a STEP export of
+the same design beside the file.
 
 An assembly's conversion first says how complete it is, under the line saying what was
 written:

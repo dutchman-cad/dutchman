@@ -41,6 +41,8 @@ pub enum Status {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LossLine {
     pub level: String,
+    /// What the default view shows: the note's plain sentence when
+    /// `dutchman_core::PLAIN_NOTES` covers it, else its subject and message.
     pub text: String,
     pub full_text: String,
 }
@@ -80,9 +82,20 @@ pub struct FileView {
     pub missing_summary: Option<String>,
     pub assembly: Option<String>,
     pub assembly_causes: Vec<String>,
+    /// What "unverified" means, when this file's editable history was not checked.
+    pub unverified_note: Option<&'static str>,
+    /// Counts of the notes the default view lists.
     pub loss_summary: String,
     pub losses: Vec<LossGroup>,
+    /// The notes the default view lists, by component, each leading with its plain sentence.
+    /// Notes that change nothing the person sees are left out.
     pub components: Vec<ComponentView>,
+    /// The raw subject, code and message of the notes the card lists that lead with a plain
+    /// sentence, for the "Details" toggle. A note with no plain sentence that changes nothing
+    /// the person sees is in neither list.
+    pub details: Vec<LossLine>,
+    /// Whether the report has any note, so the full log is worth saving.
+    pub has_log: bool,
     pub can_report: bool,
     /// Converted reports start collapsed; failed reports offer help immediately.
     pub report_case: Option<ReportCase>,
@@ -254,7 +267,20 @@ pub fn anonymous_report(
     (anonymous, id)
 }
 
+/// A loss as the default view shows it: its plain sentence when there is one.
 pub fn loss_line(loss: &Value) -> LossLine {
+    let view = json::plain_view(loss);
+    if view.rewritten {
+        return LossLine {
+            text: view.summary,
+            ..raw_loss_line(loss)
+        };
+    }
+    raw_loss_line(loss)
+}
+
+/// A loss as the Details view shows it: its subject and message, whatever the table says.
+pub fn raw_loss_line(loss: &Value) -> LossLine {
     let field = |key: &str| loss.get(key).and_then(Value::as_str).unwrap_or("");
     LossLine {
         level: field("level").to_owned(),
@@ -298,11 +324,17 @@ impl FileView {
         let incomplete = report.is_some_and(incomplete);
         let missing_parts = report.and_then(missing_parts);
         let missing_summary = missing_parts.as_deref().map(missing_summary);
-        let raw: Vec<&Value> = report
+        let every_note: Vec<&Value> = report
             .and_then(|r| r.get("losses"))
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
+            .collect();
+        // Notes that change nothing the person sees stay in the details only.
+        let raw: Vec<&Value> = every_note
+            .iter()
+            .copied()
+            .filter(|loss| json::is_shown(loss))
             .collect();
         let flattened = report
             .and_then(|r| r.pointer("/verification/status"))
@@ -367,7 +399,7 @@ impl FileView {
             })
             .collect();
         let components = report
-            .map(json::components)
+            .map(json::shown_components)
             .unwrap_or_default()
             .into_iter()
             .map(|c| ComponentView {
@@ -427,6 +459,7 @@ impl FileView {
             assembly: report
                 .and_then(json::assembly_line)
                 .filter(|_| !assembly_lines.is_empty()),
+            unverified_note: report.and_then(|r| json::unverified_history(r, false)),
             assembly_causes: assembly_lines
                 .into_iter()
                 .skip(1)
@@ -435,6 +468,12 @@ impl FileView {
             loss_summary: loss_counts(&raw),
             losses,
             components,
+            details: raw
+                .iter()
+                .filter(|loss| json::plain_view(loss).rewritten)
+                .map(|loss| raw_loss_line(loss))
+                .collect(),
+            has_log: !every_note.is_empty(),
         }
     }
 }
@@ -1478,5 +1517,77 @@ mod tests {
                 .invitation
                 .is_none()
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod plain_note_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn report() -> Value {
+        json!({"ok": true, "mode": "import", "losses": [
+            {"level": "Degraded", "code": "inventor/source.kernel-history-unclosed",
+             "subject": "inventor/source.kernel-history-unclosed",
+             "message": "The kernel carrier's delta_state chain does not frame or close."},
+            {"level": "Degraded", "code": "inventor/rse.segment-pair-untyped",
+             "subject": "inventor/rse.segment-pair-untyped",
+             "message": "Retained 1 structurally paired RSe segment(s) without record semantics."},
+            {"level": "Info", "code": "step/native.source-record-omitted",
+             "subject": "step/native.source-record-omitted",
+             "message": "67 source-native record(s) were not represented in STEP"},
+        ]})
+    }
+
+    #[test]
+    fn the_card_lists_plain_sentences_and_keeps_every_raw_note_under_details() {
+        let view = FileView::from_report(&report());
+        assert_eq!(view.loss_summary, "Losses: 1 Degraded");
+        assert_eq!(view.components.len(), 1);
+        let lines = &view.components[0].lines;
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0]
+            .text
+            .starts_with("This part's feature history couldn't be read"));
+        assert!(!lines[0].text.contains("delta_state"));
+        // Details hold the raw words of the listed note only; the notes that change nothing
+        // are in the full log alone.
+        assert_eq!(view.details.len(), 1);
+        assert!(view.details[0].text.contains("delta_state"));
+        assert!(view.has_log);
+    }
+
+    #[test]
+    fn a_file_whose_only_notes_change_nothing_is_not_converted_with_losses() {
+        let report = json!({"ok": true, "mode": "import", "losses": [
+            {"level": "Info", "code": "step/native.source-record-omitted",
+             "subject": "step/native.source-record-omitted", "message": "1 record"}]});
+        let view = FileView::from_report(&report);
+        assert_eq!(view.status, Status::Converted);
+        assert!(view.components.is_empty());
+        assert!(view.details.is_empty());
+        assert!(view.has_log);
+    }
+
+    #[test]
+    fn unknown_notes_show_as_before() {
+        let report = json!({"ok": true, "losses": [
+            {"level": "Info", "subject": "history", "message": "kept alongside"}]});
+        let view = FileView::from_report(&report);
+        assert_eq!(view.components[0].lines[0].text, "history: kept alongside");
+    }
+
+    #[test]
+    fn an_unchecked_history_carries_the_explanation() {
+        let view = FileView::from_report(&json!({"ok": true, "mode": "history"}));
+        assert!(view
+            .unverified_note
+            .unwrap()
+            .contains("Check feature history in SolidCraft"));
+        let view = FileView::from_report(
+            &json!({"ok": true, "mode": "history", "verification": {"status": "verified"}}),
+        );
+        assert!(view.unverified_note.is_none());
     }
 }

@@ -36,6 +36,7 @@ pub fn converts(format: Format) -> &'static str {
         Format::SolidWorksPart => {
             "geometry; feature history waits on cadmpeg binding sketches and extrude profiles"
         }
+        Format::CreoPart => "geometry; solids and surfaces SolidCraft can import",
         _ => "geometry through STEP; solids and surfaces SolidCraft can import",
     }
 }

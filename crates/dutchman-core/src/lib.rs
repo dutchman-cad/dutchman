@@ -23,10 +23,12 @@ mod memory;
 mod names;
 #[cfg(feature = "onshape")]
 mod onshape;
+pub mod package;
 pub mod parallel;
 mod part_positions;
 pub mod parts;
 pub mod placement;
+mod plain_notes;
 pub mod preflight;
 mod progress;
 pub mod progress_words;
@@ -161,6 +163,7 @@ impl Model {
         )
     }
 }
+pub use plain_notes::{plain_view, row_for, PlainNote, PlainView, Shown, PLAIN_NOTES};
 pub use report::{
     AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureOutput, FeatureStatus, Inferred,
     InferredAgainst, InferredSelection, LeftOutGroup, Loss, Mode, Outcome, OutputMatch,

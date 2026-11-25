@@ -1328,7 +1328,7 @@ impl Builder<'_> {
                     import_feature(part, id, &label, Some(component), suppressed, &blob);
                 if matches!(replayed, Replay::None | Replay::Rest(_)) {
                     let mut looks =
-                        history::imported(part, &step, self.report, self.has_appearances)?;
+                        history::imported_restated(part, &step, self.report, self.has_appearances)?;
                     looks.rename_bodies(&name, &mut self.bodies);
                     if let (Some(names), Some(fields)) = (
                         looks

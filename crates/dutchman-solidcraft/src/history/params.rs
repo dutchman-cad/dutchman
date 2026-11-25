@@ -754,9 +754,14 @@ pub(crate) fn values(model: &dutchman_core::Model) -> BTreeMap<String, String> {
 
 fn literal(value: &ParameterValue) -> Option<String> {
     match value {
-        ParameterValue::Length(length) => Some(format!("{} mm", length.get())),
-        ParameterValue::Angle(angle) => Some(format!("{} deg", angle.get().to_degrees())),
-        ParameterValue::Real(real) => Some(format!("{}", real.get())),
+        ParameterValue::Length(length) => {
+            Some(format!("{} mm", super::helpers::clean(length.get())))
+        }
+        ParameterValue::Angle(angle) => Some(format!(
+            "{} deg",
+            super::helpers::clean(angle.get().to_degrees())
+        )),
+        ParameterValue::Real(real) => Some(super::helpers::clean(real.get())),
         ParameterValue::Integer(integer) => Some(integer.to_string()),
         ParameterValue::Boolean(_) | ParameterValue::String(_) => None,
     }
