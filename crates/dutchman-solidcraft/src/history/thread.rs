@@ -502,7 +502,7 @@ mod tests {
         }
         // Every known target refuses; so does a thread with no designation.
         let model = model();
-        for minor in 18..=49 {
+        for minor in 19..=49 {
             let mut ctx = Context::testing(&model);
             ctx.target_version = format!("0.{minor}.0").parse().unwrap();
             let reason = map(

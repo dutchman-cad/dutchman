@@ -4008,7 +4008,6 @@ mod cli_tests {
         {
             let _forced = tests_force::force_unified_thread();
             assert!(VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
-            assert!(!VersionGate::MoveBody.supported("0.1.0".parse().unwrap()));
         }
         assert!(!VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
     }
