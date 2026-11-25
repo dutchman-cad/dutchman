@@ -115,7 +115,6 @@ pub(crate) fn read(wire: &Value) -> cadmpeg_ir::CadIr {
         for field in [
             "bodies",
             "sketches",
-            "tessellations",
             "occurrences",
             "instance_bodies",
             "representations",

@@ -52,7 +52,6 @@ pub(crate) fn policy() -> DecodePolicy {
             max_input_bytes: MAX_INPUT_BYTES,
             ..ResourceLimits::desktop()
         },
-        ..DecodePolicy::desktop()
     }
 }
 
@@ -1866,7 +1865,7 @@ mod tests {
             );
         }
         ir.model.product_definitions.push(
-            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "bodies": ["test:model:body#A", "test:model:body#B"], "bom_properties": {}, "sketches": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}))
+            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "bodies": ["test:model:body#A", "test:model:body#B"], "bom_properties": {}, "sketches": [], "storage":{"kind":"embedded"}, "occurrences":[], "instance_bodies":[], "representations":[]}))
             .unwrap(),
         );
         for (ordinal, name, body, active) in [(0, "Short", "A", true), (1, "Tall", "B", false)] {
@@ -1972,7 +1971,7 @@ mod tests {
     fn geometry_alone_leaves_no_definition_naming_a_removed_sketch() {
         let mut model = cube();
         model.ir.model.product_definitions.push(
-            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "sketches": ["test:model:sketch#0"], "bom_properties": {}, "bodies": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}))
+            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "sketches": ["test:model:sketch#0"], "bom_properties": {}, "bodies": [], "storage":{"kind":"embedded"}, "occurrences":[], "instance_bodies":[], "representations":[]}))
             .unwrap(),
         );
         geometry_only(&mut model.ir);
@@ -2040,6 +2039,7 @@ mod tests {
         );
         let findings = vec![Finding {
             check: Check::ParameterDomain,
+            rule: cadmpeg_ir::report::check::RuleName::from_static("parameter_domain"),
             severity: CadmpegSeverity::Error,
             entity: Some(model.ir.geometry.coedges[0].id.to_string()),
             related: Vec::new(),

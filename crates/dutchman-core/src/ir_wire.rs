@@ -183,7 +183,9 @@ mod tests {
     /// Every arena the CADIR wire omits, as `(name, rows as JSON)`.
     fn arenas(ir: &CadIr) -> Vec<(&'static str, Value)> {
         let m = &ir.model;
-        let rows = |value| serde_json::to_value(value).unwrap();
+        fn rows<T: serde::Serialize>(value: &T) -> Value {
+            serde_json::to_value(value).unwrap()
+        }
         vec![
             ("features", rows(&m.features)),
             (

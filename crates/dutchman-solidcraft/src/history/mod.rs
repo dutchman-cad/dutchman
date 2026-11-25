@@ -3746,7 +3746,23 @@ mod tests {
                     .extend(copy[arena].as_array().unwrap().iter().cloned());
             }
         }
-        wire["geometry"]["bodies"][0]["name"] = json!("Solid");
+        // The reader holds each arena in id order, which the appended copies are not in.
+        for arena in wire["geometry"].as_object_mut().unwrap().values_mut() {
+            if let Some(rows) = arena.as_array_mut() {
+                rows.sort_by_key(|row| row["id"].as_str().unwrap_or_default().to_owned());
+            }
+        }
+        let first = wire["geometry"]["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|body| {
+                body["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("synthetic:cube:"))
+            })
+            .unwrap();
+        wire["geometry"]["bodies"][first]["name"] = json!("Solid");
         source.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let model = &wire["model"];
         let mut ctx = Context::new(model).with_geometry(&wire["geometry"]);

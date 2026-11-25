@@ -1066,7 +1066,7 @@ mod tests {
             definitions.push(json!({
                 "id": format!("synthetic:test:component#block-{index}"), "kind": "part",
                 "bodies": [id], "sketches": [], "bom_properties": {},
-                "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [],
+                "storage": {"kind": "embedded"}, "occurrences": [],
                 "instance_bodies": [], "representations": []
             }));
         }

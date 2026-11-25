@@ -301,15 +301,14 @@ pub fn bundle(
         else {
             return Ok(None);
         };
-        let signature = Signature::new(
-            finding,
-            document
-                .source
-                .as_ref()
-                .and_then(|source| cadmpeg_core::text::CodecId::new(source.format()))
-                .unwrap_or_else(|| cadmpeg_core::text::CodecId::new("cadir").unwrap()),
-            cadmpeg_registry::repro::Stage::Check,
-        );
+        let format = document
+            .source
+            .as_ref()
+            .map_or("cadir", |source| source.format());
+        let Some(codec) = cadmpeg_core::text::CodecId::new(format) else {
+            return Ok(None);
+        };
+        let signature = Signature::new(finding, codec, cadmpeg_registry::repro::Stage::Check);
         let initial = cadmpeg_registry::repro::cut(document, finding, options).ok();
         if initial
             .as_ref()

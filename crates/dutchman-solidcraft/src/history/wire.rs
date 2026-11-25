@@ -34,12 +34,25 @@ pub(super) const SKETCH_ARENAS: &[&str] = &[
     "sketches",
 ];
 
-/// The wire form of `model`, with only the arenas in `keep`.
-pub(super) fn only_arenas<T: Serialize>(
-    model: &T,
+/// The wire form of `model`, with only the arenas in `keep`. The CADIR wire leaves out the
+/// design arenas, so those come from the model's own statement of them
+/// (`Model::omitted_arenas_value`), with the same rows.
+pub(super) fn only_arenas(
+    model: &cadmpeg_ir::document::Model,
     keep: &[&str],
 ) -> Result<Value, serde_json::Error> {
-    model.serialize(Filter { keep })
+    let mut kept = match model.serialize(Filter { keep })? {
+        Value::Object(kept) => kept,
+        _ => Map::new(),
+    };
+    if let Value::Object(mut omitted) = model.omitted_arenas_value()? {
+        for name in keep {
+            if let Some(rows) = omitted.remove(*name) {
+                kept.insert((*name).to_owned(), rows);
+            }
+        }
+    }
+    Ok(Value::Object(kept))
 }
 
 /// A serializer for a struct that keeps the named fields as a JSON object.

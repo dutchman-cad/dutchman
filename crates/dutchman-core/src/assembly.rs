@@ -4446,7 +4446,7 @@ mod tests {
             .push(json!({
                 "id": "synthetic:test:component#unplaced", "kind": "part",
                 "bodies": ["synthetic:test:body#unplaced"], "sketches": [], "bom_properties": {},
-                "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [],
+                "storage": {"kind": "embedded"}, "occurrences": [],
                 "instance_bodies": [], "representations": []
             }));
         let model = Model {
@@ -5431,12 +5431,12 @@ mod tests {
         // cadmpeg leaves root-level features unowned. When the root component is folded into
         // an embedded part, its slice must still take them.
         let model = repeated_sketch_part([0.0, 0.0], selected_layout_profile());
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let root = "f3d:model:component#root";
         let body = wire["model"]["product_definitions"][0]["bodies"].clone();
         wire["model"]["product_definitions"] = json!([{
             "id": root, "kind": "part", "bodies": body, "sketches": [], "bom_properties": {},
-            "storage": {"kind": "file", "document": {}}, "tessellations": [], "occurrences": [],
+            "storage": {"kind": "file", "document": {}}, "occurrences": [],
             "instance_bodies": [], "representations": []
         }]);
         wire["model"]["occurrences"] = json!([]);
@@ -5466,7 +5466,7 @@ mod tests {
         );
         assert_eq!(kept.len(), 2, "{kept:?}");
         // With loose bodies as well, each unowned feature and parameter lives in one slice.
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["geometry"]["bodies"]
             .as_array_mut()
             .unwrap()
@@ -5489,7 +5489,7 @@ mod tests {
         );
         let loose = slice_of(&["synthetic:model:body#loose"], HistoryOwner::Root);
         let parameters = |part: &Model| {
-            serde_json::to_value(&part.ir).unwrap()["model"]["parameters"]
+            crate::ir_wire::to_value(&part.ir).unwrap()["model"]["parameters"]
                 .as_array()
                 .map_or(0, Vec::len)
         };

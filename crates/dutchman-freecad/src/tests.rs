@@ -555,8 +555,8 @@ fn raw_joint_model(definition: Value) -> Model {
     let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let identity = dutchman_core::placement::IDENTITY;
     wire["model"]["product_definitions"] = json!([
-        {"id": "synthetic:test:product#part", "kind": "part", "bom_properties": {}, "bodies": [], "sketches": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]},
-        {"id": "synthetic:test:product#root", "kind": "assembly", "bom_properties": {}, "bodies": [], "sketches": [], "storage":{"kind":"file", "document":{}}, "tessellations":[], "occurrences":["synthetic:test:occurrence#base", "synthetic:test:occurrence#arm"], "instance_bodies":[], "representations":[]}
+        {"id": "synthetic:test:product#part", "kind": "part", "bom_properties": {}, "bodies": [], "sketches": [], "storage":{"kind":"embedded"}, "occurrences":[], "instance_bodies":[], "representations":[]},
+        {"id": "synthetic:test:product#root", "kind": "assembly", "bom_properties": {}, "bodies": [], "sketches": [], "storage":{"kind":"file", "document":{}}, "occurrences":["synthetic:test:occurrence#base", "synthetic:test:occurrence#arm"], "instance_bodies":[], "representations":[]}
     ]);
     wire["model"]["occurrences"] = json!([
         {"id": "synthetic:test:occurrence#base", "name": "Base",

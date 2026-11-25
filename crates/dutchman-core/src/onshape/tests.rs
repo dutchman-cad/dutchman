@@ -947,12 +947,7 @@ fn two_part_studio(x: f64) -> Model {
     wire["model"]["occurrences"] = json!([placed(0, "first", 0.0), placed(1, "second", x)]);
     for definition in wire["model"]["product_definitions"].as_array_mut().unwrap() {
         definition["storage"] = json!({"kind":"embedded"});
-        for field in [
-            "tessellations",
-            "occurrences",
-            "instance_bodies",
-            "representations",
-        ] {
+        for field in ["occurrences", "instance_bodies", "representations"] {
             definition[field] = json!([]);
         }
     }
@@ -961,7 +956,7 @@ fn two_part_studio(x: f64) -> Model {
         .unwrap()
         .push(json!({
             "id":"synthetic:test:component#file", "storage":{"kind":"file", "document":{}},
-            "bodies":[], "sketches":[], "bom_properties":{}, "tessellations":[],
+            "bodies":[], "sketches":[], "bom_properties":{},
             "occurrences":["synthetic:test:occurrence#0", "synthetic:test:occurrence#1"],
             "instance_bodies":[], "representations":[]
         }));
