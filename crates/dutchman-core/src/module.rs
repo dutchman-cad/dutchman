@@ -91,22 +91,32 @@ pub fn installed() -> bool {
     find().is_some()
 }
 
-type Cache = Mutex<HashMap<PathBuf, Result<Info, String>>>;
+/// A module program as it was when asked: path, modification time and size.
+type Stamp = (PathBuf, Option<std::time::SystemTime>, u64);
+type Cache = Mutex<HashMap<Stamp, Info>>;
 
-/// Asks a module what it reads, once per program: a changed module is a new run of Dutchman.
+/// Asks a module what it reads. Answers are remembered per program file as it is now (path,
+/// modification time and size), so an upgraded module is asked again. A failure is never
+/// remembered: the next call tries again.
 pub fn info(program: &Path, limits: &Limits) -> Result<Info, Error> {
     static CACHE: OnceLock<Cache> = OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
-    if let Ok(cache) = cache.lock() {
-        if let Some(found) = cache.get(program) {
-            return found.clone().map_err(Error::Module);
+    let stamp = std::fs::metadata(program)
+        .ok()
+        .map(|meta| (program.to_path_buf(), meta.modified().ok(), meta.len()));
+    if let Some(stamp) = &stamp {
+        if let Ok(cache) = cache.lock() {
+            if let Some(found) = cache.get(stamp) {
+                return Ok(found.clone());
+            }
         }
     }
-    let fresh = ask_info(program, limits);
-    if let Ok(mut cache) = cache.lock() {
-        cache.insert(program.to_path_buf(), fresh.clone());
+    let fresh = ask_info(program, limits).map_err(Error::Module)?;
+    if let (Some(stamp), Ok(mut cache)) = (stamp, cache.lock()) {
+        cache.retain(|(path, _, _), _| path != &stamp.0);
+        cache.insert(stamp, fresh.clone());
     }
-    fresh.map_err(Error::Module)
+    Ok(fresh)
 }
 
 fn ask_info(program: &Path, limits: &Limits) -> Result<Info, String> {
@@ -157,14 +167,24 @@ fn ask_info(program: &Path, limits: &Limits) -> Result<Info, String> {
     })
 }
 
-/// Whether the installed electronics module reads files with this extension.
+/// Extensions of circuit board files, used only when the installed module cannot be run, so such
+/// a file gets the module's own error and not "unknown format".
+const BOARD_LIKE_EXTENSIONS: &[&str] = &["PcbDoc", "kicad_pcb", "brd", "SchDoc"];
+
+/// Whether the installed electronics module reads files with this extension. When the module is
+/// installed but cannot be run, a board-like extension still counts, and `read` then says why
+/// the module could not be run.
 pub fn reads_extension(ext: &str) -> bool {
     let Some(program) = find() else {
         return false;
     };
     let ext = ext.trim_start_matches('.');
-    info(&program, &Limits::default())
-        .is_ok_and(|info| info.extensions.iter().any(|e| e.eq_ignore_ascii_case(ext)))
+    match info(&program, &Limits::default()) {
+        Ok(info) => info.extensions.iter().any(|e| e.eq_ignore_ascii_case(ext)),
+        Err(_) => BOARD_LIKE_EXTENSIONS
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(ext)),
+    }
 }
 
 /// Reads `input` with the installed electronics module.
@@ -183,7 +203,12 @@ pub fn read_with(
     limits: &Limits,
     report: &mut Report,
 ) -> Result<Model, Error> {
-    let info = info(program, limits)?;
+    let info = info(program, limits).map_err(|err| match err {
+        Error::Module(reason) => Error::Module(format!(
+            "the electronics module is installed but could not be run: {reason}"
+        )),
+        other => other,
+    })?;
     if info.interface != INTERFACE {
         return Err(Error::Module(format!(
             "the electronics module {} speaks module interface {}, and this Dutchman speaks interface {INTERFACE}. \
@@ -212,7 +237,7 @@ pub fn read_with(
     }
     if let Some(false) = detects(program, input, limits) {
         return Err(Error::Module(format!(
-            "the electronics module {} does not recognise {} as a circuit board it reads",
+            "the electronics module {} says {} is not a circuit board it reads, so Dutchman does not treat it as one (the module decides this from the file's contents and its name)",
             info.version,
             input.display()
         )));
@@ -574,5 +599,72 @@ cat "$out/manifest.json""#
         };
         let error = run_read(&ok_read(), &limits).unwrap_err();
         assert!(error.to_string().contains("more than Dutchman accepts"));
+    }
+
+    #[test]
+    fn a_failed_info_is_retried_and_an_upgraded_module_is_read_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("dutchman-electronics");
+        let write = |body: &str| {
+            std::fs::write(&program, body).unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        let limits = Limits::default();
+        write("#!/bin/sh\nexit 4\n");
+        assert!(info(&program, &limits).is_err());
+        write("#!/bin/sh\necho '{\"version\":\"1.0.0\",\"interface\":1,\"extensions\":[\"PcbDoc\"]}'\n");
+        assert_eq!(info(&program, &limits).unwrap().version, "1.0.0");
+        // Same size, a new modification time and new answer.
+        let later = std::time::SystemTime::now() + Duration::from_secs(5);
+        write("#!/bin/sh\necho '{\"version\":\"2.0.0\",\"interface\":1,\"extensions\":[\"PcbDoc\"]}'\n");
+        std::fs::File::options()
+            .write(true)
+            .open(&program)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        assert_eq!(info(&program, &limits).unwrap().version, "2.0.0");
+    }
+
+    #[test]
+    fn a_module_that_cannot_be_run_is_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("dutchman-electronics");
+        std::fs::write(&program, "#!/bin/sh\necho broken install >&2\nexit 1\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let error = read_with(
+            &program,
+            &board(dir.path()),
+            &Limits::default(),
+            &mut Report::default(),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("the electronics module is installed but could not be run"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_detect_no_means_not_a_board() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = fake(dir.path(), 1, &ok_read());
+        let script = std::fs::read_to_string(&program)
+            .unwrap()
+            .replace(r#""detection":"yes""#, r#""detection":"no""#);
+        std::fs::write(&program, script).unwrap();
+        let error = read_with(
+            &program,
+            &board(dir.path()),
+            &Limits::default(),
+            &mut Report::default(),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("is not a circuit board"),
+            "{error}"
+        );
     }
 }

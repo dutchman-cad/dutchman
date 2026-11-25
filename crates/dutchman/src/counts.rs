@@ -32,6 +32,7 @@ words!(SourceFormat {
     Acis => "acis",
     Step => "step",
     Iges => "iges",
+    ModuleBoard => "module_board",
     OnshapeBundle => "onshape_bundle",
     UnclassifiedPart => "unclassified_part",
     Unknown => "unknown"

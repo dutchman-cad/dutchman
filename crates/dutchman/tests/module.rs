@@ -159,3 +159,19 @@ fn a_module_that_wrote_no_manifest_is_a_named_error() {
     assert!(!out.status.success());
     assert!(text(&out).contains("no manifest.json"), "{}", text(&out));
 }
+
+#[test]
+fn a_module_that_cannot_run_info_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    module(dir.path(), GOOD_READ);
+    let path = dir.path().join("dutchman-electronics");
+    let _guard = EXECUTABLE_PUBLICATION.lock().unwrap();
+    std::fs::write(&path, "#!/bin/sh\necho broken >&2\nexit 3\n").unwrap();
+    drop(_guard);
+    let input = board(dir.path());
+    let out = convert(Some(dir.path()), &input, &dir.path().join("tiny.sc"));
+    assert!(!out.status.success());
+    let text = text(&out);
+    assert!(text.contains("installed but could not be run"), "{text}");
+    assert!(!text.contains("unknown"), "{text}");
+}
