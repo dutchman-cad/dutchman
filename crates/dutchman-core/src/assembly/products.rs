@@ -352,11 +352,32 @@ impl Products<'_> {
                 continue;
             };
             self.seen.insert(original.to_owned());
-            let prototype = row
+            let Some(prototype) = row
                 .get("prototype")
                 .and_then(Value::as_str)
                 .and_then(|id| self.definitions.get(id))
-                .ok_or("a component placement names no definition")?;
+            else {
+                // The definition is not stated (an unresolved link). Place it as an external
+                // component with no file, which the assembly reports as left out.
+                let id = self.fresh_id(original);
+                let mut placed = (*row).clone();
+                let fields = placed
+                    .as_object_mut()
+                    .ok_or("a component placement has no fields")?;
+                fields
+                    .entry("transform".to_owned())
+                    .or_insert_with(|| json!(IDENTITY));
+                fields.insert("id".to_owned(), json!(id));
+                fields.insert("ordinal".to_owned(), json!(self.out.len()));
+                fields.insert("parent".to_owned(), self.parent_value(parent));
+                fields.insert(
+                    "prototype".to_owned(),
+                    json!({"kind":"external", "document":null, "object":null,
+                        "definition":row.get("prototype")}),
+                );
+                self.out.push(placed);
+                continue;
+            };
             let mut placed = (*row).clone();
             let source_node = row.get("file_root_component").and_then(Value::as_bool) != Some(true);
             if source_node {
@@ -922,5 +943,18 @@ mod tests {
         ]});
         model["occurrences"][0]["representation"] = json!("x");
         project(&mut model).unwrap();
+    }
+
+    #[test]
+    fn a_dangling_prototype_is_placed_as_an_unresolved_external_component() {
+        let mut model = json!({"product_definitions":[
+            {"id":"root", "storage":{"kind":"file", "document":{}}, "occurrences":["a"]}
+        ], "occurrences":[{"id":"a", "name":"lost link", "prototype":"absent/unresolved"}]});
+        project(&mut model).unwrap();
+        let rows = model["occurrences"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["prototype"]["kind"], "external");
+        assert_eq!(rows[0]["prototype"]["definition"], "absent/unresolved");
+        assert_eq!(rows[0]["parent"]["kind"], "root");
     }
 }
