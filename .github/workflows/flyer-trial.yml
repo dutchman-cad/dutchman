@@ -23,6 +23,16 @@ jobs:
       # Keep the build outside the checkout, which is cleaned on every run, so the second run is warm.
       CARGO_TARGET_DIR: ${{ github.workspace }}/../flyer-target
     steps:
+      # A flyer runner's reused workspace can hold a clone missing objects it claims
+      # ("remote did not send all necessary objects"); start that workspace clean.
+      - name: Clear a corrupt reused workspace
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/.git" ] && ! git -C "$GITHUB_WORKSPACE" fsck --connectivity-only --no-progress >/dev/null 2>&1; then
+            echo "::warning::corrupt git workspace on $RUNNER_NAME; clearing it before checkout"
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi
       - uses: actions/checkout@v7
         with:
           persist-credentials: false

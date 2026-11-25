@@ -53,7 +53,15 @@ mod guest {
     /// SolidCraft's `evaluate` import: each design is staged and opened in a private host
     /// session, apart from every open design and every file, and discarded after its commands.
     #[derive(Debug)]
-    struct HostSessions;
+    struct HostSessions(std::sync::Arc<crate::progress::Progress>);
+
+    /// Tell the operations panel where the conversion is; SolidCraft 0.48 draws it and
+    /// older versions ignore it.
+    fn report(step: Option<(f32, String)>) {
+        if let Some((fraction, message)) = step {
+            control::progress(fraction, &message);
+        }
+    }
     struct Staged;
     impl crate::evaluator::Session for Staged {
         fn run(
@@ -78,6 +86,7 @@ mod guest {
             if control::cancelled() {
                 return Err("Cancelled".into());
             }
+            report(self.0.check_started());
             // Staging after a run starts a new design; reset also drops the last one.
             evaluate::reset();
             for chunk in design.chunks(crate::CHUNK_BYTES) {
@@ -128,6 +137,7 @@ mod guest {
                     return Err(folder_denied(&file.name, e));
                 }
             }
+            let progress = std::sync::Arc::new(crate::progress::Progress::default());
             let budget = Cell::new(0u64);
             let index_error = RefCell::new(None);
             let checked =
@@ -150,6 +160,7 @@ mod guest {
             }
             checked.map_err(error)?;
             let main_bytes = RefCell::new(Some(read("", file.size, &budget)?));
+            report(progress.file_read());
             let files = Cell::new(1usize);
             // The first error a host import returned, passed back to the host unchanged.
             let host_error: RefCell<Option<PluginError>> = RefCell::new(None);
@@ -184,6 +195,7 @@ mod guest {
                         "{host_path}: input exceeds the {limit}-byte file limit; choose a smaller CAD file"
                     ))));
                 }
+                report(progress.part_read());
                 files.set(files.get() + 1);
                 if files.get() > 4096 {
                     return Err(keep(PluginError::LimitExceeded(
@@ -217,7 +229,9 @@ mod guest {
                     path == Path::new(&canonical)
                 })
             };
-            let evaluator = std::sync::Arc::new(crate::evaluator::HostEvaluator(HostSessions));
+            let evaluator = std::sync::Arc::new(crate::evaluator::HostEvaluator(HostSessions(
+                progress.clone(),
+            )));
             let converted = crate::convert(&file.name, options, &reader, &resolve, Some(evaluator));
             // Assembly salvage may have succeeded. A fatal capability failure still
             // aborts the whole import, before any design bytes reach the host.

@@ -663,14 +663,48 @@ fn a_tool_without_cutting_data_gets_placeholders_and_says_so() {
     assert!(near(f(d, "rpm"), 1000.0));
     assert!(near(f(d, "feed"), 100.0));
     assert!(near(f(d, "tip_angle"), 118.0));
-    let degraded: Vec<_> = c
-        .report
-        .losses()
+    let losses = c.report.losses();
+    let placeholders: Vec<_> = losses
+        .iter()
+        .filter(|l| l.detail.contains("placeholders"))
+        .collect();
+    assert_eq!(placeholders.len(), 1);
+    assert_eq!(
+        placeholders[0].severity,
+        Severity::Info,
+        "a tool with no presets lost nothing"
+    );
+    // The missing point angle is still an approximation.
+    let degraded: Vec<_> = losses
         .iter()
         .filter(|l| l.severity == Severity::Degraded)
         .collect();
     assert_eq!(degraded.len(), 1);
-    assert!(degraded[0].detail.contains("placeholders") && degraded[0].detail.contains("118"));
+    assert!(degraded[0].detail.contains("118"));
+}
+
+#[test]
+fn placeholders_for_presets_that_could_not_be_used_stay_degraded() {
+    let mut t = tool(
+        "drill",
+        "unusable",
+        geo(&[
+            ("DC", 5.0),
+            ("LCF", 30.0),
+            ("LB", 60.0),
+            ("SFDM", 5.0),
+            ("SIG", 118.0),
+        ]),
+    );
+    t["start-values"] = json!({"presets": [{"name": "empty"}]});
+    let c = convert_lib(&library(vec![t]));
+    let losses = c.report.losses();
+    let placeholders: Vec<_> = losses
+        .iter()
+        .filter(|l| l.detail.contains("placeholders"))
+        .collect();
+    assert_eq!(placeholders.len(), 1);
+    assert_eq!(placeholders[0].severity, Severity::Degraded);
 }
 
 #[test]
@@ -1270,4 +1304,158 @@ fn a_dovetail_whose_neck_meets_its_flank_is_taken_with_the_shoulder_as_the_neck(
     assert_eq!(d["tip_angle"], 45.0);
     assert!((d["shank_d"].as_f64().unwrap() - 3.175).abs() < 1e-6);
     assert!((d["shank_len"].as_f64().unwrap() - 23.9395).abs() < 1e-6);
+}
+
+#[test]
+fn generated_names_state_sizes_without_float_noise() {
+    let name = |unit: &str, dc: f64| {
+        let mut t = tool("flat end mill", "x", geo(&[("DC", dc), ("LCF", 10.0)]));
+        t["unit"] = json!(unit);
+        t.as_object_mut().unwrap().remove("description");
+        map::map_tool(&t, 0).name
+    };
+    assert_eq!(
+        name("inches", 0.062_499_999_999_999_99),
+        "flat end mill 1/16\" (library entry 1)"
+    );
+    assert_eq!(
+        name("inches", 0.0625),
+        "flat end mill 1/16\" (library entry 1)"
+    );
+    assert_eq!(
+        name("inches", 0.1875),
+        "flat end mill 3/16\" (library entry 1)"
+    );
+    assert_eq!(name("inches", 0.5), "flat end mill 1/2\" (library entry 1)");
+    assert_eq!(
+        name("inches", 1.5),
+        "flat end mill 1-1/2\" (library entry 1)"
+    );
+    assert_eq!(name("inches", 2.0), "flat end mill 2\" (library entry 1)");
+    assert_eq!(name("inches", 4.0), "flat end mill 4\" (library entry 1)");
+    assert_eq!(name("inches", 0.3), "flat end mill 0.3\" (library entry 1)");
+    assert_eq!(
+        name("inches", 0.123_456_7),
+        "flat end mill 0.1235\" (library entry 1)"
+    );
+    assert_eq!(
+        name("millimeters", 6.0),
+        "flat end mill 6 mm (library entry 1)"
+    );
+    assert_eq!(
+        name("millimeters", 6.35),
+        "flat end mill 6.35 mm (library entry 1)"
+    );
+    assert_eq!(
+        name("millimeters", 3.175_000_000_000_000_4),
+        "flat end mill 3.175 mm (library entry 1)"
+    );
+    assert_eq!(
+        name("millimeters", 2.123_456),
+        "flat end mill 2.123 mm (library entry 1)"
+    );
+}
+
+#[test]
+fn a_library_json_is_recognised_with_holders_and_a_byte_order_mark() {
+    let dir = tempfile::tempdir().unwrap();
+    let mixed = dir.path().join("mixed.json");
+    let lib = json!({"data": [
+        {"type": "holder", "description": "BT30"},
+        tool("drill", "d", geo(&[("DC", 5.0), ("LCF", 30.0)])),
+    ]});
+    std::fs::write(&mixed, lib.to_string()).unwrap();
+    assert!(is_library(&mixed));
+    let bom = dir.path().join("bom.json");
+    let mut bytes = b"\xEF\xBB\xBF".to_vec();
+    bytes.extend_from_slice(lib.to_string().as_bytes());
+    std::fs::write(&bom, bytes).unwrap();
+    assert!(is_library(&bom));
+    assert_eq!(written(&convert_path(&bom).unwrap()).len(), 1);
+    let holders = dir.path().join("holders.json");
+    std::fs::write(
+        &holders,
+        json!({"data": [{"type": "holder", "description": "BT30"}]}).to_string(),
+    )
+    .unwrap();
+    assert!(is_library(&holders));
+    let plain = dir.path().join("plain.json");
+    std::fs::write(&plain, json!({"data": [{"id": 1}, {"id": 2}]}).to_string()).unwrap();
+    assert!(!is_library(&plain));
+}
+
+fn json_file(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, bytes).unwrap();
+    path
+}
+
+#[test]
+fn only_a_list_of_holders_and_tools_makes_a_json_a_library() {
+    let dir = tempfile::tempdir().unwrap();
+    let feature = json!({"type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 2]}});
+    let report_row = json!({"type": "row", "unit": "mm"});
+    let real = tool("drill", "d", geo(&[("DC", 5.0), ("LCF", 30.0)]));
+    for (name, lib) in [
+        ("geo.json", json!({"data": [feature.clone()]})),
+        ("report.json", json!({"data": [report_row.clone()]})),
+        (
+            "mixed-in.json",
+            json!({"data": [real.clone(), feature.clone()]}),
+        ),
+        ("bare.json", json!([real.clone()])),
+        ("no-data.json", json!({"tools": [real.clone()]})),
+    ] {
+        let path = json_file(dir.path(), name, lib.to_string().as_bytes());
+        assert!(!is_library(&path), "{name} is not a tool library");
+    }
+    // A real-shaped export: holders first, then tools.
+    let holders_first = json!({"data": [
+        {"type": "holder", "description": "BT30", "unit": "millimeters", "segments": []},
+        {"type": "holder", "description": "BT40"},
+        real,
+    ], "version": 22});
+    let path = json_file(
+        dir.path(),
+        "real.json",
+        holders_first.to_string().as_bytes(),
+    );
+    assert!(is_library(&path));
+    let converted = convert_path(&path).unwrap();
+    assert_eq!((converted.tools_read, converted.holders), (1, 2));
+}
+
+#[test]
+fn a_json_library_in_utf16_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = json!({"data": [tool("drill", "wide", geo(&[("DC", 5.0), ("LCF", 30.0)]))]});
+    let text = lib.to_string();
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let mut little = vec![0xFF, 0xFE];
+    little.extend(units.iter().flat_map(|u| u.to_le_bytes()));
+    let mut big = vec![0xFE, 0xFF];
+    big.extend(units.iter().flat_map(|u| u.to_be_bytes()));
+    for (name, bytes) in [("le.json", little), ("be.json", big)] {
+        let path = json_file(dir.path(), name, &bytes);
+        assert!(is_library(&path), "{name}");
+        assert_eq!(written(&convert_path(&path).unwrap())[0].0, "wide");
+    }
+    let broken = json_file(dir.path(), "odd.json", &[0xFF, 0xFE, 0x7B]);
+    assert!(!is_library(&broken));
+}
+
+#[test]
+fn a_json_is_sniffed_before_it_is_parsed() {
+    let dir = tempfile::tempdir().unwrap();
+    // Not an object, or no "data" in the first KB: refused without a full parse (the tail is
+    // not even valid JSON).
+    let mut later = b"{\"pad\": \"".to_vec();
+    later.extend(vec![b'x'; 20_000]);
+    later.extend(b"\", \"data\": [ not json");
+    assert!(!is_library(&json_file(dir.path(), "late.json", &later)));
+    assert!(!is_library(&json_file(
+        dir.path(),
+        "list.json",
+        b"  [ \"data\" ]"
+    )));
 }

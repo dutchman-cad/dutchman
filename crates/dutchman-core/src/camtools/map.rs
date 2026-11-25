@@ -651,11 +651,21 @@ pub(super) fn map_tool(tool: &Value, index: usize) -> Mapped {
 }
 
 fn fallback_name(tool: &Value, type_word: &str, index: usize) -> String {
+    let unit = match tool
+        .get("unit")
+        .and_then(Value::as_str)
+        .map(|u| u.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("inches" | "inch" | "in") => Unit::Inch,
+        Some("millimeters" | "millimetres" | "mm") => Unit::Mm,
+        _ => Unit::Unstated,
+    };
     let dia = tool
         .get("geometry")
         .and_then(|g| g.get("DC"))
         .and_then(number)
-        .map(|d| format!(" {d}"))
+        .map(|d| format!(" {}", size_label(d, unit)))
         .unwrap_or_default();
     let base = if type_word.is_empty() {
         "tool"
@@ -663,6 +673,69 @@ fn fallback_name(tool: &Value, type_word: &str, index: usize) -> String {
         type_word
     };
     format!("{base}{dia} (library entry {})", index.saturating_add(1))
+}
+
+/// The unit a tool states its sizes in, for naming it.
+#[derive(Clone, Copy)]
+enum Unit {
+    Inch,
+    Mm,
+    /// No unit, or one that is neither: the size is printed bare.
+    Unstated,
+}
+
+/// A size for a generated tool name, without float noise: an inch size as a common fraction
+/// (up to 64ths) where it is one, else at most 4 decimals; a millimetre size at most 3 decimals;
+/// a size in no known unit at most 4 decimals and no unit word. Trailing zeros are trimmed.
+fn size_label(value: f64, unit: Unit) -> String {
+    match unit {
+        Unit::Mm => return format!("{} mm", trimmed(value, 3)),
+        Unit::Unstated => return trimmed(value, 4),
+        Unit::Inch => {}
+    }
+    let sixty_fourths = value * 64.0;
+    let nearest = sixty_fourths.round();
+    if nearest >= 1.0 && (sixty_fourths - nearest).abs() < 1e-6 * nearest.max(1.0) {
+        let mut n = nearest as u64;
+        let mut d = 64_u64;
+        // Stop at a denominator of 1: two inches is 128/64, whose numerator stays even.
+        while d > 1 && n.is_multiple_of(2) {
+            n /= 2;
+            d /= 2;
+        }
+        let (whole, rest) = (n / d, n % d);
+        return match (whole, rest) {
+            (w, 0) => format!("{w}\""),
+            (0, r) => format!("{r}/{d}\""),
+            (w, r) => format!("{w}-{r}/{d}\""),
+        };
+    }
+    format!("{}\"", trimmed(value, 4))
+}
+
+/// `value` with at most `places` decimals, trailing zeros (and a bare point) trimmed.
+fn trimmed(value: f64, places: usize) -> String {
+    let text = trim_zeros(format!("{value:.places$}"));
+    if text != "0" || value == 0.0 || !value.is_finite() {
+        return text;
+    }
+    // A size that rounds to nothing keeps two significant digits instead of reading as 0.
+    let digits = (-value.abs().log10()).ceil().clamp(0.0, 12.0) as usize + 1;
+    trim_zeros(format!("{value:.digits$}"))
+}
+
+/// `text` without trailing zeros after a decimal point, and without a bare point or a `-0`.
+fn trim_zeros(text: String) -> String {
+    let text = if text.contains('.') {
+        text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    } else {
+        text
+    };
+    if text == "-0" {
+        "0".to_owned()
+    } else {
+        text
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1079,10 +1152,16 @@ fn cutting_data(
             def.turning = lead.and_then(|i| turning.get(i).copied().flatten());
         }
         None => {
-            approximations.push(
+            let text =
                 "no cutting data in the library: 1000 rpm and 100 mm/min were written as placeholders; set real values in CamCraft"
-                    .into(),
-            );
+                    .to_owned();
+            // A tool the source gives no presets has lost nothing: that is a note. Presets the
+            // source did give and the mapping could not use are a change, so they stay degraded.
+            if presets.is_empty() {
+                notes.push(text);
+            } else {
+                approximations.push(text);
+            }
             def.rpm = if def.kind.spindleless() { 0.0 } else { 1000.0 };
             def.feed = 100.0;
             def.material_group = "all".into();

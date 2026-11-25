@@ -6,6 +6,8 @@ mod adapter;
 mod evaluator;
 mod notice;
 mod preflight;
+#[cfg(any(test, target_arch = "wasm32"))]
+mod progress;
 mod report;
 mod stand_up;
 

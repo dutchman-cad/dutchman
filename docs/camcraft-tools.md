@@ -9,9 +9,17 @@ Dutchman converts a Fusion tool library into [CamCraft](https://github.com/NeoTe
 `.camtools` file. In CamCraft, **Import library…** opens the result. The desktop app takes the same
 files: add them with **Add designs** (the file dialog has a *Fusion tool libraries* filter) or drop
 them on the window, and the result is written to the output folder as `<name>.camtools`.
+`dutchman convert-all folder` converts the tool libraries in a folder (`.tools`, and the `.json` files
+that are tool libraries) with its other inputs, writing `<name>.camtools` at the mirrored path; other
+`.json` files are counted as skipped.
 
 - **Input:** a `.tools` export (a zip holding JSON) or a `.json` export. A `.json` file is taken as a
-  tool library when it holds a `data` list of Fusion tools; any other `.json` is not touched.
+  tool library when it is an object with a `data` list (named in its first 8 KB) in which every
+  entry is a holder (`type` `holder`) or a Fusion tool (a string `type` and a `geometry` object with
+  a Fusion size such as `DC`, or a `unit` beside `start-values`, `post-process`, `BMC` or `guid`),
+  with at least one entry. A bare list is not taken. UTF-8 and UTF-16 (with their byte order mark)
+  are read. Any other `.json` is not touched. A `.json` library converts exactly like a `.tools` one:
+  `dutchman library.json`, `dutchman convert library.json -o tools.camtools`, and in `convert-all`.
   A `.tools` archive with several JSON files is read as one library, in file-name order.
 - **Output:** `.camtools`, CamCraft's `camcraft-tools` file, lengths in millimetres. The tool library
   inside a CAM design (`.f3d`) is not read yet.
@@ -28,8 +36,8 @@ would be refused, instead of writing a file CamCraft will not open.
 | Level | Meaning |
 |---|---|
 | Dropped | The tool is not in the `.camtools`: a type CamCraft has no kind for, a missing size, a unit that is not millimeters or inches, or numbers CamCraft's rules refuse. The reason is given. |
-| Degraded | The tool is written, but not exactly: a face mill written as a flat end mill that does not cut at its centre, a slot mill as a keyseat cutter, a center or spot drill as a drill, a countersink as a chamfer mill, a drill with no point angle (118 degrees), or a tool with no cutting data (placeholder 1000 rpm and 100 mm/min). |
-| Info | Fusion fields with data CamCraft has no place for (plunge, ramp, lead-in, lead-out, retract and transition feeds, coolant, ramp spindle speed, tip diameter, shoulder length, holder gauge length, offsets that differ from the tool number, turret and so on); presets that match no CamCraft material; values derived rather than read; a name made unique; holder entries skipped. |
+| Degraded | The tool is written, but not exactly: a face mill written as a flat end mill that does not cut at its centre, a slot mill as a keyseat cutter, a center or spot drill as a drill, a countersink as a chamfer mill, a drill with no point angle (118 degrees), or a tool whose presets could not be used (placeholder 1000 rpm and 100 mm/min). |
+| Info | Fusion fields with data CamCraft has no place for (plunge, ramp, lead-in, lead-out, retract and transition feeds, coolant, ramp spindle speed, tip diameter, shoulder length, holder gauge length, offsets that differ from the tool number, turret and so on); presets that match no CamCraft material; values derived rather than read; a tool with no presets at all, which gets the placeholder 1000 rpm and 100 mm/min (the source had no cutting data, so nothing was changed); a name made unique; holder entries skipped. |
 
 A preset's `v_c` (surface speed) is not reported for a milling tool: it follows from `n` and the diameter. A Fusion field that is empty, zero, false or `disabled` is not reported. `guid`, `reference_guid`,
 `expressions`, `version`, `GRADE` and a preset's `name` and `description` hold no tool data and are
@@ -42,7 +50,7 @@ degrees.
 
 | Fusion field | CamCraft field | Notes |
 |---|---|---|
-| `description` | `name` | Without one, the name is made from the type and diameter. A name used twice becomes `Name (2)`. |
+| `description` | `name` | Without one, the name is made from the type and diameter, such as `flat end mill 1/16" (library entry 1)`: an inch size is a common fraction up to 64ths where it is one, else at most 4 decimals; a millimetre size has at most 3 decimals; trailing zeros are trimmed. A name used twice becomes `Name (2)`. |
 | `type` | `kind` | See the next table. |
 | `geometry.DC` | `diameter` | Required. Turning tools take `INSD` (inscribed circle) or `IC` when there is no `DC`. |
 | `geometry.LCF` | `flute_len` | Falls back to `LB`, then `OAL`, and says so. |
@@ -79,7 +87,7 @@ degrees.
 | `tapered mill` | `taper` | Only when the tip is a sharp point (tip diameter 0, no corner radius): the cone's diameter at the cutting length comes from the taper angle. A flat or ball tip has no place in CamCraft's cone and the tool is not written. |
 | `radius mill`, `counter bore`, `reamer`, `laser cutter`, `marking`, `turning custom`, anything else | not written; named in the report |
 
-Holder entries in a library (`type` `holder`) are not tools; the report counts them.
+Holder entries in a library (`type` `holder`) are not tools; the report counts them. A library with only holders fails with "this library holds only holders (N), no tools to convert"; an empty one with "this library holds no tools".
 
 The `.camtools` version is 1, 2 when a left-hand tap is written, 3 when a cutting row has a
 stepdown or stepover. The version is the oldest CamCraft reader that can take the file.

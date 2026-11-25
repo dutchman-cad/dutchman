@@ -208,3 +208,103 @@ fn a_tool_library_result_is_presented_as_tools_not_as_a_design() {
         "Paste the message. Dutchy replies with a private upload link for the tool library (72 hours)."
     );
 }
+
+fn zipped(path: &Path) {
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+    zip.start_file("tools.json", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(library().to_string().as_bytes()).unwrap();
+    zip.finish().unwrap();
+}
+
+#[test]
+fn a_json_library_converts_with_an_explicit_camtools_output() {
+    let dir = tempfile::tempdir().unwrap();
+    // Holders carry no unit or geometry here, and the file starts with a byte order mark.
+    let mut data = library()["data"].as_array().unwrap().clone();
+    data.push(json!({"type": "holder", "description": "BT30"}));
+    let mut bytes = b"\xEF\xBB\xBF".to_vec();
+    bytes.extend_from_slice(json!({"data": data}).to_string().as_bytes());
+    let input = dir.path().join("library.json");
+    std::fs::write(&input, bytes).unwrap();
+    let output = dir.path().join("tools.camtools");
+    let out = dutchman(&["convert", path(&input), "-o", path(&output), "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["input"]["format"], "fusion_tool_library");
+    assert_eq!(camtools(&output)["tools"].as_array().unwrap().len(), 2);
+    // The bare form writes beside the input.
+    let out = dutchman(&[path(&input)]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(dir.path().join("library.camtools").exists());
+}
+
+#[test]
+fn another_json_is_still_not_converted() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("other.json");
+    std::fs::write(&input, json!({"data": [{"id": 1}]}).to_string()).unwrap();
+    let out = dutchman(&["convert", path(&input), "--json"]);
+    assert!(!out.status.success());
+    assert!(!dir.path().join("other.camtools").exists());
+}
+
+#[test]
+fn convert_all_converts_json_and_tools_libraries_at_the_mirrored_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in");
+    std::fs::create_dir_all(input.join("sub")).unwrap();
+    std::fs::write(input.join("a.json"), library().to_string()).unwrap();
+    zipped(&input.join("sub").join("b.tools"));
+    std::fs::write(input.join("sub").join("other.json"), r#"{"x": 1}"#).unwrap();
+    let out_dir = dir.path().join("out");
+    let out = dutchman(&[
+        "convert-all",
+        "--json",
+        "--out-dir",
+        path(&out_dir),
+        path(&input),
+    ]);
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["converted"], 2, "{report}");
+    assert_eq!(report["skipped_by_extension"], json!({"json": 1}));
+    assert_eq!(
+        camtools(&out_dir.join("a.camtools"))["tools"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        camtools(&out_dir.join("sub").join("b.camtools"))["tools"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn a_library_of_only_holders_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("holders.json");
+    let holders: Vec<Value> = (0..3)
+        .map(|i| json!({"type": "holder", "description": format!("H{i}")}))
+        .collect();
+    std::fs::write(&input, json!({"data": holders}).to_string()).unwrap();
+    let out = dutchman(&["convert", path(&input), "--json"]);
+    assert!(!out.status.success());
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        report["error"]["message"],
+        "this library holds only holders (3), no tools to convert"
+    );
+}

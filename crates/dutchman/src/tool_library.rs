@@ -12,9 +12,38 @@ pub const FORMAT: &str = camtools::FORMAT;
 /// The program the input is from, as the reports name it.
 pub const PROGRAM: &str = "Fusion";
 
-/// Whether `path` is a Fusion tool library: a `.tools` file, or a `.json` export of one.
+/// What was decided about a file: its path, size and modification time, and the answer.
+type Verdicts =
+    std::collections::HashMap<(std::path::PathBuf, u64, Option<std::time::SystemTime>), bool>;
+
+/// Whether `path` is a Fusion tool library: a `.tools` file, or a `.json` export of one. A `.json`
+/// is looked at once per size and modification time, however many times the batch asks.
 pub fn is_library(path: &Path) -> bool {
-    camtools::is_library(path)
+    static VERDICTS: std::sync::Mutex<Option<Verdicts>> = std::sync::Mutex::new(None);
+    let is_json = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    if !is_json {
+        return camtools::is_library(path);
+    }
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    let key = (path.to_path_buf(), meta.len(), meta.modified().ok());
+    if let Some(known) = VERDICTS
+        .lock()
+        .ok()
+        .and_then(|v| v.as_ref().and_then(|m| m.get(&key).copied()))
+    {
+        return known;
+    }
+    let verdict = camtools::is_library(path);
+    if let Ok(mut guard) = VERDICTS.lock() {
+        guard
+            .get_or_insert_with(Default::default)
+            .insert(key, verdict);
+    }
+    verdict
 }
 
 /// The reader's status line for a tool library, as a design format's `status_for` says it.
@@ -113,10 +142,7 @@ pub fn convert(input_path: &Path, output: &Path, replace: bool) -> Value {
         report.insert(
             "error".to_owned(),
             json!({
-                "message": format!(
-                    "none of the {} tools in the library can be written to a .camtools (CamCraft refuses an empty library); the losses say why",
-                    converted.tools_read
-                ),
+                "message": no_tools_message(&converted),
                 "stage": dutchman_core::Stage::Map.id(),
                 "upstream": Value::Null,
             }),
@@ -144,4 +170,17 @@ pub fn convert(input_path: &Path, output: &Path, replace: bool) -> Value {
 
 fn input_of(report: &serde_json::Map<String, Value>) -> Value {
     report.get("input").cloned().unwrap_or(Value::Null)
+}
+
+/// Why nothing was written: no tool in the library, or none that CamCraft can hold.
+fn no_tools_message(converted: &camtools::Converted) -> String {
+    match (converted.tools_read, converted.holders) {
+        (0, 0) => "this library holds no tools".to_owned(),
+        (0, holders) => {
+            format!("this library holds only holders ({holders}), no tools to convert")
+        }
+        (read, _) => format!(
+            "none of the {read} tools in the library can be written to a .camtools (CamCraft refuses an empty library); the losses say why"
+        ),
+    }
 }
