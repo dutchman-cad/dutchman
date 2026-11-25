@@ -152,6 +152,27 @@ fn scoped_appearance_reason(binding: &Value) -> Option<&'static str> {
     }
 }
 
+/// The `pbr` of a look from an appearance's `metallic` and `roughness` properties, in the form
+/// SolidCraft's `appearance.assign` takes: all three numbers, roughness at least 0.045. Neither
+/// property is no `pbr`.
+fn pbr(properties: Option<&Value>) -> Option<Value> {
+    let get = |key: &str| {
+        properties?
+            .get(key)
+            .and_then(Value::as_f64)
+            .filter(|v| v.is_finite())
+    };
+    let (metallic, roughness) = (get("metallic"), get("roughness"));
+    if metallic.is_none() && roughness.is_none() {
+        return None;
+    }
+    Some(json!({
+        "metallic": metallic.unwrap_or(0.0).clamp(0.0, 1.0),
+        "roughness": roughness.unwrap_or(0.5).clamp(0.045, 1.0),
+        "dielectric_ior": 1.5,
+    }))
+}
+
 /// Body and face bindings override inline colours. Uniform, fully painted bodies need only
 /// one body look; mixed bodies retain point-selected face looks in definition coordinates.
 pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Vec<Value> {
@@ -203,6 +224,11 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
             let mut look = super::extrude::look(appearance.get("base_color")?)?;
             if let (Some(name), Some(fields)) = (appearance.get("name"), look.as_object_mut()) {
                 fields.insert("name".to_owned(), name.clone());
+            }
+            if let (Some(pbr), Some(fields)) =
+                (pbr(appearance.get("properties")), look.as_object_mut())
+            {
+                fields.insert("pbr".to_owned(), pbr);
             }
             Some(look)
         } else {

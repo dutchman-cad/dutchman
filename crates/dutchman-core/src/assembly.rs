@@ -6,6 +6,7 @@
 //! it, so a part is looked for at that path, then by its file name next to the assembly. Each
 //! part file is read once, however often it is placed.
 
+mod export;
 mod freecad;
 mod poses;
 mod position_bounds;
@@ -16,6 +17,8 @@ mod sketch_instance;
 mod slicing;
 mod solidworks;
 
+pub(crate) use export::placed_files;
+pub(crate) use export::resolve as resolve_inserted;
 pub(crate) use poses::flattened_completeness;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -747,11 +750,12 @@ pub(crate) enum Components {
 /// of part models each holding only its component's bodies, plus the design's loose bodies.
 pub(crate) fn local(
     model: &Model,
+    external: &ExternalParts,
     threads: usize,
     positions: crate::PartPositions,
     report: &mut Report,
 ) -> Components {
-    match local_components_with_threads(model, &BTreeMap::new(), threads, positions, report) {
+    match local_components_with_threads(model, external, threads, positions, report) {
         Ok(Some((assembly, _))) => Components::Assembly(Box::new(assembly)),
         Ok(None) => Components::None,
         Err(reason) => Components::Unplaceable(reason),
@@ -795,7 +799,9 @@ pub(crate) fn input_folder(input: &Path) -> &Path {
         .unwrap_or(Path::new("."))
 }
 
-type ExternalParts = BTreeMap<String, Result<(usize, std::rc::Rc<Model>), LeftOut>>;
+/// Designs read from other files that fill an occurrence, by the occurrence's id: each with
+/// its number among the designs read, or the placement left out and why.
+pub(crate) type ExternalParts = BTreeMap<String, Result<(usize, std::rc::Rc<Model>), LeftOut>>;
 
 #[cfg(test)]
 fn local_components_with(
@@ -860,16 +866,17 @@ fn local_components_in_document(
     };
     let mut occurrences: Vec<&Value> = all
         .iter()
-        .filter(|row| match scope(row) {
-            Some("local") => true,
-            Some("external") => {
-                holds_local(row)
-                    || row
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|id| external.contains_key(id))
+        .filter(|row| {
+            let filled = row
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| external.contains_key(id));
+            match scope(row) {
+                Some("local") => true,
+                Some("external") => holds_local(row) || filled,
+                // An insertion the file doesn't hold, filled from another file.
+                _ => filled,
             }
-            _ => false,
         })
         .collect();
     if occurrences.is_empty() {
@@ -1059,6 +1066,13 @@ fn local_components_in_document(
         .filter(|(id, _)| world_ids.contains(**id))
         .map(|(_, located)| located.path.clone())
         .collect();
+    let unstored_ids = unstored_poses(&document);
+    let unstored: BTreeSet<Vec<usize>> = tree
+        .paths
+        .iter()
+        .filter(|(id, _)| unstored_ids.contains(**id))
+        .map(|(_, located)| located.path.clone())
+        .collect();
     let mut assembly = Assembly {
         own_part,
         parts,
@@ -1143,7 +1157,7 @@ fn local_components_in_document(
     }
     assembly.remember_placements();
     left_out.extend(
-        place_by_joints_with(&mut assembly, &posed, &world_posed)
+        place_by_joints_with(&mut assembly, &posed, &world_posed, &unstored)
             .into_iter()
             .map(|text| JointNote { text, family: None }),
     );
@@ -1182,6 +1196,41 @@ fn world_posed(document: &Value) -> BTreeSet<String> {
             row.get("native_ref")
                 .and_then(Value::as_str)
                 .is_some_and(|native| posed_refs.contains(native))
+        })
+        .filter_map(|row| Some(row.get("id")?.as_str()?.to_owned()))
+        .collect()
+}
+
+/// The occurrences the file stores no pose for: an identity placement whose Fusion record has
+/// neither a placement matrix nor a current pose. An occurrence with no record to read is
+/// not one: its placement is the pose the file stores.
+fn unstored_poses(document: &Value) -> BTreeSet<String> {
+    let records = |name: &str| {
+        document
+            .pointer(&format!("/native/f3d/{name}"))
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
+    };
+    let unstored_refs: BTreeSet<&str> = records("xref_references")
+        .iter()
+        .chain(records("design_component_occurrences"))
+        .filter(|row| {
+            ["transform", "current_pose"]
+                .iter()
+                .all(|key| row.get(key).is_none_or(Value::is_null))
+        })
+        .filter_map(|row| row.get("id")?.as_str())
+        .collect();
+    document
+        .pointer("/model/occurrences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|row| {
+            row.get("native_ref")
+                .and_then(Value::as_str)
+                .is_some_and(|native| unstored_refs.contains(native))
+                && transform(row).is_ok_and(|placed| same(&placed, &IDENTITY))
         })
         .filter_map(|row| Some(row.get("id")?.as_str()?.to_owned()))
         .collect()
@@ -1335,7 +1384,7 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
 #[cfg(test)]
 /// [`place_by_joints_with`] with no world poses.
 fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec<String> {
-    place_by_joints_with(assembly, posed, &BTreeSet::new())
+    place_by_joints_with(assembly, posed, &BTreeSet::new(), &BTreeSet::new())
 }
 
 /// Place joined parts from stored poses and constraints. Closing joints anchor
@@ -1353,14 +1402,19 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
 ///
 /// `world_posed` are the posed occurrences whose pose is a world
 /// pose (see [`world_posed`]). Such a pose does not follow its holder, so an occurrence a joint
-/// names that holds one is placed where the file puts it: moving it to meet the joint would
-/// carry the posed one away from its pose, or leave it behind.
+/// names that holds one is held at the pose the file stores for it, rather than solved. When
+/// the file stores none (`unstored`, see [`unstored_poses`]), the joint places it, and the
+/// world-posed occurrences inside it stay where they are.
 fn place_by_joints_with(
     assembly: &mut Assembly,
     posed: &BTreeSet<Vec<usize>>,
     world_posed: &BTreeSet<Vec<usize>>,
+    unstored: &BTreeSet<Vec<usize>>,
 ) -> Vec<String> {
     let mut with_world_pose = posed.clone();
+    // The holders of a world pose the file stores no pose for: they pose the parts inside them,
+    // but nothing fixes them, so a joint places them.
+    let mut released = BTreeSet::new();
     for joint in assembly.joints.iter().filter(|joint| !joint.suppressed) {
         for path in [&joint.a, &joint.b] {
             if !path.is_empty()
@@ -1368,6 +1422,9 @@ fn place_by_joints_with(
                     .iter()
                     .any(|inner| inner.len() > path.len() && inner.starts_with(path))
             {
+                if unstored.contains(path) && !posed.contains(path) {
+                    released.insert(path.clone());
+                }
                 with_world_pose.insert(path.clone());
             }
         }
@@ -1411,7 +1468,13 @@ fn place_by_joints_with(
     // it. Internal joints therefore do not anchor their holder in the outer design.
     let mut fixed: BTreeMap<Vec<usize>, Vec<usize>> = BTreeMap::new();
     fixed.insert(Vec::new(), Vec::new());
-    fixed.extend(posed.iter().cloned().map(|path| (path, Vec::new())));
+    fixed.extend(
+        posed
+            .iter()
+            .filter(|path| !released.contains(*path))
+            .cloned()
+            .map(|path| (path, Vec::new())),
+    );
     // A joint between two components holding parts the file poses, which already holds as the
     // file places them, shows both placed in the design: no other joint moves them.
     for (index, row) in assembly.joints.iter().enumerate() {
@@ -1636,6 +1699,7 @@ fn place_by_joints_with(
         } else {
             (a_fixed, b_fixed)
         };
+        let stay: Vec<Vec<usize>> = placed_by_outer.iter().chain(world_posed).cloned().collect();
         match (a_fixed, b_fixed) {
             (true, true) => {
                 let b_frame = compose(&b, &joint.frame_b);
@@ -1658,7 +1722,7 @@ fn place_by_joints_with(
                     assembly,
                     &fixed,
                     posed,
-                    &placed_by_outer,
+                    &stay,
                     &joint.b,
                     &compose(&reach, &inverse(&joint.frame_b)),
                 );
@@ -1670,7 +1734,7 @@ fn place_by_joints_with(
                     &compose(&compose(&b, &joint.frame_b), &inverse(&joint.meeting())),
                     &inverse(&joint.frame_a),
                 );
-                move_keeping_placed(assembly, &fixed, posed, &placed_by_outer, &joint.a, &at);
+                move_keeping_placed(assembly, &fixed, posed, &stay, &joint.a, &at);
                 hold_in(&mut fixed, joint.a.clone(), &scope);
                 hold_in(&mut fixed, joint.b.clone(), &scope);
             }
@@ -2751,7 +2815,7 @@ impl<'a> Layouts<'a> {
                         self.classify(child, children, external, depth + 1),
                         // A malformed placement never matches; the build reports it.
                         transform(child).unwrap_or([[f64::NAN; 4]; 3]),
-                        child.get("visible").and_then(Value::as_bool) == Some(false),
+                        occurrence_hidden(child, false),
                     )
                 })
                 .collect()
@@ -3237,7 +3301,7 @@ fn scope(occurrence: &Value) -> Option<&str> {
 /// design inserted into this one, the occurrence itself.
 fn definition_key(occurrence: &Value) -> Option<&str> {
     match scope(occurrence) {
-        Some("external") => occurrence.get("id").and_then(Value::as_str),
+        Some("external" | "unresolved") => occurrence.get("id").and_then(Value::as_str),
         _ => occurrence
             .pointer("/prototype/definition")
             .and_then(Value::as_str),
@@ -3384,9 +3448,37 @@ fn slice(
         HistoryOwner::Definition(id) => Some(id).filter(|id| !root_definitions.contains(id)),
         HistoryOwner::Root | HistoryOwner::Unknown => None,
     };
+    // A Fusion root component folded into an embedded part has a file container beside it
+    // (see `products::file_containers`). cadmpeg leaves the history of the document root
+    // unowned. That history has exactly one owner: the folded root's slice when that slice
+    // exists (the root holds bodies), else the loose slice, as before.
+    let folds_root = |id: &str| {
+        id.starts_with("f3d:model:component#")
+            && root_definitions.contains(serde_json::json!([id, "file"]).to_string().as_str())
+    };
+    let folded_root = matches!(owner, HistoryOwner::Definition(id) if folds_root(id));
+    let root_slice_exists = wire
+        .get("product_definitions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|row| {
+            row.get("id")
+                .and_then(Value::as_str)
+                .is_some_and(folds_root)
+                && row
+                    .get("bodies")
+                    .and_then(Value::as_array)
+                    .is_some_and(|bodies| !bodies.is_empty())
+        });
     let owned = |row: &Value| match owner {
-        HistoryOwner::Definition(_) | HistoryOwner::Root => {
-            product_definition(row, &root_definitions) == definition
+        HistoryOwner::Definition(_) => {
+            let owner = product_definition(row, &root_definitions);
+            owner == definition || (folded_root && owner.is_none())
+        }
+        HistoryOwner::Root => {
+            let owner = product_definition(row, &root_definitions);
+            owner == definition && !(owner.is_none() && root_slice_exists)
         }
         HistoryOwner::Unknown => false,
     };
@@ -4526,7 +4618,13 @@ mod tests {
     fn definition_appearance_bindings_still_reach_shared_parts() {
         let model = component_appearance(None, None);
         let mut report = Report::default();
-        let assembly = match local(&model, 1, crate::PartPositions::LastShown, &mut report) {
+        let assembly = match local(
+            &model,
+            &ExternalParts::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut report,
+        ) {
             Components::Assembly(assembly) => Some(assembly),
             _ => None,
         }
@@ -4565,7 +4663,13 @@ mod tests {
 
     fn scoped_component_appearance_is_left_out(model: Model, reason: &str) {
         let mut report = Report::default();
-        let assembly = match local(&model, 1, crate::PartPositions::LastShown, &mut report) {
+        let assembly = match local(
+            &model,
+            &ExternalParts::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut report,
+        ) {
             Components::Assembly(assembly) => Some(assembly),
             _ => None,
         }
@@ -4613,7 +4717,13 @@ mod tests {
         model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         assert!(matches!(
-            local(&model, 1, crate::PartPositions::LastShown, &mut report),
+            local(
+                &model,
+                &ExternalParts::new(),
+                1,
+                crate::PartPositions::LastShown,
+                &mut report
+            ),
             Components::Assembly(_)
         ));
         let losses: Vec<_> = report
@@ -4655,7 +4765,13 @@ mod tests {
         model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         assert!(matches!(
-            local(&model, 1, crate::PartPositions::LastShown, &mut report),
+            local(
+                &model,
+                &ExternalParts::new(),
+                1,
+                crate::PartPositions::LastShown,
+                &mut report
+            ),
             Components::Assembly(_)
         ));
         let losses: Vec<_> = report
@@ -4784,7 +4900,13 @@ mod tests {
         model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         assert!(matches!(
-            local(&model, 1, crate::PartPositions::LastShown, &mut report),
+            local(
+                &model,
+                &BTreeMap::new(),
+                1,
+                crate::PartPositions::LastShown,
+                &mut report
+            ),
             Components::Assembly(_)
         ));
         let losses: Vec<_> = report
@@ -5301,6 +5423,81 @@ mod tests {
             "Part".to_owned(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_folded_fusion_root_keeps_the_history_no_component_owns() {
+        // cadmpeg leaves root-level features unowned. When the root component is folded into
+        // an embedded part, its slice must still take them.
+        let model = repeated_sketch_part([0.0, 0.0], selected_layout_profile());
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let root = "f3d:model:component#root";
+        let body = wire["model"]["product_definitions"][0]["bodies"].clone();
+        wire["model"]["product_definitions"] = json!([{
+            "id": root, "kind": "part", "bodies": body, "sketches": [], "bom_properties": {},
+            "storage": {"kind": "file", "document": {}}, "tessellations": [], "occurrences": [],
+            "instance_bodies": [], "representations": []
+        }]);
+        wire["model"]["occurrences"] = json!([]);
+        for feature in wire["model"]["features"].as_array_mut().unwrap() {
+            feature
+                .as_object_mut()
+                .unwrap()
+                .remove("product_definition");
+        }
+        let model = Model {
+            ir: serde_json::from_value(wire).unwrap(),
+            ..model
+        };
+        let document = placed_document(&model);
+        let part = only(
+            &model,
+            &document,
+            &["synthetic:model:body#part"],
+            HistoryOwner::Definition(root),
+            "Root".to_owned(),
+        )
+        .unwrap();
+        let kept = feature_ids(&part);
+        assert!(
+            kept.contains(&"synthetic:model:feature#sketch".to_owned()),
+            "{kept:?}"
+        );
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        // With loose bodies as well, each unowned feature and parameter lives in one slice.
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["geometry"]["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "synthetic:model:body#loose", "kind": "general"}));
+        wire["model"]["parameters"] = json!([{
+            "id": "synthetic:model:parameter#length", "name": "length", "expression": "1 mm",
+            "ordinal": 0, "dependencies": [], "properties": {}
+        }]);
+        let with_loose = Model {
+            ir: serde_json::from_value(wire).unwrap(),
+            ..model
+        };
+        let document = placed_document(&with_loose);
+        let slice_of = |bodies: &[&str], owner| {
+            only(&with_loose, &document, bodies, owner, "Slice".to_owned()).unwrap()
+        };
+        let folded = slice_of(
+            &["synthetic:model:body#part"],
+            HistoryOwner::Definition(root),
+        );
+        let loose = slice_of(&["synthetic:model:body#loose"], HistoryOwner::Root);
+        let parameters = |part: &Model| {
+            serde_json::to_value(&part.ir).unwrap()["model"]["parameters"]
+                .as_array()
+                .map_or(0, Vec::len)
+        };
+        for feature in feature_ids(&folded) {
+            assert!(!feature_ids(&loose).contains(&feature), "{feature} twice");
+        }
+        assert_eq!(feature_ids(&folded).len(), 2);
+        assert_eq!(parameters(&folded) + parameters(&loose), 1);
+        assert_eq!(parameters(&folded), 1);
     }
 
     #[test]
@@ -6567,19 +6764,85 @@ mod tests {
         };
         let child = BTreeSet::from([vec![0, 0]]);
         let mut moved = build();
-        place_by_joints_with(&mut moved, &child, &BTreeSet::new());
+        place_by_joints_with(&mut moved, &child, &BTreeSet::new(), &BTreeSet::new());
         assert!(
             !near(&world_at(&moved, &[0]).unwrap(), &at([0.0, 0.0, 0.0], 0.0)),
             "the holder moves to the joint when the child's pose follows it"
         );
         let mut kept = build();
-        place_by_joints_with(&mut kept, &child, &child);
+        place_by_joints_with(&mut kept, &child, &child, &BTreeSet::new());
         for (path, x) in [(vec![0], 0.0), (vec![0, 0], 5.0), (vec![1], 0.0)] {
             assert!(
                 near(&world_at(&kept, &path).unwrap(), &at([x, 0.0, 0.0], 0.0)),
                 "{path:?} {:?}",
                 world_at(&kept, &path)
             );
+        }
+    }
+
+    #[test]
+    fn a_joint_places_an_empty_holder_of_a_world_posed_child_the_file_stores_no_pose_for() {
+        // An empty holder (x = 0) carries a world-posed child at x = 5 and is joined to a
+        // carrier at x = 100. With no stored pose the joint places the holder; with one it
+        // stays there. The child stays at its world pose either way.
+        for (record, holder_x) in [
+            (json!({}), 100.0),
+            (json!({"transform": at([0.0, 0.0, 0.0], 0.0)}), 0.0),
+            (
+                json!({"current_pose": {"carrier_record_index": 1, "transform": at([0.0, 0.0, 0.0], 0.0)}}),
+                0.0,
+            ),
+        ] {
+            let mut holder = placed(0, "frame", root(), 0.0);
+            holder["native_ref"] = json!("f3d:Design/BulkStream.dat:design-component-occurrence#5");
+            let (part, mut wire) = nested_wire(
+                false,
+                Some(json!([
+                    holder,
+                    placed(1, "block", inside(0), 5.0),
+                    placed(2, "block", root(), 100.0),
+                ])),
+            );
+            let mut stored = record.clone();
+            stored["id"] = json!("f3d:Design/BulkStream.dat:design-component-occurrence#5");
+            wire["native"]["f3d"]["design_component_occurrences"] = json!([stored]);
+            let holder_id = wire["model"]["occurrences"][0]["id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let unstored = unstored_poses(&wire);
+            assert_eq!(unstored.contains(&holder_id), holder_x == 100.0, "{record}");
+            let model = Model {
+                ir: crate::test_products::read(&wire),
+                ..part
+            };
+            let mut assembly = local_components(&model).unwrap().unwrap().0;
+            assembly.joints = vec![Joint {
+                a: vec![1],
+                b: vec![0],
+                frame_a: IDENTITY,
+                frame_b: IDENTITY,
+                motion: Motion::Rigid,
+                flip: true,
+                suppressed: false,
+            }];
+            let child = BTreeSet::from([vec![0, 0]]);
+            let unstored = if unstored.contains(&holder_id) {
+                BTreeSet::from([vec![0]])
+            } else {
+                BTreeSet::new()
+            };
+            place_by_joints_with(&mut assembly, &child, &child, &unstored);
+            for (path, x) in [(vec![0], holder_x), (vec![0, 0], 5.0), (vec![1], holder_x)] {
+                assert!(
+                    near(
+                        &world_at(&assembly, &path).unwrap(),
+                        &at([x, 0.0, 0.0], 0.0)
+                    ),
+                    "{record} {path:?} {:?}",
+                    world_at(&assembly, &path)
+                );
+            }
         }
     }
 
@@ -8119,6 +8382,35 @@ mod tests {
 
     fn inside(key: u32) -> Value {
         json!({"kind": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")})
+    }
+
+    #[test]
+    fn layouts_separate_a_suppressed_child_from_a_shown_one() {
+        // Two insertions of one component: its child is suppressed in one and shown in the
+        // other. They are different layouts, not copies.
+        let mut suppressed = placed(2, "block", inside(0), 0.0);
+        suppressed["suppressed"] = json!(true);
+        let mut shown = placed(5, "block", inside(3), 0.0);
+        shown["suppressed"] = json!(false);
+        let rows = [
+            placed(0, "frame", root(), 0.0),
+            suppressed,
+            placed(3, "frame", root(), 50.0),
+            shown,
+        ];
+        let mut children: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+        children
+            .entry(rows[0]["id"].as_str().unwrap())
+            .or_default()
+            .push(&rows[1]);
+        children
+            .entry(rows[2]["id"].as_str().unwrap())
+            .or_default()
+            .push(&rows[3]);
+        let mut layouts = Layouts::default();
+        let a = layouts.classify(&rows[0], &children, &ExternalParts::new(), 0);
+        let b = layouts.classify(&rows[2], &children, &ExternalParts::new(), 0);
+        assert_ne!(a, b);
     }
 
     #[test]

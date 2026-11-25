@@ -32,7 +32,7 @@ egui_extras = { version = "0.33", default-features = false, features = ["svg"] }
 pollster = "0.4"
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }
-rfd = "0.15"
+rfd = "0.17"
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true

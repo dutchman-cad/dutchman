@@ -87,12 +87,20 @@ pub(crate) fn project(model: &mut Value) -> Result<(), String> {
         rows: &rows,
         overrides,
         used: BTreeSet::new(),
+        seen: BTreeSet::new(),
         out: Vec::new(),
         path: Vec::new(),
         level: 0,
     };
     for root in roots {
         tree.visit(root, None, &[])?;
+    }
+    // A row no root definition reaches is placed inside a component the design does not
+    // place; the placed tree cannot carry it, so refuse rather than drop it silently.
+    if rows.keys().any(|id| !tree.seen.contains(*id)) {
+        return Err(
+            "some components are placed inside components the design does not place".to_owned(),
+        );
     }
     let out = tree.out;
     if let Some(model) = model.as_object_mut() {
@@ -263,12 +271,60 @@ struct Products<'a> {
     rows: &'a BTreeMap<&'a str, &'a Value>,
     overrides: BTreeMap<&'a str, BTreeMap<Vec<String>, &'a Value>>,
     used: BTreeSet<String>,
+    /// Rows the walk reached, or deliberately left out with what they hold.
+    seen: BTreeSet<String>,
     out: Vec<Value>,
     path: Vec<String>,
     level: usize,
 }
 
 impl Products<'_> {
+    fn parent_value(&self, parent: Option<&str>) -> Value {
+        parent.map_or_else(
+            || json!({"kind":"root"}),
+            |id| json!({"kind":"occurrence", "occurrence":id}),
+        )
+    }
+
+    fn fresh_id(&mut self, original: &str) -> String {
+        if self.used.insert(original.to_owned()) {
+            original.to_owned()
+        } else {
+            // A JSON pair cannot alias a typed source id. Keep the native key
+            // at the end so explicit nested joint paths can select this use.
+            let key = original.rsplit(['#', ':']).next().unwrap_or(original);
+            format!("{}:{key}", json!([original, self.out.len()]))
+        }
+    }
+
+    /// Mark what a deliberately left-out component holds as accounted for.
+    fn account_for(&mut self, definition: &Value, depth: usize) {
+        if depth > MAX_DEPTH {
+            return;
+        }
+        for child in definition
+            .get("occurrences")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if !self.seen.insert(child.to_owned()) {
+                continue;
+            }
+            let inner = self
+                .rows
+                .get(child)
+                .and_then(|row| row.get("prototype"))
+                .and_then(Value::as_str)
+                .and_then(|id| self.definitions.get(id))
+                .copied();
+            if let Some(inner) = inner {
+                self.account_for(inner, depth + 1);
+            }
+        }
+    }
+
     fn visit(
         &mut self,
         definition: &Value,
@@ -295,11 +351,33 @@ impl Products<'_> {
             let Some(row) = self.rows.get(original) else {
                 continue;
             };
-            let prototype = row
+            self.seen.insert(original.to_owned());
+            let Some(prototype) = row
                 .get("prototype")
                 .and_then(Value::as_str)
                 .and_then(|id| self.definitions.get(id))
-                .ok_or("a component placement names no definition")?;
+            else {
+                // The definition is not stated (an unresolved link). Place it as an external
+                // component with no file, which the assembly reports as left out.
+                let id = self.fresh_id(original);
+                let mut placed = (*row).clone();
+                let fields = placed
+                    .as_object_mut()
+                    .ok_or("a component placement has no fields")?;
+                fields
+                    .entry("transform".to_owned())
+                    .or_insert_with(|| json!(IDENTITY));
+                fields.insert("id".to_owned(), json!(id));
+                fields.insert("ordinal".to_owned(), json!(self.out.len()));
+                fields.insert("parent".to_owned(), self.parent_value(parent));
+                fields.insert(
+                    "prototype".to_owned(),
+                    json!({"kind":"external", "document":null, "object":null,
+                        "definition":row.get("prototype")}),
+                );
+                self.out.push(placed);
+                continue;
+            };
             let mut placed = (*row).clone();
             let source_node = row.get("file_root_component").and_then(Value::as_bool) != Some(true);
             if source_node {
@@ -344,6 +422,7 @@ impl Products<'_> {
                 if source_node {
                     self.path.pop();
                 }
+                self.account_for(prototype, 0);
                 continue;
             }
             if unplaceable {
@@ -352,14 +431,7 @@ impl Products<'_> {
                         .to_owned(),
                 );
             }
-            let id = if self.used.insert(original.to_owned()) {
-                original.to_owned()
-            } else {
-                // A JSON pair cannot alias a typed source id. Keep the native key
-                // at the end so explicit nested joint paths can select this use.
-                let key = original.rsplit(['#', ':']).next().unwrap_or(original);
-                format!("{}:{key}", json!([original, self.out.len()]))
-            };
+            let id = self.fresh_id(original);
             let storage = prototype.get("storage").unwrap_or(&Value::Null);
             let external = storage.get("kind").and_then(Value::as_str) == Some("external");
             let fields = placed
@@ -370,13 +442,7 @@ impl Products<'_> {
                 .or_insert_with(|| json!(IDENTITY));
             fields.insert("id".to_owned(), json!(id));
             fields.insert("ordinal".to_owned(), json!(self.out.len()));
-            fields.insert(
-                "parent".to_owned(),
-                parent.map_or_else(
-                    || json!({"kind":"root"}),
-                    |id| json!({"kind":"occurrence", "occurrence":id}),
-                ),
-            );
+            fields.insert("parent".to_owned(), self.parent_value(parent));
             fields.insert(
                 "prototype".to_owned(),
                 if external {
@@ -846,5 +912,49 @@ mod tests {
             {"id":"root", "storage":{"kind":"file", "document":{}}, "occurrences":["self"]}
         ], "occurrences":[{"id":"self", "prototype":"root"}]});
         assert!(project(&mut model).unwrap_err().contains("inside itself"));
+    }
+
+    #[test]
+    fn rows_no_root_reaches_are_refused_but_removed_bookkeeping_is_not() {
+        // Bookkeeping removed before the tree is built leaves a child id with no row.
+        let mut model = json!({"product_definitions":[
+            {"id":"root", "storage":{"kind":"file", "document":{}}, "occurrences":["a", "gone"]},
+            {"id":"part", "storage":{"kind":"embedded"}, "occurrences":[]}
+        ], "occurrences":[{"id":"a", "prototype":"part"}]});
+        project(&mut model).unwrap();
+        assert_eq!(model["occurrences"].as_array().unwrap().len(), 1);
+        // A row placed inside a component nothing places is not silently dropped.
+        let mut model = json!({"product_definitions":[
+            {"id":"root", "storage":{"kind":"file", "document":{}}, "occurrences":["a"]},
+            {"id":"part", "storage":{"kind":"embedded"}, "occurrences":[]},
+            {"id":"lost", "storage":{"kind":"embedded"}, "occurrences":["orphan"]}
+        ], "occurrences":[{"id":"a", "prototype":"part"}, {"id":"orphan", "prototype":"part"}]});
+        assert!(project(&mut model)
+            .unwrap_err()
+            .contains("the design does not place"));
+        // What a suppressed component holds is accounted for, not refused.
+        let mut model = json!({"product_definitions":[
+            {"id":"root", "storage":{"kind":"file", "document":{}}, "occurrences":["a"]},
+            {"id":"sub", "storage":{"kind":"embedded"}, "occurrences":["inner"]},
+            {"id":"part", "storage":{"kind":"embedded"}, "occurrences":[]}
+        ], "occurrences":[
+            {"id":"a", "prototype":"sub", "suppressed":true, "visible":false, "overrides":[]},
+            {"id":"inner", "prototype":"part"}
+        ]});
+        model["occurrences"][0]["representation"] = json!("x");
+        project(&mut model).unwrap();
+    }
+
+    #[test]
+    fn a_dangling_prototype_is_placed_as_an_unresolved_external_component() {
+        let mut model = json!({"product_definitions":[
+            {"id":"root", "storage":{"kind":"file", "document":{}}, "occurrences":["a"]}
+        ], "occurrences":[{"id":"a", "name":"lost link", "prototype":"absent/unresolved"}]});
+        project(&mut model).unwrap();
+        let rows = model["occurrences"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["prototype"]["kind"], "external");
+        assert_eq!(rows[0]["prototype"]["definition"], "absent/unresolved");
+        assert_eq!(rows[0]["parent"]["kind"], "root");
     }
 }
