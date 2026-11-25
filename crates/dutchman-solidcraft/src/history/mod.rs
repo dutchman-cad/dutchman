@@ -3697,7 +3697,7 @@ mod tests {
         source.fidelity = None;
         let mut wire = dutchman_core::ir_wire::to_value(&source.ir).unwrap();
         let template = wire["geometry"].clone();
-        for (prefix, label) in [("skin", "Skin"), ("other", "Other")] {
+        for (prefix, label) in [("skin", "Skin"), ("zother", "Other")] {
             let text = serde_json::to_string(&template)
                 .unwrap()
                 .replace("synthetic:cube:", &format!("synthetic:{prefix}:"));
@@ -3740,7 +3740,7 @@ mod tests {
                 .to_string()
                 .replace("b#1", "synthetic:cube:body#0")
                 .replace("b#2", "synthetic:skin:body#0")
-                .replace("b#3", "synthetic:other:body#0"),
+                .replace("b#3", "synthetic:zother:body#0"),
         )
         .unwrap();
         let stored = json!({"id": "f#1", "ordinal": 0, "name": "Composite1", "suppressed": false, "outputs": outputs, "definition": {"kind": "operation", "value": {"kind": "stored_geometry", "value": {}}}, "dependencies": [], "source_properties": {}, "source_content": []});
@@ -3763,7 +3763,7 @@ mod tests {
         let sheets = stored_outputs(json!(["b#2", "b#3"])).unwrap();
         assert_eq!(
             sheets["_bodies"],
-            json!(["synthetic:skin:body#0", "synthetic:other:body#0"])
+            json!(["synthetic:skin:body#0", "synthetic:zother:body#0"])
         );
         assert_eq!(sheets["body_names"], json!(["Skin", "Other"]));
     }
