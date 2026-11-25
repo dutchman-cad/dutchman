@@ -252,6 +252,7 @@ pub(crate) fn onshape_step(
             .map(|name| name.to_string_lossy().into_owned()),
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     })
 }
 
@@ -494,6 +495,7 @@ fn decode_unguarded(
         source_step: (format == Format::Step)
             .then(|| String::from_utf8(bytes.to_vec()).ok())
             .flatten(),
+        merge_bodies: false,
     };
     if let Some(sink) = progress.and_then(|p| p.members.as_ref()) {
         sink.model(&model);
@@ -739,6 +741,7 @@ pub fn repro_members(
                         source_file: Some(member.id().into()),
                         assembly: None,
                         source_step: None,
+                        merge_bodies: false,
                     })
                 }
                 Some(Err(error)) => Err(Error::Decode(error.to_string())),

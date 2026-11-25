@@ -505,10 +505,10 @@ mod tests {
     #[test]
     fn a_newer_release_is_only_mentioned() {
         let mut s = state(true, Presence::Absent, Some("0.4.0"), Install::Idle);
-        s.installer.set_latest("0.4.1");
+        s.installer.set_latest("0.4.2");
         let mut h = harness(s);
         h.run_steps(4);
-        h.get_by_label_contains("A newer Fusion exporter is available (0.4.1)");
+        h.get_by_label_contains("A newer Fusion exporter is available (0.4.2)");
         assert!(h.query_by_label("Install the Fusion exporter").is_none());
     }
 

@@ -316,6 +316,20 @@ pub(crate) fn write(
     builder.container.finish(&doc)
 }
 
+/// The body names an import feature lists.
+fn body_names_of(feature: &Value) -> Vec<String> {
+    feature
+        .get("body_names")
+        .and_then(Value::as_array)
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(|name| name.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Every path from the design to a hidden occurrence, as SolidCraft hides occurrences: the
 /// occurrence ids from the root down. A hidden occurrence inside a component placed more than
 /// once is hidden in each placement of it. At most `cap` paths are made; the second value
@@ -1342,7 +1356,27 @@ impl Builder<'_> {
                     self.looks.append(&mut looks.looks);
                     self.face_looks.append(&mut looks.face_looks);
                 }
+                let pieces = if part.merge_bodies && replayed == Replay::None {
+                    body_names_of(&imported)
+                } else {
+                    Vec::new()
+                };
                 self.features.push(imported);
+                if let Some((target, tools)) = pieces.split_first().filter(|(_, t)| !t.is_empty()) {
+                    // The pieces share no face, so SolidCraft keeps them in the first one's body.
+                    let id = self.id();
+                    let label = self.unique(format!("{name} (one body)"));
+                    self.features.push(json!({
+                        "id": id,
+                        "type": "combine",
+                        "name": label,
+                        "suppressed": false,
+                        "target": target,
+                        "tools": tools,
+                        "operation": "join",
+                        "keep_tools": false,
+                    }));
+                }
             }
             (None, None) => unwritten_appearances(part, self.report),
         }
@@ -1833,6 +1867,7 @@ fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none(
         source_file: None,
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     };
     assert_eq!(
         sketch_owners(&model),

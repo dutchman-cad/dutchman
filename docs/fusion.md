@@ -81,7 +81,8 @@ It runs only in Fusion, so the entry appears on Windows and macOS.
    Fusion's process still alive shows "Fusion is busy" and keeps waiting (Fusion can take
    minutes over one large design); a stale file with the process gone means Fusion closed.
 2. If it is not found, choose **Install the Fusion exporter**. Dutchman downloads one pinned
-   release, checks its SHA-256 before writing anything, and puts it in Fusion's Add-Ins folder
+   release (Fusion Bulk Export 0.4.1, which records each design's up axis in the export
+   manifest), checks its SHA-256 before writing anything, and puts it in Fusion's Add-Ins folder
    (macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns`; Windows:
    `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns`), replacing an older
    `FusionBulkExport` folder. It never installs while the exporter is exporting, and never puts an

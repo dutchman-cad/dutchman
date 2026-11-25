@@ -453,6 +453,7 @@ fn read_studio(
         source_file: path.file_name().map(|s| s.to_string_lossy().into_owned()),
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     };
     let mut model = if bundle.contains(&step_path) {
         let source = bundle.bytes(&step_path)?;
