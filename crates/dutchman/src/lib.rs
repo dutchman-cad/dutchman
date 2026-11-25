@@ -665,14 +665,49 @@ impl ConvertOptions {
     }
 }
 
-/// Sends a file a conversion replaces to the trash or recycle bin; where there is none, keeps it
-/// beside the new one as `name.replaced-<time>.sc`. Set `DUTCHMAN_NO_TRASH` to always keep it
-/// beside the new one.
+/// Sends a file a conversion replaces to the trash or recycle bin with the system's own tool
+/// (`gio trash`, Finder, the Recycle Bin through PowerShell); where there is none, or it fails,
+/// keeps the file beside the new one as `name.replaced-<time>.sc`. Set `DUTCHMAN_NO_TRASH` to
+/// always keep it beside. The file is never deleted.
 fn retire_to_trash(path: &Path) -> std::io::Result<()> {
-    if std::env::var_os("DUTCHMAN_NO_TRASH").is_none() && trash::delete(path).is_ok() {
+    if std::env::var_os("DUTCHMAN_NO_TRASH").is_none() && move_to_trash(path) && !path.exists() {
         return Ok(());
     }
     dutchman_core::safe_output::keep_as_replaced(path)
+}
+
+/// Whether the system's trash took `path`. The path travels in an environment variable, so no
+/// quoting can change what is moved.
+fn move_to_trash(path: &Path) -> bool {
+    use std::process::{Command, Stdio};
+    let mut command = if cfg!(target_os = "macos") {
+        let mut command = Command::new("osascript");
+        command.args([
+            "-e",
+            "tell application \"Finder\" to delete (POSIX file (system attribute \"DUTCHMAN_TRASH_PATH\") as alias)",
+        ]);
+        command
+    } else if cfg!(windows) {
+        let mut command = Command::new("powershell");
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($env:DUTCHMAN_TRASH_PATH, 'OnlyErrorDialogs', 'SendToRecycleBin')",
+        ]);
+        command
+    } else {
+        let mut command = Command::new("gio");
+        command.args(["trash", "--"]).arg(path);
+        command
+    };
+    command
+        .env("DUTCHMAN_TRASH_PATH", path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// Where to write the design `output`: itself when `replace` is set or nothing is in its slot
