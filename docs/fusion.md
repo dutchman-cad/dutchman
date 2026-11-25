@@ -49,8 +49,10 @@ For SolidCraft 0.44 and newer, an extrude join, cut or intersection can select t
 bodies it modifies. Dutchman tries the reader's modified-body outputs as targets
 when earlier features have named every one, and keeps that scope only at the final
 body-building feature when replay matches the final source geometry. Intermediate
-body centres do not establish all participants, even when exact; intermediate
-features keep the previous mapping. Unknown or conflicting evidence also retains
+body centres do not establish all participants, even when exact; an intermediate
+join with one output body is the exception when the source stores as many bodies
+right after it as right before it: it consumed none, so it targets its output body.
+Other intermediate features keep the previous mapping. Unknown or conflicting evidence also retains
 the previous mapping. Native participant expressions are not interpreted. A join
 with several output bodies still uses the previous mapping because its surviving
 body identities are not established by those outputs.
