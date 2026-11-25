@@ -69,6 +69,33 @@ producer has one declared result body and one named output. Ambiguous generated
 results, historical selections and native body references remain blockers.
 Targets before 0.44 keep the previous output.
 
+## Install the Fusion exporter
+
+Export from Fusion in the desktop app asks an add-in, the Fusion exporter, to export designs
+from inside your Fusion. The add-in is [Lifeboat's Fusion exporter](https://github.com/cad-lifeboat/fusion-bulk-export).
+It runs only in Fusion, so the entry appears on Windows and macOS.
+
+1. Open **Export from Fusion**. Dutchman looks for the running add-in every few seconds. It
+   reads the small file the add-in keeps in `.cad-export/agents` in your home folder, and
+   counts the add-in as running while that file was updated in the last minute. A stale file with
+   Fusion's process still alive shows "Fusion is busy" and keeps waiting (Fusion can take
+   minutes over one large design); a stale file with the process gone means Fusion closed.
+2. If it is not found, choose **Install the Fusion exporter**. Dutchman downloads one pinned
+   release (Fusion Bulk Export 0.4.1, which records each design's up axis in the export
+   manifest), checks its SHA-256 before writing anything, and puts it in Fusion's Add-Ins folder
+   (macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns`; Windows:
+   `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns`), replacing an older
+   `FusionBulkExport` folder. It never installs while the exporter is exporting, and never puts an
+   older version over a newer one.
+3. Switch it on once in Fusion. No program can do this for you: press Shift+S (Utilities,
+   Add-Ins, Scripts and Add-Ins), find FusionBulkExport, tick **Run on Startup**, then switch
+   **Run** on. Dutchman keeps waiting and updates when the add-in starts. Fusion keeps the
+   setting when the folder is replaced by a newer version, which takes effect when Fusion next
+   starts.
+
+When the exporter's project has published a newer release than the one Dutchman installs, the
+window says so and links to it; Dutchman never installs that one by itself.
+
 ## Public Fusion shares
 
 The desktop app accepts pasted `a360.co` and `*.autodesk360.com` links and dropped
@@ -157,7 +184,7 @@ Fusion's own STEP export leaves hidden bodies out, so a STEP you export from Fus
 | A mesh body whose container cadmpeg cannot decode. | Leaves it out and reports it as an undecoded mesh body. |
 | Parameters, planar sketches with typed and native constraints. | Mapped, including point-on-curve coincidences, point-to-line distances, resolved finite-endpoint distances, and parallel-line spacing. Dimensions keep their parameter expressions, so user parameters drive the editable geometry. Native constraints without neutral operands are reported as not carried. |
 | Spatial (3D) sketches. | Mapped as SolidCraft 3D sketches at their solved positions (lines, arcs, circles, splines, points). On targets 0.44 and newer, neutral point joins, point distances, line lengths (including repeated lengths), principal-axis directions and line-to-line and line-to-arc endpoint tangencies carry across; dimensions keep their parameters. Meeting endpoints alone do not create relations. Sweep paths and rails follow their selected curves. Other constraints and links to model edges are reported as not carried. |
-| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. The designation supplies the nominal size; secondary diameter and pitch may agree at their stated decimal precision. An absent designation is derived exactly from diameter and pitch. Contradictions name both sizes; UNC/UNF cosmetic Thread output, modeled threads, and unresolved faces remain reported losses. A thread whose stored face is slightly smaller than the nominal-size sketch circle that made it (the thread class's diameter, such as Ø9.85 for M10) is reported, not rebuilt: a SolidCraft cosmetic thread cannot change the size. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
+| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. The designation supplies the nominal size (a Unified numbered size such as 2-56 UNC or #10-32 UNF is read by its gauge diameter, 0.060 + 0.013 x N inches); secondary diameter and pitch may agree at their stated decimal precision. An absent designation is derived exactly from diameter and pitch. Contradictions name both sizes; UNC/UNF cosmetic Thread output, modeled threads, and unresolved faces remain reported losses. A thread whose stored face is slightly smaller than the nominal-size sketch circle that made it (the thread class's diameter, such as Ø9.85 for M10) is reported, not rebuilt: a SolidCraft cosmetic thread cannot change the size. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
 | Body Mirror and Remove steps. | A Mirror of bodies maps when its bodies are named by earlier features, are a body the final model leaves out that cadmpeg names by the extrude that made it, or are the only body in the Mirror's own input; it joins its copy to the body when Fusion did. A Remove of such bodies maps as a SolidCraft Remove on SolidCraft 0.40 and newer. |
 | Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map, on a face of the extrusion or box made just before them; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, including on full circles such as a boss's top edge or a hole's rim, and unequal chamfers on straight edges and full circles with the face their distance runs along proven on the source's final body, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
 

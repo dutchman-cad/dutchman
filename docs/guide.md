@@ -327,8 +327,8 @@ Convert; see [the desktop guide](desktop.md).
 ## Reading the loss report
 
 Each note leads with one plain sentence: what is missing or different, and what you can do
-about it. Notes that change nothing you see (records STEP has no place for, a placement
-statistic of nothing) are left out of the default view. `--verbose` prints every note as
+about it. Notes that change nothing you see (records STEP has no place for or keeps as they are,
+an edge tolerance, a timeline folder, a placement statistic of nothing) are left out of the default view. `--verbose` prints every note as
 Dutchman wrote it, `LEVEL: SUBJECT: MESSAGE` with the code first in the subject, and the JSON
 report always keeps every note, with the sentence added as `summary`
 ([JSON report](json.md)). A note without a plain sentence yet prints as before. The sentences

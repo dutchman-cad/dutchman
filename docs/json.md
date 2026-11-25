@@ -373,7 +373,7 @@ Explicit output paths keep their given extension. The container format stays `so
 | `solidcraft` | SolidCraft output only: `target` is the selected `x.y` minor; `found` is the discovered CLI release as `x.y.z`, or null when unavailable or not checked. `known_newest` is the newest known minor (`0.42`). `status` is `newer`, `too_old`, `older_loses_history`, `current`, or `none_found`. The history status requires an older installed release and a selected target whose writer gates retain less history than newest; `current` includes older releases with no gated history loss. Included even with verification off. When `found` is null, `search` says why: `outcome` (`not_found`, or `found_no_answer` when a CLI was found but did not report its version in time) and `places`, each `{"place", "outcome"}` for `SOLIDCRAFT_CLI`, `PATH`, `beside Dutchman` and the platform's install folders (`Program Files`, `Program Files (x86)`, `per-user install folder`, `Windows registry`, `Applications`, `user Applications`), with `outcome` `unset`, `set_but_missing`, `not_found`, `found` or `used`. This local report adds each `path` and the `cli` chosen; the [anonymous report](report-anon.md) does not. An explicit target wins; otherwise the supported found version capped at known newest, else built-in newest (0.42), is targeted. |
 | `choices` | `part_positions` is `smart` (default), `last-shown`, or `first-placed`. Smart admits current poses after checking touching joints, assembly bounds, and repeated inserted designs; last-shown uses available current poses; first-placed ignores later moves. Compatibility `stored_placements` is true only for first-placed. Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
 | `part_positions` | Per-conversion placement summary: `mode`, `total`, and disjoint rule counts `displayed`, `current`, `first_placed` whose sum equals `total`. `displayed` counts saved-scene poses, directly bound or derived from agreeing displayed children, which take precedence without the current-pose guards. `bound_displayed` and `derived_holders` partition `displayed`. Only bound rows are used; an absent arena supplies none. `derived_holders` counts world poses inferred bottom-up from displayed children whose estimates agree within 0.001 mm and 1e-6 rotation entries; `holder_conflicts` counts disagreements; the holder keeps its first placement. In Smart a displayed holder whose subtree would leave the grown bounds is counted under `bounds` and reverts with everything inside it, so `derived_holders` counts only holders still displayed. `fallbacks` counts `no_current_pose`, `ambiguous`, `unsupported`, `joints`, `bounds`, and `instances`. Fallback reasons can overlap for ambiguous carriers and are not a partition. Counts describe source occurrences including holders, excluding extra history representations. Smart keeps first placements for unsupported checks; bounds use conservative geometry envelopes. The matching Info note has subject `part positions`. `assumed` lists each part (not holders) whose position nothing confirms, as `{"part", "reason"}`, with `part` naming what holds it, outermost first: `identity` (the placement could not be read and the part sits at its design's origin; a Degraded loss names these), `later_pose_unused` (the file holds a later pose that was not used), or `only_stored_pose` (the stored pose is all the file holds and no joint holds the part). The last two are usually right, so an Info note names the first 20. With `first-placed`, only `identity` is listed, since that mode ignores later poses by choice. The anonymous report leaves part names out. A non-assembly read has zero counts; decode refusals may have no summary. |
-| `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `catia_part`, `creo_part`, `nx_part`, `creo_view`, `rhino`, `acis`, `step`, `iges`, `onshape_bundle`, `unclassified_part`, or `null` for an unknown extension. `format_name` is the same for people. Creo and NX share `.prt` and are distinguished by contents; inconclusive contents give `unclassified_part`. |
+| `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `catia_part`, `creo_part`, `nx_part`, `creo_view`, `rhino`, `acis`, `step`, `iges`, `onshape_bundle`, `unclassified_part`, `inventor_drawing`, `solidworks_drawing`, `fusion_drawing`, `dwg_drawing`, `dxf_drawing`, `solid_edge_drawing`, or `null` for an unknown extension. `format_name` is the same for people. Creo and NX share `.prt` and are distinguished by contents; inconclusive contents give `unclassified_part`. |
 | `input.words` | Reader status: `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`, or `open it in SolidCraft directly` (IGES); `null` for an unknown format. Present on successes and failures, including batch results and MCP reports. The conversion's history and verification describe what this file kept. |
 | `input.program`, `input.extension` | Program or format family, and the input's actual suffix without a dot, used for status text (`prt.12` for a numbered save). Unknown programs are `null`. |
 | `output.format` | The SolidCraft design format written. |
@@ -1315,6 +1315,40 @@ orthogonality/determinant tolerance produce Dropped `placements` losses with a z
 occurrence index local to the containing assembly, name, and kind. They are excluded from
 `completeness.placed` and counted in `completeness.left_out` at stage `write`. Tiny numeric
 drift is re-orthonormalised before writing.
+
+### Drawings (additive to `dutchman.convert/1`)
+
+A file that holds a drawing adds a `drawing` section (schema `dutchman.drawing/1`) to its
+report: a FreeCAD file with TechDraw pages (beside the model's report), a Fusion `.f3z`
+that holds `.f2d` drawings, and every drawing file on its own (`.idw`, `.slddrw`, `.f2d`,
+`.dft`, `.dwg`, `.dxf`). A drawing file whose sheets cannot be read is a failed conversion
+(`ok: false`, `error.kind: "not_supported_yet"`) that still carries the section, so it
+is saved as `<name>.failed.json` and never skipped.
+
+| Field | Meaning |
+|---|---|
+| `format` | `freecad-techdraw`, `inventor-idw`, `autocad-dwg`, `solidworks-slddrw`, `fusion-f2d`, `solid-edge-dft` or `onshape-export` (a `.dxf`). |
+| `status` | `converted` (everything read was written), `partial` (something was written, the losses say what was not), `not_decoded` (the format is accepted but its contents are not decoded yet; nothing written), `failed` (the drawing could not be written). |
+| `sheets`, `dimensions`, `annotations` | `{read, written}`. |
+| `views` | `{read, written, by_kind}`; `by_kind` counts the views read as `base`, `projected`, `section`, `detail`, `other`. |
+| `model` | `{source, converted}`: the model file the drawing belongs to, when there is one, and whether it was converted. |
+| `first_stop` | `{code, item, message}` of the first thing dropped, or `null`. |
+| `losses` | `[{level, code, item, message}]`, in the same words as model losses. |
+| `output` | The SolidCraft design that holds the drawing, or `null`. |
+
+Reason codes: `drawing.format.not_decoded`, `drawing.format.content_mismatch`,
+`drawing.format.unreadable`, `drawing.sheet.unreadable`, `drawing.sheet.size_assumed`,
+`drawing.view.unsupported_kind`, `drawing.view.model_missing`, `drawing.view.no_direction`,
+`drawing.view.scale_fitted`, `drawing.view.rotation_dropped`, `drawing.view.up_assumed`,
+`drawing.view.source_whole_model`, `drawing.dimension.unsupported`,
+`drawing.annotation.unsupported`, `drawing.template.not_carried`, `drawing.write.unavailable`,
+`drawing.write.refused`, `drawing.write.no_design`, `drawing.limit`. A `message` is one
+line with no path and no sheet or view name; names go in `item`.
+
+`views.by_kind.other` and `model.source` are present for every report; for the formats
+that are not decoded, every count is 0 and `model.source` is `null`. `views.read` counts
+what the file holds, so a projection group that only places its child views is not a
+view of its own.
 
 ### DXF pages (additive to `dutchman.convert/1`)
 

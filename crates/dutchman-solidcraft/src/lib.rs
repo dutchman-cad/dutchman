@@ -16,6 +16,7 @@ mod assembly;
 pub mod compare;
 mod container;
 mod document;
+pub mod drawing;
 mod evaluator;
 mod linked;
 mod opening;
@@ -2303,6 +2304,7 @@ mod mesh_only_tests {
             source_file: Some("mesh.f3d".to_owned()),
             assembly: None,
             source_step: None,
+            merge_bodies: false,
         };
         let mut out = Vec::new();
         let result = SolidCraftWriter::default().write(&model, &mut out, &mut Report::default());

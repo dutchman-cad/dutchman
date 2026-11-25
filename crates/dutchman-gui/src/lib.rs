@@ -4,6 +4,7 @@
 
 pub mod app;
 mod doctor;
+pub mod fusion_export;
 #[doc(hidden)]
 pub mod native_paste;
 mod onshape;

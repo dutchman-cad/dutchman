@@ -24,6 +24,8 @@ use dutchman_gui::App;
 /// never the real diagnostics folder (CI runs these tests without the test-support feature).
 fn test_app(cc: &eframe::CreationContext<'_>) -> App {
     dutchman_gui::worker::convert_in_process_for_tests();
+    // The Export from Fusion button is there on Windows and macOS; lay it out on Linux too.
+    dutchman_gui::fusion_export::install::offer_everywhere_for_tests();
     static FOLDER: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     let folder = FOLDER.get_or_init(|| {
         std::env::temp_dir().join(format!(
@@ -281,6 +283,81 @@ fn header_version_screenshots() {
     }
     *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = None;
     std::fs::write(dir.join("header-version.md"), index).unwrap();
+}
+
+/// The Export from Fusion window's first half at 1280x800, Day and Night. No name a person
+/// chose appears in these screens (only the exporter's own text and version numbers), so there
+/// is no long-German-name set; the app has no translations.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn fusion_install_screenshots() {
+    use dutchman_gui::fusion_export::agent::{Agent, Presence};
+    use dutchman_gui::fusion_export::install::Step;
+    use dutchman_gui::fusion_export::panel::Install;
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    let agent = |busy: bool| Agent {
+        jobs_dir: "/Users/someone/.cad-export/jobs".into(),
+        features: vec!["export".into(), "cancel".into()],
+        version: "0.4.0".into(),
+        busy: None,
+        job: None,
+        fusion_version: Some("2.0.21508".into()),
+        pid: 41237,
+        fusion_busy: busy,
+    };
+    let cases = [
+        (
+            "fusion-1-not-found",
+            Presence::Absent,
+            Install::Idle,
+            "The exporter was not found: one button installs it.",
+        ),
+        (
+            "fusion-2-installing",
+            Presence::Absent,
+            Install::Running(Step::Downloading),
+            "Installing: downloading the pinned release.",
+        ),
+        (
+            "fusion-3-switch-on",
+            Presence::Absent,
+            Install::Done("0.4.0".into()),
+            "Installed: the steps to switch it on once in Fusion, while Dutchman keeps waiting.",
+        ),
+        (
+            "fusion-4-running",
+            Presence::Running(agent(false)),
+            Install::Idle,
+            "The exporter is running in Fusion.",
+        ),
+        (
+            "fusion-5-busy",
+            Presence::Unresponsive(agent(true)),
+            Install::Idle,
+            "Fusion is busy: the heartbeat is stale but Fusion is still running.",
+        ),
+    ];
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        for (state, presence, step, description) in &cases {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().preview_solidcraft(Some("0.47.0"));
+            harness
+                .state_mut()
+                .preview_fusion(true, presence.clone(), None, step.clone());
+            harness.run_steps(8);
+            shot(&mut harness, &dir, &mut index, state, name, description);
+        }
+    }
+    std::fs::write(dir.join("fusion-install.md"), index).unwrap();
 }
 
 #[test]
@@ -1267,7 +1344,7 @@ fn update_window_stays_clear_of_the_header_controls() {
     for width in [520.0, 900.0, 1440.0] {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(width, 900.0))
-            .build_eframe(|cc| App::new(cc));
+            .build_eframe(|cc| test_app(cc));
         harness
             .state_mut()
             .updater
@@ -1326,7 +1403,7 @@ fn update_window_stays_clear_of_the_header_controls() {
 fn update_notes_open_at_the_top_each_time() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(900.0, 760.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     let long: String = (1..=60)
         .map(|n| format!("Line number {n} of the notes.\n\n"))
         .collect();
@@ -6391,4 +6468,69 @@ fn report_buttons_screenshots() {
         );
     }
     std::fs::write(dir.join("report-buttons.md"), index).unwrap();
+}
+
+/// A synthetic drawing file whose sheets are not decoded yet: the Results card reports it.
+#[test]
+#[ignore = "renders the drawing result cards with a GPU; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn drawing_screenshots() {
+    if std::env::var_os("DUTCHMAN_DRAWING_SCREENSHOT_CHILD").is_none() {
+        let state = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "drawing_screenshots"])
+            .env("DUTCHMAN_DRAWING_SCREENSHOT_CHILD", "1")
+            .env("HOME", state.path())
+            .env("LOCALAPPDATA", state.path())
+            .env("XDG_STATE_HOME", state.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let mut index = String::new();
+    // The app has no German text yet: the German set shows a long German file name.
+    for (language, name) in [
+        ("en", "Frame-assembly.idw"),
+        (
+            "de",
+            "Zeichnung-Rahmenbaugruppe-Seitenwand-Ueberarbeitung-Fertigung.dwg",
+        ),
+    ] {
+        let input = work.path().join(name);
+        let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        if name.ends_with(".dwg") {
+            bytes = b"AC1032\0\0\0\0\0\0\0".to_vec();
+        }
+        bytes.extend([0_u8; 64]);
+        std::fs::write(&input, bytes).unwrap();
+        for (theme, mode) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().add_inputs([input.clone()]);
+            harness
+                .state_mut()
+                .set_out_dir(work.path().join(format!("{language}-{mode}")));
+            harness.state_mut().set_verify(false);
+            convert(&mut harness);
+            assert_eq!(harness.state().rows()[0].status, Status::Failed);
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("drawing-not-decoded-{language}"),
+                mode,
+                "A drawing file that is accepted and reported as not decoded yet.",
+            );
+        }
+    }
+    std::fs::write(dir.join("drawings.md"), index).unwrap();
 }

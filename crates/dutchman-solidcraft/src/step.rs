@@ -228,6 +228,7 @@ mod tests {
             name: "Synthetic open cube".into(),
             source_file: None,
             source_step: None,
+            merge_bodies: false,
             assembly: None,
         };
         let mut report = Report::default();

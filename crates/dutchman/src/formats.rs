@@ -16,6 +16,9 @@ pub fn converts(format: Format) -> &'static str {
     if format.needs_module() {
         return "placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately)";
     }
+    if format.is_drawing() {
+        return "a report of what was identified; the sheets and views are not decoded yet, so no drawing is written";
+    }
     if !format.can_convert() {
         return "nothing yet; reading geometry is not supported yet";
     }
@@ -48,7 +51,9 @@ pub fn converts(format: Format) -> &'static str {
 pub fn text() -> String {
     let mut out = String::new();
     for format in Format::ALL {
-        let status = if format.can_convert() {
+        let status = if format.is_drawing() {
+            "reports"
+        } else if format.can_convert() {
             "converts"
         } else {
             "not yet"
@@ -64,7 +69,7 @@ pub fn text() -> String {
             converts(format)
         ));
     }
-    out.push_str("\nFreeCAD TechDraw → DXF  drawings: page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped\n");
+    out.push_str("\nFreeCAD TechDraw → SolidCraft drawing (inside the converted .sc: sheets and views) and → DXF (--to dxf): page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped\n");
     out.push_str("\nFusion tool libraries (.tools, .json) convert to CamCraft's .camtools: tool geometry, holder and cutting data; tools and fields CamCraft has no place for are named in the report\n");
     out.push_str("\nWritten as a SolidCraft design (.sc), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)\n");
     out
@@ -102,7 +107,10 @@ pub fn markdown() -> String {
         };
         let converts = if format == Format::Iges {
             "Import it in SolidCraft directly (File > Import)".to_owned()
-        } else if format.can_convert() || format == Format::FreeCadDocument || format.needs_module()
+        } else if format.is_drawing()
+            || format.can_convert()
+            || format == Format::FreeCadDocument
+            || format.needs_module()
         {
             capitalised(converts(format))
         } else {
@@ -113,7 +121,7 @@ pub fn markdown() -> String {
             level.unwrap_or_else(|| "–".to_owned()),
         ));
     }
-    out.push_str("\nFreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.\n");
+    out.push_str("\nFreeCAD TechDraw pages are written into the converted SolidCraft design as a drawing (sheets and views), and also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.\n");
     out.push_str("\nFusion tool libraries (`.tools`, `.json`) also convert to CamCraft's `.camtools` (`dutchman library.tools`): tool geometry, holder and cutting data, with every tool and field CamCraft has no place for named in the report. See docs/camcraft-tools.md.\n");
     out.push_str("\nOutput is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).\n");
     out
@@ -136,7 +144,7 @@ pub fn json() -> Value {
                 "id": format.id(), "name": format.name(), "extension": format.extension(),
                 "extensions": format.extensions(),
                 "level": format.headline_level(),
-                "status": if format.can_convert() { "converts" } else { "not_supported" },
+                "status": if format.is_drawing() { "reports" } else if format.can_convert() { "converts" } else { "not_supported" },
                 "words": format.words(), "converts": converts(format),
             })
         })
