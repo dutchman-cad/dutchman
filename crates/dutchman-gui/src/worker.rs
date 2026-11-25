@@ -207,12 +207,16 @@ impl Run {
 
     /// Converts `job`, the run's job at `index`, again in the background, as it now says.
     pub fn retry(
-        job: Job,
+        mut job: Job,
         index: usize,
         options: &ConvertOptions,
         messages: Sender<Message>,
         ctx: egui::Context,
     ) -> Self {
+        // The job's design is the one this run made at that name (a name already taken was
+        // numbered when the run was planned), so converting it again replaces its own output
+        // and never a file the user put there.
+        job.replace = true;
         let stop = Arc::new(AtomicBool::new(false));
         let writer = options.writer();
         let options = options.clone();
