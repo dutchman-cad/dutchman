@@ -600,6 +600,26 @@ fn plan_with_limit(
             ));
             continue;
         }
+        // A bulk export may write a rebuilt .f3z beside an assembly's .f3d: it carries the
+        // inserted designs, so it is the one converted.
+        if root.is_dir() {
+            let archives: BTreeSet<_> = found
+                .iter()
+                .filter(|(path, _)| extension_of(path) == "f3z")
+                .map(|(path, _)| path.with_extension("").to_string_lossy().to_lowercase())
+                .collect();
+            let exported = |path: &Path| {
+                path.ancestors()
+                    .skip(1)
+                    .take_while(|folder| folder.starts_with(root))
+                    .any(|folder| folder.join(dutchman_core::EXPORT_MANIFEST).is_file())
+            };
+            found.retain(|(path, _)| {
+                extension_of(path) != "f3d"
+                    || !archives.contains(&path.with_extension("").to_string_lossy().to_lowercase())
+                    || !exported(path)
+            });
+        }
         let natives: BTreeSet<_> = found
             .iter()
             .filter(|(path, _)| !is_step(path))
@@ -655,8 +675,11 @@ fn plan_with_limit(
             });
         }
     }
-    let description = summary(&jobs);
-    project_roots(&mut jobs);
+    let mut description = summary(&jobs);
+    for note in project_roots(&mut jobs) {
+        description.push_str("; ");
+        description.push_str(&note);
+    }
     Plan {
         description,
         jobs,
@@ -667,14 +690,16 @@ fn plan_with_limit(
     }
 }
 
-// Retain roots and unused parts. Keep cycles visible so conversion can report them.
-fn project_roots(jobs: &mut Vec<Job>) {
+// Retain roots and unused parts, and say what was decided about cycles.
+fn project_roots(jobs: &mut Vec<Job>) -> Vec<String> {
     let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let mut edges = BTreeMap::new();
-    for job in jobs
-        .iter()
-        .filter(|job| Format::from_path(&job.input).is_some_and(Format::is_assembly))
-    {
+    for job in jobs.iter().filter(|job| {
+        Format::from_path(&job.input).is_some_and(|format| {
+            format.is_assembly()
+                || matches!(format, Format::FusionArchive | Format::FusionMultiDocument)
+        })
+    }) {
         if let Ok(references) = dutchman_core::assembly_references(&job.input, &job.search) {
             edges.insert(
                 canonical(&job.input),
@@ -685,26 +710,72 @@ fn project_roots(jobs: &mut Vec<Job>) {
             );
         }
     }
-    retain_roots(jobs, &edges);
+    let notes = retain_roots(jobs, &edges);
     jobs.sort_by_key(|job| !Format::from_path(&job.input).is_some_and(Format::is_assembly));
+    notes
 }
 
-fn retain_roots(jobs: &mut Vec<Job>, edges: &BTreeMap<PathBuf, Vec<PathBuf>>) {
+/// Drops from `jobs` the files an assembly places, given each assembly's `edges` to the files
+/// it actually places (matched to an insertion and readable: a design the assembly lists but
+/// does not place stays a result of its own). Files only a reference cycle places would all be
+/// dropped, so the first member of each cycle in path order stays a root; the returned notes
+/// say which.
+fn retain_roots(jobs: &mut Vec<Job>, edges: &BTreeMap<PathBuf, Vec<PathBuf>>) -> Vec<String> {
     let referenced: BTreeSet<_> = edges.values().flatten().cloned().collect();
-    let mut covered = BTreeSet::new();
-    let mut pending: Vec<_> = edges
+    let mut roots: BTreeSet<PathBuf> = edges
         .keys()
         .filter(|path| !referenced.contains(*path))
         .cloned()
         .collect();
-    while let Some(path) = pending.pop() {
-        if let Some(children) = edges.get(&path) {
-            for child in children {
-                if covered.insert(child.clone()) {
+    let mut covered = BTreeSet::new();
+    fn cover(
+        edges: &BTreeMap<PathBuf, Vec<PathBuf>>,
+        roots: &BTreeSet<PathBuf>,
+        covered: &mut BTreeSet<PathBuf>,
+        from: Vec<PathBuf>,
+    ) {
+        let mut pending = from;
+        while let Some(path) = pending.pop() {
+            for child in edges.get(&path).into_iter().flatten() {
+                if !roots.contains(child) && covered.insert(child.clone()) {
                     pending.push(child.clone());
                 }
             }
         }
+    }
+    cover(edges, &roots, &mut covered, roots.iter().cloned().collect());
+    let reaches_itself = |start: &PathBuf| {
+        let mut seen = BTreeSet::new();
+        let mut pending = vec![start];
+        while let Some(path) = pending.pop() {
+            for child in edges.get(path).into_iter().flatten() {
+                if child == start {
+                    return true;
+                }
+                if seen.insert(child) {
+                    pending.push(child);
+                }
+            }
+        }
+        false
+    };
+    let mut notes = Vec::new();
+    // What is left uncovered and referenced is placed only by a cycle (or by what one places).
+    while let Some(start) = edges
+        .keys()
+        .find(|path| !covered.contains(*path) && !roots.contains(*path) && reaches_itself(path))
+        .cloned()
+    {
+        roots.insert(start.clone());
+        cover(edges, &roots, &mut covered, vec![start.clone()]);
+        notes.push(format!(
+            "{} and the designs it places place each other in a cycle; it converts as a result of \
+             its own, with the others inside it",
+            start.file_name().map_or_else(
+                || start.display().to_string(),
+                |name| name.to_string_lossy().into_owned()
+            )
+        ));
     }
     jobs.retain(|job| {
         !covered.contains(
@@ -713,6 +784,7 @@ fn retain_roots(jobs: &mut Vec<Job>, edges: &BTreeMap<PathBuf, Vec<PathBuf>>) {
                 .unwrap_or_else(|_| job.input.clone()),
         )
     });
+    notes
 }
 
 fn is_lock_file(path: &Path) -> bool {
@@ -1444,7 +1516,7 @@ mod tests {
     }
 
     #[test]
-    fn assemblies_group_referenced_parts_and_keep_unused_parts_and_cycles() {
+    fn assemblies_group_referenced_parts_and_keep_unused_parts_and_one_member_of_a_cycle() {
         let dir = tempfile::tempdir().unwrap();
         for name in [
             "root.iam",
@@ -1480,11 +1552,91 @@ mod tests {
             .collect();
         assert_eq!(
             names,
+            BTreeSet::from(["root.iam".into(), "unused.ipt".into(), "cyclea.iam".into()])
+        );
+    }
+
+    fn jobs_for(names: &[&str]) -> (tempfile::TempDir, Vec<Job>) {
+        let dir = tempfile::tempdir().unwrap();
+        for name in names {
+            std::fs::write(dir.path().join(name), b"synthetic placeholder").unwrap();
+        }
+        let planned = plan(&[dir.path().to_path_buf()], &dir.path().join("out"));
+        (dir, planned.jobs)
+    }
+
+    fn input_names(jobs: &[Job]) -> BTreeSet<String> {
+        jobs.iter()
+            .map(|job| {
+                job.input
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_reference_cycle_keeps_its_first_member_as_a_root_and_says_so() {
+        let (dir, mut jobs) = jobs_for(&["a.iam", "b.iam", "c.iam", "leaf.ipt"]);
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        // a -> b -> c -> a, and the cycle also places a leaf.
+        let edges = BTreeMap::from([
+            (path("a.iam"), vec![path("b.iam")]),
+            (path("b.iam"), vec![path("c.iam"), path("leaf.ipt")]),
+            (path("c.iam"), vec![path("a.iam")]),
+        ]);
+        let notes = retain_roots(&mut jobs, &edges);
+        assert_eq!(input_names(&jobs), BTreeSet::from(["a.iam".to_owned()]));
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].starts_with("a.iam "), "{notes:?}");
+        // The same cycle in another order of discovery keeps the same member.
+        let (dir, mut jobs) = jobs_for(&["a.iam", "b.iam", "c.iam", "leaf.ipt"]);
+        jobs.reverse();
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        let edges = BTreeMap::from([
+            (path("c.iam"), vec![path("a.iam")]),
+            (path("b.iam"), vec![path("leaf.ipt"), path("c.iam")]),
+            (path("a.iam"), vec![path("b.iam")]),
+        ]);
+        retain_roots(&mut jobs, &edges);
+        assert_eq!(input_names(&jobs), BTreeSet::from(["a.iam".to_owned()]));
+    }
+
+    #[test]
+    fn a_cycle_below_a_root_adds_no_second_root() {
+        let (dir, mut jobs) = jobs_for(&["root.iam", "a.iam", "b.iam"]);
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        let edges = BTreeMap::from([
+            (path("root.iam"), vec![path("a.iam")]),
+            (path("a.iam"), vec![path("b.iam")]),
+            (path("b.iam"), vec![path("a.iam")]),
+        ]);
+        let notes = retain_roots(&mut jobs, &edges);
+        assert_eq!(input_names(&jobs), BTreeSet::from(["root.iam".to_owned()]));
+        assert!(notes.is_empty(), "{notes:?}");
+    }
+
+    #[test]
+    fn a_file_no_placement_covers_stays_a_result_of_its_own() {
+        // The edges hold only the files an assembly actually places (matched to an insertion
+        // and read): the design it lists that matched nothing, and the one that could not be
+        // read, have no edge and so stay.
+        let (dir, mut jobs) =
+            jobs_for(&["asm.iam", "placed.ipt", "unmatched.ipt", "unreadable.ipt"]);
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        let notes = retain_roots(
+            &mut jobs,
+            &BTreeMap::from([(path("asm.iam"), vec![path("placed.ipt")])]),
+        );
+        assert!(notes.is_empty());
+        assert_eq!(
+            input_names(&jobs),
             BTreeSet::from([
-                "root.iam".into(),
-                "unused.ipt".into(),
-                "cyclea.iam".into(),
-                "cycleb.iam".into()
+                "asm.iam".to_owned(),
+                "unmatched.ipt".to_owned(),
+                "unreadable.ipt".to_owned()
             ])
         );
     }
@@ -1548,6 +1700,101 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A synthetic export: an assembly that inserts a screw and a plate, a rebuilt archive for
+    /// a second assembly, and a lone design nothing references.
+    fn export_entries() -> Vec<(&'static str, Vec<u8>)> {
+        let entry = |id: &str, name: &str, references: serde_json::Value| {
+            serde_json::json!({"id": id, "name": name, "version": 1, "references": references,
+                "files": [{"path": format!("{name} v1.f3d")}]})
+        };
+        let manifest = serde_json::json!({"schema": 2, "entries": [
+            entry("urn:x:asm", "Asm", serde_json::json!([{"id": "urn:x:screw"}, {"id": "urn:x:plate"}])),
+            entry("urn:x:screw", "Screw", serde_json::json!([])),
+            entry("urn:x:plate", "Plate", serde_json::json!([])),
+            entry("urn:x:big", "Big", serde_json::json!([{"id": "urn:x:screw"}])),
+            entry("urn:x:lone", "Lone", serde_json::json!([])),
+        ]});
+        let mut files = vec![("manifest.json", serde_json::to_vec(&manifest).unwrap())];
+        for name in [
+            "Asm v1.f3d",
+            "Screw v1.f3d",
+            "Plate v1.f3d",
+            "Big v1.f3d",
+            "Lone v1.f3d",
+            "Big v1.f3z",
+        ] {
+            files.push((name, b"placeholder".to_vec()));
+        }
+        files
+    }
+
+    fn converted_names(planned: &Plan) -> Vec<String> {
+        let mut names: Vec<_> = planned
+            .jobs
+            .iter()
+            .map(|job| {
+                job.input
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn an_export_folder_converts_each_top_level_assembly_with_its_inserted_designs() {
+        let dir = tempfile::tempdir().unwrap();
+        let export = dir.path().join("export");
+        std::fs::create_dir(&export).unwrap();
+        for (name, bytes) in export_entries() {
+            std::fs::write(export.join(name), bytes).unwrap();
+        }
+        let planned = plan(std::slice::from_ref(&export), &dir.path().join("out"));
+        assert!(planned.problems.is_empty(), "{:?}", planned.problems);
+        // The placeholder .f3d files cannot be read, so nothing is placed inside them and each
+        // stays a result of its own; the rebuilt archive stands for its design's .f3d and
+        // carries the screw its manifest entry lists.
+        assert_eq!(
+            converted_names(&planned),
+            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d", "Plate v1.f3d"]
+        );
+    }
+
+    #[test]
+    fn an_export_zip_converts_the_same_designs_as_its_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("export.zip");
+        let entries = export_entries();
+        let borrowed: Vec<(&str, &[u8])> = entries
+            .iter()
+            .map(|(name, bytes)| (*name, bytes.as_slice()))
+            .collect();
+        project_zip(&archive, &borrowed);
+        let planned = plan(&[archive], &dir.path().join("out"));
+        assert!(planned.problems.is_empty(), "{:?}", planned.problems);
+        assert_eq!(
+            converted_names(&planned),
+            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d", "Plate v1.f3d"]
+        );
+    }
+
+    #[test]
+    fn a_folder_without_a_manifest_converts_every_design_and_both_archive_kinds() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("plain");
+        std::fs::create_dir(&folder).unwrap();
+        for (name, bytes) in export_entries() {
+            if name != "manifest.json" {
+                std::fs::write(folder.join(name), bytes).unwrap();
+            }
+        }
+        let planned = plan(std::slice::from_ref(&folder), &dir.path().join("out"));
+        assert_eq!(planned.jobs.len(), 6);
     }
 
     #[test]
