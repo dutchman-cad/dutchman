@@ -339,8 +339,7 @@ Its `level` adds cadmpeg's published headline (`L0`–`L9`), or `null` when none
 published; reader status still determines whether conversion can be attempted.
 Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, NX, Creo View, Rhino, ACIS, STEP and offline Onshape bundles
 can convert geometry. Creo and NX parts are identified by contents
-(they share `.prt`); NX parts convert their geometry, without feature history, and Creo
-parts currently open without geometry, so their conversion is refused. SolidWorks
+(they share `.prt`); both convert their geometry, without feature history. SolidWorks
 assemblies are recognised without a reader. `input.words` appears on
 conversion successes and failures. Reader status describes capability; the actual
 history and verification report says what the file kept. CLI `--quiet` hides the volunteer
@@ -367,8 +366,9 @@ For anything else, don't try workarounds such as renaming the file. Tell the use
   and unreadable occurrences are left out and reported. Unavailable referenced configurations
   fall back to the saved active configuration with a Degraded loss. Suppressed and mirrored
   components follow cadmpeg's loss notes.
-- **Creo**: reading geometry is not supported yet.
-  Suggest exporting STEP from the program that made the design and converting that.
+- **Creo**: only the features cadmpeg resolves to a solid are read. When none do, the
+  conversion fails with "no geometry could be read"; suggest exporting STEP from Creo and
+  converting that.
 - **Inventor assemblies (`.iam`)** convert, but need their part files next to the assembly
   (or at the paths it stores). If parts are missing, the report lists them as `Dropped`.
 
@@ -498,9 +498,9 @@ A bend without its mapped attached plate remains blocked.
 - `solidcraft_version: "0.25.1"` (CLI `--solidcraft-version 0.25.1` on `convert`,
   `convert-all`, or `watch`) chooses the target release. It must be x.y.z and at least
   0.18.2. The default is the found CLI's version capped at newest known, else the newest known at build time
-  (currently 0.47), even with CLI `--no-verify` or MCP `verify: false`.
+  (currently 0.49), even with CLI `--no-verify` or MCP `verify: false`.
   Dutchman targets the current SolidCraft with a rolling 14-day window (currently
-  0.40–0.47); older targets get simplified features with a named reason.
+  0.40–0.49); older targets get simplified features with a named reason.
 - `preset: "fast"` when the user wants only the shape. `history: false` (also
   `import_only: true`) removes history while keeping the preset's reference sketches and
   joints. Leave `verify` at its default.
@@ -933,7 +933,7 @@ SolidCraft reports also include `solidcraft.known_newest` (a version string) and
 fields require no network check. See [JSON reports](../../docs/json.md).
 
 SolidCraft names and report targets use minors: `solidcraft.target` and
-`solidcraft.known_newest` are `x.y` strings such as `"0.47"`. `solidcraft.found`
+`solidcraft.known_newest` are `x.y` strings such as `"0.49"`. `solidcraft.found`
 retains the full installed version. All patches of the newest minor count as current;
 writer gates still use full versions internally. Explicit target inputs remain `x.y.z`.
 

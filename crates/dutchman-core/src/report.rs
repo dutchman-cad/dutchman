@@ -263,6 +263,8 @@ const MAX_NAMES: usize = 100_000;
 /// succeeded; the report says how faithfully.
 #[derive(Clone, Debug, Default)]
 pub struct Report {
+    /// The version of the program that saved the input file, as `major.minor.revision`.
+    source_version: Option<String>,
     threads: Option<(usize, usize)>,
     part_positions: Option<(crate::PartPositions, crate::PartPositionCounts)>,
     placement_assumptions: Vec<(String, crate::PlacementAssumption)>,
@@ -668,6 +670,17 @@ impl Report {
         self.verification_tolerances = Some(tolerances);
     }
 
+    /// The version of the program that saved the input file, as `major.minor.revision`, when
+    /// the file states it as numbers (an Inventor file does). Never read from a name or message.
+    pub fn source_version(&self) -> Option<&str> {
+        self.source_version.as_deref()
+    }
+
+    /// Records the saving program's version once; the first one recorded is kept.
+    pub fn record_source_version(&mut self, version: String) {
+        self.source_version.get_or_insert(version);
+    }
+
     /// Requested and bounded maximum Dutchman part workers, excluding child-process threads.
     pub fn threads(&self) -> Option<(usize, usize)> {
         self.threads
@@ -890,6 +903,9 @@ impl Report {
         for checks in other.verification_checks {
             self.record_verification_checks(checks);
         }
+        if let Some(version) = other.source_version {
+            self.record_source_version(version);
+        }
         self.merge_threads(other.threads);
         if let Some((mode, counts)) = other.part_positions {
             self.record_part_positions(mode, counts);
@@ -910,6 +926,9 @@ impl Report {
     pub fn append_prefixed(&mut self, other: Report, prefix: &str) {
         for checks in other.verification_checks {
             self.record_verification_checks(checks);
+        }
+        if let Some(version) = other.source_version {
+            self.record_source_version(version);
         }
         self.merge_threads(other.threads);
         if let Some((mode, counts)) = other.part_positions {

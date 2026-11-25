@@ -151,7 +151,10 @@ Use `--report-counts --report-anon FILE` with `convert` or `convert-all` to writ
 `dutchman.report-counts/1`. For MCP `convert_all`, set `report_counts: true` and
 `report_anon` to the destination. This opt-in profile holds counts and fixed categories;
 it has no messages, file IDs, names, paths, dimensions or geometry. It cannot use
-`report_salt` or `report_key`. Source version bands remain `unknown` when unavailable.
+`report_salt` or `report_key`. Inventor files carry the release year they were saved with as a band (`inventor_2021`,
+`inventor_older`, `inventor_newer`); for an assembly it is the `.iam` file's own saving
+version, not its parts'. The band is `unknown` for other formats and when the
+file states no version.
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](json.md).

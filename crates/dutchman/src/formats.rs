@@ -13,6 +13,9 @@ pub fn converts(format: Format) -> &'static str {
     if format == Format::FreeCadDocument && format.codec_id().is_none() {
         return "left out of this build (the `freecad` feature); release builds convert them: https://github.com/dutchman-cad/dutchman/releases";
     }
+    if format.needs_module() {
+        return "placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately)";
+    }
     if !format.can_convert() {
         return "nothing yet; reading geometry is not supported yet";
     }
@@ -36,6 +39,7 @@ pub fn converts(format: Format) -> &'static str {
         Format::SolidWorksPart => {
             "geometry; feature history waits on cadmpeg binding sketches and extrude profiles"
         }
+        Format::CreoPart => "geometry; solids and surfaces SolidCraft can import",
         _ => "geometry through STEP; solids and surfaces SolidCraft can import",
     }
 }
@@ -98,7 +102,8 @@ pub fn markdown() -> String {
         };
         let converts = if format == Format::Iges {
             "Import it in SolidCraft directly (File > Import)".to_owned()
-        } else if format.can_convert() || format == Format::FreeCadDocument {
+        } else if format.can_convert() || format == Format::FreeCadDocument || format.needs_module()
+        {
             capitalised(converts(format))
         } else {
             "Not yet".to_owned()

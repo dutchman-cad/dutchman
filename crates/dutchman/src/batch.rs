@@ -330,12 +330,14 @@ pub fn text(report: &Value, verbose: bool) -> String {
             out.push_str(&line);
             out.push('\n');
         }
-        let losses = result
-            .get("losses")
-            .and_then(Value::as_array)
-            .map_or(&[][..], Vec::as_slice);
+        if let Some(meaning) = report::unverified_history(result, true) {
+            out.push_str("           ");
+            out.push_str(meaning);
+            out.push('\n');
+        }
+        let losses = report::listed_losses(result, verbose);
         if verbose || losses.len() <= report::LISTED {
-            for loss in losses {
+            for loss in &losses {
                 let (line, shortened) = report::loss_line(loss, verbose);
                 cut |= shortened;
                 out.push_str("           ");
@@ -915,9 +917,7 @@ fn search(
             search(root, &path, depth + 1, out, skipped, include, left);
         } else if meta.is_file()
             && Format::from_path(&path).is_none()
-            && !path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("tools"))
+            && !crate::tool_library::is_library(&path)
         {
             *skipped.entry(extension_of(&path)).or_insert(0) += 1;
         } else if meta.is_file() {

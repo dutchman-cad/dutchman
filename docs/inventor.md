@@ -173,7 +173,9 @@ Every file found is named as its folder lists it, whatever case the assembly sto
 ## Testing without real Inventor files
 
 cadmpeg publishes no Inventor part with geometry or history, and Dutchman never uses customer
-files. `crates/dutchman-core/tests/fixtures/synthetic_cube.ipt` is generated from cadmpeg's own
+files. `crates/dutchman-core/tests/fixtures/inventor_parameter_expressions.ipt` is a CC0 block
+made on purpose in Inventor 2016 with user parameters, model parameters and expressions that read
+each other; `an_inventor_part_keeps_its_parameter_expressions` converts it. `crates/dutchman-core/tests/fixtures/synthetic_cube.ipt` is generated from cadmpeg's own
 synthetic sources (its README has the recipe). History behaviour is tested on CADIR built in
 the tests in the shape the Inventor codec emits, until cadmpeg publishes generated Inventor
 goldens with a design segment (sketch and extrude).

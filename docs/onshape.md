@@ -313,6 +313,33 @@ already there is replaced; when another file has the name, the new bundle gets `
 and so on. An explicit `--out` is used exactly as given, and an existing
 output is replaced only after a successful fetch.
 
+### Before you fetch
+
+- **You need Onshape API keys.** Fetching reads the document through the Onshape API with your
+  own keys. Converting a `.onshape-bundle` you already have needs no keys. Make them in Onshape
+  under My account > Developer > API keys
+  ([Onshape help: My Account - Developer](https://cad.onshape.com/help/Content/Plans/my_account_developer.htm));
+  [Connect your Onshape account](#connect-your-onshape-account) lists the two permissions to tick.
+- **Not every account can make keys.** Onshape caps individual accounts at two API keys, and
+  company, classroom and enterprise accounts have no cap (same help page). A newly created Free
+  account was seen without the option to create keys, while another user's account could
+  create them. If you don't see **Create new API key**, someone who can make keys and open the
+  document can fetch it and send you the `.onshape-bundle`.
+- **A fetch spends your yearly API calls.** Onshape allows 2,500 API calls a year per user on
+  EDU Student, Free and Standard, 5,000 per user on Professional, and 10,000 per full user on
+  Enterprise ([Onshape API limits](https://onshape-public.github.io/docs/auth/limits/)). Onshape
+  counts only calls that succeed. My account > Developer shows how many you have used.
+- **A small Part Studio costs about 11 calls.** From a version link: three to list the document
+  (microversion, name, tabs), the feature list, one body-detail state, the configuration, the
+  variables, the sketches, and the STEP export (request, one poll, download). A workspace link
+  adds one final check. Each feature whose faces or parts the conversion needs adds one
+  body-detail call, and a Derived Part Studio or an assembly adds the studios it reads. Before
+  fetching, Dutchman estimates 30 calls for each Part Studio or assembly and asks above 50; see
+  [Calls and cache](#calls-and-cache). Fetching the same version again is read from the cache and usually costs no calls.
+- **Cap a fetch with `--max-calls N`** (`max_calls` in the MCP tool). The fetch stops before
+  call N+1, and `--max-calls 0` reads only the cache. A stopped fetch picks up later with only
+  the calls it is missing ([Continue a stopped fetch](#continue-a-stopped-fetch)).
+
 ### Connect your Onshape account
 
 In the Dutchman app, choose **Connect Onshape**. Create API keys in Onshape under

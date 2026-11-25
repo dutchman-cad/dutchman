@@ -17,19 +17,23 @@ mod hidden;
 mod input_edges;
 mod locate;
 mod memory;
+pub mod module;
 mod names;
 #[cfg(feature = "onshape")]
 mod onshape;
+pub mod package;
 pub mod parallel;
 mod part_positions;
 pub mod parts;
 pub mod placement;
+mod plain_notes;
 pub mod preflight;
 mod progress;
 pub mod progress_words;
 mod refusal;
 pub mod source;
 mod source_errors;
+mod source_version;
 pub mod time;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
@@ -157,6 +161,7 @@ impl Model {
         )
     }
 }
+pub use plain_notes::{plain_view, row_for, PlainNote, PlainView, Shown, PLAIN_NOTES};
 pub use report::{
     AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureOutput, FeatureStatus, Inferred,
     InferredAgainst, InferredSelection, LeftOutGroup, Loss, Mode, Outcome, OutputMatch,
@@ -242,7 +247,7 @@ pub fn assembly_references(
     let value = serde_json::to_value(&model.ir.model.occurrences)
         .map_err(|err| Error::Decode(format!("cannot read assembly references: {err}")))?;
     let finder = locate::Finder::new(search);
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = assembly::input_folder(input);
     let mut references: std::collections::BTreeSet<_> = value
         .as_array()
         .into_iter()
@@ -366,6 +371,7 @@ pub fn read_with_progress(
         report,
         &|format, path, report| {
             let model = decode_file(format, path, report, progress)?;
+            source_version::record(report, path, input, &model.ir.native);
             // The codec owns Fusion archive members; do not count the whole archive as one.
             if format != Format::FusionMultiDocument {
                 if let Some(progress) = progress {
@@ -547,6 +553,15 @@ fn decode_file(
     }
     if let Some(progress) = progress {
         progress.stage(Stage::Input);
+    }
+    if format.needs_module() {
+        names::saw_path(input, report);
+        check_input(input)?;
+        if let Some(progress) = progress {
+            progress.stage(Stage::Decode);
+        }
+        let model = module::read(input, report)?;
+        return source::finish_decoded(format, model, false, report);
     }
     let input_name = input.file_name().map(|name| name.to_string_lossy());
     let opening = progress.map(|p| p.step(StepKind::Opening, input_name.as_deref(), None, None));

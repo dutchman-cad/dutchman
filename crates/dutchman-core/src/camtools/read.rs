@@ -23,9 +23,18 @@ pub struct Contents {
     pub holders: usize,
 }
 
+/// How much of a `.json` file is looked at before it is parsed in full.
+const SNIFF_BYTES: usize = 8 * 1024;
+
+/// Geometry fields a Fusion tool states.
+const GEOMETRY_KEYS: [&str; 10] = [
+    "DC", "diameter", "INSD", "IC", "OAL", "LCF", "LB", "NOF", "SFDM", "RE",
+];
+
 /// Whether `path` is a Fusion tool library this module reads: any `.tools` file, and a `.json`
-/// file whose tools look like Fusion's (a `data` array of objects with a `type` and a `unit`
-/// or `geometry`).
+/// file that is an object with a `data` list in which every entry is a holder or a Fusion tool
+/// (see [`looks_like_fusion`]). Other `.json` files are cheap to refuse: the first few KB must
+/// open an object and name `"data"` before the file is parsed in full.
 pub fn is_library(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
@@ -39,31 +48,106 @@ pub fn is_library(path: &Path) -> bool {
     let Ok(file) = std::fs::File::open(path) else {
         return false;
     };
+    let mut head = Vec::new();
+    if file
+        .take(SNIFF_BYTES as u64)
+        .read_to_end(&mut head)
+        .is_err()
+    {
+        return false;
+    }
+    let Ok(head) = decode_text(&head, true) else {
+        return false;
+    };
+    let head = head.trim_start();
+    if !head.starts_with('{') || !head.contains("\"data\"") {
+        return false;
+    }
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
     let mut bytes = Vec::new();
     if file.take(MAX_BYTES).read_to_end(&mut bytes).is_err() {
         return false;
     }
-    serde_json::from_slice::<Value>(&bytes)
+    let Ok(text) = decode_text(&bytes, false) else {
+        return false;
+    };
+    serde_json::from_str::<Value>(&text)
         .ok()
         .is_some_and(|root| looks_like_fusion(&root))
 }
 
-fn looks_like_fusion(root: &Value) -> bool {
-    let entries = match root {
-        Value::Object(o) => match o.get("data") {
-            Some(Value::Array(a)) => a.as_slice(),
-            _ => return false,
-        },
-        Value::Array(a) => a.as_slice(),
-        _ => return false,
+/// A holder, or a Fusion tool: a string `type` and either a `geometry` object with a Fusion
+/// size field or a `unit` beside tool-only sections.
+fn is_holder_or_tool(entry: &Value) -> bool {
+    let Some(o) = entry.as_object() else {
+        return false;
     };
-    !entries.is_empty()
-        && entries.iter().all(|e| {
-            e.as_object().is_some_and(|o| {
-                o.get("type").is_some_and(Value::is_string)
-                    && (o.contains_key("geometry") || o.contains_key("unit"))
+    let Some(kind) = o.get("type").and_then(Value::as_str) else {
+        return false;
+    };
+    if kind == "holder" {
+        return true;
+    }
+    let sized = o
+        .get("geometry")
+        .and_then(Value::as_object)
+        .is_some_and(|g| GEOMETRY_KEYS.iter().any(|k| g.contains_key(*k)));
+    let by_unit = o.get("unit").is_some_and(Value::is_string)
+        && ["start-values", "post-process", "BMC", "guid"]
+            .iter()
+            .any(|k| o.contains_key(*k));
+    sized || by_unit
+}
+
+/// A `{"data": [...]}` object whose entries are all holders or Fusion tools, at least one.
+fn looks_like_fusion(root: &Value) -> bool {
+    let Some(entries) = root
+        .as_object()
+        .and_then(|o| o.get("data"))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    !entries.is_empty() && entries.iter().all(is_holder_or_tool)
+}
+
+/// The text of a JSON file as UTF-8: a UTF-8 byte order mark is dropped, and UTF-16 (little or
+/// big endian, marked by its byte order mark, as PowerShell writes it) is decoded. `partial` is
+/// set for a prefix of a file, which may end inside a character.
+fn decode_text(bytes: &[u8], partial: bool) -> Result<String, String> {
+    let utf16 = |rest: &[u8], big: bool| {
+        let units: Vec<u16> = rest
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| {
+                if big {
+                    u16::from_be_bytes(pair)
+                } else {
+                    u16::from_le_bytes(pair)
+                }
             })
-        })
+            .collect();
+        if partial {
+            Ok(String::from_utf16_lossy(&units))
+        } else {
+            String::from_utf16(&units).map_err(|_| "the file is not valid UTF-16 text".to_owned())
+        }
+    };
+    if let Some(rest) = bytes.strip_prefix(b"\xFF\xFE") {
+        return utf16(rest, false);
+    }
+    if let Some(rest) = bytes.strip_prefix(b"\xFE\xFF") {
+        return utf16(rest, true);
+    }
+    let rest = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    if partial {
+        Ok(String::from_utf8_lossy(rest).into_owned())
+    } else {
+        String::from_utf8(rest.to_vec()).map_err(|_| "the file is not valid UTF-8 text".to_owned())
+    }
 }
 
 /// Reads the library at `path`.
@@ -93,7 +177,7 @@ pub fn read(path: &Path) -> Result<Contents, String> {
         read_json(&text, &name, &mut contents)?;
     }
     if contents.tools.is_empty() && contents.holders == 0 {
-        return Err("the library holds no tools".into());
+        return Err("this library holds no tools".into());
     }
     Ok(contents)
 }
@@ -145,8 +229,9 @@ fn read_archive(path: &Path, into: &mut Contents) -> Result<(), String> {
 
 /// Adds the tools of one JSON document.
 pub(super) fn read_json(text: &[u8], source: &str, into: &mut Contents) -> Result<(), String> {
+    let text = decode_text(text, false).map_err(|e| format!("{source}: {e}"))?;
     let root: Value =
-        serde_json::from_slice(text).map_err(|e| format!("{source} is not valid JSON: {e}"))?;
+        serde_json::from_str(&text).map_err(|e| format!("{source} is not valid JSON: {e}"))?;
     let entries: Vec<Value> = match root {
         Value::Object(mut o) => match o.remove("data") {
             Some(Value::Array(a)) => a,

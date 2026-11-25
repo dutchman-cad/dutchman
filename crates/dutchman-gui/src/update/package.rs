@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,46 @@ mod appimage;
 mod msi;
 mod scoop;
 mod windows;
+
+/// The message shown when GitHub cannot be reached during a download.
+pub(super) fn unreachable_message() -> &'static str {
+    windows::UNREACHABLE
+}
+
+/// Marks a job as only downloading until finished or dropped (also on a panic), so Dutchman
+/// may close without losing anything.
+struct Downloading(Arc<AtomicBool>);
+impl Downloading {
+    fn start(flag: &Arc<AtomicBool>) -> Self {
+        flag.store(true, Ordering::SeqCst);
+        Self(flag.clone())
+    }
+    fn finish(&self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+impl Drop for Downloading {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+type Fetch<'a> = dyn Fn(&str, u64, &mut dyn std::io::Write) -> Result<(), String> + 'a;
+
+/// Wraps a fetch so the download phase ends once the package itself has been fetched: what
+/// follows (SHA-256 check, replacing files) must not be interrupted by closing.
+fn ending_download<'a>(
+    guard: &'a Downloading,
+    inner: &'a Fetch<'a>,
+) -> impl Fn(&str, u64, &mut dyn std::io::Write) -> Result<(), String> + 'a {
+    move |url, limit, out| {
+        let result = inner(url, limit, out);
+        if !url.ends_with(".sha256") {
+            guard.finish();
+        }
+        result
+    }
+}
 
 pub(super) fn windows_startup(install: &Install) -> Option<scoop::Failure> {
     if matches!(install, Install::Msi(_)) {
@@ -554,6 +595,9 @@ pub struct Job {
     progress: Arc<Mutex<Progress>>,
     pub tag: String,
     prepared: Arc<Mutex<Option<windows::Verified>>>,
+    /// True while a release file is being fetched. Nothing is installed yet, so the window may
+    /// close and take the download with it.
+    downloading: Arc<AtomicBool>,
 }
 impl Default for Job {
     fn default() -> Self {
@@ -569,7 +613,16 @@ impl Job {
             })),
             tag: String::new(),
             prepared: Arc::new(Mutex::new(None)),
+            downloading: Arc::new(AtomicBool::new(false)),
         }
+    }
+    /// Whether the job is only downloading, so closing Dutchman loses nothing.
+    pub fn downloading(&self) -> bool {
+        self.downloading.load(Ordering::SeqCst)
+    }
+    /// Whether a close request must wait: work is under way and is not just a download.
+    pub fn blocks_close(&self) -> bool {
+        self.busy() && !self.downloading()
     }
     pub fn snapshot(&self) -> Progress {
         self.progress
@@ -631,22 +684,25 @@ impl Job {
         self.set_phase(Phase::Running);
         let progress = self.progress.clone();
         let prepared = self.prepared.clone();
+        let downloading = self.downloading.clone();
         let ctx = ctx.clone();
         let result = std::thread::Builder::new()
             .name("windows-download".into())
             .spawn(move || {
-                let result =
-                    windows::prepare(&install, &tag, &windows::download).and_then(|package| {
-                        if let Some(package) = package {
-                            *prepared
-                                .lock()
-                                .map_err(|_| "The installer download worker stopped.")? =
-                                Some(package);
-                            Ok(Phase::Ready)
-                        } else {
-                            Ok(Phase::Installed)
-                        }
-                    });
+                // True for the whole download (checksum and package), cleared before the
+                // verification and install, and cleared if this thread panics.
+                let guard = Downloading::start(&downloading);
+                let fetch = ending_download(&guard, &windows::download);
+                let result = windows::prepare(&install, &tag, &fetch).and_then(|package| {
+                    if let Some(package) = package {
+                        *prepared
+                            .lock()
+                            .map_err(|_| "The installer download worker stopped.")? = Some(package);
+                        Ok(Phase::Ready)
+                    } else {
+                        Ok(Phase::Installed)
+                    }
+                });
                 if let Ok(mut p) = progress.lock() {
                     p.phase = result.unwrap_or_else(Phase::Failed);
                 }
