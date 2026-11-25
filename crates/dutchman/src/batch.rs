@@ -1072,8 +1072,41 @@ fn search(
     }
 }
 
+/// Names Windows keeps for devices: a file called one of these, with any extension, cannot be made.
+const RESERVED: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// `path` with a file name every system can make: no trailing dots or spaces in the stem
+/// (Windows drops them, so `a.sc` and `a .sc` would be one file) and no device name (`con.sc`
+/// becomes `con_.sc`).
+fn portable_name(path: &Path) -> PathBuf {
+    let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
+        return path.to_path_buf();
+    };
+    let mut clean = stem.trim_end_matches(['.', ' ']).to_owned();
+    if clean.is_empty() {
+        clean = "_".to_owned();
+    }
+    let head = clean.split('.').next().unwrap_or_default().to_lowercase();
+    if RESERVED.contains(&head.as_str()) {
+        clean.insert(head.len().min(clean.len()), '_');
+    }
+    if clean == stem {
+        return path.to_path_buf();
+    }
+    let mut name = std::ffi::OsString::from(clean);
+    if let Some(extension) = path.extension() {
+        name.push(".");
+        name.push(extension);
+    }
+    path.with_file_name(name)
+}
+
 /// `path`, numbered (`part-2.sc`) when an earlier file already writes there.
 fn unique(path: PathBuf, taken: &mut BTreeSet<String>) -> PathBuf {
+    let path = portable_name(&path);
     let mut candidate = path.clone();
     let mut n = 2;
     // Reserve portable names even on a case-sensitive source filesystem: outputs
@@ -2251,6 +2284,24 @@ mod tests {
             default_output(&input),
             dir.path().join("project (SolidCraft 2)")
         );
+    }
+
+    #[test]
+    fn output_names_are_ones_every_system_can_make() {
+        let mut taken = BTreeSet::new();
+        let name = |path: &str, taken: &mut BTreeSet<String>| {
+            unique(PathBuf::from(path), taken)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(name("out/CON.sc", &mut taken), "CON_.sc");
+        assert_eq!(name("out/aux.v2.sc", &mut taken), "aux_.v2.sc");
+        assert_eq!(name("out/part.sc", &mut taken), "part.sc");
+        // Windows drops a trailing dot or space, so these are one file.
+        assert_eq!(name("out/part .sc", &mut taken), "part-2.sc");
+        assert_eq!(name("out/Part..sc", &mut taken), "Part-3.sc");
     }
 
     #[test]
