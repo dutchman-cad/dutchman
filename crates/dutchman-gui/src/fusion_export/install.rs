@@ -21,14 +21,10 @@ pub struct Pin {
 }
 
 /// The pinned exporter release: version, zip and hash change together, here only.
-///
-/// This is the protocol release's release candidate (rc.2). Its URL answers only once 0.4.0 is
-/// released; the released zip is rebuilt, so replace `sha256` with the published
-/// `FusionBulkExport-0.4.0.zip.sha256` then.
 pub const PIN: Pin = Pin {
-    version: "0.4.0",
-    zip_url: "https://github.com/cad-lifeboat/fusion-bulk-export/releases/download/v0.4.0/FusionBulkExport-0.4.0.zip",
-    sha256: "2dfc7e45d962fd971200a39e2eb1ab9ddf24f4804457d8af8a2dc2bb64b62a27",
+    version: "0.4.1",
+    zip_url: "https://github.com/cad-lifeboat/fusion-bulk-export/releases/download/v0.4.1/FusionBulkExport-0.4.1.zip",
+    sha256: "3d6e826382254d54c4b4261778bc04e682563c1e164cdfe5200bf9739a47a2d7",
 };
 
 /// Where the exporter announces its newest release; only used to say a newer one exists.
@@ -888,22 +884,22 @@ mod tests {
         assert!(latest_release_at(&serve(b"{}".to_vec())).is_err());
     }
 
-    /// The real release candidate's three files (a folder named by `DUTCHMAN_FX_RC_DIR`);
+    /// The real release's three files (a folder named by `DUTCHMAN_FX_RC_DIR`);
     /// skipped when it is not set. The hash comes from the release's own
     /// `.sha256` file, never from the pin, which changes when the final zip is rebuilt.
     #[test]
-    fn the_real_release_candidate_installs() {
+    fn the_real_release_installs() {
         let Some(dir) = std::env::var_os("DUTCHMAN_FX_RC_DIR").map(PathBuf::from) else {
             eprintln!("DUTCHMAN_FX_RC_DIR not set; skipped");
             return;
         };
-        let zip = std::fs::read(dir.join("FusionBulkExport-0.4.0.zip")).unwrap();
-        let sum = std::fs::read_to_string(dir.join("FusionBulkExport-0.4.0.zip.sha256")).unwrap();
+        let zip = std::fs::read(dir.join("FusionBulkExport-0.4.1.zip")).unwrap();
+        let sum = std::fs::read_to_string(dir.join("FusionBulkExport-0.4.1.zip.sha256")).unwrap();
         let url = serve(zip);
         let addins = tempfile::tempdir().unwrap();
         plant(addins.path(), "0.3.5");
         let o = Options {
-            version: "0.4.0".into(),
+            version: "0.4.1".into(),
             zip_url: url,
             sha256: sum.split_whitespace().next().unwrap().into(),
             addins: addins.path().to_path_buf(),
@@ -913,12 +909,12 @@ mod tests {
             allow_http: true,
         };
         let done = run(&o, false).unwrap();
-        assert_eq!(done.version, "0.4.0");
+        assert_eq!(done.version, "0.4.1");
         let folder = addins.path().join(ADDIN);
         for file in ["install-stamp.json", "FusionBulkExport.manifest"] {
             let v: Value =
                 serde_json::from_str(&std::fs::read_to_string(folder.join(file)).unwrap()).unwrap();
-            assert_eq!(v["version"], "0.4.0", "{file}");
+            assert_eq!(v["version"], "0.4.1", "{file}");
         }
         assert!(!folder.join("old-file.py").exists());
     }

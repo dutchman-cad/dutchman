@@ -284,6 +284,7 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
             assembly: model.assembly.clone(),
             // The shown bodies are a subset of the file's: restate them.
             source_step: None,
+            merge_bodies: model.merge_bodies,
         },
         hidden,
     )))

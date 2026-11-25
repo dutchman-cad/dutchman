@@ -111,7 +111,7 @@ geometry and hands over finished areas.
 Loops of one area may touch at a single point (a hole touching the outer loop, or two holes touching). Points closer
 than 1e-6 mm are one point.
 
-Each overlay becomes one body named after it: a sheet with one planar face per area, or, with a `thickness`, a solid for each area.
+Each overlay becomes one body named after it: a sheet with one planar face per area, or, with a `thickness`, a solid for each area, all in the one body (SolidCraft keeps the separate pieces together, so a board with hundreds of areas opens with one body per overlay). The `Plating` part's tubes are one body the same way.
 Colour and opacity apply to every face of either.
 
 ### Limits and safety

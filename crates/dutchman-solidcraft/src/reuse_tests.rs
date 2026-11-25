@@ -68,6 +68,7 @@ fn part() -> Model {
         source_file: None,
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     }
 }
 

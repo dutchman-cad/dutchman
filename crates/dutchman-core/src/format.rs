@@ -24,11 +24,23 @@ pub enum Format {
     ModuleBoard,
     /// A shared part suffix whose contents do not identify Creo or NX.
     UnclassifiedPart,
+    /// An Inventor drawing (.idw).
+    InventorDrawing,
+    /// A SolidWorks drawing (.slddrw).
+    SolidWorksDrawing,
+    /// A Fusion drawing (.f2d).
+    FusionDrawing,
+    /// A DWG drawing: AutoCAD, Inventor, or an Onshape drawing export.
+    DwgDrawing,
+    /// A DXF drawing, such as an Onshape drawing export.
+    DxfDrawing,
+    /// A Solid Edge drawing (.dft).
+    SolidEdgeDrawing,
 }
 
 impl Format {
     /// Every recognised format.
-    pub const ALL: [Format; 18] = [
+    pub const ALL: [Format; 24] = [
         Self::FusionArchive,
         Self::FusionMultiDocument,
         Self::InventorPart,
@@ -47,6 +59,12 @@ impl Format {
         Self::Iges,
         Self::ModuleBoard,
         Self::UnclassifiedPart,
+        Self::InventorDrawing,
+        Self::SolidWorksDrawing,
+        Self::FusionDrawing,
+        Self::DwgDrawing,
+        Self::DxfDrawing,
+        Self::SolidEdgeDrawing,
     ];
 
     fn metadata(self) -> (&'static str, &'static str, &'static str, &'static str) {
@@ -109,6 +127,32 @@ impl Format {
                 "Creo or NX part (.prt)",
                 "Creo or NX",
             ),
+            Self::InventorDrawing => (
+                "inventor_drawing",
+                "idw",
+                "Inventor drawing (.idw)",
+                "Inventor",
+            ),
+            Self::SolidWorksDrawing => (
+                "solidworks_drawing",
+                "slddrw",
+                "SolidWorks drawing (.slddrw)",
+                "SolidWorks",
+            ),
+            Self::FusionDrawing => ("fusion_drawing", "f2d", "Fusion drawing (.f2d)", "Fusion"),
+            Self::DwgDrawing => (
+                "dwg_drawing",
+                "dwg",
+                "DWG drawing (.dwg)",
+                "AutoCAD or Inventor",
+            ),
+            Self::DxfDrawing => ("dxf_drawing", "dxf", "DXF drawing (.dxf)", "AutoCAD"),
+            Self::SolidEdgeDrawing => (
+                "solid_edge_drawing",
+                "dft",
+                "Solid Edge drawing (.dft)",
+                "Solid Edge",
+            ),
         }
     }
 
@@ -141,6 +185,12 @@ impl Format {
             Self::Iges => &["igs", "iges"],
             // The fallback: with the module installed, `dutchman-electronics info` lists them all.
             Self::ModuleBoard => crate::module::FALLBACK_EXTENSIONS,
+            Self::InventorDrawing => &["idw"],
+            Self::SolidWorksDrawing => &["slddrw"],
+            Self::FusionDrawing => &["f2d"],
+            Self::DwgDrawing => &["dwg"],
+            Self::DxfDrawing => &["dxf"],
+            Self::SolidEdgeDrawing => &["dft"],
         }
     }
     /// Human-readable format name.
@@ -158,6 +208,12 @@ impl Format {
             Self::InventorPart | Self::InventorAssembly => Some("inventor"),
             Self::SolidWorksPart | Self::SolidWorksAssembly => Some("sldprt"),
             Self::UnclassifiedPart | Self::ModuleBoard => None,
+            Self::InventorDrawing
+            | Self::SolidWorksDrawing
+            | Self::FusionDrawing
+            | Self::DwgDrawing
+            | Self::DxfDrawing
+            | Self::SolidEdgeDrawing => None,
             Self::FreeCadDocument => Some("fcstd"),
             Self::CatiaPart => Some("catia"),
             Self::CreoPart => Some("creo"),
@@ -195,9 +251,23 @@ impl Format {
             .map(|level| format!("L{level}"))
     }
 
+    /// Whether this is a drawing format: converting it writes a report, and a SolidCraft
+    /// drawing when its sheets can be read.
+    pub fn is_drawing(self) -> bool {
+        matches!(
+            self,
+            Self::InventorDrawing
+                | Self::SolidWorksDrawing
+                | Self::FusionDrawing
+                | Self::DwgDrawing
+                | Self::DxfDrawing
+                | Self::SolidEdgeDrawing
+        )
+    }
+
     /// Whether Dutchman can read usable geometry for this format.
     pub fn reads_geometry(self) -> bool {
-        !matches!(self, Self::UnclassifiedPart | Self::Iges)
+        !matches!(self, Self::UnclassifiedPart | Self::Iges) && !self.is_drawing()
     }
 
     /// Plain words for the reader's current capability.
@@ -206,6 +276,8 @@ impl Format {
             "reads geometry with the electronics module"
         } else if self == Self::Iges {
             "open it in SolidCraft directly"
+        } else if self.is_drawing() {
+            "accepted; the report says which sheets and views were read"
         } else if self.reads_geometry() {
             "reads geometry"
         } else if self.codec_id().is_some() {
@@ -219,6 +291,10 @@ impl Format {
     pub fn can_convert(self) -> bool {
         if self.needs_module() {
             return crate::module::installed();
+        }
+        // A drawing is always accepted: it gets a report, and a drawing when it can be read.
+        if self.is_drawing() {
+            return true;
         }
         self.codec_id().is_some() && self.reads_geometry()
     }

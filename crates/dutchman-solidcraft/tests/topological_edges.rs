@@ -27,6 +27,7 @@ fn model(wire: &Value) -> Model {
         source_file: None,
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     }
 }
 

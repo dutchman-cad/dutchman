@@ -727,6 +727,7 @@ mod tests {
             name: "Cube".to_owned(),
             source_file: None,
             source_step: None,
+            merge_bodies: false,
             assembly: None,
         }
     }

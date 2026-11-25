@@ -469,10 +469,10 @@ mod tests {
     fn a_newer_release_is_only_mentioned() {
         let mut panel = Panel::new();
         panel.preview(true, Presence::Running(found()), None, Install::Idle);
-        panel.set_latest("0.4.1");
+        panel.set_latest("0.4.2");
         let mut h = harness(panel);
         h.run();
-        h.get_by_label_contains("A newer Fusion exporter is available (0.4.1)");
+        h.get_by_label_contains("A newer Fusion exporter is available (0.4.2)");
         assert!(h.query_by_label("Install the Fusion exporter").is_none());
     }
 
