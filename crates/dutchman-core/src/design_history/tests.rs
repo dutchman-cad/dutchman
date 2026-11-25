@@ -151,7 +151,7 @@ pub(crate) fn block(span: Option<Value>) -> CadIr {
 /// The feature rows in timeline order. The model writes its arenas in id order, so the
 /// timeline is read back from each row's ordinal.
 fn rows(ir: &CadIr) -> Vec<Value> {
-    let mut rows = crate::ir_wire::to_value(&ir).unwrap()["model"].clone()["features"]
+    let mut rows = crate::ir_wire::to_value(ir).unwrap()["model"].clone()["features"]
         .as_array()
         .unwrap()
         .clone();
