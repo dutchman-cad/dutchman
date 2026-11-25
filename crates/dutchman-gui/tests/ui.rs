@@ -6472,6 +6472,7 @@ fn report_buttons_screenshots() {
 
 /// The Advanced "Up axis" choice, closed and open, with an English and a long German design
 /// name (the app has no translations yet), at 1280x800. Needs a GPU renderer.
+#[cfg(feature = "test-support")]
 #[test]
 #[ignore = "renders GPU screenshots of the Up axis choice; set DUTCHMAN_GUI_SCREENSHOTS"]
 fn up_axis_screenshots() {
