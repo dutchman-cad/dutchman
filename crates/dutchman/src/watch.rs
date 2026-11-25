@@ -271,11 +271,10 @@ fn run_loop(
                 )?;
                 continue;
             }
-            // Nothing already in the slot is replaced unless asked: the design gets the next free
-            // name instead, and the reports beside it the same number.
-            let numbered = (!command.options.replace)
-                .then(|| dutchman_core::safe_output::free_slot(&pending.job.output));
-            let output = numbered.as_ref().unwrap_or(&pending.job.output);
+            // Watch protects what is not its own: an output that another input or the user made is
+            // skipped and reported, never replaced and never written under a numbered name (a
+            // changed upload would pile up copies). Its own earlier output is refreshed.
+            let output = &pending.job.output;
             let success = report.get("ok") == Some(&json!(true));
             let sidecar = output.with_extension(if success {
                 "report.json"

@@ -472,7 +472,7 @@ For `parts/cube.f3d`, the default results are `parts/cube.sc` and
 there, with the ordinary `dutchman.convert/1` error report. A failed update keeps the
 previous design. Successful updates replace the design and report; obsolete report sidecars
 are removed only when they still contain the watcher's bytes. Unrelated or externally
-edited outputs and sidecars are skipped, as are destinations assigned to another input. Without `--replace`, a changed upload is written to the next free name (`part (2).sc`) rather than over the earlier output.
+edited outputs and sidecars are skipped, as are destinations assigned to another input. A changed upload refreshes the watcher's own earlier output; an output it did not write is skipped and reported, never replaced and never numbered.
 
 The output folder's `.dutchman-watch.json` records SHA-256 input hashes and outcomes,
 plus hashes proving which outputs the watcher owns. It is saved by temporary file and
