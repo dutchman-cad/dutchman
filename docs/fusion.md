@@ -359,6 +359,13 @@ carries no feature history". When the file does hold a timeline but cadmpeg coul
 example a sheet-metal settings record it found invalid), the report says so instead: the feature
 timeline is in the file, but cadmpeg could not decode it, followed by what it could not read.
 
+## Configurations and sketch dimensions
+
+When a design's saved configuration can't be read, the converted design may include bodies from
+other configurations, and a note in the report says so: check those bodies. Some sketch
+dimensions may not come through either; another note says so, and you can add them again in
+SolidCraft.
+
 ## Trimmed and unresolved profile regions
 
 One stored sketch loop does not prove a native profile selection when other solid
