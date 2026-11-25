@@ -3372,13 +3372,35 @@ fn slice(
     };
     // A Fusion root component folded into an embedded part has a file container beside it
     // (see `products::file_containers`). cadmpeg leaves the history of the document root
-    // unowned, so the folded root takes that history as well as what names it.
-    let folded_root = matches!(owner, HistoryOwner::Definition(id)
-        if root_definitions.contains(serde_json::json!([id, "file"]).to_string().as_str()));
+    // unowned. That history has exactly one owner: the folded root's slice when that slice
+    // exists (the root holds bodies), else the loose slice, as before.
+    let folds_root = |id: &str| {
+        id.starts_with("f3d:model:component#")
+            && root_definitions.contains(serde_json::json!([id, "file"]).to_string().as_str())
+    };
+    let folded_root = matches!(owner, HistoryOwner::Definition(id) if folds_root(id));
+    let root_slice_exists = wire
+        .get("product_definitions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|row| {
+            row.get("id")
+                .and_then(Value::as_str)
+                .is_some_and(folds_root)
+                && row
+                    .get("bodies")
+                    .and_then(Value::as_array)
+                    .is_some_and(|bodies| !bodies.is_empty())
+        });
     let owned = |row: &Value| match owner {
-        HistoryOwner::Definition(_) | HistoryOwner::Root => {
+        HistoryOwner::Definition(_) => {
             let owner = product_definition(row, &root_definitions);
             owner == definition || (folded_root && owner.is_none())
+        }
+        HistoryOwner::Root => {
+            let owner = product_definition(row, &root_definitions);
+            owner == definition && !(owner.is_none() && root_slice_exists)
         }
         HistoryOwner::Unknown => false,
     };
@@ -5287,6 +5309,40 @@ mod tests {
             "{kept:?}"
         );
         assert_eq!(kept.len(), 2, "{kept:?}");
+        // With loose bodies as well, each unowned feature and parameter lives in one slice.
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["geometry"]["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "synthetic:model:body#loose", "kind": "general"}));
+        wire["model"]["parameters"] = json!([{
+            "id": "synthetic:model:parameter#length", "name": "length", "expression": "1 mm",
+            "ordinal": 0, "dependencies": [], "properties": {}
+        }]);
+        let with_loose = Model {
+            ir: serde_json::from_value(wire).unwrap(),
+            ..model
+        };
+        let document = placed_document(&with_loose);
+        let slice_of = |bodies: &[&str], owner| {
+            only(&with_loose, &document, bodies, owner, "Slice".to_owned()).unwrap()
+        };
+        let folded = slice_of(
+            &["synthetic:model:body#part"],
+            HistoryOwner::Definition(root),
+        );
+        let loose = slice_of(&["synthetic:model:body#loose"], HistoryOwner::Root);
+        let parameters = |part: &Model| {
+            serde_json::to_value(&part.ir).unwrap()["model"]["parameters"]
+                .as_array()
+                .map_or(0, Vec::len)
+        };
+        for feature in feature_ids(&folded) {
+            assert!(!feature_ids(&loose).contains(&feature), "{feature} twice");
+        }
+        assert_eq!(feature_ids(&folded).len(), 2);
+        assert_eq!(parameters(&folded) + parameters(&loose), 1);
+        assert_eq!(parameters(&folded), 1);
     }
 
     #[test]
