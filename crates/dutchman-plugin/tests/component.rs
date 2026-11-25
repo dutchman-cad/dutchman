@@ -16,6 +16,9 @@ mod loss_report;
 #[path = "../src/notice.rs"]
 #[allow(dead_code)]
 mod notice;
+#[path = "../src/preflight.rs"]
+#[allow(dead_code)]
+mod preflight;
 #[path = "../src/stand_up.rs"]
 mod stand_up;
 use adapter::host::{
@@ -135,6 +138,7 @@ enum Fault {
     Aggregate,
     Oversize,
     FolderDenied,
+    PartTooBig,
 }
 impl Host {
     fn input(&mut self, operation: &str, path: &str) -> Result<(), PluginError> {
@@ -234,6 +238,10 @@ impl source::Host for Host {
     fn size(&mut self, path: String) -> Result<Option<u64>, PluginError> {
         self.input("size", &path)?;
         if path.ends_with("P02a.FCStd") {
+            if let Some(Fault::PartTooBig) = self.fault {
+                self.input_failed = true;
+                return Ok(Some(900_000_000));
+            }
             if let Some(Fault::Aggregate | Fault::Oversize) = self.fault {
                 assert!(self.good_member_read);
                 self.input_failed = true;
@@ -479,6 +487,8 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     stand_up_replays(&engine, &component, &linker, &root)?;
     hidden_repeated_bodies(&engine, &component, &linker, &root)?;
     folder_not_granted(&engine, &component, &linker, &root)?;
+    part_too_big_for_the_guest(&engine, &component, &linker, &root)?;
+    failures_carry_the_full_report(&engine, &component, &linker, &root)?;
     let mut fixtures = Vec::new();
     collect_fixtures(&root, &mut fixtures)?;
     fixtures.sort();
@@ -683,6 +693,8 @@ fn fatal_member_failures(
             Fault::ResolveLimit => PluginError::LimitExceeded("Original source.resolve failure".into()),
             Fault::Aggregate => PluginError::LimitExceeded("Input exceeds the 1 GiB conversion limit; choose a smaller CAD file".into()),
             Fault::Oversize => PluginError::LimitExceeded("P02a.FCStd: input exceeds the 1073741824-byte file limit; choose a smaller CAD file".into()),
+            // Not in this loop; part_too_big_for_the_guest covers it.
+            Fault::PartTooBig => PluginError::LimitExceeded(String::new()),
             // Not in this loop; folder_not_granted covers it.
             Fault::FolderDenied => PluginError::PermissionDenied("input_folder was not granted".into()),
         };
@@ -980,5 +992,193 @@ fn folder_not_granted(
     }
     assert_eq!(store.data().calls, 0, "nothing is read before the grant");
     assert!(store.data().output.is_empty());
+    Ok(())
+}
+
+/// A conversion's result and the store it ran in.
+type Converted = (Result<String, PluginError>, Store<Host>);
+
+/// One conversion in a fresh instance of the component.
+fn convert_in(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    host: Host,
+    name: &str,
+    size: u64,
+    options: &str,
+) -> Result<Converted, Box<dyn std::error::Error + Send + Sync>> {
+    let mut store = Store::new(engine, host);
+    store.limiter(|host| &mut host.limits);
+    store.set_fuel(50_000_000_000)?;
+    let instance = ImporterPlugin::instantiate(&mut store, component, linker)?;
+    let result = import_file(
+        &instance,
+        &mut store,
+        "convert",
+        &source::FileInfo {
+            name: name.into(),
+            size,
+        },
+        options,
+    )?;
+    Ok((result, store))
+}
+
+/// A part whose size alone would not fit the guest's memory is refused before it is read, in
+/// one plain line that says which limit, needed against available, and where to go.
+fn part_too_big_for_the_guest(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let folder = root.join("freecad-1.1.4-A01");
+    let main = std::fs::read(folder.join("A01a.FCStd"))?;
+    let size = main.len() as u64;
+    let mut host = host(&folder, main);
+    host.fault = Some(Fault::PartTooBig);
+    let (result, store) = convert_in(engine, component, linker, host, "A01a.FCStd", size, "{}")?;
+    let Err(PluginError::LimitExceeded(message)) = result else {
+        return Err(format!("Expected a size refusal, got {result:?}").into());
+    };
+    assert!(
+        message.starts_with("This design is too large to open inside SolidCraft: it needs about "),
+        "{message}"
+    );
+    assert!(
+        message.contains(" MB of memory for the 90")
+            && message.contains(" MB of files it reads, and the plugin has 1700 MB"),
+        "{message}"
+    );
+    assert!(message.contains("Open it in the Dutchman app"), "{message}");
+    assert_eq!(message.lines().count(), 1, "{message}");
+    assert!(store.data().output.is_empty());
+    Ok(())
+}
+
+/// A failed conversion returns its full `dutchman.convert/1` report in the error text, which is
+/// the one path a plugin has (SolidCraft gives it no clipboard and no file to write).
+fn failures_carry_the_full_report(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let report_of = |message: &str| -> Value {
+        assert!(message.contains("Dutchman app"), "{message}");
+        serde_json::from_str(message.lines().last().unwrap()).unwrap()
+    };
+    let (broken, store) = convert_in(
+        engine,
+        component,
+        linker,
+        host(root, vec![0; 64]),
+        "broken.f3d",
+        64,
+        "{}",
+    )?;
+    let Err(PluginError::InvalidInput(FieldFailure { reason, .. })) = broken else {
+        return Err(format!("Expected invalid input, got {broken:?}").into());
+    };
+    let report = report_of(&reason);
+    assert_eq!(report["schema"], "dutchman.convert/1");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["input"]["path"], "broken.f3d");
+    assert!(report["error"]["kind"].is_string() && report["error"]["stage"].is_string());
+    assert!(reason.contains("broken.failed.json"), "{reason}");
+    assert!(store.data().output.is_empty());
+    Ok(())
+}
+
+/// Opt-in measurement of one large assembly through the real component: set
+/// `DUTCHMAN_PLUGIN_ASSEMBLY` to the absolute path of an `.iam` or `.sldasm` whose parts sit
+/// beside it. It prints the guest's peak linear memory, the fuel used, and the time, or the plugin's
+/// refusal, and checks only that the result is not a trap.
+#[test]
+fn measure_one_large_assembly() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(assembly) = std::env::var_os("DUTCHMAN_PLUGIN_ASSEMBLY").map(PathBuf::from) else {
+        eprintln!("measure_one_large_assembly: DUTCHMAN_PLUGIN_ASSEMBLY not set; not measuring");
+        return Ok(());
+    };
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || measure(&assembly))?
+        .join()
+        .map_err(|_| "measurement worker failed")?
+}
+
+fn measure(assembly: &Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let path = std::env::var("DUTCHMAN_PLUGIN_COMPONENT")
+        .map_err(|_| "Set DUTCHMAN_PLUGIN_COMPONENT to the wasm32-unknown-unknown component")?;
+    let mut config = Config::new();
+    config
+        .wasm_component_model(true)
+        .consume_fuel(true)
+        .max_wasm_stack(16 * 1024 * 1024)
+        .async_stack_size(18 * 1024 * 1024);
+    let engine = Engine::new(&config)?;
+    let component = Component::from_file(&engine, &path)?;
+    let mut linker = Linker::new(&engine);
+    add_to_linker(&mut linker)?;
+    let main = std::fs::read(assembly)?;
+    let name = assembly.file_name().unwrap().to_str().unwrap();
+    let mut host = host(assembly.parent().unwrap(), main.clone());
+    host.evaluator = None;
+    let options = r#"{"editable_history":true}"#;
+    let mut store = Store::new(&engine, host);
+    store.limiter(|host| &mut host.limits);
+    // SolidCraft's own ceiling is 100,000,000,000; measure with room to finish.
+    let fuel = std::env::var("DUTCHMAN_PLUGIN_FUEL")
+        .ok()
+        .and_then(|f| f.parse().ok())
+        .unwrap_or(2_000_000_000_000u64);
+    store.set_fuel(fuel)?;
+    let instance = ImporterPlugin::instantiate(&mut store, &component, &linker)?;
+    let started = Instant::now();
+    let result = import_file(
+        &instance,
+        &mut store,
+        "convert",
+        &source::FileInfo {
+            name: name.into(),
+            size: main.len() as u64,
+        },
+        options,
+    );
+    let used = fuel - store.get_fuel().unwrap_or(0);
+    eprintln!(
+        "assembly_measurement file={name} main_bytes={} peak_guest_mib={:.1} fuel_used={used} seconds={:.1} reads={} read_bytes={} output_bytes={}",
+        main.len(),
+        store.data().limits.bytes as f64 / 1048576.0,
+        started.elapsed().as_secs_f64(),
+        store.data().calls,
+        store.data().read,
+        store.data().output.len(),
+    );
+    match result {
+        Ok(Ok(report)) => {
+            let report: Value = serde_json::from_str(&report)?;
+            eprintln!(
+                "assembly_measurement result=converted summary={} assembly={} items={}",
+                report["summary"],
+                report["details"]["assembly"],
+                report["items"]
+                    .as_array()
+                    .map(|items| items
+                        .iter()
+                        .take(8)
+                        .map(|i| format!("{}: {}", i["severity"], i["title"]))
+                        .collect::<Vec<_>>()
+                        .join(" | "))
+                    .unwrap_or_default()
+            )
+        }
+        Ok(Err(refusal)) => eprintln!("assembly_measurement result=refused {refusal:?}"),
+        Err(trap) => {
+            eprintln!("assembly_measurement result=trap {trap:#}");
+            return Err(format!("trap: {trap}").into());
+        }
+    }
     Ok(())
 }
