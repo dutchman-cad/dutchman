@@ -69,6 +69,7 @@ pub(crate) fn map(
                 .and_then(|profile| profile.get("value"))
                 .unwrap_or(&Value::Null),
             ctx,
+            None,
         )?
     } else {
         profile(reference, ctx)?
@@ -730,7 +731,7 @@ pub(super) fn look(color: &Value) -> Option<Value> {
 
 /// A length as a SolidCraft expression.
 fn mm(length: f64) -> String {
-    format!("{length} mm")
+    format!("{} mm", super::helpers::clean(length))
 }
 
 #[cfg(test)]

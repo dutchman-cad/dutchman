@@ -24,6 +24,8 @@ use dutchman_gui::App;
 /// never the real diagnostics folder (CI runs these tests without the test-support feature).
 fn test_app(cc: &eframe::CreationContext<'_>) -> App {
     dutchman_gui::worker::convert_in_process_for_tests();
+    // The Export from Fusion button is there on Windows and macOS; lay it out on Linux too.
+    dutchman_gui::fusion_export::install::offer_everywhere_for_tests();
     static FOLDER: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     let folder = FOLDER.get_or_init(|| {
         std::env::temp_dir().join(format!(
@@ -91,7 +93,7 @@ fn header_harness(width: f32, theme: ThemePreference, update: bool) -> Harness<'
         .with_size(egui::vec2(width, 680.0))
         .build_eframe(|cc| test_app(cc));
     h.ctx.set_theme(theme);
-    h.state_mut().preview_solidcraft(Some("0.46.9"));
+    h.state_mut().preview_solidcraft(Some("0.49.9"));
     if update {
         h.state_mut()
             .updater
@@ -122,11 +124,11 @@ fn assert_header_fits(h: &Harness<'_, App>, width: f32, update: bool, theme: &st
     let narrow = width - 64.0 < 850.0;
     let mut labels = vec!["Settings", "Report a problem"];
     let found = h
-        .query_by_label(if narrow { "0.46" } else { "SolidCraft 0.46" })
+        .query_by_label(if narrow { "0.49" } else { "SolidCraft 0.49" })
         .is_some();
     labels.push(match (narrow, found) {
-        (true, true) => "0.46",
-        (false, true) => "SolidCraft 0.46",
+        (true, true) => "0.49",
+        (false, true) => "SolidCraft 0.49",
         (true, false) => "not found",
         (false, false) => "SolidCraft not found",
     });
@@ -200,6 +202,164 @@ fn header_screenshots() {
     }
 }
 
+/// The baseline of a one-line label: its bottom edge, less the font's descent below the baseline.
+fn baseline_of(h: &Harness<'_, App>, label: &str, style: egui::TextStyle) -> f32 {
+    let rect = h.get_by_label(label).rect();
+    let font = style.resolve(&h.ctx.style());
+    let below = h.ctx.fonts_mut(|fonts| {
+        let galley = fonts.layout_no_wrap(label.to_owned(), font, egui::Color32::WHITE);
+        let row = &galley.rows[0];
+        row.size.y - row.glyphs[0].pos.y
+    });
+    rect.bottom() - below
+}
+
+#[test]
+fn the_version_sits_on_the_titles_baseline_in_one_line() {
+    let version = dutchman_gui::version_label();
+    for (width, title_style) in [
+        (1400.0, dutchman_gui::theme::title()),
+        (1100.0, egui::TextStyle::Heading),
+        (520.0, egui::TextStyle::Heading),
+    ] {
+        for theme in [ThemePreference::Light, ThemePreference::Dark] {
+            let h = header_harness(width, theme, false);
+            let title = baseline_of(&h, "Dutchman Convert", title_style.clone());
+            let small = baseline_of(&h, &version, egui::TextStyle::Small);
+            assert!(
+                (title - small).abs() <= 1.0,
+                "{width}: title baseline {title}, version baseline {small}"
+            );
+            let name = h.get_by_label("Dutchman Convert").rect();
+            let tag = h.get_by_label(&version).rect();
+            assert!(tag.left() >= name.right() && tag.height() < name.height());
+        }
+    }
+}
+
+/// The main window's header at 1280x800: the version on the title's line, in English and with a
+/// long German subtitle (the app has no German text yet), Day and Night.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the header; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn header_version_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, subtitle) in [
+        ("english", None),
+        (
+            "german",
+            Some("Wandelt native CAD-Konstruktionen in SolidCraft-Konstruktionen um.".to_owned()),
+        ),
+    ] {
+        *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = subtitle;
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().preview_solidcraft(Some("0.49.0"));
+            harness.run_steps(8);
+            let title = baseline_of(&harness, "Dutchman Convert", dutchman_gui::theme::title());
+            let small = baseline_of(
+                &harness,
+                &dutchman_gui::version_label(),
+                egui::TextStyle::Small,
+            );
+            assert!((title - small).abs() <= 1.0, "{language} {name}");
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("header-version-{language}"),
+                name,
+                "The version is on the title's line, on its baseline.",
+            );
+        }
+    }
+    *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = None;
+    std::fs::write(dir.join("header-version.md"), index).unwrap();
+}
+
+/// The Export from Fusion window's first half at 1280x800, Day and Night. No name a person
+/// chose appears in these screens (only the exporter's own text and version numbers), so there
+/// is no long-German-name set; the app has no translations.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn fusion_install_screenshots() {
+    use dutchman_gui::fusion_export::agent::{Agent, Presence};
+    use dutchman_gui::fusion_export::install::Step;
+    use dutchman_gui::fusion_export::panel::Install;
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    let agent = |busy: bool| Agent {
+        jobs_dir: "/Users/someone/.cad-export/jobs".into(),
+        features: vec!["export".into(), "cancel".into()],
+        version: "0.4.0".into(),
+        busy: None,
+        job: None,
+        fusion_version: Some("2.0.21508".into()),
+        pid: 41237,
+        fusion_busy: busy,
+    };
+    let cases = [
+        (
+            "fusion-1-not-found",
+            Presence::Absent,
+            Install::Idle,
+            "The exporter was not found: one button installs it.",
+        ),
+        (
+            "fusion-2-installing",
+            Presence::Absent,
+            Install::Running(Step::Downloading),
+            "Installing: downloading the pinned release.",
+        ),
+        (
+            "fusion-3-switch-on",
+            Presence::Absent,
+            Install::Done("0.4.0".into()),
+            "Installed: the steps to switch it on once in Fusion, while Dutchman keeps waiting.",
+        ),
+        (
+            "fusion-4-running",
+            Presence::Running(agent(false)),
+            Install::Idle,
+            "The exporter is running in Fusion.",
+        ),
+        (
+            "fusion-5-busy",
+            Presence::Unresponsive(agent(true)),
+            Install::Idle,
+            "Fusion is busy: the heartbeat is stale but Fusion is still running.",
+        ),
+    ];
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        for (state, presence, step, description) in &cases {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().preview_solidcraft(Some("0.47.0"));
+            harness
+                .state_mut()
+                .preview_fusion(true, presence.clone(), None, step.clone());
+            harness.run_steps(8);
+            shot(&mut harness, &dir, &mut index, state, name, description);
+        }
+    }
+    std::fs::write(dir.join("fusion-install.md"), index).unwrap();
+}
+
 #[test]
 fn designs_convert_from_the_window() {
     let out = tempfile::tempdir().unwrap();
@@ -265,7 +425,7 @@ fn a_file_that_cannot_convert_says_why() {
     harness.get_by_label(dutchman_gui::report_panel::QUESTION);
     harness.get_by_label("Copy and open DM");
     harness
-        .query_all_by_label("GitHub issue")
+        .query_all_by_label("File a GitHub issue ↗")
         .next()
         .unwrap()
         .click_accesskit();
@@ -314,6 +474,8 @@ fn failed_card(name: &str, bytes: usize, width: f32) -> (Harness<'static, App>, 
 }
 
 /// Opens the report panel's folded "More": the anonymous review, the AI prompt and Diagnose.
+const CLOUD: &str = dutchman_gui::report_panel::CLOUD_REPORT_BUTTON;
+
 fn open_more(harness: &mut Harness<'static, App>) {
     harness
         .get_by_label(dutchman_gui::report_panel::MORE)
@@ -400,11 +562,11 @@ fn a_large_failed_file_takes_the_private_link_and_no_folder_opens() {
 #[test]
 fn the_step_cards_stand_side_by_side_and_wrap_when_narrow() {
     let (harness, _dir) = failed_card("wide.f3d", 10, 1000.0);
-    let join = harness.get_by_label("Join our Discord server").rect();
+    let join = harness.get_by_label("Join our Discord").rect();
     let dm = harness.get_by_label("DM Dutchy").rect();
     assert!((join.top() - dm.top()).abs() < 1.0 && join.right() < dm.left());
     let (harness, _dir) = failed_card("narrow.f3d", 10, 520.0);
-    let join = harness.get_by_label("Join our Discord server").rect();
+    let join = harness.get_by_label("Join our Discord").rect();
     let step = harness.get_by_label("Please add a STEP export").rect();
     assert!(step.top() > join.bottom());
 }
@@ -516,9 +678,7 @@ fn screenshots() {
             convert(&mut harness);
             harness.state_mut().preview_size(0, size);
             harness.run_steps(8);
-            harness
-                .get_by_label("Join our Discord server")
-                .scroll_to_me();
+            harness.get_by_label("Join our Discord").scroll_to_me();
             harness.run_steps(8);
             shot(
                 &mut harness,
@@ -584,13 +744,13 @@ fn screenshots() {
             "A newer release is available: the Update pill in the header.",
         );
         for (found, case, update, width) in [
-            (Some("0.46.9"), "current", false, 1120.0),
-            (Some("0.47.0"), "newer", false, 1120.0),
-            (Some("0.47.0"), "newer-update", true, 1120.0),
+            (Some("0.49.9"), "current", false, 1120.0),
+            (Some("0.50.0"), "newer", false, 1120.0),
+            (Some("0.50.0"), "newer-update", true, 1120.0),
             (Some("0.17.9"), "too-old", false, 1120.0),
             (Some("0.24.0"), "older-history", false, 1120.0),
             (None, "none-found", false, 1120.0),
-            (Some("0.47.0"), "narrow", true, 760.0),
+            (Some("0.50.0"), "narrow", true, 760.0),
         ] {
             let mut preview = Harness::builder()
                 .with_size(egui::vec2(width, 680.0))
@@ -634,7 +794,7 @@ fn screenshots() {
                     "too-old" => "is too old to open Dutchman's designs",
                     "older-history" => "A newer SolidCraft keeps more of their history.",
                     "none-found" => "SolidCraft not found. Install SolidCraft",
-                    _ => "SolidCraft 0.46 is installed.",
+                    _ => "SolidCraft 0.49 is installed.",
                 })
                 .is_some());
             let file = format!("00-solidcraft-{case}-{name}.png");
@@ -860,6 +1020,11 @@ fn shot(
     let file = format!("{state}-{theme}.png");
     let image = harness.render().unwrap();
     let (width, height) = image.dimensions();
+    // People use a square or wider window, never a tall narrow one.
+    assert!(
+        height <= width,
+        "screenshot {file} is {width}x{height}: render at a landscape size such as 1280x800"
+    );
     use image::ImageEncoder;
     let output = std::fs::File::create(dir.join(&file)).unwrap();
     image::codecs::png::PngEncoder::new_with_quality(
@@ -927,7 +1092,7 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
     harness.state_mut().set_out_dir(dir.path().join("out"));
     harness.run_steps(8);
     assert!(harness
-        .query_by_label("Creo .prt: opens, no geometry yet")
+        .query_by_label("Creo .prt: reads geometry")
         .is_some());
     assert!(harness.query_by_label("NX .prt: reads geometry").is_some());
     convert(&mut harness);
@@ -1028,13 +1193,13 @@ fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
         return;
     }
     for (found, expected) in [
-        (Some("0.47.0"), "is newer than this Dutchman knows"),
+        (Some("0.50.0"), "is newer than this Dutchman knows"),
         (Some("0.17.9"), "is too old to open Dutchman's designs"),
         (
             Some("0.24.0"),
             "A newer SolidCraft keeps more of their history.",
         ),
-        (Some("0.46.2"), "SolidCraft 0.46 is installed."),
+        (Some("0.49.0"), "SolidCraft 0.49 is installed."),
         (None, "SolidCraft not found. Install SolidCraft"),
     ] {
         let mut harness = Harness::builder()
@@ -1101,10 +1266,10 @@ fn solidcraft_panel_takes_a_chosen_cli_and_explains_the_app_alone() {
         .query_by_label_contains("Found the SolidCraft app")
         .is_none());
 
-    script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.46.2");
+    script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.49.0");
     harness.state_mut().choose_solidcraft_cli(&app);
     harness.run_steps(8);
-    assert!(harness.query_by_label("SolidCraft 0.46").is_some());
+    assert!(harness.query_by_label("SolidCraft 0.49").is_some());
     assert!(harness.query_by_label("Find automatically").is_some());
     assert!(harness
         .query_by_label_contains("the portable ZIP and the MSI")
@@ -1179,7 +1344,7 @@ fn update_window_stays_clear_of_the_header_controls() {
     for width in [520.0, 900.0, 1440.0] {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(width, 900.0))
-            .build_eframe(|cc| App::new(cc));
+            .build_eframe(|cc| test_app(cc));
         harness
             .state_mut()
             .updater
@@ -1238,7 +1403,7 @@ fn update_window_stays_clear_of_the_header_controls() {
 fn update_notes_open_at_the_top_each_time() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(900.0, 760.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     let long: String = (1..=60)
         .map(|n| format!("Line number {n} of the notes.\n\n"))
         .collect();
@@ -1710,11 +1875,7 @@ mod consent_e2e {
         if capture_walkthrough {
             walkthrough(&mut harness, "01-failed-card");
         }
-        harness
-            .query_all_by_label("Anonymous report")
-            .next()
-            .unwrap()
-            .click_accesskit();
+        harness.get_by_label(CLOUD).click_accesskit();
         harness.run_steps(8);
         harness
             .get_by_label("Send the whole file privately")
@@ -1728,11 +1889,7 @@ mod consent_e2e {
         if capture_walkthrough {
             walkthrough(&mut harness, "02-private-send-card");
         }
-        harness
-            .query_all_by_label("Anonymous report")
-            .next()
-            .unwrap()
-            .click_accesskit();
+        harness.get_by_label(CLOUD).click_accesskit();
         harness.run_steps(8);
         assert!(harness.query_by_label("Send a problem report").is_some());
         assert!(harness.query_by_label(SENT).is_none());
@@ -1814,7 +1971,7 @@ mod consent_e2e {
         let stub = Stub::new(201);
         let out = tempfile::tempdir().unwrap();
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(1100.0, 1500.0))
+            .with_size(egui::vec2(1280.0, 800.0))
             .build_eframe(|cc| test_app(cc));
         harness
             .state_mut()
@@ -1836,11 +1993,7 @@ mod consent_e2e {
             });
         harness.run_steps(8);
         open_more(&mut harness);
-        harness
-            .query_all_by_label("Anonymous report")
-            .next()
-            .unwrap()
-            .click_accesskit();
+        harness.get_by_label(CLOUD).click_accesskit();
         harness.run_steps(8);
         harness
             .get_by_label("Anonymous summary only")
@@ -1950,7 +2103,10 @@ mod consent_e2e {
             assert!(harness
                 .query_by_label("Send the whole file privately")
                 .is_some());
-            assert!(harness.query_all_by_label("GitHub issue").next().is_some());
+            assert!(harness
+                .query_all_by_label("File a GitHub issue ↗")
+                .next()
+                .is_some());
         }
         snapshot(&mut harness, &format!("consent-{status}-after"));
         stub.thread.join().unwrap();
@@ -1964,7 +2120,7 @@ mod consent_e2e {
 
     fn walkthrough_extras(harness: &mut Harness<'static, App>, report: &Value) {
         harness
-            .query_all_by_label("GitHub issue")
+            .query_all_by_label("File a GitHub issue ↗")
             .next()
             .unwrap()
             .click_accesskit();
@@ -2212,11 +2368,7 @@ fn run_log_buttons_share_the_batch_log_and_review_names_it() {
     );
     assert!(log.is_file()); // Explicit paths remain exactly as supplied, even result-like names.
     open_more(&mut harness);
-    harness
-        .query_all_by_label("Anonymous report")
-        .next()
-        .unwrap()
-        .click_accesskit();
+    harness.get_by_label(CLOUD).click_accesskit();
     harness.run_steps(8);
     // The review, in the panel, names the same log as the two cards.
     harness.get_by_label(dutchman_gui::report_consent::REVIEW_TITLE);
@@ -2497,7 +2649,7 @@ fn every_result_has_the_report_panel_and_a_button_for_it() {
         assert!(ask.left() >= 0.0 && ask.right() <= width, "{ask:?}");
         harness.get_by_label(REPORT_THIS_FILE).click_accesskit();
         harness.run_steps(8);
-        for label in ["Copy and open DM", "Anonymous report"] {
+        for label in ["Copy and open DM", CLOUD] {
             let rect = harness.query_all_by_label(label).next().unwrap().rect();
             assert!(
                 rect.left() >= 0.0 && rect.right() <= width,
@@ -2548,18 +2700,18 @@ fn anonymous_report_only_opens_review_and_sends_nothing() {
         format!("http://{}/api/reports", listener.local_addr().unwrap()),
         None,
     );
-    assert!(h.query_by_label("Anonymous report").is_none());
-    assert_eq!(h.query_all_by_label("GitHub issue").count(), 1);
-    let github = h.get_by_label("GitHub issue").rect();
+    assert_eq!(h.query_all_by_label("File a GitHub issue ↗").count(), 1);
+    let github = h.get_by_label("File a GitHub issue ↗").rect();
     let dm = h.get_by_label("Copy and open DM").rect();
     assert!(github.top() > dm.bottom());
-    open_more(&mut h);
-    // The bottom-pinned panel grows upward when More opens; compare the current layout.
-    let github = h.get_by_label("GitHub issue").rect();
-    let anonymous = h.get_by_label("Anonymous report").rect();
-    assert!(anonymous.top() > github.bottom());
+    // The cloud report is the last route: after the GitHub link, on its row or below it.
+    let cloud = h.get_by_label(CLOUD).rect();
+    assert!(
+        github.right() <= cloud.left() || github.bottom() <= cloud.top(),
+        "{github:?} {cloud:?}"
+    );
     assert!(h.query_by_label("No Discord?").is_none());
-    h.get_by_label("Anonymous report").click_accesskit();
+    h.get_by_label(CLOUD).click_accesskit();
     h.run_steps(12);
     h.get_by_label(dutchman_gui::report_consent::REVIEW_TITLE);
     h.get_by_label("Send");
@@ -2652,7 +2804,7 @@ fn output_settings_collapse_after_conversion_and_reopen() {
         let footer = h.get_by_label("Convert").rect().top();
         for label in [
             dutchman_gui::report_panel::QUESTION,
-            "Join our Discord server",
+            "Join our Discord",
             dutchman::present::SEND_JOIN_BUTTON,
             dutchman::present::SEND_JOIN_NOTE,
         ] {
@@ -2910,6 +3062,258 @@ fn converted_report_screenshots() {
         }
     }
     std::fs::write(dir.join("index.md"), index).unwrap();
+}
+
+/// The plain notes on a card with a Degraded note and an "unverified" history, Details closed and
+/// open, Day and Night, with neutral paths. Needs a GPU renderer; set DUTCHMAN_GUI_SCREENSHOTS.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the plain notes; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn plain_notes_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, titles) in [
+        ("english", None),
+        (
+            "german",
+            Some([
+                "Unserem Discord-Server beitreten".to_owned(),
+                "Dutchy eine Direktnachricht senden".to_owned(),
+                "Bitte einen STEP-Export hinzufügen".to_owned(),
+            ]),
+        ),
+    ] {
+        *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = titles;
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let docs = PathBuf::from("/Users/demo/Documents");
+            let mut harness = screenshot_harness(theme);
+            harness.set_size(egui::vec2(1280.0, 800.0));
+            harness.state_mut().set_checker_for_test(true);
+            harness.state_mut().preview_solidcraft(Some("0.46.2"));
+            harness.state_mut().set_out_dir(docs.join("Converted"));
+            let mut report = developer_notes_report();
+            report["mode"] = serde_json::json!("history");
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: docs.join("Cube.ipt"),
+                    output: Some(docs.join("Converted").join("Cube.sc")),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(report),
+                });
+            harness.run_steps(8);
+            harness.get_by_label_contains("Losses:").click_accesskit();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("plain-notes-{language}"),
+                name,
+                "Plain notes, Details closed.",
+            );
+            harness.get_by_label("Details").click_accesskit();
+            harness.run_steps(8);
+            // The results column scrolls; bring its last button into view so the whole list shows.
+            harness
+                .get_by_label_contains("Report this file")
+                .scroll_to_me();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("plain-notes-details-{language}"),
+                name,
+                "Plain notes, Details open.",
+            );
+        }
+    }
+    *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = None;
+    std::fs::write(dir.join("plain-notes.md"), index).unwrap();
+}
+
+/// A synthetic Fusion tool library: `kinds` are the Fusion tool types, one tool each.
+#[cfg(feature = "test-support")]
+fn synthetic_tool_library(kinds: &[&str]) -> String {
+    let tools: Vec<_> = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| {
+            serde_json::json!({
+                "BMC": "carbide", "description": format!("Tool {}", i + 1), "type": kind,
+                "unit": "millimeters",
+                "geometry": {"DC": 6.0, "LCF": 12.0, "LB": 40.0, "SFDM": 6.0, "NOF": 2},
+                "post-process": {"number": i + 1},
+                "start-values": {"presets": [{"n": 9000.0, "v_f": 1500.0,
+                    "material": {"category": "all"}}]}
+            })
+        })
+        .collect();
+    serde_json::json!({"version": 22, "data": tools}).to_string()
+}
+
+/// A synthetic library converted for real in a temporary folder, as the row a finished card shows,
+/// with neutral paths. Returns the row, its input path and the Designs summary the real planner
+/// makes for the library.
+#[cfg(feature = "test-support")]
+fn converted_tool_library(kinds: &[&str]) -> (dutchman_gui::app::Row, PathBuf, String) {
+    let work = tempfile::tempdir().unwrap();
+    let source = work.path().join("Shop tools.json");
+    std::fs::write(&source, synthetic_tool_library(kinds)).unwrap();
+    let made = work.path().join("Shop tools.camtools");
+    let summary = dutchman::batch::plan(&[source.clone()], work.path()).description;
+    let mut report = dutchman::tool_library::convert(&source, &made, true);
+    let docs = PathBuf::from("/Users/demo/Documents");
+    let input = docs.join("Shop tools.json");
+    let output = docs.join("Converted").join("Shop tools.camtools");
+    report["input"]["path"] = serde_json::json!(input);
+    let ok = report["ok"] == true;
+    if ok {
+        report["output"]["path"] = serde_json::json!(output);
+    }
+    let row = dutchman_gui::app::Row {
+        input: input.clone(),
+        output: ok.then_some(output),
+        status: if ok {
+            Status::Converted
+        } else {
+            Status::Failed
+        },
+        progress: None,
+        job: None,
+        size: None,
+        report: Some(report),
+    };
+    (row, input, summary)
+}
+
+/// A converted Fusion tool library is shown as one, not as a design.
+#[cfg(feature = "test-support")]
+#[test]
+fn a_tool_library_card_uses_tool_wording_and_no_design_buttons() {
+    for (kinds, word, body) in [
+        (
+            &["flat end mill", "ball end mill", "reamer"][..],
+            "Converted, some tools left out",
+            "2 of 3 tools written to CamCraft's tool library",
+        ),
+        (
+            &["flat end mill", "ball end mill"][..],
+            "Converted",
+            "2 of 2 tools written to CamCraft's tool library",
+        ),
+    ] {
+        let (row, input, summary) = converted_tool_library(kinds);
+        let mut harness = harness();
+        harness.state_mut().add_inputs([input]);
+        harness.state_mut().preview_result_for_test(row);
+        harness.run_steps(16);
+        assert_eq!(summary, "1 tool library");
+        harness.state_mut().set_project_summary_for_test(&summary);
+        harness.run_steps(8);
+        harness.get_by_label(word);
+        harness.get_by_label(body);
+        harness.get_by_label("Show in folder");
+        harness.get_by_label_contains("Fusion tool library (.json)");
+        harness.get_by_label_contains("1 tool library");
+        harness.get_by_label(dutchman::present::SEND_TOOLS_INTRO);
+        harness.get_by_label("Please add the same library as .tools");
+        harness.get_by_label(dutchman::present::SEND_TOOLS_STEP_NOTE);
+        // The Designs list shows the file's name; its full path is in the tooltip.
+        assert!(harness
+            .query_by_label_contains("/Users/demo/Documents/Shop tools.json")
+            .is_none());
+        assert!(
+            harness
+                .query_all_by_label_contains("Shop tools.json")
+                .count()
+                >= 1
+        );
+        assert!(harness.query_by_label_contains("for the design").is_none());
+        for absent in [
+            "Open in SolidCraft",
+            "Add matching STEP",
+            "Converted, no history",
+            dutchman::present::SEND_CONVERTED_INTRO,
+            dutchman::present::SEND_STEP_TITLE,
+        ] {
+            assert!(
+                harness.query_by_label(absent).is_none(),
+                "{absent} is shown for a tool library"
+            );
+        }
+        assert!(harness
+            .query_by_label_contains("Geometry without history")
+            .is_none());
+    }
+}
+
+/// A Fusion tool library converted to CamCraft's `.camtools`: converted with a tool that cannot
+/// be written, and one where no tool can be written. Synthetic libraries, built here.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the tool library flow; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn tool_library_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, titles) in [
+        ("english", None),
+        (
+            "german",
+            Some([
+                "Unserem Discord-Server beitreten".to_owned(),
+                "Dutchy eine Direktnachricht senden".to_owned(),
+                "Bitte dieselbe Werkzeugbibliothek als .tools hinzufügen".to_owned(),
+            ]),
+        ),
+    ] {
+        *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = titles;
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            for (case, kinds) in [
+                (
+                    "tool-library-partial",
+                    &["flat end mill", "ball end mill", "reamer"][..],
+                ),
+                ("tool-library-none", &["reamer", "reamer"][..]),
+            ] {
+                let docs = PathBuf::from("/Users/demo/Documents");
+                let (row, input, summary) = converted_tool_library(kinds);
+                let mut harness = screenshot_harness(theme);
+                harness.set_size(egui::vec2(1280.0, 800.0));
+                harness.state_mut().set_checker_for_test(true);
+                harness.state_mut().preview_solidcraft(Some("0.49.0"));
+                harness.state_mut().add_inputs([input.clone()]);
+                harness.state_mut().set_out_dir(docs.join("Converted"));
+                harness.state_mut().set_project_summary_for_test(&summary);
+                harness.run_steps(8);
+                harness.state_mut().preview_result_for_test(row);
+                harness.state_mut().set_project_summary_for_test(&summary);
+                harness.run_steps(16);
+                shot(
+                    &mut harness,
+                    &dir,
+                    &mut index,
+                    &format!("{case}-{language}"),
+                    name,
+                    "The result after converting the library.",
+                );
+            }
+        }
+    }
+    *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = None;
+    std::fs::write(dir.join("tool-library.md"), index).unwrap();
 }
 
 #[cfg(feature = "test-support")]
@@ -3173,7 +3577,7 @@ fn fit_harness_for(
         .with_size(egui::vec2(size[0], size[1]))
         .build_eframe(|cc| test_app(cc));
     harness.ctx.set_theme(theme);
-    harness.state_mut().preview_solidcraft(Some("0.46.9"));
+    harness.state_mut().preview_solidcraft(Some("0.49.9"));
     // A fixed checker, so no path of the machine running the test is shown.
     #[cfg(feature = "test-support")]
     harness.state_mut().set_checker_for_test(true);
@@ -3210,14 +3614,6 @@ fn assert_main_screen_in_view(h: &mut Harness<'_, App>, size: [f32; 2]) {
         h.get_by_label(label).scroll_to_me();
         h.run_steps(12);
         let rect = h.get_by_label(label).rect();
-        let question = h.get_by_label(dutchman_gui::report_panel::QUESTION).rect();
-        assert!(window.contains_rect(question) && question.bottom() <= convert_row);
-        if rect.left() < question.right() {
-            assert!(
-                rect.bottom() <= question.top(),
-                "{label}: {rect:?} overlaps {question:?}"
-            );
-        }
         assert!(
             window.contains_rect(rect),
             "{size:?}: {label} {rect:?} outside the window"
@@ -3227,6 +3623,12 @@ fn assert_main_screen_in_view(h: &mut Harness<'_, App>, size: [f32; 2]) {
             "{size:?}: {label} {rect:?} runs under the Convert row at {convert_row}"
         );
     }
+    // The report panel is part of the one scrolling left column: scrolled to, it is in view.
+    h.get_by_label(dutchman_gui::report_panel::QUESTION)
+        .scroll_to_me();
+    h.run_steps(12);
+    let question = h.get_by_label(dutchman_gui::report_panel::QUESTION).rect();
+    assert!(window.contains_rect(question) && question.bottom() <= convert_row);
 }
 
 #[test]
@@ -3310,6 +3712,28 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
         assert_failed_card_in_view(&h, monitor);
         h.get_by_label("Open invite");
     }
+}
+
+/// People use a square or wider window, so the window never opens taller than wide, on any
+/// landscape monitor and at the smallest size the app allows.
+#[test]
+fn the_default_window_is_never_taller_than_wide() {
+    let fit = dutchman_gui::FIT_SIZE;
+    assert!(fit[1] <= fit[0], "the fitted size {fit:?} is tall");
+    for monitor in [
+        [1280.0, 720.0],
+        [1366.0, 768.0],
+        [1440.0, 900.0],
+        [1920.0, 1080.0],
+        [2560.0, 1440.0],
+        [1024.0, 1024.0],
+    ] {
+        let size = dutchman_gui::fit_size(monitor);
+        assert!(size[1] <= size[0], "{size:?} on {monitor:?} is tall");
+    }
+    // The smallest window the app allows is landscape too.
+    let smallest = dutchman_gui::fit_size([100.0, 100.0]);
+    assert!(smallest[1] <= smallest[0], "{smallest:?} is tall");
 }
 
 #[test]
@@ -3468,6 +3892,30 @@ fn a_result_title_has_its_own_line_above_one_row_of_buttons() {
     }
 }
 
+/// In a wide window the left column (Designs, Output folder, the report panel) is not scrolled by
+/// a conversion: it sits at the top before and after, with the first frames of the result too.
+#[test]
+fn the_wide_left_column_stays_at_the_top_through_a_conversion() {
+    let work = tempfile::tempdir().unwrap();
+    let input = work.path().join("cube.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe(|cc| test_app(cc));
+    #[cfg(feature = "test-support")]
+    h.state_mut().set_checker_for_test(true);
+    h.state_mut().add_inputs([input]);
+    h.state_mut().set_out_dir(work.path().join("converted"));
+    h.state_mut().set_verify(false);
+    h.run_steps(8);
+    let before = h.get_by_label("DESIGNS").rect().top();
+    convert(&mut h);
+    for _ in 0..4 {
+        h.run_steps(4);
+        assert_eq!(h.get_by_label("DESIGNS").rect().top(), before);
+    }
+}
+
 #[test]
 fn a_very_long_result_name_wraps_instead_of_eliding() {
     let work = tempfile::tempdir().unwrap();
@@ -3484,14 +3932,17 @@ fn a_very_long_result_name_wraps_instead_of_eliding() {
     h.state_mut().set_verify(false);
     h.run_steps(8);
     convert(&mut h);
-    let titles: Vec<_> = h
-        .get_all_by_label(&long)
-        .filter(|node| node.rect().top() > 300.0)
-        .collect();
-    let title = titles.last().expect("result title");
+    // A narrow window scrolls its one page to the Results after a run (the app does that on
+    // purpose, as before the one-column change), so this test does not assume a scroll
+    // position: every place the name is shown counts, the design list and the result title.
+    let names: Vec<_> = h.get_all_by_label_contains("a_very_long").collect();
+    assert!(names.len() >= 2, "the design list and the result title");
+    for name in &names {
+        assert!(name.rect().right() <= 520.0, "{:?}", name.rect());
+    }
     // Wrapped onto several lines, so taller than one heading line.
-    assert!(title.rect().height() > 40.0, "{:?}", title.rect());
-    assert!(title.rect().right() <= 520.0);
+    let tallest = names.iter().map(|n| n.rect().height()).fold(0.0, f32::max);
+    assert!(tallest > 40.0, "tallest name {tallest}");
 }
 
 #[test]
@@ -3623,7 +4074,7 @@ fn solidcraft_window_screenshots() {
             "{window:?} outside {viewport:?}"
         );
         let texts: &[&str] = if found {
-            &["SolidCraft 0.46 is installed."]
+            &["SolidCraft 0.49 is installed."]
         } else {
             &[
                 "SolidCraft not found.",
@@ -3751,6 +4202,74 @@ fn update_dialog_screenshots() {
     }
 }
 
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders the update window with a GPU; set DUTCHMAN_GUI_SCREENSHOTS to a folder"]
+fn update_unreachable_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    // Settings come from a temporary home, never the reader's. The panel shows no design name or
+    // path, so there is no long German string to simulate: English Day and Night only.
+    if std::env::var_os("DUTCHMAN_GUI_SCREENSHOT_CHILD").is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "update_unreachable_screenshots",
+                "--nocapture",
+            ])
+            .env("DUTCHMAN_GUI_SCREENSHOT_CHILD", "1")
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .env("XDG_DATA_HOME", home.path().join("data"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "screenshot child failed: {status}");
+        return;
+    }
+    // Offer the next minor release after the running build, so the panel never offers an older one.
+    let mut running = env!("CARGO_PKG_VERSION").split('.');
+    let major = running.next().unwrap();
+    let minor: u64 = running.next().unwrap().parse().unwrap();
+    let newer = format!("{major}.{}.0", minor + 1);
+    let mut index = String::new();
+    for (theme, name) in [
+        (ThemePreference::Light, "Day"),
+        (ThemePreference::Dark, "Night"),
+    ] {
+        let mut harness = screenshot_harness(theme);
+        harness.set_size(egui::vec2(1280.0, 800.0));
+        harness.state_mut().set_checker_for_test(true);
+        harness
+            .state_mut()
+            .updater
+            .preview(dutchman_gui::update::Release {
+                fixes_reports: Vec::new(),
+                tag: format!("v{newer}"),
+                notes: format!("Dutchman {newer}\n\nA newer version of Dutchman Convert."),
+                download: format!("https://github.com/dutchman-cad/dutchman/releases/tag/v{newer}"),
+            });
+        harness.state_mut().updater.preview_download_unreachable();
+        harness.run_steps(8);
+        assert!(harness
+            .query_by_label_contains(&format!("Dutchman {newer} is available"))
+            .is_some());
+        assert!(harness.query_by_label("Try again").is_some());
+        assert!(harness.query_by_label("Download manually").is_some());
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "update-unreachable",
+            name,
+            "download could not reach GitHub",
+        );
+    }
+}
+
 #[test]
 fn the_guide_link_names_this_builds_version() {
     assert_eq!(
@@ -3775,7 +4294,7 @@ fn running_step_screenshots() {
     ] {
         for seconds in [0, 61, 120, 121] {
             let mut harness = screenshot_harness(theme);
-            harness.state_mut().preview_solidcraft(Some("0.46.2"));
+            harness.state_mut().preview_solidcraft(Some("0.49.0"));
             harness.state_mut().set_checker_for_test(true);
             harness
                 .state_mut()
@@ -3840,7 +4359,7 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
             .with_size(egui::vec2(width, 800.0))
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
-        harness.state_mut().preview_solidcraft(Some("0.46.2"));
+        harness.state_mut().preview_solidcraft(Some("0.49.0"));
         harness.state_mut().set_checker_for_test(true);
         let rows = (0..1293)
             .map(|index| {
@@ -3953,6 +4472,37 @@ mod paste_inputs {
         h.get_by_label("Change keys").click_accesskit();
         h.run_steps(4);
         assert!(h.query_by_label("Your Onshape API keys").is_some());
+    }
+
+    /// The startup estimate reports free memory from a background thread. Its line appearing in
+    /// the frame that handles a click must not lose the click.
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn a_late_free_memory_line_does_not_drop_a_click_below_it() {
+        let mut h = window(true);
+        let started = Instant::now();
+        // Let the real startup estimate land first, so only the test changes the line below.
+        while h.query_by_label_contains("of memory free").is_none()
+            && started.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        let input = fixture("generated_unit_cube.f3d");
+        let sizes = dutchman::choices::read_sizes(&input).unwrap();
+        h.state_mut().set_sizes_for_test(input.clone(), sizes, 0);
+        h.run_steps(2);
+        assert!(h.query_by_label_contains("of memory free").is_none());
+        h.get_by_label("Onshape connected ✓").click_accesskit();
+        let sizes = dutchman::choices::read_sizes(&input).unwrap();
+        h.state_mut()
+            .set_sizes_for_test(input, sizes, 8_000_000_000);
+        h.step();
+        h.run_steps(3);
+        assert!(h.query_by_label_contains("of memory free").is_some());
+        assert!(h
+            .query_by_label("Paste your Onshape Part Studio link")
+            .is_some());
     }
 
     #[test]
@@ -4230,6 +4780,169 @@ mod paste_inputs {
             SHOT_TAKEN.store(true, std::sync::atomic::Ordering::SeqCst);
             wait_for_conversion(&mut h);
         }
+    }
+
+    /// Names the design after 12 calls, then holds until released.
+    fn named_fetch(
+        link: String,
+        folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        progress.calls(12, Some(51));
+        progress.named("Bracket - Part Studio 1");
+        let started = Instant::now();
+        while !NAME_SEEN.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(started.elapsed() < Duration::from_secs(30), "never read");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        fetch(link, folder, progress)
+    }
+    static NAME_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    #[test]
+    fn the_row_goes_by_the_design_name_once_the_fetch_knows_it() {
+        let output = tempfile::tempdir().unwrap();
+        let mut h = window(true);
+        h.state_mut().set_out_dir(output.path().into());
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), named_fetch);
+        paste(&mut h, LINK);
+        let started = Instant::now();
+        while h
+            .query_by_label("Bracket - Part Studio 1.onshape-bundle")
+            .is_none()
+        {
+            assert!(started.elapsed() < Duration::from_secs(30), "no title");
+            std::thread::sleep(Duration::from_millis(10));
+            h.step();
+        }
+        assert_eq!(
+            h.state().rows()[0].input,
+            PathBuf::from("Bracket - Part Studio 1.onshape-bundle")
+        );
+        assert!(h
+            .query_by_label("cccccccccccccccccccccccc.onshape-bundle")
+            .is_none());
+        NAME_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
+        wait_for_conversion(&mut h);
+    }
+
+    /// The design name [`named_held_fetch`] reports.
+    #[cfg(feature = "test-support")]
+    static SHOT_TITLE: std::sync::Mutex<&str> = std::sync::Mutex::new("Bracket - Part Studio 1");
+
+    #[cfg(feature = "test-support")]
+    /// Names the design, then holds until the screenshot is taken.
+    fn named_held_fetch(
+        _link: String,
+        _folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        progress.calls(12, Some(51));
+        let title = *SHOT_TITLE.lock().unwrap();
+        progress.named(title);
+        let started = Instant::now();
+        while !SHOT_TAKEN.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(started.elapsed() < Duration::from_secs(60), "never shot");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Err("Fetch ended.".into())
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    #[ignore = "renders real GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+    fn onshape_title_screenshots() {
+        let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        // English, and a long simulated German design name (the app has no translations yet).
+        for (language, title) in [
+            ("english", "Bracket - Part Studio 1"),
+            (
+                "german",
+                "Getriebegehäuse Rückseite mit Befestigungsflansch - Teilestudio Lagerdeckel 1",
+            ),
+        ] {
+            *SHOT_TITLE.lock().unwrap() = title;
+            for (theme, name) in [
+                (ThemePreference::Light, "day"),
+                (ThemePreference::Dark, "night"),
+            ] {
+                SHOT_TAKEN.store(false, std::sync::atomic::Ordering::SeqCst);
+                let mut h = window(true);
+                h.ctx.set_theme(theme);
+                h.state_mut().set_checker_for_test(true);
+                h.state_mut().preview_solidcraft(Some("0.49.0"));
+                h.state_mut()
+                    .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
+                h.state_mut().set_verify(false);
+                h.state_mut().set_link_transport_for_test(
+                    Arc::new(MockNetwork::default()),
+                    named_held_fetch,
+                );
+                paste(&mut h, LINK);
+                let started = Instant::now();
+                while h
+                    .query_by_label(&format!("{title}.onshape-bundle"))
+                    .is_none()
+                {
+                    assert!(started.elapsed() < Duration::from_secs(30), "no title");
+                    std::thread::sleep(Duration::from_millis(10));
+                    h.step();
+                }
+                h.run_steps(3);
+                h.render()
+                    .unwrap()
+                    .save(dir.join(format!("onshape-title-fetching-{language}-{name}.png")))
+                    .unwrap();
+                SHOT_TAKEN.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Reports 12 calls, then loops until the window's Stop button asks it to end.
+    fn stoppable_fetch(
+        _link: String,
+        _folder: &Path,
+        progress: &mut dyn dutchman::onshape::FetchProgress,
+    ) -> Result<PathBuf, String> {
+        progress.calls(12, Some(51));
+        let started = Instant::now();
+        while !progress.stop_requested() {
+            assert!(started.elapsed() < Duration::from_secs(30), "never stopped");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Err(App::budget_stop_message_for_test())
+    }
+
+    #[test]
+    fn stop_ends_an_onshape_fetch_and_offers_continue_fetching() {
+        let mut h = window(true);
+        let output = tempfile::tempdir().unwrap();
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), stoppable_fetch);
+        output_picker(&mut h, output.path());
+        paste(&mut h, LINK);
+        let started = Instant::now();
+        while h
+            .query_by_label("Fetching from Onshape: 12 of about 51 API calls…")
+            .is_none()
+        {
+            assert!(started.elapsed() < Duration::from_secs(20), "no call count");
+            std::thread::sleep(Duration::from_millis(10));
+            h.step();
+        }
+        h.get_by_label("Stop").click_accesskit();
+        while h.query_by_label("Continue fetching").is_none() {
+            assert!(started.elapsed() < Duration::from_secs(20), "no button");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        h.run_steps(3);
+        assert_eq!(h.state().rows()[0].status, Status::Stopped);
+        assert!(h.query_by_label("Failed").is_none());
     }
 
     #[test]
@@ -4581,7 +5294,7 @@ fn a_running_card_shows_the_feature_and_the_measured_note() {
     ] {
         for measured in [false, true] {
             let mut harness = screenshot_harness(theme);
-            harness.state_mut().preview_solidcraft(Some("0.46.1"));
+            harness.state_mut().preview_solidcraft(Some("0.49.1"));
             harness.state_mut().set_checker_for_test(true);
             harness
                 .state_mut()
@@ -4755,7 +5468,7 @@ fn report_flow_case_screenshots() {
             .with_size(size)
             .build_eframe(|cc| test_app(cc));
         h.ctx.set_theme(ThemePreference::Light);
-        h.state_mut().preview_solidcraft(Some("0.46.1"));
+        h.state_mut().preview_solidcraft(Some("0.49.1"));
         h.state_mut().set_checker_for_test(true);
         h.state_mut().set_file_manager(|_| Ok(()));
         h.state_mut().set_out_dir(work.path().join("converted"));
@@ -4917,7 +5630,7 @@ fn report_flow_case_screenshots() {
         );
         let bottom = h.get_by_label("Convert").rect().top();
         for label in [
-            "Join our Discord server",
+            "Join our Discord",
             dutchman::present::SEND_JOIN_BUTTON,
             dutchman::present::SEND_JOIN_NOTE,
         ] {
@@ -5200,7 +5913,7 @@ fn report_labels_screenshots() {
     std::fs::write(dir.join("index.md"), index).unwrap();
 }
 
-/// The 48-point allowance includes the output card's padding and the section gap.
+/// The 56-point allowance includes the output card's padding and the section gap.
 #[cfg(feature = "test-support")]
 #[test]
 fn a_single_result_keeps_reporting_close_below_output() {
@@ -5231,9 +5944,12 @@ fn a_single_result_keeps_reporting_close_below_output() {
             .top();
         let gap = report_top - output_bottom;
         assert!(
-            (0.0..=48.0).contains(&gap),
-            "report gap {gap} points exceeds 48"
+            (0.0..=56.0).contains(&gap),
+            "report gap {gap} points exceeds 56"
         );
+        h.get_by_label(dutchman::present::SEND_JOIN_BUTTON)
+            .scroll_to_me();
+        h.run_steps(8);
         assert!(
             h.get_by_label(dutchman::present::SEND_JOIN_BUTTON)
                 .rect()
@@ -5243,6 +5959,513 @@ fn a_single_result_keeps_reporting_close_below_output() {
     }
 }
 
+/// The notes of a small Inventor part as issue 926 quotes them: one that matters, three that
+/// change nothing the person sees (internal records, a statistic of nothing), and a closing line.
+#[cfg(feature = "test-support")]
+fn developer_notes_report() -> serde_json::Value {
+    serde_json::json!({"ok": true, "mode": "import", "losses": [
+        {"level": "Degraded", "code": "inventor/source.kernel-history-unclosed",
+         "subject": "inventor/source.kernel-history-unclosed", "stage": "decode",
+         "message": "The kernel carrier's delta_state chain does not frame or close; features have no history states."},
+        {"level": "Degraded", "code": "inventor/rse.segment-pair-untyped",
+         "subject": "inventor/rse.segment-pair-untyped", "stage": "decode",
+         "message": "Retained 1 structurally paired RSe segment(s) without record semantics."},
+        {"level": "Info", "code": null, "subject": "part positions", "stage": "map",
+         "message": "0 parts placed as last shown in the original program (0 directly bound, 0 holders derived from displayed children), 0 at current poses, 0 as first placed (smart); first-placement reasons: 0 without a current pose, 0 ambiguous, 0 unsupported, 0 joint checks, 0 bounds checks, 0 inserted-design checks; 0 holder conflicts"},
+        {"level": "Info", "code": "step/attribute.source-record-not-written",
+         "subject": "step/attribute.source-record-not-written", "stage": "write",
+         "message": "7 source attribute record(s) were not written to STEP"},
+        {"level": "Info", "code": "step/native.source-record-omitted",
+         "subject": "step/native.source-record-omitted", "stage": "write",
+         "message": "67 source-native record(s) were not represented in STEP"},
+        {"level": "Info", "code": null, "subject": "history", "stage": "map",
+         "message": "flattened: the design carries no feature history"}
+    ]})
+}
+
+#[cfg(feature = "test-support")]
+fn developer_notes_row() -> dutchman_gui::app::Row {
+    dutchman_gui::app::Row {
+        input: PathBuf::from("synthetic_cube.ipt"),
+        output: Some(PathBuf::from("converted/synthetic_cube.sc")),
+        status: Status::Converted,
+        progress: None,
+        job: None,
+        size: None,
+        report: Some(developer_notes_report()),
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn notes_lead_with_a_plain_sentence_and_the_raw_codes_sit_behind_details() {
+    let mut harness = harness();
+    harness
+        .state_mut()
+        .preview_result_for_test(developer_notes_row());
+    harness.run_steps(8);
+    harness.get_by_label_contains("Losses:").click_accesskit();
+    harness.run_steps(8);
+    // The note that matters leads with a plain sentence; the raw words are not on the card.
+    assert!(harness
+        .query_by_label_contains("feature history couldn't be read")
+        .is_some());
+    assert!(harness.query_by_label_contains("delta_state").is_none());
+    // Notes that change nothing are not listed, and are not counted.
+    assert!(harness
+        .query_by_label_contains("source-native record")
+        .is_none());
+    assert!(harness.query_by_label_contains("0 parts placed").is_none());
+    assert!(harness
+        .query_by_label("Losses: 1 Info, 1 Degraded")
+        .is_some());
+    // Details holds the raw words of the listed note, and nothing else.
+    harness.get_by_label("Details").click_accesskit();
+    harness.run_steps(8);
+    assert!(harness.query_by_label_contains("delta_state").is_some());
+    assert!(harness
+        .query_by_label_contains("step/native.source-record-omitted")
+        .is_none());
+    assert!(harness
+        .query_by_label_contains("step/attribute.source-record-not-written")
+        .is_none());
+    assert!(harness
+        .query_by_label_contains("rse.segment-pair-untyped")
+        .is_none());
+    assert!(harness.query_by_label_contains("0 parts placed").is_none());
+    // The notes that change nothing are in the full log.
+    assert!(harness.query_by_label("Save the full log…").is_some());
+}
+
+/// Before/after evidence of the Results card with these notes. Needs a GPU renderer:
+/// `DUTCHMAN_GUI_SCREENSHOTS=<dir> DUTCHMAN_SHOT_PREFIX=after cargo test -p dutchman-gui
+/// --features test-support --test ui -- --ignored notes_card_screenshots`.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders with a GPU; set DUTCHMAN_GUI_SCREENSHOTS and DUTCHMAN_SHOT_PREFIX"]
+fn notes_card_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    let prefix = std::env::var("DUTCHMAN_SHOT_PREFIX").unwrap_or_else(|_| "after".into());
+    std::fs::create_dir_all(&dir).unwrap();
+    for (theme, name) in [
+        (ThemePreference::Light, "light"),
+        (ThemePreference::Dark, "dark"),
+    ] {
+        let mut harness = screenshot_harness(theme);
+        harness.set_size(egui::vec2(760.0, 760.0));
+        harness
+            .state_mut()
+            .preview_result_for_test(developer_notes_row());
+        harness.run_steps(8);
+        harness.get_by_label_contains("Losses:").click_accesskit();
+        harness.run_steps(8);
+        let mut index = String::new();
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            &format!("{prefix}-notes"),
+            name,
+            "",
+        );
+        // Only the new card has a Details toggle.
+        if harness.query_by_label("Details").is_some() {
+            harness.get_by_label("Details").click_accesskit();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("{prefix}-notes-details"),
+                name,
+                "",
+            );
+        }
+    }
+}
+
+/// Import-note screenshots for the plain-sentence change: one finished conversion with several
+/// notes (some that matter, some that change nothing), English names and long German names, Day
+/// and Night, 1280x800. Run once per build under test with DUTCHMAN_SHOT_PREFIX=before|after.
+/// Needs a GPU renderer; set DUTCHMAN_GUI_SCREENSHOTS to a folder.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders with a GPU; set DUTCHMAN_GUI_SCREENSHOTS and DUTCHMAN_SHOT_PREFIX"]
+fn import_notes_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    let prefix = std::env::var("DUTCHMAN_SHOT_PREFIX").unwrap_or_else(|_| "after".into());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (variant, file, part, bolt) in [
+        (
+            "english",
+            "Bracket.f3d",
+            "Cover plate",
+            "Cylinder head screw",
+        ),
+        (
+            "german",
+            "Getriebegehäuse_Abdeckplatte_Rückseite_Ausführung_B.f3d",
+            "Getriebegehäuse_Abdeckplatte_Rückseite_Ausführung_B",
+            "Schraubenverbindung Zylinderkopfschraube",
+        ),
+    ] {
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let docs = PathBuf::from("/Users/demo/Documents");
+            let mut harness = screenshot_harness(theme);
+            harness.set_size(egui::vec2(1280.0, 800.0));
+            harness.state_mut().set_checker_for_test(true);
+            harness.state_mut().preview_solidcraft(Some("0.49.1"));
+            harness.state_mut().set_out_dir(docs.join("Converted"));
+            let output = docs.join("Converted").join(file.replace(".f3d", ".sc"));
+            let report = serde_json::json!({
+                "ok": true, "mode": "history",
+                "history": {"mapped": 5, "total": 6},
+                "losses": [
+                {"level": "Degraded", "code": "history/body-fallback-imported",
+                 "subject": format!("{part}: Extrude 3"), "stage": "map",
+                 "message": format!("Extrude 3 of {part} could not be rebuilt from its sketch; the stored body was imported")},
+                {"level": "Degraded", "code": "f3d/material.not-transferred",
+                 "subject": bolt, "stage": "map",
+                 "message": format!("Materials and appearances of {bolt} were not transferred")},
+                {"level": "Degraded", "code": "history/rebuild-failed",
+                 "subject": format!("{bolt}: Fillet 1"), "stage": "verify",
+                 "message": "SolidCraft could not rebuild the feature"},
+                {"level": "Info", "code": "dutchman/appearance.redundant-face",
+                 "subject": part, "stage": "map",
+                 "message": "A face colour equal to its body colour was not written"},
+                {"level": "Info", "code": "history/body-scope-confirmed",
+                 "subject": format!("{part}: Extrude 3"), "stage": "map",
+                 "message": "The bodies this feature acts on were confirmed"},
+                {"level": "Info", "code": "f3d/source.unindexed-records-retained",
+                 "subject": "f3d/source.unindexed-records-retained", "stage": "decode",
+                 "message": "Retained 3 unindexed record(s) without record semantics."},
+                {"level": "Info", "code": null, "subject": "part positions", "stage": "map",
+                 "message": "0 parts placed as last shown in the original program (0 directly bound), 0 at current poses, 0 as first placed (smart); 0 holder conflicts"},
+                {"level": "Info", "code": "step/attribute.source-record-not-written",
+                 "subject": "step/attribute.source-record-not-written", "stage": "write",
+                 "message": "7 source attribute record(s) were not written to STEP"},
+                {"level": "Info", "code": "step/native.source-record-omitted",
+                 "subject": "step/native.source-record-omitted", "stage": "write",
+                 "message": "67 source-native record(s) were not represented in STEP"}
+            ]});
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: docs.join(file),
+                    output: Some(output),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(report),
+                });
+            harness.run_steps(8);
+            if harness.query_by_label_contains("Losses:").is_some() {
+                harness.get_by_label_contains("Losses:").click_accesskit();
+                harness.run_steps(8);
+            }
+            if harness
+                .query_by_label_contains("Report this file")
+                .is_some()
+            {
+                harness
+                    .get_by_label_contains("Report this file")
+                    .scroll_to_me();
+                harness.run_steps(8);
+            }
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("import-notes-{prefix}-{variant}"),
+                name,
+                "Results card, Details closed.",
+            );
+            // Only the new card has a Details toggle.
+            if harness.query_by_label("Details").is_some() {
+                harness.get_by_label("Details").click_accesskit();
+                harness.run_steps(8);
+                // The card's header and buttons stay in view: scroll the panel to the top.
+                harness.get_by_label("Open in SolidCraft").scroll_to_me();
+                harness.run_steps(8);
+                shot(
+                    &mut harness,
+                    &dir,
+                    &mut index,
+                    &format!("import-notes-{prefix}-{variant}-details"),
+                    name,
+                    "Results card, Details open.",
+                );
+            }
+        }
+    }
+    std::fs::write(dir.join(format!("import-notes-{prefix}.md")), index).unwrap();
+}
+
 #[cfg(feature = "test-support")]
 #[path = "../../dutchman/tests/support/net.rs"]
 mod test_support;
+
+/// A converted row with a report, shown in the panel as it is after a file finishes.
+#[cfg(feature = "test-support")]
+fn finished_cloud_app(dir: &Path) -> Harness<'static, App> {
+    use serde_json::json;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe(|cc| test_app(cc));
+    harness.state_mut().set_out_dir(dir.to_path_buf());
+    let input = dir.join("Bracket.f3d");
+    harness
+        .state_mut()
+        .preview_result_for_test(dutchman_gui::app::Row {
+            input: input.clone(),
+            output: Some(dir.join("Bracket.sc")),
+            status: Status::Converted,
+            progress: None,
+            report: Some(json!({"ok": true, "input": {"path": input, "format": "fusion_archive"}})),
+            job: None,
+            size: Some(100),
+        });
+    harness.run_steps(8);
+    harness
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn cloud_report_button_is_visible_and_enabled_once_the_file_has_a_report() {
+    use egui_kittest::kittest::NodeT;
+    let dir = tempfile::tempdir().unwrap();
+    let harness = finished_cloud_app(dir.path());
+    // Visible without opening More, next to the GitHub link.
+    let button = harness.get_by_label(CLOUD);
+    assert!(!button.accesskit_node().is_disabled());
+    assert!(harness
+        .query_by_label(dutchman_gui::report_panel::CLOUD_REPORT_WAIT)
+        .is_none());
+    let github = harness.get_by_label("File a GitHub issue ↗").rect();
+    let cloud = button.rect();
+    assert!(github.right() <= cloud.left() || github.bottom() <= cloud.top());
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn cloud_report_button_is_disabled_while_the_file_is_converting() {
+    use egui_kittest::kittest::NodeT;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe(|cc| test_app(cc));
+    harness
+        .state_mut()
+        .preview_running_for_test(dutchman_gui::app::Row {
+            input: PathBuf::from("Assembly.iam"),
+            output: None,
+            status: Status::Converting,
+            report: None,
+            job: None,
+            size: None,
+            progress: None,
+        });
+    harness.run_steps(8);
+    assert!(harness.get_by_label(CLOUD).accesskit_node().is_disabled());
+    harness.get_by_label(dutchman_gui::report_panel::CLOUD_REPORT_WAIT);
+    // Clicking a disabled button opens nothing.
+    harness.get_by_label(CLOUD).click_accesskit();
+    harness.run_steps(8);
+    assert!(harness
+        .query_by_label(dutchman_gui::report_consent::REVIEW_TITLE)
+        .is_none());
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn cloud_report_button_opens_the_review_screen_without_opening_more() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = finished_cloud_app(dir.path());
+    assert!(harness
+        .query_by_label(dutchman_gui::report_consent::REVIEW_TITLE)
+        .is_none());
+    harness.get_by_label(CLOUD).click_accesskit();
+    harness.run_steps(8);
+    harness.get_by_label(dutchman_gui::report_consent::REVIEW_TITLE);
+    harness.get_by_label("Anonymous summary only");
+    // Nothing duplicates the button under More.
+    assert_eq!(harness.query_all_by_label(CLOUD).count(), 1);
+}
+
+/// The three step cards share rows, so their buttons line up, with English and with long German
+/// titles, finished and mid-run.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the step cards; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn step_cards_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, titles) in [
+        ("english", None),
+        (
+            "german",
+            Some([
+                "Unserem Discord-Server beitreten".to_owned(),
+                "Dutchy eine Direktnachricht senden".to_owned(),
+                "Bitte einen STEP-Export hinzufügen".to_owned(),
+            ]),
+        ),
+    ] {
+        *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = titles;
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            for state in ["finished", "running"] {
+                let docs = PathBuf::from("/Users/demo/Documents");
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(1280.0, 800.0))
+                    .build_eframe(|cc| test_app(cc));
+                harness.ctx.set_theme(theme);
+                harness.state_mut().set_checker_for_test(true);
+                harness.state_mut().preview_solidcraft(Some("0.49.0"));
+                harness.state_mut().set_out_dir(docs.join("Converted"));
+                if state == "finished" {
+                    harness
+                        .state_mut()
+                        .preview_result_for_test(dutchman_gui::app::Row {
+                            input: docs.join("Bracket.f3d"),
+                            output: Some(docs.join("Converted").join("Bracket.sc")),
+                            status: Status::Converted,
+                            progress: None,
+                            report: Some(serde_json::json!({"ok": true,
+                                "input": {"path": docs.join("Bracket.f3d"), "format": "fusion_archive"}})),
+                            job: None,
+                            size: Some(100),
+                        });
+                } else {
+                    harness
+                        .state_mut()
+                        .preview_running_for_test(dutchman_gui::app::Row {
+                            input: PathBuf::from("Assembly.iam"),
+                            output: None,
+                            status: Status::Converting,
+                            report: None,
+                            job: None,
+                            size: None,
+                            progress: None,
+                        });
+                }
+                harness.run_steps(8);
+                harness.run_steps(8);
+                harness.get_by_label(CLOUD).scroll_to_me();
+                harness.run_steps(8);
+                let invite = harness.get_by_label("Open invite").rect().top();
+                let dm = harness.get_by_label("Copy and open DM").rect().top();
+                assert!(
+                    (invite - dm).abs() <= 1.0,
+                    "{language} {name} {state}: the two teal buttons are {invite} and {dm}"
+                );
+                shot(
+                    &mut harness,
+                    &dir,
+                    &mut index,
+                    &format!("step-cards-{language}-{state}"),
+                    name,
+                    "The three step cards share rows; the two teal buttons line up.",
+                );
+            }
+        }
+    }
+    *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = None;
+    std::fs::write(dir.join("step-cards.md"), index).unwrap();
+}
+
+/// The report panel's two buttons, finished and mid-run, in Day and Night.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the report buttons; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn report_buttons_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        // Neutral absolute paths: the app shows paths as they are, so none of the machine's.
+        let docs = PathBuf::from("/Users/demo/Documents");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        harness.ctx.set_theme(theme);
+        harness.state_mut().set_checker_for_test(true);
+        harness.state_mut().preview_solidcraft(Some("0.49.0"));
+        harness.state_mut().set_out_dir(docs.join("Converted"));
+        harness
+            .state_mut()
+            .preview_result_for_test(dutchman_gui::app::Row {
+                input: docs.join("Bracket.f3d"),
+                output: Some(docs.join("Converted").join("Bracket.sc")),
+                status: Status::Converted,
+                progress: None,
+                report: Some(serde_json::json!({"ok": true,
+                    "input": {"path": docs.join("Bracket.f3d"), "format": "fusion_archive"}})),
+                job: None,
+                size: Some(100),
+            });
+        harness.run_steps(8);
+        harness.run_steps(8);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "report-buttons-top",
+            name,
+            "Top of the left column: Designs and Output folder at their natural height.",
+        );
+        harness.get_by_label(CLOUD).scroll_to_me();
+        harness.run_steps(8);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "report-buttons-finished",
+            name,
+            "Finished file: File a GitHub issue ↗ first, Review and send report last.",
+        );
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        harness.ctx.set_theme(theme);
+        harness.state_mut().set_checker_for_test(true);
+        harness.state_mut().preview_solidcraft(Some("0.49.0"));
+        harness
+            .state_mut()
+            .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
+        harness
+            .state_mut()
+            .preview_running_for_test(dutchman_gui::app::Row {
+                input: PathBuf::from("Assembly.iam"),
+                output: None,
+                status: Status::Converting,
+                report: None,
+                job: None,
+                size: None,
+                progress: None,
+            });
+        harness.run_steps(8);
+        harness.get_by_label(CLOUD).scroll_to_me();
+        harness.run_steps(8);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "report-buttons-running",
+            name,
+            "Mid-run: the review button disabled with its hint.",
+        );
+    }
+    std::fs::write(dir.join("report-buttons.md"), index).unwrap();
+}

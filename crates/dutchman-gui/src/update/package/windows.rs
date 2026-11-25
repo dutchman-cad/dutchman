@@ -1,12 +1,11 @@
 //! Windows release downloads: verify first, then install or replace the portable programs.
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
 use super::{Install, Spec};
-use crate::update::{version, RELEASES};
+use crate::update::{version, Timeouts, RELEASES};
 
 /// Largest download accepted; release ZIPs and AppImages are about 170 MB.
 const MAX_PACKAGE: u64 = 512 * 1024 * 1024;
@@ -30,6 +29,11 @@ fn asset_url(tag: &str, extension: &str) -> Result<String, String> {
 }
 
 fn allowed_url(url: &str) -> bool {
+    // Tests talk to a local server.
+    #[cfg(test)]
+    if url.starts_with("http://127.0.0.1:") {
+        return true;
+    }
     url.starts_with(&format!("{RELEASES}/download/"))
         || [
             "release-assets.githubusercontent.com",
@@ -39,26 +43,79 @@ fn allowed_url(url: &str) -> bool {
         .any(|host| url.starts_with(&format!("https://{host}/")))
 }
 
+/// Said whenever GitHub cannot be reached or stops answering; the installed copy is untouched.
+pub(super) const UNREACHABLE: &str = "The update could not be downloaded: GitHub did not answer in time or the connection was blocked (a firewall or proxy may be in the way). Your installed Dutchman is unchanged. Use the manual download link to get the new version.";
+
+/// Downloads up to this size are checksums and the like, not packages.
+const SMALL_LIMIT: u64 = 64 * 1024;
+
+/// Said when a read or write timed out or no connection could be made.
+fn interrupted(detail: &dyn std::fmt::Display) -> String {
+    format!("The update download was interrupted ({detail}). Your installed Dutchman is unchanged. Use the manual download link to get the new version.")
+}
+
+fn timed_out(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+    )
+}
+
 pub(super) fn download(url: &str, limit: u64, out: &mut dyn Write) -> Result<(), String> {
-    let agent = ureq::AgentBuilder::new()
-        .redirects(0)
-        .timeout(Duration::from_secs(120))
-        .build();
+    // The package has no total limit (a slow download that keeps moving must finish); small
+    // files such as the checksum also get a deadline for the whole request.
+    let timeouts = if limit <= SMALL_LIMIT {
+        Timeouts::SMALL
+    } else {
+        Timeouts::DEFAULT
+    };
+    download_with(url, limit, out, timeouts)
+}
+
+pub(super) fn download_with(
+    url: &str,
+    limit: u64,
+    out: &mut dyn Write,
+    timeouts: Timeouts,
+) -> Result<(), String> {
+    let agent = crate::update::agent(timeouts, 0);
     let mut url = url.to_owned();
     for _ in 0..6 {
         if !allowed_url(&url) {
             return Err("The update download host is not allowed. Open the release page.".into());
         }
-        let response = agent
+        let response = match agent
             .get(&url)
             .set(
                 "User-Agent",
                 concat!("Dutchman-update-check/", env!("CARGO_PKG_VERSION")),
             )
             .call()
-            .map_err(|e| {
-                format!("Could not download the update: {e}. Open the release page to retry.")
-            })?;
+        {
+            Ok(response) => response,
+            Err(ureq::Error::Status(code, _)) => {
+                return Err(format!(
+                    "The update download was refused (HTTP {code}). Open the release page to download it manually."
+                ))
+            }
+            Err(ureq::Error::Transport(t)) => {
+                use std::error::Error;
+                // Only a failed lookup or connection and a timeout look like a block; a reset or
+                // a TLS error says what it was.
+                let blocked = matches!(
+                    t.kind(),
+                    ureq::ErrorKind::Dns | ureq::ErrorKind::ConnectionFailed
+                ) || t
+                    .source()
+                    .and_then(|s| s.downcast_ref::<std::io::Error>())
+                    .is_some_and(timed_out);
+                return Err(if blocked {
+                    UNREACHABLE.into()
+                } else {
+                    interrupted(&t)
+                });
+            }
+        };
         if matches!(response.status(), 301 | 302 | 303 | 307 | 308) {
             url = response
                 .header("Location")
@@ -69,8 +126,29 @@ pub(super) fn download(url: &str, limit: u64, out: &mut dyn Write) -> Result<(),
         if response.status() != 200 {
             return Err("The update download did not finish. Open the release page.".into());
         }
-        let count = std::io::copy(&mut response.into_reader().take(limit + 1), out)
+        let mut reader = response.into_reader().take(limit + 1);
+        let mut buffer = [0; 64 * 1024];
+        let mut count = 0u64;
+        loop {
+            // A read that fails is the network; a write that fails is the disk.
+            let n = reader.read(&mut buffer).map_err(|e| {
+                if timed_out(&e) {
+                    UNREACHABLE.to_owned()
+                } else {
+                    interrupted(&e)
+                }
+            })?;
+            if n == 0 {
+                break;
+            }
+            out.write_all(
+                buffer
+                    .get(..n)
+                    .ok_or("Could not read the update download.")?,
+            )
             .map_err(|e| e.to_string())?;
+            count += n as u64;
+        }
         if count > limit {
             return Err("The update download is too large. Open the release page.".into());
         }

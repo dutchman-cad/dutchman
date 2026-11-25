@@ -71,6 +71,19 @@ fn running_file_line(rows: &[Row]) -> Option<String> {
     ))
 }
 
+/// Whether `path` is a file Dutchman converts by itself: a design in a known format, or a Fusion
+/// tool library (written as CamCraft's `.camtools`).
+fn is_known_file(path: &Path) -> bool {
+    dutchman_core::Format::from_path(path).is_some() || dutchman::tool_library::is_library(path)
+}
+
+/// The reader's status line for `path`, whichever kind of file it is.
+fn status_line(path: &Path) -> Option<String> {
+    dutchman_core::Format::from_path(path)
+        .map(|format| format.status_for(path))
+        .or_else(|| dutchman::tool_library::status(path))
+}
+
 /// The "last shown" Part positions choice, naming the program when every queued design comes from one.
 fn last_shown_label(inputs: &[PathBuf]) -> String {
     let mut families = inputs
@@ -94,8 +107,7 @@ impl Row {
             self.report.as_ref(),
         );
         if view.capability.is_none() {
-            view.capability = dutchman_core::Format::from_path(&self.input)
-                .map(|format| format.status_for(&self.input));
+            view.capability = status_line(&self.input);
         }
         view
     }
@@ -138,6 +150,7 @@ pub struct App {
     download_root: Option<tempfile::TempDir>,
     doctor: Option<crate::doctor::Page>,
     onshape: crate::onshape::Panel,
+    fusion: crate::fusion_export::panel::Panel,
     intake: crate::paste::Inbox,
     output_picker: Box<dyn Fn(Sender<Message>, egui::Context)>,
     clipboard: Box<dyn Fn() -> (Vec<PathBuf>, String)>,
@@ -459,6 +472,7 @@ impl App {
             download_root: None,
             doctor: None,
             onshape: crate::onshape::Panel::new(&cc.egui_ctx),
+            fusion: crate::fusion_export::panel::Panel::new(),
             intake: crate::paste::Inbox::new(),
             output_picker: Box::new(|sender, ctx| worker::pick(Pick::Output, sender, ctx)),
             clipboard: Box::new(crate::paste::clipboard),
@@ -625,6 +639,18 @@ impl App {
                 self.inputs.push(path);
             }
         }
+    }
+
+    /// Shows the Export from Fusion window in a given state, for tests and screenshots.
+    #[doc(hidden)]
+    pub fn preview_fusion(
+        &mut self,
+        offered: bool,
+        presence: crate::fusion_export::agent::Presence,
+        installed: Option<&str>,
+        step: crate::fusion_export::panel::Install,
+    ) {
+        self.fusion.preview(offered, presence, installed, step);
     }
 
     /// Supplies a saved account for UI previews without contacting Onshape.
@@ -803,6 +829,12 @@ impl App {
                         }
                         _ => format!("Fetching from Onshape: {sent} API calls…"),
                     });
+                }
+                Message::Named(title) => {
+                    // The running row goes by the design's name instead of the link's id.
+                    if let Some(row) = self.intake.row.and_then(|index| self.rows.get_mut(index)) {
+                        row.input = PathBuf::from(format!("{title}.onshape-bundle"));
+                    }
                 }
                 Message::Progress(bytes, size) => {
                     self.intake.progress = Some((bytes, size));
@@ -1011,6 +1043,14 @@ impl App {
         self.size_inputs = Some(self.inputs.clone());
         self.available = Some(available);
         self.estimate_key = None;
+    }
+
+    /// Shows `text` as the Designs summary and drops any plan still being made, for screenshots
+    /// of files that do not exist on this machine.
+    #[cfg(feature = "test-support")]
+    pub fn set_project_summary_for_test(&mut self, text: &str) {
+        self.estimate_generation += 1;
+        self.project_summary = text.to_owned();
     }
 
     #[cfg(feature = "test-support")]
@@ -1603,7 +1643,7 @@ impl App {
             && self
                 .inputs
                 .first()
-                .is_some_and(|input| dutchman_core::Format::from_path(input).is_some());
+                .is_some_and(|input| is_known_file(input));
         let text = if single_file {
             sentences.first()?.clone()
         } else {
@@ -2159,6 +2199,7 @@ impl App {
         {
             self.queue_link(crate::paste::Source::Onshape(link), ctx);
         }
+        self.fusion.window(ctx, self.header_bottom);
         self.download_window(ctx);
         self.approval_window(ctx);
         let can_restart =
@@ -2212,7 +2253,7 @@ impl App {
         self.page_scrolls = area.content_size.y > area.inner_rect.height() + 1.0;
     }
 
-    /// A wide window: choices scroll above a pinned report panel; results scroll separately.
+    /// A wide window: choices and the report panel scroll as one column; results scroll separately.
     fn wide_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, view: &present::RunView) {
         let rect = ui.available_rect_before_wrap();
         let gap = theme::SPACE_8;
@@ -2222,54 +2263,20 @@ impl App {
             egui::pos2(rect.min.x + left_width + gap, rect.min.y),
             rect.max,
         );
-        let height_id = ui.id().with("report-panel-height");
-        let measured = ui
-            .data(|data| data.get_temp::<f32>(height_id))
-            .unwrap_or(360.0);
-        // Bound long reviews and More so the input and output controls remain reachable.
-        let report_height = measured.min(left.height() * 0.7);
-        let pinned_top = left.bottom() - report_height;
-        let mut report_top = pinned_top;
-        let choices = egui::Rect::from_min_max(
-            left.min,
-            egui::pos2(left.right(), report_top - theme::SPACE_4),
-        );
-        ui.scope_builder(egui::UiBuilder::new().max_rect(choices), |ui| {
-            let area = ScrollArea::vertical()
+        // One scroll area for the whole left column: Designs, Output folder, then the report
+        // panel, each at its natural height, so no card is squeezed or clipped.
+        ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+            ScrollArea::vertical()
                 .id_salt("main-left")
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     self.inputs_panel(ui);
                     ui.add_space(theme::SPACE_4);
                     self.output_panel(ui, ctx);
+                    ui.add_space(theme::SPACE_8);
+                    self.report_panel(ui, view);
                 });
-            // Use spare room below compact controls, while retaining the pinned
-            // boundary when Advanced or a long input list needs its own scroll area.
-            if !self.rows.is_empty() {
-                report_top = (choices.top() + area.content_size.y + theme::SPACE_4).min(pinned_top);
-            }
-        });
-        let report = egui::Rect::from_min_max(egui::pos2(left.left(), report_top), left.max);
-        ui.scope_builder(egui::UiBuilder::new().max_rect(report), |ui| {
-            let top = ui.cursor().top();
-            let reveal = self.reveal_report;
-            self.report_heading(ui);
-            let heading_height = ui.cursor().top() - top;
-            // Keep the body width fixed while its measured height grows. A disappearing
-            // scrollbar would reflow the cards and change button IDs during a click.
-            let mut scroll = ScrollArea::vertical()
-                .id_salt("report-panel-body")
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-                .auto_shrink([false, false]);
-            if reveal {
-                scroll = scroll.vertical_scroll_offset(0.0);
-            }
-            let area = scroll.show(ui, |ui| self.report_panel_body(ui, view));
-            let height = heading_height + area.content_size.y;
-            if (height - measured).abs() > 0.5 {
-                ui.data_mut(|data| data.insert_temp(height_id, height));
-                ui.ctx().request_repaint();
-            }
         });
         ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
             self.unfinished_notice(ui);
@@ -2313,19 +2320,32 @@ impl App {
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.with_layout(Layout::left_to_right(Align::Max), |ui| {
                 ui.spacing_mut().item_spacing.x = theme::SPACE_2;
-                if compact {
-                    ui.label(RichText::new(crate::APP_NAME).heading());
+                let title_style = if compact {
+                    egui::TextStyle::Heading
                 } else {
-                    ui.label(RichText::new(crate::APP_NAME).text_style(theme::title()));
-                }
-                ui.label(RichText::new(crate::version_label()).small().color(p.tide));
+                    theme::title()
+                };
+                let lift = theme::baseline_lift(ui, &title_style, &egui::TextStyle::Small);
+                ui.label(RichText::new(crate::APP_NAME).text_style(title_style));
+                // Both texts end at the row's bottom edge; the smaller one has a different
+                // descent, so lift it until the two baselines are the same line.
+                let version = crate::version_label();
+                let font = egui::TextStyle::Small.resolve(ui.style());
+                let size = ui
+                    .fonts_mut(|fonts| fonts.layout_no_wrap(version.clone(), font, p.tide).size())
+                    + egui::vec2(1.0, lift);
+                ui.allocate_ui_with_layout(size, Layout::top_down(Align::Min), |ui| {
+                    ui.label(RichText::new(version).small().color(p.tide));
+                });
             });
             if !compact {
-                ui.label(
-                    RichText::new("Converts native CAD designs into SolidCraft designs.")
-                        .small()
-                        .color(p.tide),
-                );
+                #[allow(unused_mut)]
+                let mut subtitle = crate::SUBTITLE.to_owned();
+                #[cfg(feature = "test-support")]
+                if let Some(text) = crate::SUBTITLE_FOR_TEST.lock().ok().and_then(|t| t.clone()) {
+                    subtitle = text;
+                }
+                ui.label(RichText::new(subtitle).small().color(p.tide));
             }
         });
     }
@@ -2551,21 +2571,14 @@ impl App {
                                 ui,
                                 |ui| {
                                     ui.vertical(|ui| {
-                                        let folder =
-                                            if dutchman_core::Format::from_path(input).is_some() {
-                                                input.parent().filter(|parent| {
-                                                    !parent.as_os_str().is_empty()
-                                                        && *parent != Path::new(".")
-                                                })
-                                            } else {
-                                                Some(input.as_path())
-                                            };
-                                        // Keep real folders and their estimates in one paragraph.
+                                        // Each entry shows its name, not its path; the full path is
+                                        // in the tooltip. A folder or link has no separate name
+                                        // line, so its name leads the paragraph with the estimate.
+                                        let known = is_known_file(input);
                                         let mut line = egui::text::LayoutJob::default();
-                                        let mut tooltip = String::new();
-                                        if let Some(folder) = folder {
-                                            tooltip = display(folder);
-                                            RichText::new(&tooltip).append_to(
+                                        let mut tooltip = display(input);
+                                        if !known {
+                                            RichText::new(file_name(input)).append_to(
                                                 &mut line,
                                                 ui.style(),
                                                 egui::FontSelection::Default,
@@ -2575,8 +2588,7 @@ impl App {
                                         if let Some((text, hover, large)) =
                                             estimate.as_ref().filter(|_| index == 0)
                                         {
-                                            let prefix =
-                                                if folder.is_some() { " — " } else { "" };
+                                            let prefix = if known { "" } else { " — " };
                                             RichText::new(format!("{prefix}{text}"))
                                                 .small()
                                                 .color(if *large { p.lantern_text } else { p.tide })
@@ -2586,26 +2598,19 @@ impl App {
                                                     egui::FontSelection::Default,
                                                     Align::Center,
                                                 );
-                                            if !tooltip.is_empty() {
-                                                tooltip.push('\n');
-                                            }
+                                            tooltip.push('\n');
                                             tooltip.push_str(hover);
                                         }
                                         if !line.text.is_empty() {
                                             ui.add(egui::Label::new(line).wrap())
-                                                .on_hover_text(tooltip);
+                                                .on_hover_text(tooltip.clone());
                                         }
-                                        if dutchman_core::Format::from_path(input).is_some()
-                                            && (self.inputs.len() > 1 || estimate.is_none())
-                                        {
-                                            ui.add(egui::Label::new(file_name(input)).wrap());
+                                        if known && (self.inputs.len() > 1 || estimate.is_none()) {
+                                            ui.add(egui::Label::new(file_name(input)).wrap())
+                                                .on_hover_text(display(input));
                                         }
-                                        if let Some(format) =
-                                            dutchman_core::Format::from_path(input)
-                                        {
-                                            ui.add(
-                                                egui::Label::new(format.status_for(input)).wrap(),
-                                            );
+                                        if let Some(status) = status_line(input) {
+                                            ui.add(egui::Label::new(status).wrap());
                                         }
                                     });
                                 },
@@ -2635,11 +2640,16 @@ impl App {
                     );
                 }
             };
-            if self.inputs.is_empty() {
-                summary(ui);
-            } else {
-                ui.horizontal_wrapped(summary);
-            }
+            // One fixed scope, whatever it holds: the free-memory line arrives from a background
+            // estimate, and widgets added here must not shift the ids of the controls below. A
+            // shifted id drops a click or the share-link field's keyboard focus in that frame.
+            ui.push_id("input-summary", |ui| {
+                if self.inputs.is_empty() {
+                    summary(ui);
+                } else {
+                    ui.horizontal_wrapped(summary);
+                }
+            });
             if self.inputs.is_empty() {
                 ui.add_space(theme::SPACE_2);
             }
@@ -3054,19 +3064,27 @@ impl App {
         let p = *theme::palette(ui);
         ui.horizontal(|ui| {
             if self.running() {
-                let stopping = self.diagnostic_stopped;
+                let fetching = self.run.is_none() && self.intake.active && self.intake.stop_onshape;
+                let fetch_stopping = self.intake.stop.load(std::sync::atomic::Ordering::SeqCst);
+                let stopping = self.diagnostic_stopped || (fetching && fetch_stopping);
                 let label = if stopping {
                     report_panel::STOPPING_BUTTON
                 } else {
                     "Stop"
                 };
                 if ui
-                    .add_enabled(self.run.is_some() && !stopping, egui::Button::new(label))
+                    .add_enabled(
+                        (self.run.is_some() || fetching) && !stopping,
+                        egui::Button::new(label),
+                    )
                     .clicked()
                 {
                     if let Some(run) = &self.run {
                         run.stop();
                         self.diagnostic_stopped = true;
+                    } else if fetching {
+                        // The fetch ends before its next call and keeps what it fetched.
+                        self.intake.stop.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                 }
             } else {
@@ -3117,7 +3135,19 @@ impl App {
                         }
                     });
                 }
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Fusion tool library (.tools, .json)");
+                    ui.label(dutchman::tool_library::WORDS);
+                });
             });
+            if self.fusion.offered()
+                && ui
+                    .button("Export from Fusion")
+                    .on_hover_text("Find the Fusion exporter in your Fusion, or install it")
+                    .clicked()
+            {
+                self.fusion.toggle(ui.ctx());
+            }
         });
         if self.running() && self.diagnostic_stopped {
             ui.label(RichText::new(report_panel::STOPPING).color(p.lantern_text));
@@ -3242,7 +3272,16 @@ impl App {
     /// Does what a button on a result card or in the report panel asked for.
     fn act(&mut self, action: Action, ctx: &egui::Context) -> Result<(), String> {
         match action {
-            Action::Open(path) => platform::open_in_solidcraft(&path),
+            Action::Open(path) => {
+                let chosen = self.options.solidcraft.clone();
+                let how = platform::open_in_solidcraft(&path, chosen.as_deref())?;
+                if how == platform::Opened::SystemDefault {
+                    self.notice = Some(
+                        "No SolidCraft is chosen, so the design opened with the system's default app for it, which may be another SolidCraft release. Choose a solidcraft-cli in the SolidCraft version window to open it in that release.".into(),
+                    );
+                }
+                Ok(())
+            }
             Action::Reveal(path) => platform::reveal(&path),
             Action::Check(index) => {
                 if let Some(row) = self.rows.get(index) {
@@ -3484,9 +3523,14 @@ impl App {
             ];
             if step_card {
                 cards.push(report_panel::Card {
-                    title: present::SEND_STEP_TITLE,
+                    title: steps
+                        .as_ref()
+                        .map_or(present::SEND_STEP_TITLE, |steps| steps.step_title.as_str()),
                     button: None,
-                    hint: report_panel::STEP_TEXT,
+                    hint: steps
+                        .as_ref()
+                        .and_then(|steps| steps.step_note)
+                        .unwrap_or(report_panel::STEP_TEXT),
                     done: None,
                 });
             }
@@ -3495,8 +3539,44 @@ impl App {
                 Some(Step::Dm) => action = Some(Action::Dm(selected)),
                 Some(Step::Github) | None => {}
             }
-            if report_panel::backup_link(ui, &p, present::REPORT_BUTTON).clicked() {
-                action = Some(Action::Report(selected.filter(|_| report.is_some())));
+            let mut show_wait_hint = false;
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(report_panel::NOT_ON_DISCORD)
+                        .small()
+                        .color(p.tide),
+                );
+                if ui
+                    .button(present::REPORT_BUTTON)
+                    .on_hover_text(present::REPORT_HELP)
+                    .clicked()
+                {
+                    action = Some(Action::Report(selected.filter(|_| report.is_some())));
+                }
+                if let Some((index, _)) = row {
+                    let ready = report.is_some() && file.is_some_and(|file| file.can_report);
+                    let button = ui.add_enabled(
+                        ready && !busy,
+                        egui::Button::new(report_panel::CLOUD_REPORT_BUTTON),
+                    );
+                    if !ready || busy {
+                        button.on_disabled_hover_text(report_panel::CLOUD_REPORT_WAIT);
+                        show_wait_hint = !ready;
+                    } else if button.clicked() {
+                        action = Some(Action::Consent(index));
+                    }
+                }
+            });
+            if show_wait_hint {
+                // Its own line under the buttons, so it never wraps beside them.
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(report_panel::CLOUD_REPORT_WAIT)
+                            .small()
+                            .color(p.tide),
+                    )
+                    .wrap_mode(egui::TextWrapMode::Extend),
+                );
             }
             if let Some(text) = done(Step::Github) {
                 ui.label(RichText::new(text).small().strong().color(p.ink));
@@ -3506,13 +3586,6 @@ impl App {
                     egui::CollapsingHeader::new(report_panel::MORE)
                         .id_salt(("report-more", index, &row.input))
                         .show(ui, |ui| {
-                            if file.can_report
-                                && ui
-                                    .add_enabled(!busy, egui::Button::new("Anonymous report"))
-                                    .clicked()
-                            {
-                                action = Some(Action::Consent(index));
-                            }
                             if row.output.is_some() {
                                 if let Some(chosen) =
                                     ask_ai_ui(ui, index, self.ai_prompts.get(&index), reveal_ai)
@@ -3617,12 +3690,13 @@ enum Action {
 
 /// Completed designs with missing history or degraded content need review.
 fn result_colour(p: &Palette, report: Option<&Value>, view: &FileView) -> egui::Color32 {
-    let needs_review = report
-        .is_some_and(|report| report.get("mode").and_then(Value::as_str) != Some("history"))
-        || view
-            .losses
-            .iter()
-            .any(|group| matches!(group.level.as_str(), "Degraded" | "Dropped"))
+    let needs_review = report.is_some_and(|report| {
+        !dutchman::tool_library::is_report(report)
+            && report.get("mode").and_then(Value::as_str) != Some("history")
+    }) || view
+        .losses
+        .iter()
+        .any(|group| matches!(group.level.as_str(), "Degraded" | "Dropped"))
         || view
             .components
             .iter()
@@ -3672,19 +3746,26 @@ fn row_ui(
             .on_hover_text(display(&row.input));
     });
     let stopped = row.status == Status::Stopped;
-    let step_button = !running && row.report.is_some() && !stopped;
+    let tool_library = row
+        .report
+        .as_ref()
+        .is_some_and(dutchman::tool_library::is_report);
+    // A tool library has no design to open and no STEP to match.
+    let step_button = !running && row.report.is_some() && !stopped && !tool_library;
     let bundle =
         crate::onshape::is_bundle(&row.input) && row.input.is_file() && row.report.is_some();
     if output.is_some() || step_button || bundle {
         // One row of buttons under it.
         theme::control_row(ui, |ui| {
             if let Some(output) = output {
-                if is_macro {
+                if is_macro || tool_library {
                     if ui.button("Show in folder").clicked() {
                         action = Some(Action::Reveal(output.clone()));
                     }
-                    ui.label("Run macro in FreeCAD")
-                        .on_hover_text("In FreeCAD, choose Macro > Macros… > Execute.");
+                    if is_macro {
+                        ui.label("Run macro in FreeCAD")
+                            .on_hover_text("In FreeCAD, choose Macro > Macros… > Execute.");
+                    }
                 } else {
                     let open = ui.button("Open in SolidCraft");
                     let open = if has_app {
@@ -3821,6 +3902,9 @@ fn row_ui(
         .on_hover_text(output);
         let (outcome, history) = outcome_and_history(&view.outcome, row.report.as_ref());
         ui.label(RichText::new(outcome).color(p.ink));
+        if let Some(meaning) = view.unverified_note {
+            ui.label(RichText::new(meaning).small().color(p.tide));
+        }
         for loss in history {
             ui.label(RichText::new(loss).color(p.tide));
         }
@@ -3864,8 +3948,19 @@ fn row_ui(
                     }
                 });
         }
+        if !view.details.is_empty() {
+            // The raw subject, code and message of the notes above that lead with a plain
+            // sentence. Notes that change nothing are only in the saved full log.
+            egui::CollapsingHeader::new(RichText::new("Details").color(p.tide))
+                .id_salt(("details", index))
+                .show(ui, |ui| {
+                    for loss in &view.details {
+                        loss_line(ui, p, loss);
+                    }
+                });
+        }
         theme::control_row(ui, |ui| {
-            if !view.components.is_empty() && ui.button("Save the full log…").clicked() {
+            if view.has_log && ui.button("Save the full log…").clicked() {
                 action = Some(Action::Pick(Pick::SaveLog(index)));
             }
             // Every finished file has the way to report it, whatever the card says: Dutchman
@@ -4347,7 +4442,8 @@ mod tests {
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty() && *parent != Path::new("."))
             {
-                assert!(harness.query_by_label(&display(parent)).is_some());
+                // Entries show their name; the folder is only in the tooltip.
+                assert!(harness.query_by_label(&display(parent)).is_none());
             }
         }
     }
@@ -4558,7 +4654,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
             let mut app = App::new(cc);
             app.options.no_verify = true;
-            app.found_version = Some("0.46.2".into());
+            app.found_version = Some("0.49.0".into());
             app.rows.push(Row {
                 input: PathBuf::from("synthetic.f3d"),
                 output: Some(PathBuf::from("synthetic.sc")),
@@ -4788,18 +4884,16 @@ mod tests {
                     app
                 });
             harness.run_steps(8);
-            // The question and its steps show at once; the anonymous review is under More.
+            // The question, its steps and the cloud button show at once.
             harness.get_by_label(report_panel::QUESTION);
-            assert!(harness.query_by_label("Anonymous report").is_none());
+            harness.get_by_label(report_panel::CLOUD_REPORT_BUTTON);
             let join = harness.get_by_label(present::SEND_JOIN_BUTTON).rect();
             let dm = harness.get_by_label(present::SEND_DM_BUTTON).rect();
             harness.get_by_label(report_panel::MORE).click_accesskit();
             harness.run_steps(8);
             assert!(harness.query_by_label("Diagnose this file").is_none());
             let review = harness
-                .query_all_by_label("Anonymous report")
-                .last()
-                .unwrap()
+                .get_by_label(report_panel::CLOUD_REPORT_BUTTON)
                 .rect();
             // Discord first: the invite's card stands left of the DM's, both above More.
             assert!(join.right() <= dm.left());
@@ -4808,9 +4902,7 @@ mod tests {
                 assert!(rect.left() >= 0.0 && rect.right() <= width);
             }
             harness
-                .query_all_by_label("Anonymous report")
-                .next()
-                .unwrap()
+                .get_by_label(report_panel::CLOUD_REPORT_BUTTON)
                 .click_accesskit();
             harness.run_steps(8);
             harness.get_by_label("This file converted, but the result is wrong.");
@@ -5297,7 +5389,8 @@ mod tests {
                         app
                     });
                 h.run_steps(8);
-                let paragraph = format!("{} — {sentence}", display(&folder));
+                // The entry shows its name, with the full path in the tooltip.
+                let paragraph = format!("{} — {sentence}", file_name(&folder));
                 let text_rect = h.get_by_label(&paragraph).rect();
                 let remove = h.get_by_label("Remove").rect();
                 assert!(text_rect.right() < remove.left());

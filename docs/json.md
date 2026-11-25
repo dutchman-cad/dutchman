@@ -368,6 +368,7 @@ Explicit output paths keep their given extension. The container format stays `so
 |---|---|
 | `ok` | `true` when the design was written with no unplaced parts. An output can be written with `ok: false` and partial verification when occurrence positions could not be read; the conversion CLI returns exit status 1. See `completeness`. |
 | `estimate` | Quick pre-read estimate, including on memory refusals: `peak_bytes` and `seconds` are unsigned integers; `seconds_exact` is an additive fractional-second elapsed estimate (`seconds` is its ceiling); time bands apply to `seconds_exact`; `band` is the legacy shared heuristic (`0.5` means ±50%); `memory_band` is the separate relative RAM band and `time_band` is a relative time band or `null` when uncalibrated. `band` remains the shared compatibility field; current phase models use their total-memory envelope there, while older combined models retain their heuristic. `null` when unavailable. No design is decoded; a Fusion archive's designs are read one at a time for their own directories. Calibrated on measured conversions (see [Choosing what to keep](presets.md)). Measured formats add independent read, conversion and checking costs; other formats keep their combined heuristic. |
+| `source_version` | The version of the program that saved the input file, as `major.minor.revision` numbers, read from the file's own numeric record. Recorded for Inventor files only (the `RSeDb` database's saving-application version; the newest when a file holds several; Inventor's major number is its release year minus 1996, so `25` is 2021). Omitted for every other format and when the file states none. Only the input file's own version is recorded, never a part's or component's. This is not preflight's `scan.source_version`, which is always `null` today and is read before conversion. |
 | `threads` | `{requested, used}` records the per-part worker limit (`0`: automatic, `1`: serial) and the bounded maximum used across component slicing and SolidCraft preparation. Counts are limited by part count and available memory, and never below `1`. Present on SolidCraft writes and on assembly reads that reach component slicing, including inspection and other output formats; omitted for pre-read estimates and reads/writers with no part-worker stage. Batch entries and watch reports carry it within each conversion report. Native decoding stays serial. |
 | `solidcraft` | SolidCraft output only: `target` is the selected `x.y` minor; `found` is the discovered CLI release as `x.y.z`, or null when unavailable or not checked. `known_newest` is the newest known minor (`0.42`). `status` is `newer`, `too_old`, `older_loses_history`, `current`, or `none_found`. The history status requires an older installed release and a selected target whose writer gates retain less history than newest; `current` includes older releases with no gated history loss. Included even with verification off. When `found` is null, `search` says why: `outcome` (`not_found`, or `found_no_answer` when a CLI was found but did not report its version in time) and `places`, each `{"place", "outcome"}` for `SOLIDCRAFT_CLI`, `PATH`, `beside Dutchman` and the platform's install folders (`Program Files`, `Program Files (x86)`, `per-user install folder`, `Windows registry`, `Applications`, `user Applications`), with `outcome` `unset`, `set_but_missing`, `not_found`, `found` or `used`. This local report adds each `path` and the `cli` chosen; the [anonymous report](report-anon.md) does not. An explicit target wins; otherwise the supported found version capped at known newest, else built-in newest (0.42), is targeted. |
 | `choices` | `part_positions` is `smart` (default), `last-shown`, or `first-placed`. Smart admits current poses after checking touching joints, assembly bounds, and repeated inserted designs; last-shown uses available current poses; first-placed ignores later moves. Compatibility `stored_placements` is true only for first-placed. Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
@@ -376,7 +377,7 @@ Explicit output paths keep their given extension. The container format stays `so
 | `input.words` | Reader status: `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`, or `open it in SolidCraft directly` (IGES); `null` for an unknown format. Present on successes and failures, including batch results and MCP reports. The conversion's history and verification describe what this file kept. |
 | `input.program`, `input.extension` | Program or format family, and the input's actual suffix without a dot, used for status text (`prt.12` for a numbered save). Unknown programs are `null`. |
 | `output.format` | The SolidCraft design format written. |
-| `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `partial_history`: retained editable features in a hidden component and the visible imported final shape. `import`: geometry, possibly with reference sketches. |
+| `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `partial_history`: the retained editable features, a Remove of the bodies they make, then one Import of the rest of the design (the history object's `rest_imported_from` names the first feature not converted). `import`: geometry, possibly with reference sketches. |
 | `retried_after_low_memory` | Present and `true` when a batch file stopped for low memory alongside other files and was converted again alone at the end of the batch. The report is of that second try: if it converted, an Info line under `memory` says so; if not, `error` holds the memory stop. |
 | `verification_tolerances` | Present when a SolidCraft history check ran: the history verified, partly kept (`partial`), or rebuilt and found to differ (`flattened` with a reason beginning `replay differs`). Absent when the check did not run (`unverified`, `not_applicable`, `--no-verify`), for geometry-only output, and for other output formats. The same object in the CLI's `--json`, the MCP tools and batch results. `version` is `1`. `replay`: `volume_relative` (1e-4), `area_relative` (1e-3), `position_min_mm` (0.01) and `position_diagonal_relative` (2e-4) for the box centre and corners, `mesh_chord_relative` (5e-5) and `mesh_chord_floor_mm` (1e-4) for the measuring mesh's allowance in volume, and the text fields `bodies`, `face_count` and `centre` saying what is and is not compared. `stored_bodies`: `exact_box_min_mm` (0.5), `exact_box_diagonal_relative` (0.01), `sampled_box_min_mm` (1.0), `sampled_box_diagonal_relative` (0.02). `import`: `no_volume_mm3` (1e-6). `edge_proof`: `position_mm` (1e-6), `direction` (1e-6), `blame_distance_mm` (0.01). `face_proof`: `position_mm` (1e-5), `direction` (1e-5), `area_relative_straight` (1e-4), `area_relative_curved` (0.02), `plane_mm` (1e-4), `line_cover_relative` (1e-4), `arc_radius_relative` (1e-3), `turn_rad` (2e-3). `cap_proof`: `area_min_mm2` (1.0), `area_relative` (0.03), `plane_mm` (1e-4). What each compares is in [How a history is checked](history.md#verification-tolerances). Fields are only added within `version`. |
 | `history_check_skipped` | Present only when a requested SolidCraft history/geometry check was skipped for memory. Object with `needed_bytes` (estimated extra memory), `available_bytes` (free memory at the decision), and `reason`: `History check skipped: needs about N GB, M GB free`. The conversion can still have `ok: true`; retained history stays unverified or partial and the original shape remains usable. Absent when checking is explicitly off, forced, or not skipped. Applies to batch result objects and MCP as well. |
@@ -385,6 +386,7 @@ Explicit output paths keep their given extension. The container format stays `so
 | `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane or an unused construction helper), `left_out` (suppressed in the source, changes no geometry in the source, or a reference sketch omitted by choice), `blocked` (does not map; `reason` says why). Each feature also has `ordinal` (its position number in the design's timeline, as the source model numbers it; null when it has none) and `variant` (a short form such as `extrude, to a plane`, or null for kinds without one). `profile_unverified: true` appears on a `mapped` extrude whose profile region could not be checked by the source end-cap area proof: it is kept, but that proof did not establish the region it swept. An extrude whose profile region does not match the source is `blocked` with a `reason` of `its profile region doesn't match the source (swept A mm², the source B mm²)` and a loss with code `history/profile-region-mismatch`. `inferred` appears on a `mapped` feature whose profile region or blend edges the source does not record and Dutchman inferred by measuring candidates in SolidCraft; it is never an exact reading of the source: `selection` (`profile_region` or `edges`), `candidates` (how many were measured), `matches` (how many matched the source's measures; above 1 when the face count alone chose one), `measured_against` (`original_shape`: the source's final solid; `stored_bodies`: the centres of the bodies the source stores right after the feature) and `deviation_mm` (the largest distance between the kept candidate's surface and the source's, when the two solids were compared directly, else null). Absent on every other feature. |
 | `history.rebuilt`, `history.needing` | Features that became SolidCraft features, out of those that need one: all but left-out and not-needed ones. These are the counts to quote. |
 | `history.reapplied` | Kept features that re-apply to a base body Fusion stores only as the design ends (a join, cut or intersection after it), so editing them may not change the shape. They are mapped, but not counted in `history.rebuilt`. |
+| `history.rest_imported_from` | With `mode: partial_history`: the name of the first source feature that is not converted. The converted features before it are live in the part's timeline; from it on, the part is one imported body. Absent otherwise. |
 | `history.features[].reapplied`, `final_body` | `true` on such a kept feature, and on the base feature written with its final body. Absent otherwise. |
 | `history.mapped`, `history.total` | Mapped or not-needed features, out of all but left-out ones. `mapped` counts features that needed nothing, such as component inserts and joints, so it isn't a count of editable features. |
 | `history.features[].source`, `category`, `upstream`, `reason_raw` | Present only on a feature SolidCraft itself refused when it replayed the history. `source` is `solidcraft`; `reason` then reads `SolidCraft refused feature "X": ...` without SolidCraft's internal site number, and `reason_raw` keeps the original text. `category` is `solidcraft-refused` for a refusal not yet recognised, or a specific name such as `fillet-overflows-neighbouring-face` (the blend is larger than the neighbouring faces). `upstream` is the link to the SolidCraft issue that tracks a known category, else `null`. Absent for Dutchman's own mapping limits. |
@@ -392,7 +394,7 @@ Explicit output paths keep their given extension. The container format stays `so
 | `completeness` | For an assembly or a single design with unreadable local occurrence positions: `placed` counts placements with geometry and assembly holders of children; `placed_empty` counts placements of leaf parts with no bodies. Empty leaves no longer inflate `placed`. `unplaced` maps part names to occurrence counts whose positions were assumed or could not be decoded, including children that depend on such a parent. These do not count in `placed` or `placed_empty`. `placements` is `placed + placed_empty + sum(unplaced values) + sum(left_out.count)`. Such conversions use `verification.status: "partial"` with a plain explanation; `ok` is `false` when parts are unplaced, even though output was written. Counts include every recorded placement through placed sub-assemblies, each as often as placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part without unreadable local occurrences. For a flattened single design, overlapping reader counts use the largest count under `Local components with unreadable positions`; this is a conservative count because the reader cannot bind those carriers to distinct occurrences. Decoded bodies absent from every written component occurrence appear in `left_out` at stage `map`, counted once per body, with loss code `dutchman/assembly.bodies-without-occurrences`. |
 | `joints` | For an assembly whose joints were written: how many of each kind, `{"revolute": 5, "rigid": 1}` (kinds `revolute`, `slider`, `rigid`). Grounded joints count as `rigid`, fixing their occurrence to the design at its stored placement. Absent when none were. |
 | `names` | Every name the conversion met, sorted: the paths and folders it read from, and the names the design gives its parts, components, bodies, features, sketches, parameters and properties. For tools that take names out of a report before it is shared (the anonymous report does); absent when there were none. |
-| `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is a stable cadmpeg or Dutchman loss code when available, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
+| `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is a stable cadmpeg or Dutchman loss code when available, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). `summary` is one plain sentence for the person who opens the design: what is missing or different and, when there is something to do, what to do; for a note without a plain sentence it is the `message`. `shown_by_default` is `false` for notes that change nothing the person sees (records STEP has no place for, a placement statistic or any other count of nothing); the app, plugin and command line leave those out of their default view, and the app's Details, and keep them in the saved full log or behind `--verbose`. Every note stays in `losses`, and `code`, `subject` and `message` are unchanged. |
 
 An empty leaf retains its component and joints and adds a `Degraded` loss whose
 `subject` is `part N`, using the anonymous catalog number from `diagnose` and `--part`.
@@ -548,9 +550,9 @@ asking for its body-producing feature to resolve first. Source storage order doe
 change replay order: the neutral ordinal controls it.
 
 SolidCraft version presentation uses minors: `solidcraft.target` and
-`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.46"`), changing their
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.49"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
-`"0.44.0"`). Status comparisons use minors, so all 0.46 patches are current; 0.47 is newer
+`"0.44.0"`). Status comparisons use minors, so all 0.49 patches are current; 0.50 is newer
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.
@@ -683,7 +685,7 @@ For older targets, `history.features[].reason` says
 line explains the blocker. `--solidcraft-version x.y.z` selects the target on `convert`,
 `convert-all`, and `watch`; it must be at least 0.18.2. By default the found verification
 CLI's version is used, even with `--no-verify`, else the newest release known at build
-time (currently 0.46). The supported rolling 14-day window is currently 0.40–0.46;
+time (currently 0.49). The supported rolling 14-day window is currently 0.40–0.49;
 older targets down to 0.18.2 retain the existing feature simplifications.
 When a written coil or flat entry-recess tip uses the newer mapping, the history line
 includes the actual target, such as `target SolidCraft 0.25 patch 1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip
@@ -753,7 +755,7 @@ A failure carries `"ok": false`, `input` and `error`, and exits 1:
 ```json
 {"schema": "dutchman.convert/1", "ok": false,
  "input": {"path": "part.prt", "format": "creo_part", "format_name": "Creo part (.prt, .prt.N)"},
- "error": {"message": "Creo part (.prt, .prt.N): reading geometry is not supported yet. …",
+ "error": {"message": "cannot read this design: no geometry could be read from this Creo part (.prt, .prt.N) file; … Export a STEP file from Creo and convert that instead",
            "stage": "decode", "upstream": "cadmpeg"}}
 ```
 
@@ -834,8 +836,13 @@ components are unsigned 64-bit integers.
 | `features` | Aggregate rows with fixed `kind`, `outcome`, `reason`, and integer `count`. No feature names, ordinals, variants, selections or output IDs. |
 
 `source_format` uses the fixed input format identifiers defined above, plus `unknown`.
-`source_version_band` is `unknown`: conversion reports currently do not record the source
-version. It never guesses a version from a name or error message. `document` is `part`,
+`source_version_band` comes from the convert report's `source_version`, and only for
+Inventor files: `inventor_2016` through `inventor_2027` for the release year,
+`inventor_older` below 2016 and `inventor_newer` for the few versions after 2027 (file
+versions 32 to 40). A file version above 40 is treated as a damaged record, not a release. An
+assembly's band is the `.iam` file's own saving version, not its parts'. Every other format, and any
+Inventor file whose version is absent or is not three plain numbers, is `unknown`. It never
+guesses a version from a name or error message. `document` is `part`,
 `assembly`, or `unknown` when the format is not recognized, based on the recorded assembly or the fixed source-format category.
 `verification` is `verified`, `partial`, `differs`, `unverified`, `flattened`,
 `not_applicable`, or `unknown`.
@@ -1031,8 +1038,8 @@ of a particular file. This additive field retains `dutchman.formats/1`.
 `extensions` lists all accepted suffixes without dots (`prt.N` denotes a numbered save);
 the existing `extension` remains the preferred suffix.
 Dutchman attempts conversion when the format reads geometry and its codec is available in
-this build. Creo opens without geometry support; SolidWorks assemblies and
-unclassified `.prt` files are recognised without readers. Reader status does not promise
+this build. SolidWorks assemblies and unclassified `.prt` files are recognised
+without readers. Reader status does not promise
 that a particular file will convert or that every feature will map.
 `--quiet` suppresses only the text volunteer invitation after a conversion run; JSON
 reports contain neither that invitation nor status prose outside the report.
@@ -1833,8 +1840,8 @@ No report fields or schema versions change.
 The desktop report panel stays visible below output controls in wide windows. Narrow
 windows pin **Report a problem…** (or **Report this design…** with a result selected) above
 **Convert**; it scrolls to the full numbered cards in the page. Discord comes first, with
-a small **GitHub issue** backup link (a public issue under the user's GitHub name).
-**Anonymous report**, under **More**, opens review before direct cloud upload.
+a **File a GitHub issue ↗** backup button (a public issue under the user's GitHub name).
+**Review and send report**, beside it, opens review before direct cloud upload.
 Partial history says **Partly converted**; geometry-only or flattened results say
 **Converted, no history**, in amber. Full history keeps **Converted** in green unless
 degraded content needs review. Report fields
@@ -1917,8 +1924,8 @@ source attributes are dropped with subject `attributes` and a message naming
 that scope. Neither assignment is applied to the shared component definition.
 No report fields or schema versions change.
 
-The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
-and **GitHub issue** (a public issue under the user’s GitHub name).
+The desktop secondary buttons are **Review and send report** (review before direct cloud upload)
+and **File a GitHub issue ↗** (a public issue under the user’s GitHub name).
 
 Meeting 3D curve endpoints do not create relations without a decoded source relation.
 
@@ -2121,6 +2128,11 @@ unverified.
 Linked components the file places but doesn't contain are reported as a Dropped `linked components`
 loss naming them, counted under `completeness.left_out`, and the design is `unverified`: its parts are
 not all there, whatever the replay says.
+For a Fusion `.f3d` whose inserted components come from designs the file doesn't contain, each is a Dropped
+`inserted design <name>` loss and the summary reads "N inserted components come from other Fusion designs
+that this .f3d doesn't contain; convert the whole export folder (or its zip) so the inserted designs come
+along, or export the assembly as a Fusion Archive (.f3z) from Fusion's File > Export." (see
+[fusion.md](fusion.md)). No field is added.
 The final opening check has its own time, at least 15 minutes, not what earlier checks left.
 Opening and geometry checks share a successful evaluation only for identical written bytes with the same SolidCraft evaluator; repaired designs are evaluated again.
 When SolidCraft doesn't finish it, verification is `unverified` with the reason "Not verified:

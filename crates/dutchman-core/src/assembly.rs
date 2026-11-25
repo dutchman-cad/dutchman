@@ -6,6 +6,7 @@
 //! it, so a part is looked for at that path, then by its file name next to the assembly. Each
 //! part file is read once, however often it is placed.
 
+mod export;
 mod freecad;
 mod poses;
 mod position_bounds;
@@ -15,6 +16,8 @@ mod sketch_instance;
 mod slicing;
 mod solidworks;
 
+pub(crate) use export::placed_files;
+pub(crate) use export::resolve as resolve_inserted;
 pub(crate) use poses::flattened_completeness;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -481,10 +484,7 @@ pub(crate) fn resolve(
     }
     occurrences.sort_by_key(|row| row.get("ordinal").and_then(Value::as_u64));
 
-    let folder = input
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+    let folder = input_folder(input);
     let mut parts: Vec<Model> = Vec::new();
     let mut identities = Vec::new();
     // Each file read, once: its part, or the stage and reason it could not be read.
@@ -700,11 +700,12 @@ pub(crate) enum Components {
 /// of part models each holding only its component's bodies, plus the design's loose bodies.
 pub(crate) fn local(
     model: &Model,
+    external: &ExternalParts,
     threads: usize,
     positions: crate::PartPositions,
     report: &mut Report,
 ) -> Components {
-    match local_components_with_threads(model, &BTreeMap::new(), threads, positions, report) {
+    match local_components_with_threads(model, external, threads, positions, report) {
         Ok(Some((assembly, _))) => Components::Assembly(Box::new(assembly)),
         Ok(None) => Components::None,
         Err(reason) => Components::Unplaceable(reason),
@@ -739,7 +740,18 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
     local_components_with(model, &BTreeMap::new())
 }
 
-type ExternalParts = BTreeMap<String, Result<(usize, std::rc::Rc<Model>), LeftOut>>;
+/// The folder an assembly's part files are looked for in first: the input's own folder, or the
+/// current folder for a bare file name (whose `parent()` is an empty path, not `None`).
+pub(crate) fn input_folder(input: &Path) -> &Path {
+    input
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+/// Designs read from other files that fill an occurrence, by the occurrence's id: each with
+/// its number among the designs read, or the placement left out and why.
+pub(crate) type ExternalParts = BTreeMap<String, Result<(usize, std::rc::Rc<Model>), LeftOut>>;
 
 #[cfg(test)]
 fn local_components_with(
@@ -787,16 +799,17 @@ fn local_components_with_threads(
     };
     let mut occurrences: Vec<&Value> = all
         .iter()
-        .filter(|row| match scope(row) {
-            Some("local") => true,
-            Some("external") => {
-                holds_local(row)
-                    || row
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|id| external.contains_key(id))
+        .filter(|row| {
+            let filled = row
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| external.contains_key(id));
+            match scope(row) {
+                Some("local") => true,
+                Some("external") => holds_local(row) || filled,
+                // An insertion the file doesn't hold, filled from another file.
+                _ => filled,
             }
-            _ => false,
         })
         .collect();
     if occurrences.is_empty() {
@@ -2984,7 +2997,7 @@ fn scope(occurrence: &Value) -> Option<&str> {
 /// design inserted into this one, the occurrence itself.
 fn definition_key(occurrence: &Value) -> Option<&str> {
     match scope(occurrence) {
-        Some("external") => occurrence.get("id").and_then(Value::as_str),
+        Some("external" | "unresolved") => occurrence.get("id").and_then(Value::as_str),
         _ => occurrence
             .pointer("/prototype/definition")
             .and_then(Value::as_str),
@@ -3762,6 +3775,17 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_file_name_looks_for_its_parts_in_the_current_folder() {
+        assert_eq!(input_folder(Path::new("A01a.SLDASM")), Path::new("."));
+        assert_eq!(input_folder(Path::new("./A01a.SLDASM")), Path::new("."));
+        assert_eq!(input_folder(Path::new("sub/A01a.SLDASM")), Path::new("sub"));
+        assert_eq!(
+            input_folder(Path::new("/abs/A01a.SLDASM")),
+            Path::new("/abs")
+        );
+    }
+
+    #[test]
     fn completeness_counts_through_each_placed_sub_assembly() {
         let project = Project::new(&[
             (
@@ -4209,7 +4233,13 @@ mod tests {
     fn definition_appearance_bindings_still_reach_shared_parts() {
         let model = component_appearance(None, None);
         let mut report = Report::default();
-        let assembly = match local(&model, 1, crate::PartPositions::LastShown, &mut report) {
+        let assembly = match local(
+            &model,
+            &ExternalParts::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut report,
+        ) {
             Components::Assembly(assembly) => Some(assembly),
             _ => None,
         }
@@ -4248,7 +4278,13 @@ mod tests {
 
     fn scoped_component_appearance_is_left_out(model: Model, reason: &str) {
         let mut report = Report::default();
-        let assembly = match local(&model, 1, crate::PartPositions::LastShown, &mut report) {
+        let assembly = match local(
+            &model,
+            &ExternalParts::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut report,
+        ) {
             Components::Assembly(assembly) => Some(assembly),
             _ => None,
         }
@@ -4296,7 +4332,13 @@ mod tests {
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         assert!(matches!(
-            local(&model, 1, crate::PartPositions::LastShown, &mut report),
+            local(
+                &model,
+                &ExternalParts::new(),
+                1,
+                crate::PartPositions::LastShown,
+                &mut report
+            ),
             Components::Assembly(_)
         ));
         let losses: Vec<_> = report
@@ -4338,7 +4380,13 @@ mod tests {
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         assert!(matches!(
-            local(&model, 1, crate::PartPositions::LastShown, &mut report),
+            local(
+                &model,
+                &ExternalParts::new(),
+                1,
+                crate::PartPositions::LastShown,
+                &mut report
+            ),
             Components::Assembly(_)
         ));
         let losses: Vec<_> = report

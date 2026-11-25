@@ -5,7 +5,8 @@ Folder and selection summaries use the highest per-file memory estimate and sum 
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
 the full path on hover. The path and estimate share one paragraph that wraps as needed,
 keeping the complete sentence visible at every window width. The compact header keeps the
-default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
+default window’s controls in view. The version number sits on the same line as the app name,
+in smaller muted type on the same baseline. Estimate values in commands, tools and JSON reports are unchanged.
 
 Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
 components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
@@ -211,7 +212,7 @@ A design stores its geometry compressed, so a large assembly stays small: SolidC
 [Install](install.md) has every option, checksums, and the one-time
 [first-run approval](install.md#opening-the-app-the-first-time) on macOS. Install
 [SolidCraft](install.md#solidcraft-optional-recommended) too: Dutchman uses it to check each
-converted history. The supported SolidCraft window is currently 0.40–0.46.
+converted history. The supported SolidCraft window is currently 0.40–0.49.
 
 ## Your first conversion
 
@@ -239,16 +240,14 @@ converted  solidworks_cube.sldprt -> cube.sc (geometry without history)
 dutchman: Degraded: sldprt/source.dialect-unverified: the document carries no swSolidWorks swVersion declaration, so no declared identity was verified. …
 dutchman: Degraded: sldprt/config.inferred-without-native: 1 configuration state(s) are inferred from geometry partitions without native configuration definitions.
 dutchman: Info: step/design.parametric-records-omitted: 1 parametric/design record(s) were not represented in STEP: configuration=1
-dutchman: Info: step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s) were not represented in STEP
-dutchman: Info: step/native.source-record-omitted: 1 source-native record(s) were not represented in STEP
 dutchman: Info: history: flattened: the design carries no feature history
-dutchman: (repeated notes are grouped and long notes shortened; --verbose prints every note in full)
+dutchman: (notes are summarised in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)
 Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 The synthetic SolidWorks cube lacks native version and configuration metadata, so those
 warnings are expected for this sample. The internal records omitted from STEP do not change
-its shape: the written geometry should be one 10 mm cube (1,000 mm³). The sample has no
+its shape (`--verbose` lists them): the written geometry should be one 10 mm cube (1,000 mm³). The sample has no
 editable feature history. Check the result in SolidCraft as [below](#open-the-result-in-solidcraft).
 
 The exit code is 0, and the first line, on stdout, says what was written where: here the
@@ -326,6 +325,18 @@ The desktop shows the same estimate in the file row and starts converting when y
 Convert; see [the desktop guide](desktop.md).
 
 ## Reading the loss report
+
+Each note leads with one plain sentence: what is missing or different, and what you can do
+about it. Notes that change nothing you see (records STEP has no place for, a placement
+statistic of nothing) are left out of the default view. `--verbose` prints every note as
+Dutchman wrote it, `LEVEL: SUBJECT: MESSAGE` with the code first in the subject, and the JSON
+report always keeps every note, with the sentence added as `summary`
+([JSON report](json.md)). A note without a plain sentence yet prints as before. The sentences
+live in one table, `PLAIN_NOTES` in `crates/dutchman-core/src/plain_notes.rs`. Beside an
+editable history that was not checked, the text report says what "unverified" means (SolidCraft
+did not replay it and compare the result with the original shape; it is not a warning that the
+history is wrong) and how to check it: run again without `--no-verify`, with a STEP export of
+the same design beside the file.
 
 An assembly's conversion first says how complete it is, under the line saying what was
 written:
@@ -903,9 +914,10 @@ In narrow desktop windows, **Report a problem…** (or **Report this design…**
 selected) stays above **Convert** and scrolls to the full numbered cards in the page.
 See [reporting a problem](desktop.md#reporting-a-problem).
 
-Report consent is per report. In the desktop app, Discord is the first route, with a small
-**GitHub issue** backup link below the three steps. **Anonymous report** is under **More**,
-with AI help and diagnosis. It opens a review for the chosen file
+Report consent is per report. In the desktop app, Discord is the first route, with a row
+below the three steps that starts with the small label **Not on Discord?**, then the
+**File a GitHub issue ↗** backup button and **Review and send report**
+(greyed out until the file finishes); **More** holds AI help and diagnosis. It opens a review for the chosen file
 with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
 problem signature only. Converted results use `converted-with-problem` and never
@@ -917,7 +929,7 @@ Nothing is sent before clicking Send. A report is sent only when a matching rece
 arrives. A temporary failure gets one short retry, then keeps the report locally;
 retrying later requires clicking **Retry**, which appears after a failure. A daily cap
 asks you to try again tomorrow.
-**Anonymous report** sends to the cloud inbox after review. **GitHub issue** opens the
+**Review and send report** sends to the cloud inbox after review. **File a GitHub issue ↗** opens the
 prefilled public issue form under your GitHub username. Never attach a geometry bundle
 there. For a converted result the form asks what differs from the original, without claiming conversion failed.
 

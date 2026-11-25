@@ -6,29 +6,37 @@
 //! not be carried across. See `docs/ARCHITECTURE.md`.
 
 mod assembly;
+/// The file name of a bulk export's manifest.
+pub const EXPORT_MANIFEST: &str = export_folder::MANIFEST;
+pub mod camtools;
 mod companion;
 pub mod contents;
 mod decode;
 mod error;
 pub mod estimate;
+mod export_folder;
 mod format;
 mod hidden;
 mod input_edges;
 mod locate;
 mod memory;
+pub mod module;
 mod names;
 #[cfg(feature = "onshape")]
 mod onshape;
+pub mod package;
 pub mod parallel;
 mod part_positions;
 pub mod parts;
 pub mod placement;
+mod plain_notes;
 pub mod preflight;
 mod progress;
 pub mod progress_words;
 mod refusal;
 pub mod source;
 mod source_errors;
+mod source_version;
 pub mod time;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
@@ -156,10 +164,11 @@ impl Model {
         )
     }
 }
+pub use plain_notes::{plain_view, row_for, PlainNote, PlainView, Shown, PLAIN_NOTES};
 pub use report::{
     AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureOutput, FeatureStatus, Inferred,
     InferredAgainst, InferredSelection, LeftOutGroup, Loss, Mode, Outcome, OutputMatch,
-    PartHistory, Report, Severity, SourceError, Stage,
+    PartHistory, Report, RestImported, Severity, SourceError, Stage,
 };
 
 /// Whether a source-native CADIR operation identifies a construction binder. Keep native
@@ -169,6 +178,13 @@ pub fn is_native_binder(kind: &str) -> bool {
         kind,
         "PartDesign::SubShapeBinder" | "PartDesign::ShapeBinder"
     )
+}
+
+/// Whether a source-native CADIR operation is a coordinate frame the source keeps only as
+/// construction references and expressions (a Fusion Coordinate System whose solved frame
+/// cadmpeg does not state). It builds no geometry; like a binder it is a helper.
+pub fn is_native_coordinate_system(kind: &str) -> bool {
+    kind == "CoordinateSystem"
 }
 
 /// The largest input file Dutchman will open, in bytes. Native CAD files beyond this are
@@ -224,6 +240,38 @@ pub fn assembly_references(
     input: &Path,
     search: &PartSearch,
 ) -> Result<Vec<std::path::PathBuf>, Error> {
+    // A Fusion assembly from a bulk export: the designs it inserts that conversion will place,
+    // that is, the ones an insertion of the file matches and that can be read. A design the
+    // manifest lists that nothing matches, or that cannot be read, is not placed inside the
+    // assembly, so it stays a result of its own.
+    if Format::from_path(input) == Some(Format::FusionArchive) {
+        // Only an assembly the manifest lists designs for is read.
+        let lists = export_folder::inserted(input, search.project.as_deref())
+            .and_then(Result::ok)
+            .is_some_and(|inserted| !inserted.references.is_empty());
+        if !lists {
+            return Ok(Vec::new());
+        }
+        let decode = |format: Format, path: &Path, report: &mut Report| {
+            decode_file(format, path, report, None)
+        };
+        let Ok(model) = decode(Format::FusionArchive, input, &mut Report::default()) else {
+            return Ok(Vec::new());
+        };
+        return Ok(assembly::placed_files(
+            &model,
+            input,
+            search.project.as_deref(),
+            &decode,
+        ));
+    }
+    // A rebuilt .f3z carries the designs its manifest entry lists inside it.
+    if Format::from_path(input) == Some(Format::FusionMultiDocument) {
+        return Ok(export_folder::inserted(input, search.project.as_deref())
+            .and_then(Result::ok)
+            .map(|inserted| inserted.references.into_iter().map(|r| r.file).collect())
+            .unwrap_or_default());
+    }
     let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
         path: input.to_path_buf(),
     })?;
@@ -234,7 +282,7 @@ pub fn assembly_references(
     let value = serde_json::to_value(&model.ir.model.occurrences)
         .map_err(|err| Error::Decode(format!("cannot read assembly references: {err}")))?;
     let finder = locate::Finder::new(search);
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = assembly::input_folder(input);
     let mut references: std::collections::BTreeSet<_> = value
         .as_array()
         .into_iter()
@@ -352,12 +400,10 @@ pub fn read_with_progress(
     }
     let read = std::sync::Mutex::new(std::collections::BTreeSet::new());
     let finder = locate::Finder::new(search);
-    let mut model = assembly::read(
-        format,
-        input,
-        report,
-        &|format, path, report| {
+    let decode_design =
+        |format: Format, path: &Path, report: &mut Report| -> Result<Model, Error> {
             let model = decode_file(format, path, report, progress)?;
+            source_version::record(report, path, input, &model.ir.native);
             // The codec owns Fusion archive members; do not count the whole archive as one.
             if format != Format::FusionMultiDocument {
                 if let Some(progress) = progress {
@@ -373,7 +419,12 @@ pub fn read_with_progress(
                 }
             }
             Ok(model)
-        },
+        };
+    let mut model = assembly::read(
+        format,
+        input,
+        report,
+        &decode_design,
         &finder,
         &mut Vec::new(),
     )?;
@@ -383,7 +434,33 @@ pub fn read_with_progress(
     if let Some(searched) = finder.searched_note() {
         report.push_at(Stage::Input, Severity::Info, "parts search", searched);
     }
-    local_components(&mut model, finder.threads, search.part_positions, report);
+    // A Fusion assembly from a bulk export: the designs it inserts are in the export folder.
+    let inserted = if format == Format::FusionArchive {
+        if let (Some(progress), Some(Ok(listing))) = (
+            progress,
+            export_folder::inserted(input, search.project.as_deref()),
+        ) {
+            progress.designs_total(1 + listing.references.len() as u64);
+        }
+        assembly::resolve_inserted(
+            &model,
+            input,
+            search.project.as_deref(),
+            report,
+            &decode_design,
+            &finder,
+            &mut Vec::new(),
+        )
+    } else {
+        assembly::ExternalParts::new()
+    };
+    local_components_with(
+        &mut model,
+        &inserted,
+        finder.threads,
+        search.part_positions,
+        report,
+    );
     report.note_part_positions(search.part_positions);
     Ok(model)
 }
@@ -396,8 +473,26 @@ fn local_components(
     positions: PartPositions,
     report: &mut Report,
 ) {
+    local_components_with(
+        model,
+        &assembly::ExternalParts::new(),
+        threads,
+        positions,
+        report,
+    );
+}
+
+/// [`local_components`], with the inserted designs read from a bulk export's folder, by the
+/// id of the insertion they fill.
+fn local_components_with(
+    model: &mut Model,
+    inserted: &assembly::ExternalParts,
+    threads: usize,
+    positions: PartPositions,
+    report: &mut Report,
+) {
     if model.assembly.is_none() {
-        match assembly::local(model, threads, positions, report) {
+        match assembly::local(model, inserted, threads, positions, report) {
             assembly::Components::None => {}
             // The writer reports the assembly's joint notes: what it leaves out depends on
             // what it can build.
@@ -427,12 +522,22 @@ fn local_components(
     } else if let Some(completeness) = assembly::flattened_completeness(model, report) {
         report.set_completeness(completeness);
     }
-    report.record_missing_links(&missing_linked_components(model));
+    let missing = missing_linked_components(model, inserted);
+    let fusion_f3d = model
+        .source_file
+        .as_deref()
+        .and_then(|file| Path::new(file).extension())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("f3d"));
+    if fusion_f3d {
+        report.record_missing_inserted_designs(&missing);
+    } else {
+        report.record_missing_links(&missing);
+    }
 }
 
 /// Occurrences whose design is a linked document the file doesn't contain: the reader states
 /// their prototype as unresolved.
-fn missing_linked_components(model: &Model) -> Vec<String> {
+fn missing_linked_components(model: &Model, inserted: &assembly::ExternalParts) -> Vec<String> {
     let (Ok(definitions), Ok(occurrences)) = (
         serde_json::to_value(&model.ir.model.product_definitions),
         serde_json::to_value(&model.ir.model.occurrences),
@@ -459,6 +564,12 @@ fn missing_linked_components(model: &Model) -> Vec<String> {
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|row| {
+            // An insertion the export folder filled is placed, or left out with its own reason.
+            !row.get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| inserted.contains_key(id))
+        })
         .filter_map(|row| {
             // The reader states the prototype as unresolved, or (newer readers) as an empty
             // placeholder definition named for the unresolved occurrence.
@@ -529,6 +640,15 @@ fn decode_file(
     }
     if let Some(progress) = progress {
         progress.stage(Stage::Input);
+    }
+    if format.needs_module() {
+        names::saw_path(input, report);
+        check_input(input)?;
+        if let Some(progress) = progress {
+            progress.stage(Stage::Decode);
+        }
+        let model = module::read(input, report)?;
+        return source::finish_decoded(format, model, false, report);
     }
     let input_name = input.file_name().map(|name| name.to_string_lossy());
     let opening = progress.map(|p| p.step(StepKind::Opening, input_name.as_deref(), None, None));
@@ -930,6 +1050,45 @@ mod tests {
     }
 
     #[test]
+    fn a_fusion_f3d_with_inserted_designs_missing_says_to_export_an_f3z() {
+        let mut report = Report::default();
+        let mut model = read(
+            Format::FusionArchive,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/generated_unit_cube.f3d"),
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(
+            model.source_file.as_deref(),
+            Some("generated_unit_cube.f3d")
+        );
+        // Synthetic: two insertions whose source designs the reader states as unresolved.
+        model.ir.model.occurrences = serde_json::from_value(json!([
+            {"id": "synthetic:assembly:occurrence#1", "ordinal": 1, "name": "Component Insert",
+             "parent": {"kind": "root"}, "prototype": {"kind": "unresolved"},
+             "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]},
+            {"id": "synthetic:assembly:occurrence#2", "ordinal": 2, "name": "Component Insert",
+             "parent": {"kind": "root"}, "prototype": {"kind": "unresolved"},
+             "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]}
+        ]))
+        .unwrap();
+        let mut report = Report::default();
+        local_components(&mut model, 1, PartPositions::FirstPlaced, &mut report);
+        let dropped: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.severity == Severity::Dropped)
+            .collect();
+        assert_eq!(dropped.len(), 3, "{dropped:?}");
+        assert!(dropped[2].detail.starts_with(
+            "2 inserted components come from other Fusion designs that this .f3d doesn't \
+             contain; convert the whole export folder (or its zip) so the inserted designs \
+             come along, or export the assembly as a Fusion Archive (.f3z) from Fusion's \
+             File > Export."
+        ));
+    }
+
+    #[test]
     fn missing_links_are_reported_but_embedded_components_are_complete() {
         let mut model = read(
             Format::FusionArchive,
@@ -964,7 +1123,7 @@ mod tests {
                 "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]
             }]))
             .unwrap();
-            let names = missing_linked_components(&model);
+            let names = missing_linked_components(&model, &assembly::ExternalParts::new());
             assert_eq!(names, if missing { vec!["Component"] } else { vec![] });
             let mut report = Report::default();
             report.set_completeness(Completeness {

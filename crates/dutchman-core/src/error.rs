@@ -48,6 +48,10 @@ pub enum Error {
     /// Structured, anonymous facts from cadmpeg's model checks.
     #[error("cannot read this design: {message}")]
     Checks { message: String, facts: CheckFacts },
+    /// The file is well formed but its writer exported an empty design: it has a product and
+    /// no solids, surfaces or curves.
+    #[error("{0}")]
+    EmptyExport(String),
     /// The conversion exceeds the selected memory budget.
     #[error("{0}")]
     MemoryBudget(String),
@@ -61,6 +65,9 @@ pub enum Error {
     /// The model was read but holds no geometry the target can take.
     #[error("cannot convert this design: {0}")]
     NoGeometry(String),
+    /// An optional module, a separate program, failed to read the file.
+    #[error("{0}")]
+    Module(String),
     /// cadmpeg could not restate the model as STEP for the target.
     #[error("cannot convert this design: {0}")]
     Restate(String),
@@ -77,8 +84,10 @@ impl Error {
             | Error::UnknownFormat { .. }
             | Error::OutputExists { .. }
             | Error::WrongOutputExtension { .. }
-            | Error::Assembly(_) => Stage::Input,
-            Error::NotSupportedYet { .. } | Error::Decode(_) => Stage::Decode,
+            | Error::Assembly(_)
+            // An empty export is the file itself, not something the reader failed at.
+            | Error::EmptyExport(_) => Stage::Input,
+            Error::NotSupportedYet { .. } | Error::Decode(_) | Error::Module(_) => Stage::Decode,
             Error::NoGeometry(_) | Error::Checks { .. } => Stage::Project,
             Error::Encode(_) | Error::Restate(_) => Stage::Write,
         }
@@ -115,6 +124,7 @@ fn not_supported(format: Format) -> String {
             "Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import)."
                 .to_owned()
         }
+        Format::ModuleBoard => crate::module::missing_message(),
         // Built without the `freecad` feature.
         Format::FreeCadDocument => {
             format!(
@@ -152,13 +162,24 @@ impl Error {
             Self::NotSupportedYet { .. } => "not_supported_yet",
             Self::OutputExists { .. } => "output_exists",
             Self::WrongOutputExtension { .. } => "wrong_output_extension",
-            Self::Decode(_) => "decode",
+            Self::Decode(_) | Self::EmptyExport(_) => "decode",
             Self::Checks { .. } => "cadmpeg_checks",
             Self::MemoryBudget(_) => "memory_budget",
             Self::Encode(_) => "encode",
             Self::Assembly(_) => "assembly",
+            Self::Module(_) => "module",
             Self::NoGeometry(_) => "no_geometry",
             Self::Restate(_) => "restate",
+        }
+    }
+}
+
+impl Error {
+    /// A finer, fixed reason within `kind`, when there is one.
+    pub fn cause(&self) -> Option<&'static str> {
+        match self {
+            Self::EmptyExport(_) => Some("empty_export"),
+            _ => None,
         }
     }
 }

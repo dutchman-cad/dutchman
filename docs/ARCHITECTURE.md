@@ -210,7 +210,7 @@ format provides the 0.18.2 compatibility floor. This stays `solidcraft/23` for 0
 targets too: its format 45 additions (nested Browser groups, point cloud properties and
 filters, and print faces) are not used by Dutchman. Feature mapping also respects the writer's
 target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
-`NEWEST_SOLIDCRAFT` (currently 0.46), unless an explicit target is supplied.
+`NEWEST_SOLIDCRAFT` (currently 0.49), unless an explicit target is supplied.
 `WINDOW_OLDEST` (currently 0.40.0) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
@@ -276,8 +276,10 @@ local frame in place of its final positioned body. This applies with verificatio
 too; ordinary histories retain their existing verification behavior.
 
 At the first blocking feature, the editable timeline stops. Earlier features and
-independently resolved sketches are kept in a hidden component, followed by the original
-final geometry as a visible Import. The original is a separate result, not an
+independently resolved sketches stay live in the part's own component, followed by a Remove
+of the bodies they make and the original final geometry as one visible Import named
+"Rest of the design (from <first feature not converted>)". Without SolidCraft's names for
+those bodies (no CLI), they stay in a hidden component beside the Import instead. The original is a separate result, not an
 intermediate body on which later features could safely continue: CADIR supplies final
 geometry only. The report names the blocker and counts retained source features. If no
 body-building prefix exists, the import keeps resolved sketches for reference as before.
@@ -340,7 +342,8 @@ arc carriers prove the profile lies on one side of it. SolidCraft 0.18.2 and 0.2
 sweep toward the sketch normal for a positive angle, independently of the axis direction;
 the writer signs the angle to preserve the source's right-hand sweep. Unproven sides and
 unequal partial two-sided revolves remain blockers;
-lofts through two to fifty profile or terminal point sections,
+lofts through two to fifty profile or terminal point sections (a section may be one face of
+the model as it was earlier, rebuilt as a sketch of its boundary and proven on the replay),
 open, smooth (or ruled through two sections without rails), solid or surface (a surface loft
 becomes a new surface body, without point ends), guided by up to two rails of sketch curves or
 one-curve whole sketches (sections can select separate regions of one sketch; resolved point and
@@ -451,8 +454,8 @@ and the original live, and compares body count, volumes and areas. SolidCraft me
 a mesh whose chords keep within 5e-5 of a body's size of its faces, so two meshes of one shape
 may differ in volume by both their areas times that chord, and never less than 1e-4 of the
 volume is allowed; areas must agree within 1e-3. A mismatch retains the editable
-timeline hidden beside the visible original final shape (`partial_history`, verification
-`partial`). A replay error that identifies a feature shortens the prefix before that
+timeline, then a Remove of its bodies and the original final shape as one Import
+(`partial_history`, verification `partial`). A replay error that identifies a feature shortens the prefix before that
 feature; a final volume or area difference alone cannot identify a bad step, so the
 mapped timeline stays available for correction. Retained features are replayed
 separately from the original, without claiming that the unfinished result matches the

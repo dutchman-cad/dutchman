@@ -560,22 +560,36 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         assert_eq!(details["schema"], "dutchman.plugin.report/2");
         let native_report = loss_report::readable(&cli_report);
         // The harness's evaluate refuses every check where the CLI had verification off: the
-        // same unchecked status, and the CLI's reason within the plugin's, which names the host's
+        // unchecked status, and the CLI's reason within the plugin's, which names the host's
         // refusal where the CLI says verification is off (and may say which check it was).
         let guest = &details["shape_check"];
         let native = &native_report["shape_check"];
+        // The harness host cannot evaluate, so the plugin says "Not checked" whatever the CLI
+        // (verification off) said, and keeps the CLI's reason in front of the host's refusal
+        // (`unavailable` in dutchman-solidcraft's opening.rs). The CLI never claims a check.
+        assert_ne!(
+            native["result"], "Checked against the original shape",
+            "{fixture}: the CLI ran with verification off"
+        );
         assert_eq!(
-            guest["result"], native["result"],
-            "{fixture}: verification must retain the CLI's unchecked status"
+            guest["result"], "Not checked",
+            "{fixture}: verification must report the host's refusal as unchecked"
         );
         let message = |value: &serde_json::Value| value["reason"].as_str().map(str::to_owned);
         let guest_message =
             message(guest).map(|text| text.replace(NO_HOST_EVALUATION, "verification turned off"));
+        // `unavailable` keeps the earlier reason only for a partly checked or flattened
+        // design; "No editable history to check" gives way to the host's refusal.
+        let keeps_reason = matches!(
+            native["result"].as_str(),
+            Some("Original shape kept without editable history" | "Partly checked")
+        );
         match (guest_message, message(native)) {
-            (Some(guest), Some(native)) => assert!(
+            (Some(guest), Some(native)) if keeps_reason => assert!(
                 guest.contains(&native),
                 "{fixture}: verification must retain the CLI's reason: {guest} / {native}"
             ),
+            (Some(_), _) if !keeps_reason => {}
             (guest, native) => assert_eq!(guest, native, "{fixture}: verification reason"),
         }
         assert_eq!(
@@ -585,6 +599,11 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         );
         assert!(store.data().calls > 0);
         assert_eq!(store.data().progress.last(), Some(&1.0));
+        assert!(
+            store.data().progress.windows(2).all(|w| w[0] <= w[1]),
+            "{fixture}: progress must never go back: {:?}",
+            store.data().progress
+        );
         eprintln!(
             "{fixture}: matched CLI document and body payloads ({} streamed reads): {summary}",
             store.data().calls
@@ -656,14 +675,16 @@ fn fatal_member_failures(
             "{}",
         )?;
         let expected = match fault {
-            Fault::ReadDenied => PluginError::PermissionDenied("Original source.read failure".into()),
+            Fault::ReadDenied => PluginError::PermissionDenied(folder_access("Original source.read failure")),
             Fault::ReadLimit => PluginError::LimitExceeded("Original source.read failure".into()),
-            Fault::SizeDenied => PluginError::PermissionDenied("Original source.size failure".into()),
+            Fault::SizeDenied => PluginError::PermissionDenied(folder_access("Original source.size failure")),
             Fault::SizeLimit => PluginError::LimitExceeded("Original source.size failure".into()),
-            Fault::ResolveDenied => PluginError::PermissionDenied("Original source.resolve failure".into()),
+            Fault::ResolveDenied => PluginError::PermissionDenied(folder_access("Original source.resolve failure")),
             Fault::ResolveLimit => PluginError::LimitExceeded("Original source.resolve failure".into()),
             Fault::Aggregate => PluginError::LimitExceeded("Input exceeds the 1 GiB conversion limit; choose a smaller CAD file".into()),
             Fault::Oversize => PluginError::LimitExceeded("P02a.FCStd: input exceeds the 1073741824-byte file limit; choose a smaller CAD file".into()),
+            // Not in this loop; folder_not_granted covers it.
+            Fault::FolderDenied => PluginError::PermissionDenied("input_folder was not granted".into()),
         };
         assert_eq!(
             format!("{:?}", result.unwrap_err()),
@@ -678,6 +699,13 @@ fn fatal_member_failures(
         eprintln!("fatal_member_failure={fault:?}: original error, no output");
     }
     Ok(())
+}
+
+/// What the plugin says when SolidCraft refuses the read of the folder beside A01a.FCStd.
+fn folder_access(host: &str) -> String {
+    format!(
+        "Dutchman needs read access to the folder that holds A01a.FCStd: the design refers to other files in that folder. It reads only that folder, never writes, and never looks elsewhere. Give it that access by approving \"read access to the input folder\" when you install Dutchman (Preferences > Plugins > Install plugin...), keep the parts beside the assembly, then open the file again. SolidCraft said: {host}"
+    )
 }
 
 fn document(bytes: &[u8]) -> Value {

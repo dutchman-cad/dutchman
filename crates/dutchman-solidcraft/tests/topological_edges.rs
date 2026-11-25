@@ -111,6 +111,8 @@ fn editable_copy(bytes: &[u8]) -> Vec<u8> {
     assert!(!features.is_empty());
     for feature in features {
         feature["component"] = json!(0);
+        // The hidden copy's body-building features are written suppressed (#940); turn them on.
+        feature["suppressed"] = json!(false);
     }
     document["components"] = json!([]);
     document["occurrences"] = json!([]);

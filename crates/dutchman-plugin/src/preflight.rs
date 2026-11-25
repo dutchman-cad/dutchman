@@ -5,10 +5,11 @@ use dutchman_core::{
 };
 use std::io::{Read, Seek};
 
-/// Four times the public 41-part arm's measured 167,740,144,095 guest fuel,
-/// including real host evaluation, before this preflight update.
-/// SolidCraft 0.45 accepts up to u64::MAX, but its user ceiling must also be raised.
-pub(crate) const PLUGIN_FUEL: u64 = 670_960_576_380;
+/// SolidCraft's default "Max plugin fuel" ceiling. A package runs with exactly the fuel its
+/// manifest declares and cannot read what the host would allow, so asking for more would make a
+/// default install refuse the plugin for every file. Designs whose estimate exceeds this go to
+/// the Dutchman app instead.
+pub(crate) const PLUGIN_FUEL: u64 = 100_000_000_000;
 
 /// Retain the existing conservative memory/time gate alongside the explicit fuel gate.
 pub(crate) const PLUGIN_BUDGET: Budget = Budget {
@@ -171,7 +172,7 @@ fn check_sizes(sizes: Sizes, parts: u64, history: bool, budget: Budget) -> Resul
 /// Mini inlet plate (260,519 / 17 / 1), 3,350,956,153; switch plate
 /// (198,568 / 17 / 1), 2,412,586,136. The unmultiplied model bounds all four;
 /// 3x reserves room for runtime differences and unseen feature complexity. The
-/// manifest requests 4x the measured arm. RailCore Mini (110,045,607 / 45 / 43)
+/// manifest requests SolidCraft's default cap. RailCore Mini (110,045,607 / 45 / 43)
 /// and 300ZL (74,341,274 / 71 / 69) exceed this budget as well as the old gate.
 /// Other formats retain their existing memory/time checks until measured.
 fn estimated_fuel(sizes: Sizes, parts: u64) -> Option<u64> {
@@ -342,7 +343,43 @@ mod tests {
             manifest["runtime"]["limits"]["fuel"].as_u64(),
             Some(PLUGIN_BUDGET.fuel)
         );
-        assert_eq!(PLUGIN_FUEL, 4 * 167_740_144_095);
+        assert_eq!(PLUGIN_FUEL, 100_000_000_000);
+    }
+
+    #[test]
+    fn manifest_fuel_request_never_exceeds_solidcraft_default_cap() {
+        const SOLIDCRAFT_DEFAULT_MAX_PLUGIN_FUEL: u64 = 100_000_000_000;
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../plugin.json")).unwrap();
+        let requested = manifest["runtime"]["limits"]["fuel"].as_u64().unwrap();
+        assert!(requested > 0 && requested <= SOLIDCRAFT_DEFAULT_MAX_PLUGIN_FUEL);
+        const { assert!(PLUGIN_BUDGET.fuel <= SOLIDCRAFT_DEFAULT_MAX_PLUGIN_FUEL) };
+    }
+
+    #[test]
+    fn design_above_fuel_budget_is_routed_to_the_app() {
+        // Synthetic metadata: 40 documents is above 1e11 fuel, one is below it.
+        let sizes = Sizes {
+            format: Format::FusionArchive,
+            bytes: 1_000_000,
+            members: 4,
+        };
+        let budget = Budget {
+            peak_bytes: u64::MAX,
+            seconds: u64::MAX,
+            ..PLUGIN_BUDGET
+        };
+        let parts = 40;
+        assert!(estimated_fuel(sizes, parts).unwrap() > budget.fuel);
+        let error = check_sizes(sizes, parts, true, budget).unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("too large to open inside SolidCraft"),
+            "{message}"
+        );
+        assert!(message.contains("Open it in the Dutchman app"), "{message}");
+        assert!(!message.contains("Max plugin fuel"), "{message}");
+        assert!(check_sizes(sizes, 1, true, budget).is_ok());
     }
 
     #[test]
@@ -367,7 +404,15 @@ mod tests {
             };
             assert!(estimated_fuel(sizes, parts).unwrap() >= 3 * measured);
             for history in [false, true] {
-                assert!(check_sizes(sizes, parts, history, PLUGIN_BUDGET).is_ok());
+                // The arm's estimate is above the 1e11 budget, so it is routed to the app.
+                let fits = estimated_fuel(sizes, parts).unwrap() <= PLUGIN_BUDGET.fuel;
+                assert_eq!(fits, measured < 100_000_000_000);
+                let verdict = check_sizes(sizes, parts, history, PLUGIN_BUDGET);
+                if fits {
+                    assert!(verdict.is_ok());
+                } else {
+                    assert!(verdict.is_err());
+                }
             }
         }
     }

@@ -956,7 +956,11 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     ]);
     assert_eq!(text.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&text.stdout);
-    assert!(stdout.ends_with("1 converted, 0 failed\n"), "{stdout}");
+    // The notes are in plain words, so the report ends by saying `--verbose` prints them in full.
+    assert!(
+        stdout.ends_with("1 converted, 0 failed\n(notes are summarised in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)\n"),
+        "{stdout}"
+    );
     // Each converted file's losses are listed beneath it, as `convert` prints them, after the
     // SolidCraft version it targets.
     let lines = without_target_line(&stdout);
@@ -965,13 +969,13 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     assert_eq!(lines[0], "Fusion .f3d: reads geometry");
     assert!(lines[1].starts_with("converted  "), "{stdout}");
     assert!(
-        lines[2..lines.len() - 1]
+        lines[2..lines.len() - 2]
             .iter()
             .all(|line| line.starts_with("           ") && line.contains(": ")),
         "{stdout}"
     );
     assert!(
-        stdout.contains("Degraded: f3d/material.not-transferred"),
+        stdout.contains("Degraded: The design's materials and appearances weren't carried over"),
         "{stdout}"
     );
 
@@ -992,7 +996,10 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
             .unwrap(),
     ]);
     let stdout = String::from_utf8_lossy(&text.stdout);
-    assert!(stdout.ends_with("2 converted, 1 failed\n"), "{stdout}");
+    assert!(
+        without_notes_hint(&stdout).ends_with("2 converted, 1 failed\n"),
+        "{stdout}"
+    );
     let text = dutchman(&[
         "convert-all",
         "--quiet",
@@ -1003,7 +1010,8 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     ]);
     let stdout = String::from_utf8_lossy(&text.stdout);
     assert!(
-        stdout.ends_with("2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)\n"),
+        without_notes_hint(&stdout)
+            .ends_with("2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)\n"),
         "{stdout}"
     );
 }
@@ -1029,16 +1037,9 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
         )
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains(
-            "step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s)"
-        ),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains("step/native.source-record-omitted: 1 source-native record(s)"),
-        "{stderr}"
-    );
+    // Records STEP has no place for change nothing the person sees: they wait for --verbose.
+    assert!(!stderr.contains("step/native."), "{stderr}");
+    assert!(!stderr.contains("source-native record(s)"), "{stderr}");
     assert!(
         stderr.contains("so no declared identity was verified. …\n"),
         "{stderr}"
@@ -1059,6 +1060,16 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("Agreement is consistency, not a declaration."),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s)"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("step/native.source-record-omitted: 1 source-native record(s)"),
         "{stderr}"
     );
     assert!(!stderr.contains("--verbose prints"), "{stderr}");
@@ -1477,7 +1488,7 @@ mod external_tools {
             file.write_all(
                 br#"#!/bin/sh
 if [ "$1" = "--version" ]; then
-    printf 'solidcraft-cli 0.46.2\n'
+    printf 'solidcraft-cli 0.49.0\n'
     exit 0
 fi
 printf 'replay\n' >> "$DUTCHMAN_TEST_REPLAY_MARKER"
@@ -1495,7 +1506,7 @@ exit 1
             "-o",
             output.to_str().unwrap(),
             "--solidcraft-version",
-            "0.46.2",
+            "0.49.0",
             "--json",
         ];
         // Preflight fits while the calibrated check does not.
@@ -1840,7 +1851,7 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
     let first = dir.path().join("first.prt");
     let second = dir.path().join("second.prt");
     for path in [&first, &second] {
-        std::fs::write(path, b"#UGC:2").unwrap();
+        std::fs::write(path, b"unclassified").unwrap();
     }
     let output = dir.path().join("out.sc");
     for option in [None, Some("--quiet"), Some("--json")] {
@@ -1852,11 +1863,11 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if option == Some("--json") {
             let report = json_of(&out);
-            assert_eq!(report["input"]["format"], "creo_part");
-            assert_eq!(report["input"]["words"], "opens, no geometry yet");
+            assert_eq!(report["input"]["format"], "unclassified_part");
+            assert_eq!(report["input"]["words"], "recognised, not read yet");
             assert!(!stderr.contains("Want to help"));
         } else {
-            assert!(stdout.starts_with("Creo .prt: opens, no geometry yet\n"));
+            assert!(stdout.starts_with("Creo or NX .prt: recognised, not read yet\n"));
         }
         assert_eq!(
             stdout.matches("Want to help").count(),
@@ -1887,7 +1898,7 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
                 .lines()
                 .find(|l| l.starts_with("Want to help"))
                 .unwrap();
-            assert!(pitch.starts_with("Want to help Dutchman read Creo better?"));
+            assert!(pitch.starts_with("Want to help Dutchman read Creo or NX better?"));
             assert!(pitch.contains("https://dutchmancad.xyz/fixtures/"));
             assert!(!pitch.contains("first") && !pitch.contains("second"));
         }
@@ -1939,7 +1950,7 @@ fn numbered_saves_select_the_newest_and_report_the_older_revision() {
     let outputs = dir.path().join("outputs");
     std::fs::create_dir_all(&inputs).unwrap();
     for name in ["bracket.prt.3", "bracket.prt.7"] {
-        std::fs::write(inputs.join(name), b"#UGC:2").unwrap();
+        std::fs::write(inputs.join(name), b"unclassified").unwrap();
     }
     for json in [false, true] {
         let mut args = vec![
@@ -1952,7 +1963,7 @@ fn numbered_saves_select_the_newest_and_report_the_older_revision() {
             args.push("--json");
         }
         let out = dutchman(&args);
-        // Creo is recognised but does not supply geometry yet; only the newest is attempted.
+        // An unclassified part is recognised but does not supply geometry; only the newest is attempted.
         assert_eq!(out.status.code(), Some(1));
         if json {
             let report = json_of(&out);
@@ -1969,10 +1980,10 @@ fn numbered_saves_select_the_newest_and_report_the_older_revision() {
             );
         } else {
             let text = String::from_utf8(out.stdout).unwrap();
-            assert!(text.contains("Creo .prt.7: opens, no geometry yet"));
+            assert!(text.contains("Creo or NX .prt.7: recognised, not read yet"));
             assert!(text.contains("bracket.prt.3: older revision; using "));
             assert!(text.contains("1 skipped (older revisions)"));
-            assert!(!text.contains("Creo .prt.3:"));
+            assert!(!text.contains("Creo or NX .prt.3:"));
         }
     }
 }
@@ -2478,7 +2489,7 @@ fn a_check_stopped_for_memory_keeps_the_design_unverified() {
     let cli = dir.path().join("solidcraft-cli");
     std::fs::write(
         &cli,
-        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.46.1'; exit 0; fi\nsleep 30\n",
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.49.1'; exit 0; fi\nsleep 30\n",
     )
     .unwrap();
     std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -2757,6 +2768,15 @@ fn part_threads_keep_assembly_json_and_design_bytes_identical() {
 }
 
 /// Conversion lines without the target line and optional installed-version notice.
+/// The report with its closing "notes are summarised ... --verbose" line removed.
+fn without_notes_hint(stdout: &str) -> String {
+    stdout
+        .lines()
+        .filter(|line| !(line.starts_with("(notes are summarised in plain words")))
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
 fn without_target_line(stdout: &str) -> Vec<&str> {
     let (target, rest): (Vec<&str>, Vec<&str>) = stdout
         .lines()
@@ -3682,7 +3702,7 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
         "-o",
         output.to_str().unwrap(),
         "--solidcraft-version",
-        "0.46.2",
+        "0.49.0",
         "--json",
     ];
     let out = dutchman_with(&args, &env);
@@ -3728,7 +3748,7 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
             "--out-dir",
             dir.path().to_str().unwrap(),
             "--solidcraft-version",
-            "0.46.2",
+            "0.49.0",
             "--json",
         ],
         &env,
@@ -3755,7 +3775,7 @@ fn low_memory_keeps_editable_history_unverified_and_the_original_shape_visible()
             "-o",
             output.to_str().unwrap(),
             "--solidcraft-version",
-            "0.46.2",
+            "0.49.0",
             "--part",
             "1",
             "--stop-at-feature",
@@ -3803,7 +3823,7 @@ fn automatic_assembly_workers_use_the_synthetic_free_memory_budget() {
             output.to_str().unwrap(),
             "--no-verify",
             "--solidcraft-version",
-            "0.46.2",
+            "0.49.0",
             "--json",
         ],
         &[("DUTCHMAN_TEST_MEMORY", "100000000,500000000")],

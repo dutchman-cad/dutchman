@@ -656,10 +656,13 @@ fn outcome(histories: &[Check], features: Vec<FeatureOutcome>) -> Outcome {
 }
 
 /// What became of a part's history in its component.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum Replay {
     /// No history is live: the part's geometry is its live Import.
     None,
+    /// The history is live, a Remove takes away the bodies it makes, and the Import of the
+    /// rest of the design follows it under this name.
+    Rest(String),
     /// The history is live, and the original geometry follows it, suppressed.
     BesideOriginal,
     /// The history is live and is the original geometry itself.
@@ -1316,16 +1319,16 @@ impl Builder<'_> {
                 }
                 let blob = self.container.add_step(step.as_bytes())?;
                 let id = self.id();
-                let (label, suppressed) = if replayed == Replay::BesideOriginal {
-                    (ORIGINAL.to_owned(), true)
-                } else {
-                    (feature_name(part), false)
+                let (label, suppressed) = match &replayed {
+                    Replay::BesideOriginal => (ORIGINAL.to_owned(), true),
+                    Replay::Rest(label) => (label.clone(), false),
+                    _ => (feature_name(part), false),
                 };
                 let mut imported =
                     import_feature(part, id, &label, Some(component), suppressed, &blob);
-                if replayed == Replay::None {
+                if matches!(replayed, Replay::None | Replay::Rest(_)) {
                     let mut looks =
-                        history::imported(part, &step, self.report, self.has_appearances)?;
+                        history::imported_restated(part, &step, self.report, self.has_appearances)?;
                     looks.rename_bodies(&name, &mut self.bodies);
                     if let (Some(names), Some(fields)) = (
                         looks
@@ -1537,8 +1540,9 @@ impl Builder<'_> {
             self.histories.push(check);
             return Ok(Replay::None);
         }
-        let hidden = partial || unverified_hidden;
-        let whole = !hidden && history::base::whole(&history, part);
+        let rest = partial && self.writer.writes_rest_visibly(&history);
+        let hidden = (partial && !rest) || unverified_hidden;
+        let whole = !hidden && !rest && history::base::whole(&history, part);
         let component = if hidden {
             let child = self.id();
             let occurrence = self.id();
@@ -1571,6 +1575,15 @@ impl Builder<'_> {
         }
         history.relocate(self.next_id - 1, component, &prefix(name), &mut self.taken);
         history.rename_bodies(name, &mut self.bodies);
+        if rest {
+            // The bodies it made are removed before the import, which takes their names.
+            history.looks.clear();
+            history.face_looks.clear();
+            history.hidden_bodies.clear();
+        } else if hidden {
+            // The visible Import already is the part: the hidden copy builds no second body.
+            history::suppress_bodies(&mut history.features);
+        }
         self.mark_written(part);
         self.unused_sketches.extend(history.hidden_sketches());
         self.hidden_bodies.extend(
@@ -1581,6 +1594,21 @@ impl Builder<'_> {
         );
         self.next_id = history.next_id;
         self.features.append(&mut history.features);
+        if let Some(bodies) = history
+            .replayed_bodies
+            .take()
+            .filter(|bodies| rest && !bodies.is_empty())
+        {
+            let id = self.id();
+            self.features.push(json!({
+                "id": id,
+                "name": crate::document::REMOVE,
+                "type": "remove",
+                "suppressed": false,
+                "component": component,
+                "bodies": bodies,
+            }));
+        }
         self.params.append(&mut history.params);
         for rule in history.sheet_rules.drain(..) {
             if !self
@@ -1598,6 +1626,9 @@ impl Builder<'_> {
         self.histories.push(check);
         Ok(match (hidden, whole) {
             (true, _) => Replay::None,
+            (false, _) if rest => {
+                Replay::Rest(crate::document::rest_name(history.rest_from.as_deref()))
+            }
             (false, true) => Replay::IsOriginal,
             (false, false) => Replay::BesideOriginal,
         })

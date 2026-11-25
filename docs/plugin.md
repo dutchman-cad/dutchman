@@ -18,6 +18,7 @@ native geometry, the plugin checks bounded archive indexes and the desktop app's
 memory/time estimate. It retains a conservative 520 MB peak-memory estimate ceiling and
 a five-minute time estimate ceiling, and links to the [Dutchman app download](https://github.com/dutchman-cad/dutchman/releases/latest).
 The guest's actual memory limit is 2048 MiB; the lower estimate ceiling also bounds conversion work.
+The module itself declares that 2048 MiB maximum and reserves a 16 MiB stack, so hosts that cannot impose a limit, such as web browsers, enforce the same ceiling.
 The app can convert larger designs and save a `.sc` to open in SolidCraft. Compressed inner archive checks are bounded to 16 MiB in total; larger checks also
 direct you to the app. The estimate is
 approximate; it is not a guarantee that every smaller design fits. SolidCraft 0.45's importer
@@ -35,8 +36,11 @@ archives' expanded bytes. `E` counts outer archive entries; `D` counts indexed `
 documents, with a minimum of one. These come from bounded ZIP metadata, without reading
 features or B-rep payloads. Documents are not placed parts: the 41-part arm has only two
 indexed documents. Arithmetic saturates, so overflowing work estimates are refused.
-An estimate above the manifest's **670,960,576,380 fuel** request directs the design to the
-app before native decoding. Other formats retain the existing memory/time checks.
+The manifest requests **100,000,000,000 fuel**, SolidCraft's default **Max plugin fuel**
+ceiling, so a default install loads the plugin. An estimate above that request directs the
+design to the app before native decoding. SolidCraft runs a package with exactly the fuel its
+manifest declares and the guest interface has no call to read the host's ceiling, so raising
+**Max plugin fuel** cannot give the plugin a larger budget and the message does not suggest it. Other formats retain the existing memory/time checks.
 
 Calibration used the component from `f174dac3`, before this preflight update, in Wasmtime 50.0.2,
 with editable history enabled and real CLI host evaluation. The fuel count includes
@@ -55,7 +59,8 @@ only; these public design files are not added to the test fixtures.
 
 The formula before its 3x multiplier bounds all four observations; that multiplier
 reserves room for runtime differences and unseen feature complexity. The declared request
-is exactly **4x the arm's measured fuel**, replacing the old 100-billion request.
+is SolidCraft's default 100-billion ceiling (it was 4x the arm's measured fuel, which default
+installs refused at load). The 41-part arm's estimate is above it, so it opens in the app.
 The RailCore Mini (110,045,607 expanded bytes, 45 entries, 43 documents) and 300ZL
 (74,341,274 bytes, 71 entries, 69 documents) exceed both the fuel envelope and the retained
 memory gate. They are refused from their outer indexes before inner archive inflation.
@@ -66,7 +71,7 @@ For comparison, the rc.9 component with host evaluation refused used
 
 After the update, the rebuilt component used 167,744,341,712 fuel for the arm,
 including real host evaluation, with 240,254,976 bytes of peak guest linear memory.
-The request retains more than three times that measured fuel. A synthetic archive
+That measurement is above the current request, which is why the arm is directed to the app. A synthetic archive
 with 10,000 small entries also confirmed that the compiled component refuses work
 from the fuel estimate independently of the memory estimate.
 In one headless SolidCraft 0.45.0 session, `file.import` opened all 41 arm parts in
@@ -187,8 +192,11 @@ All generated guest and harness bindings are in `src/adapter.rs`, from
   any other path is relative to its folder. `source.size(path)` gives member sizes and
   `source.resolve(path)` the folder's case-preserving name for a member.
 - `design.write(bytes)` appends the converted SolidCraft design, at most 1 MiB per call.
-- `control.progress` reports reading and writing; `control.cancelled` is checked before
-  each member read and before the design is written.
+- `control.progress` reports the main file read, each part read (5-35%), each SolidCraft
+  history check (40-90%) and writing, in steps of at least 1% and never going back, so
+  SolidCraft 0.48's operations row shows how far a conversion has got. `control.cancelled` is
+  checked before each member read, each history check and before the design is written;
+  mapping runs without host calls, so Cancel takes effect at the next of those steps.
 - The result is the loss report below. Errors: a file that is not supported yet or cannot be read
   is `invalid-input` with field `file` (`options` and `entry` for bad options or entry
   names); size budgets are `limit-exceeded`; an error returned by a host import is passed
@@ -264,7 +272,7 @@ The return value is UTF-8 JSON under 1 MiB, in the shape SolidCraft shows to the
 | Field | Shape and meaning |
 |---|---|
 | `summary` | One line, at most 240 bytes, such as `Partly converted; Losses: 2 Info, 1 Degraded` |
-| `items` | At most 4096 rows, with dropped losses first, then degraded losses, then informational losses (source order within each severity). One per retained Dutchman loss: `severity` (`info`, `degraded`, `dropped`), `title` (a plain description of the change; at most 120 bytes), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). SolidCraft shows one line per title with its count and keeps codes and messages under Details. |
+| `items` | At most 4096 rows, with dropped losses first, then degraded losses, then informational losses (source order within each severity). One per retained Dutchman loss: `severity` (`info`, `degraded`, `dropped`), `title` (one plain sentence about the change, at most 120 bytes; a note Dutchman has no plain sentence for keeps its own message here), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). Notes that change nothing the person sees (records STEP has no place for, a placement statistic of nothing) are not in `items`; they stay in `details.losses`. SolidCraft shows one line per title with its count and keeps codes and messages under Details. |
 | `details` | The `dutchman.plugin.report/2` report below. When the whole result exceeds 1 MiB, its `losses` array is left out; items are reduced further if needed, retaining the severity priority. |
 
 When losses exceed the item or byte limit, a reserved final item has code
@@ -288,11 +296,11 @@ part and feature names; archive member paths are replaced with plain description
 | `schema` | Literal `dutchman.plugin.report/2` |
 | `result` | `Converted`, `Partly converted`, `Converted, no history`, or `Incomplete`, using the desktop app's wording |
 | `help` | "Is there a problem? Is something missing?", followed by the Discord invite, DM Dutchy, and GitHub issue links, in that order |
-| `shape_check` | Nullable `{result, reason}` with plain descriptions such as "Not checked" or "No editable history to check" |
+| `shape_check` | Nullable `{result, reason}` with plain descriptions such as "Not checked" or "No editable history to check". A history that was not checked, or only partly, also has `meaning`: it was written without SolidCraft replaying it and comparing the result with the original shape, which is not a warning that the history is wrong, and how to check it (Dutchman Convert with **Check feature history in SolidCraft** turned on, and a STEP export of the same design). |
 | `features` | Nullable list of `{name, feature, result, reason}` in source order; results are `Converted`, `Not needed`, `Left out`, or `Not supported yet` |
 | `assembly` | Nullable `{placed_parts, empty_parts, unplaced_parts, placement_summary, missing_parts}`; `unplaced_parts` rows contain `{part, placements}` for unreadable archive positions and dependent children. These do not count in `placed_parts` or `empty_parts`. `placement_summary` is the plain unreadable-position sentence (or `null`); the headline is `Incomplete`. Missing rows contain `{part, reason, placements}` |
 | `parts` | List of `{name, shape_check, converted_features, source_features}` |
-| `losses` | List of `{level, part_or_feature, reason}`; `level` is `Info`, `Degraded`, or `Dropped` |
+| `losses` | Every note, as `{level, part_or_feature, reason, summary, shown_by_default}`; `level` is `Info`, `Degraded`, or `Dropped`; `summary` is the plain sentence and `shown_by_default` is `false` for notes that change nothing the person sees |
 | `truncation` | Present only when shortened: `omitted_items` count and `details_losses_omitted` boolean |
 
 With Keep editable history off, the reason is `Keep editable history is turned off`.

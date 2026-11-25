@@ -194,7 +194,21 @@ pub(crate) fn map(
         if loops_selected(section, ctx) > 1 {
             return Err(SEVERAL_LOOPS.to_owned());
         }
-        let (sketch_id, profiles) = profile(Some(section), ctx)?;
+        // A face of the model as it was earlier is a section through the sketch of its
+        // boundary; the replay proves that face exists, and which side the sketch faces
+        // does not change the lofted shape.
+        let reference = super::profile::planar(section);
+        let (sketch_id, profiles) =
+            if reference.get("kind").and_then(Value::as_str) == Some("historical_faces") {
+                super::face_profile::map(
+                    feature,
+                    reference.get("value").unwrap_or(&Value::Null),
+                    ctx,
+                    Some(index),
+                )?
+            } else {
+                profile(Some(section), ctx)?
+            };
         let sketch = ctx
             .sketches
             .get(&sketch_id)

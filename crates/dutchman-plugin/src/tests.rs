@@ -235,7 +235,7 @@ fn report_and_failure_offer_discord_before_github_without_archive_paths() {
         report["details"]["help"].as_str().unwrap().to_owned(),
     ] {
         assert!(text.contains(crate::notice::QUESTION));
-        assert!(text.find("Join our Discord server").unwrap() < text.find("DM Dutchy").unwrap());
+        assert!(text.find("Join our Discord").unwrap() < text.find("DM Dutchy").unwrap());
         assert!(text.find("DM Dutchy").unwrap() < text.find("GitHub issue").unwrap());
         assert!(text.contains("https://discord.gg/yTcseBEdeu"));
         assert!(text.contains("https://discord.com/users/1563591265810129088"));

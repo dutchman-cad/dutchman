@@ -281,6 +281,7 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
     assembly.placements[1].part = 1;
     for target in [
         "0.29.0", "0.30.0", "0.40.0", "0.41.0", "0.42.0", "0.43.0", "0.44.0", "0.45.0", "0.46.0",
+        "0.47.0", "0.48.0", "0.49.0",
     ] {
         let mut report = Report::default();
         let mut bytes = Vec::new();
@@ -330,8 +331,10 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
         assert!(report.losses().iter().any(|note| note
             .detail
             .contains("unverified: verification turned off; kept hidden")));
+        // The hidden history's body-building features are written suppressed, so only the two
+        // visible parts evaluate to bodies (an export holds one body per part).
         if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
-            assert_eq!(evaluate(&cli, &bytes).len(), 3);
+            assert_eq!(evaluate(&cli, &bytes).len(), 2);
         }
     }
 }

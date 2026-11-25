@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CiResultTests(unittest.TestCase):
-    def check_results(self, event, release=False, failed=None, results=None, docs=False, platform=False, floor=False):
+    def check_results(self, event, release=False, failed=None, results=None, docs=False, platform=False, floor=False,
+                      placements=False, lockfile=False):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         script = workflow.split('echo "$RESULTS" | python3 -c \'\n', 1)[1]
         script = textwrap.dedent(script.rsplit("\n          '", 1)[0])
@@ -29,16 +30,25 @@ class CiResultTests(unittest.TestCase):
         needs["changes"]["outputs"] = {key: "true" for key in ("code", "rust", "docker")}
         needs["changes"]["outputs"]["full"] = str(full).lower()
         if event == "merge_group":
+            active |= {"placements", "solidcraft-roundtrip"}
+            needs["placements"]["result"] = "success"
+            needs["solidcraft-roundtrip"]["result"] = "success"
+        needs["changes"]["outputs"].update(platform=str(platform).lower(), floor=str(floor).lower())
+        if lockfile:
+            needs["changes"]["outputs"]["lockfile"] = "true"
+            active.add("msrv")
+            needs["msrv"]["result"] = "success"
+        if event == "pull_request" and placements:
+            needs["changes"]["outputs"]["placements"] = "true"
             active.add("placements")
             needs["placements"]["result"] = "success"
-        needs["changes"]["outputs"].update(platform=str(platform).lower(), floor=str(floor).lower())
         if event == "pull_request":
             if platform:
                 needs["test-macos"]["result"] = "success"
             if floor:
                 needs["solidcraft-roundtrip"]["result"] = "success"
         if docs:
-            for job in ("fmt", "clippy", "test", "placements"):
+            for job in ("fmt", "clippy", "test", "placements", "solidcraft-roundtrip"):
                 needs[job]["result"] = "skipped"
             needs["docs"]["result"] = "success"
             needs["changes"]["outputs"].update(code="false", rust="false", docker="false")
@@ -82,10 +92,31 @@ class CiResultTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_queue_skips_platform_and_image_checks(self):
-        for job in ("test-arm", "test-macos", "wasm", "msrv", "solidcraft-roundtrip"):
+        for job in ("test-arm", "test-macos", "wasm", "msrv"):
             with self.subTest(job=job):
                 result = self.check_results("merge_group", results={job: "success"})
                 self.assertNotEqual(result.returncode, 0)
+
+    def test_a_pin_or_assembly_pr_requires_the_placement_sets(self):
+        result = self.check_results("pull_request", placements=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.check_results("pull_request", placements=True, failed="placements")
+        self.assertNotEqual(result.returncode, 0)
+        # Without the filter a pull request does not run them, and a run would be unexpected.
+        result = self.check_results("pull_request", results={"placements": "success"})
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_a_cargo_lock_change_requires_the_msrv_build(self):
+        for event in ("pull_request", "merge_group"):
+            with self.subTest(event=event):
+                result = self.check_results(event, lockfile=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                result = self.check_results(event, lockfile=True, failed="msrv")
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_queue_requires_the_solidcraft_replay(self):
+        result = self.check_results("merge_group", failed="solidcraft-roundtrip")
+        self.assertNotEqual(result.returncode, 0)
 
     def test_queue_requires_linux_tools_and_smoke_placements(self):
         result = self.check_results("merge_group", failed="placements")
@@ -119,12 +150,15 @@ class CiResultTests(unittest.TestCase):
                       "needs.changes.outputs.full": "false", "needs.changes.outputs.code": "true",
                       "needs.changes.outputs.rust": "true", "needs.changes.outputs.docker": "true",
                       "needs.changes.outputs.platform": "true", "needs.changes.outputs.floor": "true",
+                      "needs.changes.outputs.lockfile": "false",
                       "needs.placements.result": "success", "needs.test-arm.result": "failure"}
             for key, value in values.items():
                 condition = condition.replace(key, repr(value))
             condition = re.sub(r"!(?!=)", "not ", condition.replace("&&", "and").replace("||", "or"))
             with self.subTest(job=job):
-                self.assertFalse(eval(condition, {"__builtins__": {}}))
+                # The SolidCraft replay is the one job the queue runs for every code change.
+                scheduled = eval(condition, {"__builtins__": {}})
+                self.assertEqual(scheduled, job == "solidcraft-roundtrip")
 
     def test_full_ci_accepts_retry_after_timeout_or_shutdown(self):
         # A timeout can appear as failure or cancelled in the needs context.

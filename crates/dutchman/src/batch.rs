@@ -4,14 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use dutchman_core::{Format, Writer};
 use serde_json::{json, Value};
 
 use crate::json as report;
+use crate::schedule::Take;
 use crate::worker::{self, Limits};
 use crate::{ConvertOptions, PartSearch};
 
@@ -95,7 +96,13 @@ impl Settings {
 pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
     let extension = options.output_extension();
     for job in jobs {
-        let _ = job.output.set_extension(extension);
+        let _ = job
+            .output
+            .set_extension(if crate::tool_library::is_library(&job.input) {
+                dutchman_core::camtools::EXTENSION
+            } else {
+                extension
+            });
         job.replace = !options.no_clobber && Format::part_revision(&job.input).is_none();
         if options.project.is_some() {
             job.search.project.clone_from(&options.project);
@@ -324,12 +331,14 @@ pub fn text(report: &Value, verbose: bool) -> String {
             out.push_str(&line);
             out.push('\n');
         }
-        let losses = result
-            .get("losses")
-            .and_then(Value::as_array)
-            .map_or(&[][..], Vec::as_slice);
+        if let Some(meaning) = report::unverified_history(result, true) {
+            out.push_str("           ");
+            out.push_str(meaning);
+            out.push('\n');
+        }
+        let losses = report::listed_losses(result, verbose);
         if verbose || losses.len() <= report::LISTED {
-            for loss in losses {
+            for loss in &losses {
                 let (line, shortened) = report::loss_line(loss, verbose);
                 cut |= shortened;
                 out.push_str("           ");
@@ -441,6 +450,23 @@ pub fn line(result: &Value) -> String {
             .pointer("/output/path")
             .and_then(Value::as_str)
             .unwrap_or("?");
+        if result.pointer("/output/format").and_then(Value::as_str)
+            == Some(crate::tool_library::FORMAT)
+        {
+            let count = |key: &str| {
+                result
+                    .pointer(&format!("/tools/{key}"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            let (written, left) = (count("written"), count("not_written"));
+            let words = if left == 0 {
+                format!("{written} tools")
+            } else {
+                format!("{written} tools; {left} not written, see the losses")
+            };
+            return format!("converted  {input} -> {output} ({words})");
+        }
         let written = match (
             result.get("mode").and_then(Value::as_str),
             result
@@ -448,7 +474,7 @@ pub fn line(result: &Value) -> String {
                 .and_then(Value::as_str),
         ) {
             (Some("partial_history"), _) => {
-                "partial editable history; imported final shape visible"
+                "partial editable history; the rest is one imported body"
             }
             (Some("history"), Some("verified")) => "editable history, verified in SolidCraft",
             (Some("history"), _) => "editable history, unverified",
@@ -575,6 +601,26 @@ fn plan_with_limit(
             ));
             continue;
         }
+        // A bulk export may write a rebuilt .f3z beside an assembly's .f3d: it carries the
+        // inserted designs, so it is the one converted.
+        if root.is_dir() {
+            let archives: BTreeSet<_> = found
+                .iter()
+                .filter(|(path, _)| extension_of(path) == "f3z")
+                .map(|(path, _)| path.with_extension("").to_string_lossy().to_lowercase())
+                .collect();
+            let exported = |path: &Path| {
+                path.ancestors()
+                    .skip(1)
+                    .take_while(|folder| folder.starts_with(root))
+                    .any(|folder| folder.join(dutchman_core::EXPORT_MANIFEST).is_file())
+            };
+            found.retain(|(path, _)| {
+                extension_of(path) != "f3d"
+                    || !archives.contains(&path.with_extension("").to_string_lossy().to_lowercase())
+                    || !exported(path)
+            });
+        }
         let natives: BTreeSet<_> = found
             .iter()
             .filter(|(path, _)| !is_step(path))
@@ -605,7 +651,11 @@ fn plan_with_limit(
                         Format::part_revision(&relative)
                             .map_or_else(|| relative.clone(), |(part, _)| part),
                     )
-                    .with_extension(crate::OutputFormat::Solidcraft.extension()),
+                    .with_extension(if crate::tool_library::is_library(&path) {
+                        dutchman_core::camtools::EXTENSION
+                    } else {
+                        crate::OutputFormat::Solidcraft.extension()
+                    }),
                 &mut outputs,
             );
             let replace = Format::part_revision(&path).is_none();
@@ -626,8 +676,11 @@ fn plan_with_limit(
             });
         }
     }
-    let description = summary(&jobs);
-    project_roots(&mut jobs);
+    let mut description = summary(&jobs);
+    for note in project_roots(&mut jobs) {
+        description.push_str("; ");
+        description.push_str(&note);
+    }
     Plan {
         description,
         jobs,
@@ -638,14 +691,16 @@ fn plan_with_limit(
     }
 }
 
-// Retain roots and unused parts. Keep cycles visible so conversion can report them.
-fn project_roots(jobs: &mut Vec<Job>) {
+// Retain roots and unused parts, and say what was decided about cycles.
+fn project_roots(jobs: &mut Vec<Job>) -> Vec<String> {
     let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let mut edges = BTreeMap::new();
-    for job in jobs
-        .iter()
-        .filter(|job| Format::from_path(&job.input).is_some_and(Format::is_assembly))
-    {
+    for job in jobs.iter().filter(|job| {
+        Format::from_path(&job.input).is_some_and(|format| {
+            format.is_assembly()
+                || matches!(format, Format::FusionArchive | Format::FusionMultiDocument)
+        })
+    }) {
         if let Ok(references) = dutchman_core::assembly_references(&job.input, &job.search) {
             edges.insert(
                 canonical(&job.input),
@@ -656,26 +711,72 @@ fn project_roots(jobs: &mut Vec<Job>) {
             );
         }
     }
-    retain_roots(jobs, &edges);
+    let notes = retain_roots(jobs, &edges);
     jobs.sort_by_key(|job| !Format::from_path(&job.input).is_some_and(Format::is_assembly));
+    notes
 }
 
-fn retain_roots(jobs: &mut Vec<Job>, edges: &BTreeMap<PathBuf, Vec<PathBuf>>) {
+/// Drops from `jobs` the files an assembly places, given each assembly's `edges` to the files
+/// it actually places (matched to an insertion and readable: a design the assembly lists but
+/// does not place stays a result of its own). Files only a reference cycle places would all be
+/// dropped, so the first member of each cycle in path order stays a root; the returned notes
+/// say which.
+fn retain_roots(jobs: &mut Vec<Job>, edges: &BTreeMap<PathBuf, Vec<PathBuf>>) -> Vec<String> {
     let referenced: BTreeSet<_> = edges.values().flatten().cloned().collect();
-    let mut covered = BTreeSet::new();
-    let mut pending: Vec<_> = edges
+    let mut roots: BTreeSet<PathBuf> = edges
         .keys()
         .filter(|path| !referenced.contains(*path))
         .cloned()
         .collect();
-    while let Some(path) = pending.pop() {
-        if let Some(children) = edges.get(&path) {
-            for child in children {
-                if covered.insert(child.clone()) {
+    let mut covered = BTreeSet::new();
+    fn cover(
+        edges: &BTreeMap<PathBuf, Vec<PathBuf>>,
+        roots: &BTreeSet<PathBuf>,
+        covered: &mut BTreeSet<PathBuf>,
+        from: Vec<PathBuf>,
+    ) {
+        let mut pending = from;
+        while let Some(path) = pending.pop() {
+            for child in edges.get(&path).into_iter().flatten() {
+                if !roots.contains(child) && covered.insert(child.clone()) {
                     pending.push(child.clone());
                 }
             }
         }
+    }
+    cover(edges, &roots, &mut covered, roots.iter().cloned().collect());
+    let reaches_itself = |start: &PathBuf| {
+        let mut seen = BTreeSet::new();
+        let mut pending = vec![start];
+        while let Some(path) = pending.pop() {
+            for child in edges.get(path).into_iter().flatten() {
+                if child == start {
+                    return true;
+                }
+                if seen.insert(child) {
+                    pending.push(child);
+                }
+            }
+        }
+        false
+    };
+    let mut notes = Vec::new();
+    // What is left uncovered and referenced is placed only by a cycle (or by what one places).
+    while let Some(start) = edges
+        .keys()
+        .find(|path| !covered.contains(*path) && !roots.contains(*path) && reaches_itself(path))
+        .cloned()
+    {
+        roots.insert(start.clone());
+        cover(edges, &roots, &mut covered, vec![start.clone()]);
+        notes.push(format!(
+            "{} and the designs it places place each other in a cycle; it converts as a result of \
+             its own, with the others inside it",
+            start.file_name().map_or_else(
+                || start.display().to_string(),
+                |name| name.to_string_lossy().into_owned()
+            )
+        ));
     }
     jobs.retain(|job| {
         !covered.contains(
@@ -684,6 +785,7 @@ fn retain_roots(jobs: &mut Vec<Job>, edges: &BTreeMap<PathBuf, Vec<PathBuf>>) {
                 .unwrap_or_else(|_| job.input.clone()),
         )
     });
+    notes
 }
 
 fn is_lock_file(path: &Path) -> bool {
@@ -760,8 +862,13 @@ pub fn summary(jobs: &[Job]) -> String {
     let mut assemblies = 0;
     let mut parts = 0;
     let mut steps = 0;
+    let mut libraries = 0;
     let fallbacks = jobs.iter().filter(|job| job.fallback.is_some()).count();
     for job in jobs {
+        if crate::tool_library::is_library(&job.input) {
+            libraries += 1;
+            continue;
+        }
         match extension_of(&job.input).as_str() {
             "sldasm" | "iam" | "f3z" => assemblies += 1,
             "step" | "stp" => steps += 1,
@@ -776,8 +883,19 @@ pub fn summary(jobs: &[Job]) -> String {
     };
     let part_word = if parts == 1 { "part" } else { "parts" };
     let file_word = if steps == 1 { "file" } else { "files" };
+    let library_word = if libraries == 1 {
+        "tool library"
+    } else {
+        "tool libraries"
+    };
+    if libraries > 0 && assemblies + parts + steps == 0 {
+        return format!("{libraries} {library_word}");
+    }
     let mut text =
         format!("{assemblies} {assembly_word}, {parts} {part_word}, {steps} STEP {file_word}");
+    if libraries > 0 {
+        text.push_str(&format!(", {libraries} {library_word}"));
+    }
     if assemblies > 0 {
         text.push_str("; converting assemblies with their parts");
     }
@@ -870,7 +988,10 @@ fn search(
         }
         if meta.is_dir() {
             search(root, &path, depth + 1, out, skipped, include, left);
-        } else if meta.is_file() && Format::from_path(&path).is_none() {
+        } else if meta.is_file()
+            && Format::from_path(&path).is_none()
+            && !crate::tool_library::is_library(&path)
+        {
             *skipped.entry(extension_of(&path)).or_insert(0) += 1;
         } else if meta.is_file() {
             let relative = path
@@ -969,7 +1090,8 @@ pub fn run_isolated(
 }
 
 /// Runs `convert` on every job with `workers` threads, as [`run_each`] does, adding each
-/// file's time to its report as `elapsed_ms`.
+/// file's time to its report as `elapsed_ms`. With more than one worker the files start
+/// middle-out: largest first, each only when its predicted memory fits what is free.
 pub(crate) fn run_with(
     work: &[Job],
     workers: usize,
@@ -977,8 +1099,76 @@ pub(crate) fn run_with(
     convert: impl Fn(&Job, usize) -> Value + Sync,
     on_event: impl Fn(Event) + Sync,
 ) {
-    let next = AtomicUsize::new(0);
+    run_scheduled(
+        work,
+        workers,
+        stop,
+        convert,
+        on_event,
+        &Policy {
+            cost: &|job| crate::schedule::predict(&job.input),
+            free: &dutchman_core::available_memory,
+            ramp: Duration::from_secs(10),
+            poll: Duration::from_millis(500),
+        },
+    );
+}
+
+/// What decides when each file starts: what a file is predicted to cost, how much memory is
+/// free now, how long a started file keeps growing (per GiB it is predicted to reach), and how
+/// often to look again.
+pub(crate) struct Policy<'a> {
+    pub cost: &'a (dyn Fn(&Job) -> crate::schedule::Cost + Sync),
+    pub free: &'a (dyn Fn() -> Option<u64> + Sync),
+    pub ramp: Duration,
+    pub poll: Duration,
+}
+
+/// [`run_with`] with the policy given.
+pub(crate) fn run_scheduled(
+    work: &[Job],
+    workers: usize,
+    stop: &AtomicBool,
+    convert: impl Fn(&Job, usize) -> Value + Sync,
+    on_event: impl Fn(Event) + Sync,
+    policy: &Policy<'_>,
+) {
     let workers = workers.min(work.len()).max(1);
+    let costs: Vec<crate::schedule::Cost> = if workers > 1 {
+        work.iter().map(policy.cost).collect()
+    } else {
+        vec![crate::schedule::Cost::default(); work.len()]
+    };
+    let queue = Mutex::new(if workers > 1 {
+        crate::schedule::Queue::middle_out(&costs, policy.ramp)
+    } else {
+        crate::schedule::Queue::in_order(work.len())
+    });
+    let changed = Condvar::new();
+    // The next file to start, waiting for room when none fits yet.
+    let next = || -> Option<usize> {
+        let mut queue = queue.lock().ok()?;
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                return None;
+            }
+            match queue.take(&costs, (policy.free)(), Instant::now()) {
+                Take::Job(index) => return Some(index),
+                Take::Done => return None,
+                Take::Wait => {
+                    queue = changed.wait_timeout(queue, policy.poll).ok()?.0;
+                }
+            }
+        }
+    };
+    // Frees a file's place when its worker is done, also while a panic unwinds, so the
+    // others never wait on a file that is gone; the panic still ends the batch as before.
+    struct Release<'a>(&'a dyn Fn());
+    impl Drop for Release<'_> {
+        fn drop(&mut self) {
+            (self.0)();
+        }
+    }
     let run = |job: &Job, index: usize| {
         let started = Instant::now();
         let mut report = convert(job, index);
@@ -992,21 +1182,28 @@ pub(crate) fn run_with(
     let stopped = Mutex::new(Vec::new());
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                if stop.load(Ordering::Relaxed) {
-                    break;
-                }
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(job) = work.get(index) else { break };
-                on_event(Event::Started(index));
-                let report = run(job, index);
-                if workers > 1 && crate::stop::stopped_for_memory(&report) {
-                    if let Ok(mut stopped) = stopped.lock() {
-                        stopped.push((index, report));
+            scope.spawn(|| {
+                while let Some(index) = next() {
+                    let finish = || {
+                        if let Ok(mut queue) = queue.lock() {
+                            queue.finish(index);
+                        }
+                        changed.notify_all();
+                    };
+                    let _release = Release(&finish);
+                    let Some(job) = work.get(index) else {
                         continue;
+                    };
+                    on_event(Event::Started(index));
+                    let report = run(job, index);
+                    if workers > 1 && crate::stop::stopped_for_memory(&report) {
+                        if let Ok(mut stopped) = stopped.lock() {
+                            stopped.push((index, report));
+                            continue;
+                        }
                     }
+                    on_event(Event::Finished(index, report));
                 }
-                on_event(Event::Finished(index, report));
             });
         }
     });
@@ -1060,6 +1257,10 @@ impl Journal {
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(io(err)),
+        }
+        // The journal may sit in the output folder, which this run has not made yet.
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(io)?;
         }
         let file = std::fs::OpenOptions::new()
             .create(true)
@@ -1259,6 +1460,156 @@ fn make_folder(job: &Job) -> Option<Value> {
 mod tests {
     use super::*;
 
+    fn named_job(name: &str) -> Job {
+        Job {
+            project_files: None,
+            fallback: None,
+            input: PathBuf::from(name),
+            output: PathBuf::from(format!("{name}.sc")),
+            replace: true,
+            search: PartSearch::default(),
+        }
+    }
+
+    /// Runs a fake batch; the predicted peak is the digit in each name, in GiB. Returns the
+    /// start order, the finish events in the order they were told, and the most predicted
+    /// memory running at once.
+    fn fake_batch(
+        names: &[&str],
+        workers: usize,
+        free: Option<u64>,
+    ) -> (Vec<usize>, Vec<usize>, u64) {
+        const GIB: u64 = 1 << 30;
+        let jobs: Vec<Job> = names.iter().map(|n| named_job(n)).collect();
+        let peak_of = |job: &Job| -> u64 {
+            let name = job.input.to_string_lossy();
+            u64::from(name.bytes().find(|b| b.is_ascii_digit()).unwrap() - b'0') * GIB
+        };
+        let started = Mutex::new(Vec::new());
+        let finished = Mutex::new(Vec::new());
+        let running = Mutex::new((0u64, 0u64));
+        run_scheduled(
+            &jobs,
+            workers,
+            &AtomicBool::new(false),
+            |job, _| {
+                let peak = peak_of(job);
+                {
+                    let mut running = running.lock().unwrap();
+                    running.0 += peak;
+                    running.1 = running.1.max(running.0);
+                }
+                std::thread::sleep(Duration::from_millis(30));
+                running.lock().unwrap().0 -= peak;
+                json!({"ok": true, "input": job.input})
+            },
+            |event| match event {
+                Event::Started(i) => started.lock().unwrap().push(i),
+                Event::Finished(i, _) => finished.lock().unwrap().push(i),
+                Event::Progress(..) => {}
+            },
+            &Policy {
+                // Larger digit, larger file; names starting "asm" start first.
+                cost: &|job| {
+                    let name = job.input.to_string_lossy();
+                    let peak = peak_of(job);
+                    crate::schedule::Cost {
+                        work: peak,
+                        peak,
+                        first: name.starts_with("asm"),
+                    }
+                },
+                free: &|| free,
+                ramp: Duration::from_secs(60),
+                poll: Duration::from_millis(5),
+            },
+        );
+        let high = running.lock().unwrap().1;
+        (
+            started.into_inner().unwrap(),
+            finished.into_inner().unwrap(),
+            high,
+        )
+    }
+
+    #[test]
+    fn a_panicking_file_does_not_hang_the_others_waiting_for_room() {
+        const GIB: u64 = 1 << 30;
+        // The panic comes first; the big file waits because nothing fits beside it.
+        let jobs = [named_job("a9"), named_job("b1")];
+        let outcome = std::panic::catch_unwind(|| {
+            run_scheduled(
+                &jobs,
+                2,
+                &AtomicBool::new(false),
+                |job, _| {
+                    if job.input.to_string_lossy() == "a9" {
+                        std::thread::sleep(Duration::from_millis(50));
+                        panic!("forced conversion panic");
+                    }
+                    json!({"ok": true})
+                },
+                |_| {},
+                &Policy {
+                    cost: &|job| {
+                        let (work, peak) = if job.input.to_string_lossy() == "a9" {
+                            (100, 9)
+                        } else {
+                            (1, 100)
+                        };
+                        crate::schedule::Cost {
+                            work,
+                            peak: peak * GIB,
+                            first: false,
+                        }
+                    },
+                    free: &|| Some(8 * GIB),
+                    ramp: Duration::from_secs(60),
+                    poll: Duration::from_millis(5),
+                },
+            );
+        });
+        assert!(outcome.is_err(), "the panic still surfaces");
+    }
+
+    #[test]
+    fn one_job_converts_in_input_order() {
+        let (started, finished, _) = fake_batch(&["a1", "b9", "asm2", "c5"], 1, Some(1 << 40));
+        assert_eq!(started, [0, 1, 2, 3]);
+        assert_eq!(finished, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn many_jobs_start_largest_first_and_every_file_finishes_once() {
+        // Two workers, ample memory: assemblies first, then 9, 5, 2, 1 GiB.
+        let (started, mut finished, _) =
+            fake_batch(&["a1", "b9", "asm2", "c5", "d2"], 2, Some(1 << 40));
+        assert_eq!(&started[..2], &[2, 1]);
+        assert_eq!(started.len(), 5);
+        finished.sort_unstable();
+        assert_eq!(finished, [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_batch_never_runs_more_than_the_free_memory_less_the_margin_allows() {
+        const GIB: u64 = 1 << 30;
+        // 16 GiB free keeps 4 back: 12 GiB at once, so never all of 5+5+5+5.
+        let (started, _, high) = fake_batch(&["a5", "b5", "c5", "d5"], 4, Some(16 * GIB));
+        assert_eq!(started.len(), 4);
+        assert!(high <= 12 * GIB, "ran {} GiB at once", high / GIB);
+    }
+
+    #[test]
+    fn a_file_bigger_than_free_memory_runs_alone_and_the_batch_completes() {
+        const GIB: u64 = 1 << 30;
+        let (started, finished, high) = fake_batch(&["a9", "b1", "c1"], 3, Some(4 * GIB));
+        assert_eq!(started[0], 0);
+        assert_eq!(started.len(), 3);
+        assert_eq!(finished.len(), 3);
+        assert_eq!(finished[0], 0);
+        assert_eq!(high, 9 * GIB);
+    }
+
     /// Stop must reach the already-running child as well as preventing the next job.
     #[cfg(unix)]
     #[test]
@@ -1392,7 +1743,7 @@ mod tests {
     }
 
     #[test]
-    fn assemblies_group_referenced_parts_and_keep_unused_parts_and_cycles() {
+    fn assemblies_group_referenced_parts_and_keep_unused_parts_and_one_member_of_a_cycle() {
         let dir = tempfile::tempdir().unwrap();
         for name in [
             "root.iam",
@@ -1428,11 +1779,91 @@ mod tests {
             .collect();
         assert_eq!(
             names,
+            BTreeSet::from(["root.iam".into(), "unused.ipt".into(), "cyclea.iam".into()])
+        );
+    }
+
+    fn jobs_for(names: &[&str]) -> (tempfile::TempDir, Vec<Job>) {
+        let dir = tempfile::tempdir().unwrap();
+        for name in names {
+            std::fs::write(dir.path().join(name), b"synthetic placeholder").unwrap();
+        }
+        let planned = plan(&[dir.path().to_path_buf()], &dir.path().join("out"));
+        (dir, planned.jobs)
+    }
+
+    fn input_names(jobs: &[Job]) -> BTreeSet<String> {
+        jobs.iter()
+            .map(|job| {
+                job.input
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_reference_cycle_keeps_its_first_member_as_a_root_and_says_so() {
+        let (dir, mut jobs) = jobs_for(&["a.iam", "b.iam", "c.iam", "leaf.ipt"]);
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        // a -> b -> c -> a, and the cycle also places a leaf.
+        let edges = BTreeMap::from([
+            (path("a.iam"), vec![path("b.iam")]),
+            (path("b.iam"), vec![path("c.iam"), path("leaf.ipt")]),
+            (path("c.iam"), vec![path("a.iam")]),
+        ]);
+        let notes = retain_roots(&mut jobs, &edges);
+        assert_eq!(input_names(&jobs), BTreeSet::from(["a.iam".to_owned()]));
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].starts_with("a.iam "), "{notes:?}");
+        // The same cycle in another order of discovery keeps the same member.
+        let (dir, mut jobs) = jobs_for(&["a.iam", "b.iam", "c.iam", "leaf.ipt"]);
+        jobs.reverse();
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        let edges = BTreeMap::from([
+            (path("c.iam"), vec![path("a.iam")]),
+            (path("b.iam"), vec![path("leaf.ipt"), path("c.iam")]),
+            (path("a.iam"), vec![path("b.iam")]),
+        ]);
+        retain_roots(&mut jobs, &edges);
+        assert_eq!(input_names(&jobs), BTreeSet::from(["a.iam".to_owned()]));
+    }
+
+    #[test]
+    fn a_cycle_below_a_root_adds_no_second_root() {
+        let (dir, mut jobs) = jobs_for(&["root.iam", "a.iam", "b.iam"]);
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        let edges = BTreeMap::from([
+            (path("root.iam"), vec![path("a.iam")]),
+            (path("a.iam"), vec![path("b.iam")]),
+            (path("b.iam"), vec![path("a.iam")]),
+        ]);
+        let notes = retain_roots(&mut jobs, &edges);
+        assert_eq!(input_names(&jobs), BTreeSet::from(["root.iam".to_owned()]));
+        assert!(notes.is_empty(), "{notes:?}");
+    }
+
+    #[test]
+    fn a_file_no_placement_covers_stays_a_result_of_its_own() {
+        // The edges hold only the files an assembly actually places (matched to an insertion
+        // and read): the design it lists that matched nothing, and the one that could not be
+        // read, have no edge and so stay.
+        let (dir, mut jobs) =
+            jobs_for(&["asm.iam", "placed.ipt", "unmatched.ipt", "unreadable.ipt"]);
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        let notes = retain_roots(
+            &mut jobs,
+            &BTreeMap::from([(path("asm.iam"), vec![path("placed.ipt")])]),
+        );
+        assert!(notes.is_empty());
+        assert_eq!(
+            input_names(&jobs),
             BTreeSet::from([
-                "root.iam".into(),
-                "unused.ipt".into(),
-                "cyclea.iam".into(),
-                "cycleb.iam".into()
+                "asm.iam".to_owned(),
+                "unmatched.ipt".to_owned(),
+                "unreadable.ipt".to_owned()
             ])
         );
     }
@@ -1496,6 +1927,101 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A synthetic export: an assembly that inserts a screw and a plate, a rebuilt archive for
+    /// a second assembly, and a lone design nothing references.
+    fn export_entries() -> Vec<(&'static str, Vec<u8>)> {
+        let entry = |id: &str, name: &str, references: serde_json::Value| {
+            serde_json::json!({"id": id, "name": name, "version": 1, "references": references,
+                "files": [{"path": format!("{name} v1.f3d")}]})
+        };
+        let manifest = serde_json::json!({"schema": 2, "entries": [
+            entry("urn:x:asm", "Asm", serde_json::json!([{"id": "urn:x:screw"}, {"id": "urn:x:plate"}])),
+            entry("urn:x:screw", "Screw", serde_json::json!([])),
+            entry("urn:x:plate", "Plate", serde_json::json!([])),
+            entry("urn:x:big", "Big", serde_json::json!([{"id": "urn:x:screw"}])),
+            entry("urn:x:lone", "Lone", serde_json::json!([])),
+        ]});
+        let mut files = vec![("manifest.json", serde_json::to_vec(&manifest).unwrap())];
+        for name in [
+            "Asm v1.f3d",
+            "Screw v1.f3d",
+            "Plate v1.f3d",
+            "Big v1.f3d",
+            "Lone v1.f3d",
+            "Big v1.f3z",
+        ] {
+            files.push((name, b"placeholder".to_vec()));
+        }
+        files
+    }
+
+    fn converted_names(planned: &Plan) -> Vec<String> {
+        let mut names: Vec<_> = planned
+            .jobs
+            .iter()
+            .map(|job| {
+                job.input
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn an_export_folder_converts_each_top_level_assembly_with_its_inserted_designs() {
+        let dir = tempfile::tempdir().unwrap();
+        let export = dir.path().join("export");
+        std::fs::create_dir(&export).unwrap();
+        for (name, bytes) in export_entries() {
+            std::fs::write(export.join(name), bytes).unwrap();
+        }
+        let planned = plan(std::slice::from_ref(&export), &dir.path().join("out"));
+        assert!(planned.problems.is_empty(), "{:?}", planned.problems);
+        // The placeholder .f3d files cannot be read, so nothing is placed inside them and each
+        // stays a result of its own; the rebuilt archive stands for its design's .f3d and
+        // carries the screw its manifest entry lists.
+        assert_eq!(
+            converted_names(&planned),
+            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d", "Plate v1.f3d"]
+        );
+    }
+
+    #[test]
+    fn an_export_zip_converts_the_same_designs_as_its_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("export.zip");
+        let entries = export_entries();
+        let borrowed: Vec<(&str, &[u8])> = entries
+            .iter()
+            .map(|(name, bytes)| (*name, bytes.as_slice()))
+            .collect();
+        project_zip(&archive, &borrowed);
+        let planned = plan(&[archive], &dir.path().join("out"));
+        assert!(planned.problems.is_empty(), "{:?}", planned.problems);
+        assert_eq!(
+            converted_names(&planned),
+            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d", "Plate v1.f3d"]
+        );
+    }
+
+    #[test]
+    fn a_folder_without_a_manifest_converts_every_design_and_both_archive_kinds() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("plain");
+        std::fs::create_dir(&folder).unwrap();
+        for (name, bytes) in export_entries() {
+            if name != "manifest.json" {
+                std::fs::write(folder.join(name), bytes).unwrap();
+            }
+        }
+        let planned = plan(std::slice::from_ref(&folder), &dir.path().join("out"));
+        assert_eq!(planned.jobs.len(), 6);
     }
 
     #[test]

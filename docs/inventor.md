@@ -69,7 +69,8 @@ attachments at concave edges. The plate must still be rectangular, square to the
 its entire selected edge, share its thickness, and start at the bend end or the outer face.
 Height is measured from the outer face; bend radius comes from the paired bend. The writer
 uses the existing `sheet_flange` feature with `edges`, `height`, `angle: "90 deg"`, `radius`,
-and `position: "inside"`; no new version gate or command inputs are needed.
+and `position: "inside"`; a plate attached along several equal, parallel edges on one face lists
+all of them in `edges`; no new version gate or command inputs are needed.
 
 The attachment proof refuses curved, open, crossing, disconnected, or collinear base edges,
 base profiles with holes or partial regions, and bases changed by earlier solid features.
@@ -172,7 +173,9 @@ Every file found is named as its folder lists it, whatever case the assembly sto
 ## Testing without real Inventor files
 
 cadmpeg publishes no Inventor part with geometry or history, and Dutchman never uses customer
-files. `crates/dutchman-core/tests/fixtures/synthetic_cube.ipt` is generated from cadmpeg's own
+files. `crates/dutchman-core/tests/fixtures/inventor_parameter_expressions.ipt` is a CC0 block
+made on purpose in Inventor 2016 with user parameters, model parameters and expressions that read
+each other; `an_inventor_part_keeps_its_parameter_expressions` converts it. `crates/dutchman-core/tests/fixtures/synthetic_cube.ipt` is generated from cadmpeg's own
 synthetic sources (its README has the recipe). History behaviour is tested on CADIR built in
 the tests in the shape the Inventor codec emits, until cadmpeg publishes generated Inventor
 goldens with a design segment (sketch and extrude).

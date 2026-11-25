@@ -20,7 +20,7 @@ pub(super) fn resolve(
             "the assembly places over {MAX_PLACEMENTS} components"
         )));
     }
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = input_folder(input);
     let mut external = ExternalParts::new();
     let mut files: BTreeMap<PathBuf, LoadedPart> = BTreeMap::new();
     let mut unresolved = Vec::new();
@@ -148,11 +148,17 @@ pub(super) fn resolve(
         && external.values().all(Result::is_err)
         && model.ir.geometry.bodies.is_empty()
     {
-        return Err(Error::Assembly(
-            "none of the assembly's parts could be found or read; if they are elsewhere, give \
-             the project folder that holds them"
-                .to_owned(),
-        ));
+        let missing: Vec<&str> = external.keys().take(3).map(String::as_str).collect();
+        return Err(Error::Assembly(format!(
+            "none of the assembly's parts could be found or read ({}{}); if they are elsewhere, \
+             give the project folder that holds them",
+            missing.join(", "),
+            if external.len() > missing.len() {
+                ", ..."
+            } else {
+                ""
+            }
+        )));
     }
     let mut assembly = local_components_with_threads(
         model,

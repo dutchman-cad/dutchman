@@ -1074,10 +1074,15 @@ fn run_cli() -> ExitCode {
                 }
                 return exit(&report);
             }
+            let library = dutchman::tool_library::is_library(&input);
             let output = explicit.unwrap_or_else(|| {
                 dutchman_core::Format::part_revision(&default_input)
                     .map_or_else(|| default_input.clone(), |(part, _)| part)
-                    .with_extension(options.output_extension())
+                    .with_extension(if library {
+                        dutchman_core::camtools::EXTENSION
+                    } else {
+                        options.output_extension()
+                    })
             });
             if derived {
                 if input == output
@@ -1742,12 +1747,13 @@ fn convert(
         for line in json::completeness_lines(&report) {
             println!("{line}");
         }
-        let losses = report
-            .get("losses")
-            .and_then(Value::as_array)
-            .map_or(&[][..], Vec::as_slice);
+        if let Some(meaning) = json::unverified_history(&report, true) {
+            println!("{meaning}");
+        }
+        // Notes that change nothing the person sees wait for --verbose.
+        let losses = json::listed_losses(&report, verbose);
         if verbose || losses.len() <= json::LISTED {
-            print_losses(losses, verbose);
+            print_losses(&losses, verbose);
         } else {
             for line in json::grouped_lines(&report) {
                 eprintln!("dutchman: {line}");
@@ -1813,7 +1819,9 @@ fn inspect(
         match (&inspection.conversion, &outcome.mode, &outcome.check) {
             (Err(reason), _, _) => println!("would write: nothing; converting it fails: {reason}"),
             (Ok(()), Mode::PartialHistory, _) => {
-                println!("would write: partial editable history and the imported final shape")
+                println!(
+                    "would write: partial editable history, then the rest as one imported body"
+                )
             }
             (Ok(()), Mode::History, _) => println!("would write: editable history"),
             (Ok(()), Mode::Import, Check::Flattened(reason) | Check::NotApplicable(reason)) => {
@@ -2168,7 +2176,7 @@ mod output_tests {
             if command != "convert" {
                 args.extend(["--out-dir", "out"]);
             }
-            for version in ["0.18.2", "0.25.1", "0.46.2"] {
+            for version in ["0.18.2", "0.25.1", "0.49.0"] {
                 let mut valid = args.clone();
                 valid.extend(["--solidcraft-version", version, "--no-verify"]);
                 let cli = Cli::try_parse_from(valid).unwrap();

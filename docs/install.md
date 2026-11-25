@@ -50,6 +50,24 @@ first launch with **Windows protected your PC**:
 
 Windows remembers the approval for that download. A new version may ask again.
 
+#### Smart App Control
+
+On Windows 11 with **Smart App Control** turned on, Windows blocks unsigned programs that it
+has no reputation for. The message says it could not verify the publisher, and there is no
+**Run anyway** button. Smart App Control has no exception for a single program, and the
+portable ZIP is blocked the same way.
+
+To run Dutchman Convert there, turn Smart App Control off:
+
+1. Open **Windows Security**.
+2. Go to **App & browser control** > **Smart App Control settings**.
+3. Choose **Off**.
+
+On some Windows versions, Smart App Control cannot be turned back on after that without
+resetting Windows. Check Microsoft's
+[Smart App Control FAQ](https://support.microsoft.com/windows/smart-app-control-faq-285ea03d-fa88-4d56-882e-6698afdb7003)
+for your version before you turn it off.
+
 ## Homebrew or Scoop
 
 On macOS or Linux with [Homebrew](https://brew.sh):
@@ -318,9 +336,9 @@ it says so under the check option:
 
 Dutchman is made for the current SolidCraft (any release from the last two weeks);
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
-`convert`, `convert-all`, or `watch`. The current window is 0.40–0.46; roundtrip
+`convert`, `convert-all`, or `watch`. The current window is 0.40–0.49; roundtrip
 checks cover the 0.18.2 opens-in floor and newest release. Each design targets the found CLI's version,
-even with `--no-verify`, else the newest release known at build time (currently 0.46).
+even with `--no-verify`, else the newest release known at build time (currently 0.49).
 Versions below 0.18.2 and malformed versions are refused. Older targets remain accepted
 down to 0.18.2. Features that need a newer release block history with a named reason
 and preserve the original geometry as for other blockers.

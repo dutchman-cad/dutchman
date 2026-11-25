@@ -88,6 +88,9 @@ fn report_question_and_actions_stay_inside_the_wide_window() {
             egui::pos2(0.0, 80.0),
             egui::pos2(1180.0, h.get_by_label("Convert").rect().top()),
         );
+        // The left column scrolls as one page, so the report panel is reached by scrolling.
+        h.get_by_label(report_panel::QUESTION).scroll_to_me();
+        h.run_steps(12);
         for label in [
             report_panel::QUESTION,
             present::SEND_JOIN_BUTTON,
@@ -114,11 +117,14 @@ fn report_question_and_actions_stay_inside_the_wide_window() {
         assert!(window.contains_rect(question));
         h.get_by_label(report_panel::MORE).click_accesskit();
         h.run_steps(12);
-        let question = h.get_by_label(report_panel::QUESTION).rect();
-        assert!(window.contains_rect(question));
-        h.get_by_label("Anonymous report").scroll_to_me();
+        h.get_by_label(report_panel::CLOUD_REPORT_BUTTON)
+            .scroll_to_me();
         h.run_steps(12);
-        assert_eq!(h.get_by_label(report_panel::QUESTION).rect(), question);
+        let button = h.get_by_label(report_panel::CLOUD_REPORT_BUTTON).rect();
+        assert!(
+            window.contains_rect(button),
+            "{button:?} outside {window:?}"
+        );
     }
 }
 

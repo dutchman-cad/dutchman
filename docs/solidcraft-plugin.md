@@ -16,12 +16,12 @@ the input folder it reads assembly parts from.
    [latest release](https://github.com/dutchman-cad/dutchman/releases/latest). The release also
    lists `dutchman-plugin-X.Y.Z.zip.sha256`; `dutchman-plugin.zip` is the same file under a name
    that does not change.
-2. In SolidCraft, open **Preferences > Plugins**, set **Max plugin fuel** to at least
-   **670960576380**, and apply it. Choose **Install plugin...**, then pick the zip.
+2. In SolidCraft, choose **Install plugin...**, then pick the zip. No change to **Max plugin
+   fuel** is needed.
 3. Read the confirmation screen: it shows the plugin's name, version, and what it asks for (see
    below):
    - **2048 MiB of memory**, above SolidCraft's usual 128 MiB plugin limit;
-   - **670,960,576,380 fuel**, four times the measured cost of a 41-part public robot arm;
+   - **100,000,000,000 fuel**, SolidCraft's default ceiling;
    - **read access to the input folder**, the folder of each file you open, for an assembly's
      parts.
 
@@ -44,21 +44,21 @@ not checked.
 
 ## First run in one pass
 
-Everything the plugin needs is set once, before the first file:
+Everything the plugin needs is set once, before the first file. The default **Max plugin fuel**
+is enough:
 
 | Step | Where | Value | What it is for |
 |---|---|---|---|
-| 1 | **Preferences > Plugins > Max plugin fuel** | at least 670960576380 | The plugin's work budget; SolidCraft's default (100,000,000,000) stops larger designs with a fuel error. |
-| 2 | **Max plugin memory (MiB)**, same page, only if SolidCraft refuses the memory request | at least 2048 | Room for the decoded model. |
-| 3 | **Install plugin...** and approve | memory and "read access to the input folder" | Assembly parts are read from the folder of the file you open. |
+| 1 | **Preferences > Plugins > Max plugin memory (MiB)**, only if SolidCraft refuses the memory request | at least 2048 | Room for the decoded model. |
+| 2 | **Install plugin...** and approve | memory and "read access to the input folder" | Assembly parts are read from the folder of the file you open. |
 
 The plugin cannot open a dialog or change SolidCraft's preferences, so these are SolidCraft's
 settings, not something Dutchman can do for you. What Dutchman does itself: when you open a
 `.iam` or `.sldasm` and the folder was not granted, it stops before reading anything and says
 which grant is missing and what it is for, instead of failing on the first missing part. A
 design above the plugin's estimate is sent to the Dutchman app before any work is done.
-If SolidCraft stops a conversion with "used all ... fuel it asks for", raise **Max plugin fuel**
-to 670960576380 as in step 1.
+A design that needs more work than the plugin's 100,000,000,000 fuel is not attempted; open it
+in the Dutchman app instead.
 
 ## What it asks for
 
@@ -66,7 +66,7 @@ to 670960576380 as in step 1.
 |---|---|
 | Read access to the folder of the file you open | An assembly names its part files; the plugin reads them from that folder. Without it, only the file you open is read. |
 | 2048 MiB of memory | Real CAD files need it; see below. |
-| 670,960,576,380 fuel | Larger assemblies need more work than SolidCraft's default fuel ceiling permits. |
+| 100,000,000,000 fuel | The work budget; SolidCraft's default ceiling. Larger designs go to the Dutchman app. |
 
 It has no network access, no clock or settings access, and no permission to write files. It
 cannot change the design you have open: it only produces a new one.
@@ -101,10 +101,9 @@ The dialog shows three options:
 ## Limits
 
 - SolidCraft 0.44 or newer, desktop only for now.
-- SolidCraft 0.45 defaults to a ceiling of 100,000,000,000 fuel. Larger requests
-  require raising **Max plugin fuel** in **Preferences > Plugins** before running
-  the plugin. The host accepts positive integer fuel limits up to `u64::MAX`;
-  increasing that ceiling does not change the plugin's own declared budget.
+- SolidCraft defaults to a ceiling of 100,000,000,000 fuel and the plugin asks for exactly that.
+  A package runs with the fuel its manifest declares; raising **Max plugin fuel** does not give
+  it more.
 - One file per conversion, at most 1 GiB read and 256 MiB written, as SolidCraft sets.
 - A file that SolidCraft's own reader handles (for example FreeCAD) still opens with SolidCraft's
   reader on File > Open when both are installed; pick Dutchman's entry from the Plugins menu to

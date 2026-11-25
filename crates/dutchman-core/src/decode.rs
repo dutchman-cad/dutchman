@@ -255,6 +255,18 @@ pub(crate) fn onshape_step(
     })
 }
 
+/// What to say when cadmpeg read a file but found no body in it. Creo parts keep much of their
+/// geometry in features cadmpeg does not resolve yet, so they point to a STEP export.
+pub(crate) fn no_geometry_message(format: Format) -> String {
+    let mut message = format!("no geometry could be read from this {} file", format.name());
+    if format == Format::CreoPart {
+        message.push_str(
+            "; Dutchman reads only the Creo features it can resolve to a solid. Export a STEP file from Creo and convert that instead",
+        );
+    }
+    message
+}
+
 /// Full drawing decode uses the same detector, limits, validation and panic guard. A
 /// geometry-only retry would discard the drawing graph, so its errors are returned directly.
 pub(crate) fn drawings(
@@ -434,10 +446,10 @@ fn decode_unguarded(
         && !format.is_assembly()
         && !(format == Format::FreeCadDocument && !ir.model.occurrences.is_empty())
     {
-        return Err(Error::Decode(format!(
-            "no geometry could be read from this {} file",
-            format.name()
-        )));
+        if format == Format::Step && step_holds_no_shapes(bytes) {
+            return Err(Error::EmptyExport(EMPTY_STEP_MESSAGE.to_owned()));
+        }
+        return Err(Error::Decode(no_geometry_message(format)));
     }
     report.extend_from_cadmpeg(&decode_report.losses);
     if format == Format::FreeCadDocument {
@@ -558,6 +570,100 @@ fn mesh_only_error(
     } else {
         Error::Decode(message)
     })
+}
+
+/// What to tell the user when a STEP file's writer exported a design with nothing in it.
+pub const EMPTY_STEP_MESSAGE: &str = "This STEP file contains no shapes: it has a product but no solids, surfaces or curves, so the program that wrote it exported an empty design. Check the design has bodies, then export it again; mesh bodies are not written to STEP, so turn a design's meshes into solid bodies before exporting (in Fusion: Mesh > Modify > Convert Mesh), or export the mesh as STL and open that in SolidCraft directly.";
+
+/// True when `bytes` is a STEP exchange text with a product and no geometric entity at all: no
+/// solid, shell, face, surface, curve, edge, vertex or tessellation. Presentation styles
+/// (`SURFACE_STYLE_USAGE`, `CURVE_STYLE`) and units (`SOLID_ANGLE_UNIT`) are not geometry. A
+/// file that is not STEP text, or that has no product, is not judged empty.
+fn step_holds_no_shapes(bytes: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    if !text.trim_start().starts_with("ISO-10303-21") {
+        return false;
+    }
+    let mut product = false;
+    let mut in_string = false;
+    let mut in_comment = false;
+    let mut word = String::new();
+    let mut previous = '\0';
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_comment {
+            if previous == '*' && c == '/' {
+                in_comment = false;
+            }
+            previous = c;
+            continue;
+        }
+        if in_string {
+            // A doubled quote inside a string is an escaped quote.
+            if c == '\'' {
+                if chars.peek() == Some(&'\'') {
+                    chars.next();
+                } else {
+                    in_string = false;
+                }
+            }
+            continue;
+        }
+        if c.is_ascii_alphanumeric() || c == '_' {
+            word.push(c.to_ascii_uppercase());
+            previous = c;
+            continue;
+        }
+        if !word.is_empty() {
+            let mut next = c;
+            if c.is_whitespace() {
+                while let Some(&n) = chars.peek() {
+                    if !n.is_whitespace() {
+                        break;
+                    }
+                    chars.next();
+                }
+                next = chars.peek().copied().unwrap_or(' ');
+            }
+            if next == '(' {
+                if word == "PRODUCT" {
+                    product = true;
+                } else if is_geometric_entity(&word) {
+                    return false;
+                }
+            }
+            word.clear();
+        }
+        if c == '\'' {
+            in_string = true;
+        } else if previous == '/' && c == '*' {
+            in_comment = true;
+        }
+        previous = c;
+    }
+    product
+}
+
+fn is_geometric_entity(name: &str) -> bool {
+    if name.contains("STYLE") || name.contains("PRESENTATION") || name.ends_with("_UNIT") {
+        return false;
+    }
+    matches!(
+        name,
+        "LINE" | "CIRCLE" | "ELLIPSE" | "PARABOLA" | "HYPERBOLA" | "POLYLINE" | "POINT_CLOUD"
+    ) || [
+        "BREP",
+        "SHELL",
+        "FACE",
+        "SURFACE",
+        "CURVE",
+        "EDGE",
+        "SOLID",
+        "TESSELLATED",
+        "VERTEX",
+    ]
+    .iter()
+    .any(|part| name.contains(part))
 }
 
 /// cadmpeg's loss for a Fusion part whose stored mesh bodies, its only bodies, did not decode.
@@ -1218,6 +1324,41 @@ pub(crate) fn preflight_codec(prefix: &[u8]) -> Option<&'static str> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_creo_part_with_no_body_points_to_a_step_export() {
+        let creo = super::no_geometry_message(Format::CreoPart);
+        assert!(creo.starts_with("no geometry could be read from this Creo part"));
+        assert!(creo.contains("Export a STEP file from Creo"), "{creo}");
+        let other = super::no_geometry_message(Format::CatiaPart);
+        assert!(!other.contains("STEP"), "{other}");
+    }
+
+    #[test]
+    fn step_shape_scan_tells_empty_from_geometry() {
+        let head = "ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n#1 = PRODUCT('a','a','',());\n";
+        let tail = "ENDSEC;\nEND-ISO-10303-21;\n";
+        let make = |body: &str| format!("{head}{body}{tail}");
+        let styled = make(
+            "#2 = SURFACE_STYLE_USAGE(.BOTH.,#3);\n#4 = ( NAMED_UNIT(*) SOLID_ANGLE_UNIT() );\n",
+        );
+        assert!(step_holds_no_shapes(styled.as_bytes()));
+        for body in [
+            "#2 = MANIFOLD_SOLID_BREP('',#3);\n",
+            "#2 = ADVANCED_FACE('',(#3),#4,.T.);\n",
+            "#2 = LINE('',#3,#4);\n",
+            "#2 = SHELL_BASED_SURFACE_MODEL('',(#3));\n",
+            "#2 = B_SPLINE_CURVE_WITH_KNOTS('',1,(#3),.UNSPECIFIED.,.F.,.F.,(2,2),(0.,1.),.UNSPECIFIED.);\n",
+        ] {
+            assert!(!step_holds_no_shapes(make(body).as_bytes()), "{body}");
+        }
+        // A name inside a string or comment is not an entity.
+        let quoted = make("#2 = DESCRIPTION('MANIFOLD_SOLID_BREP(');\n/* FACE( */\n");
+        assert!(step_holds_no_shapes(quoted.as_bytes()));
+        // Not STEP text, or no product: not judged empty.
+        assert!(!step_holds_no_shapes(b"\x00\x01 PRODUCT("));
+        assert!(!step_holds_no_shapes(b"ISO-10303-21;\nDATA;\nENDSEC;\n"));
+    }
 
     #[cfg(feature = "onshape")]
     #[test]

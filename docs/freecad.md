@@ -11,9 +11,7 @@ Their actual boundary edges still determine shell closure; native face associati
 cannot be carried are reported.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and resolved
-sketches are kept in a hidden **Editable history (partial)** component. The original final
-shape remains visible as an Import after the kept history. Show the hidden component to
-continue editing it. The report names the blocker and counts retained source features;
+sketches are kept live in the part's own timeline, followed by a **Remove** feature that takes away the bodies they make and one **Import** named "Rest of the design (from <first feature not converted>)" that holds the source's final shape. The visible result is exactly the original shape, with one body per source body. Roll the timeline marker back before **Remove** to see and edit the body the converted features build; to keep modelling from them, delete or suppress the last two features. SolidCraft needs the CLI to name the bodies the features make; without it the kept features stay in a hidden **Editable history (partial)** component beside the visible Import, as before. The report names the blocker and counts retained source features;
 `mode: partial_history` and verification `partial` distinguish this from full verified
 history. The reason says whether retained features replayed or remain unverified. Later
 sketches with unresolved planes or external geometry are reported and left out. A sketch
@@ -44,6 +42,15 @@ as well as the visible final shape.
   A missing or unreadable linked file is left out and reported by name; the other components
   still convert. Cyclic links are left out and reported, with nesting limited to 32 levels.
   Links that name only a document identifier, or select subelements, are not supported yet.
+  A PartDesign Body that an Assembly container links from its own document converts once, in
+  the link's component at the link's placement, with its own history (sketches, pads, pockets,
+  revolutions) mapped and checked like a standalone Body's. The document's original Body,
+  which a visible, unsuppressed Assembly link places (also through a link to a link), is not
+  placed again; a Body no such link places, or that a Part container places, stays placed as
+  stored. The report says how many original Bodies were folded into their links. When a
+  feature of a Body cannot be told from another Body's (a Boolean or a sketch used by two
+  Bodies), the report names it as a warning and that Body stays as stored, without its
+  history. Sketches and datums no feature uses are named in the report too.
 - **Grounded joints** hold their part fixed to the design where it is stored, as a rigid
   joint to the design; the assembly's revolute and slider joints keep their motion.
   Assembly-workbench joints use the same mapping as Fusion joints when cadmpeg resolves
@@ -161,8 +168,8 @@ axis, pitch/height/turn law, handedness, reversed direction, and join/cut operat
 sketch-profile coils when the target is SolidCraft 0.25 patch 1 or newer. Choose a target with
 `--solidcraft-version x.y.z` on `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The default is the found CLI's version, even with `--no-verify`, else the newest release
-known at build time (currently 0.46). The rolling 14-day window is currently
-0.40–0.46. Targets before 0.25 patch 1 block the helix with
+known at build time (currently 0.49). The rolling 14-day window is currently
+0.40–0.49. Targets before 0.25 patch 1 block the helix with
 `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the original
 geometry. Resolved feature parameter
 bindings drive the coil dimensions; dimensions without bindings keep their values.

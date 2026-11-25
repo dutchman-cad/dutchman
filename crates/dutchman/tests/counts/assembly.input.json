@@ -6,6 +6,7 @@
         "format": "inventor_assembly",
         "path": "/private/assembly.iam"
       },
+      "source_version": "25.2.1",
       "assembly": {
         "parts": 2
       },

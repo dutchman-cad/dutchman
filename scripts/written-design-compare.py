@@ -224,19 +224,32 @@ def hidden_history_components(design):
 
 
 def split_hidden_history(result, hidden):
-    """Compare what the user sees: hidden editable-history copies are reported apart."""
-    def under_hidden(path):
-        return any(step.rsplit(':', 1)[0] in hidden for step in path)
+    """Compare what the user sees, and fail on any hidden editable-history body.
+
+    A hidden copy is still a body: STEP export, renders, body counts and mass properties
+    read every body, hidden or not. So each one, however it is reported, fails the check,
+    and the failure names the part it duplicates.
+    """
+    def hidden_step(path):
+        return next((i for i, step in enumerate(path) if step.rsplit(':', 1)[0] in hidden), None)
     kept, history = [], []
     for failure in result['failures']:
         path = failure.get('component_path')
-        if path is not None and failure.get('source_count') == 0 and under_hidden(path):
+        if path is not None and failure.get('source_count') == 0 and hidden_step(path) is not None:
             history.append(failure)
         else:
             kept.append(failure)
-    hidden_bodies = sum(1 for body in result.get('written_bodies', [])
-                        if under_hidden(body['component_path']))
-    result['failures'] = kept
+    duplicated = defaultdict(list)
+    for body in result.get('written_bodies', []):
+        at = hidden_step(body['component_path'])
+        if at is not None:
+            duplicated['/'.join(body['component_path'][:at]) or '(root)'].append(body['name'])
+    hidden_bodies = sum(len(names) for names in duplicated.values())
+    result['failures'] = kept + [
+        {'hidden_duplicate_bodies': names, 'part': part,
+         'reason': 'a hidden editable-history copy still holds a body, so an export or a '
+                   'measure of the design sees this part more than once'}
+        for part, names in sorted(duplicated.items())]
     result['hidden_history'] = {'bodies': hidden_bodies, 'components': history}
     result['total'] -= hidden_bodies
     return result

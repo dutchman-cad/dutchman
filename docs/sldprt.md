@@ -22,7 +22,7 @@ described below.
 | No geometry (no Parasolid stream yields a body). | Stops: "no geometry could be read". |
 | Bodies with no face whose bounds can be written (for example a lone face whose edges have no curve). | Stops: "the model has no solids or surfaces SolidCraft can import". Faces that can be bounded convert as surfaces, with the rest reported. |
 | Losses: an unverified SolidWorks version, configurations inferred from geometry, opaque carriers, derived body hierarchy. | Printed as Degraded, with cadmpeg's loss code. |
-| Parameters, with their expressions (`Depth = 12.5mm`). | Mapped to SolidCraft parameters when the history maps. |
+| Parameters, with their expressions (`Depth = 12.5mm`). | Mapped to SolidCraft parameters when the history maps. A length the file keeps next to rounded display text (6.35 mm shown as `0.25` in an inch document) is written as its stored value, not the bare display number. |
 | Feature history from the Keywords XML: extrusions with their operation, extent and depth; sketches; suppression state; many features only as `native` records. | Keeps editable features before the first blocker and resolved sketches, hidden beside the imported final shape; the report names the blocker (below). Without a body-building prefix, keeps reference sketches beside the import. |
 | Sketch geometry from the ResolvedFeatures records: lines, arcs, circles, ellipses, splines, coincidences, with a resolved plane. | Read only through a sketch feature that binds it (below). |
 
@@ -101,8 +101,9 @@ occurrences and placements; Dutchman resolves external `.sldprt` and `.sldasm` r
 through the shared assembly file finder. Absolute Windows paths are matched by file name,
 case-insensitively, beside the assembly first, then through the project and `--search` folders.
 When none of the assembly's part files can be found or read, and the assembly holds no bodies
-of its own, conversion stops with "none of the assembly's parts could be found or read", and the
-report lists each part file it looked for.
+of its own, conversion stops with "none of the assembly's parts could be found or read", naming
+the first part files it looked for. "Beside the assembly" also holds for a bare file name such as
+`dutchman convert A01a.SLDASM` run in the assembly's own folder.
 See [finding part files](inventor.md#finding-the-part-files) for the shared search rules.
 
 Local sub-assemblies keep their component tree. Referenced assembly files are read recursively,

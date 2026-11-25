@@ -1,5 +1,6 @@
 use super::*;
 use std::io::Cursor;
+use std::time::Duration;
 
 fn package(missing: bool) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -261,4 +262,153 @@ fn a_verified_appimage_replaces_the_running_file_and_a_bad_checksum_does_not() {
         .unwrap()
         .is_none());
     assert_eq!(std::fs::read(&target).unwrap(), bytes);
+}
+
+mod blocked_network {
+    use super::*;
+    use std::net::TcpListener;
+    use std::time::Instant;
+
+    const TIMEOUTS: Timeouts = Timeouts {
+        connect: Duration::from_secs(1),
+        stall: Duration::from_secs(1),
+        total: None,
+    };
+
+    /// How a local server treats the package request.
+    #[derive(Clone, Copy)]
+    enum Mode {
+        /// Accepts the connection and never answers.
+        Silent,
+        /// Sends headers and part of the body, then goes quiet.
+        Stalls,
+        /// Nothing listens.
+        Refuses,
+        /// Sends part of the body and closes the connection.
+        Truncates,
+    }
+
+    /// Serves a valid checksum, then treats the package as `mode` says. Returns the port.
+    fn serve(mode: Mode, bytes: Vec<u8>) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        if matches!(mode, Mode::Refuses) {
+            drop(listener);
+            return port;
+        }
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut request = [0; 2048];
+                let n = if matches!(mode, Mode::Silent) {
+                    0
+                } else {
+                    stream.read(&mut request).unwrap_or(0)
+                };
+                let head = String::from_utf8_lossy(&request[..n]).to_string();
+                let path = head.split_whitespace().nth(1).unwrap_or("").to_owned();
+                if let Some(name) = path
+                    .strip_suffix(".sha256")
+                    .map(|p| p.rsplit('/').next().unwrap_or(""))
+                {
+                    let body = format!(
+                        "{}  {name}\n",
+                        Sha256::digest(&bytes)
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<String>()
+                    );
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                } else if matches!(mode, Mode::Truncates) {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\npartial"
+                    );
+                } else if matches!(mode, Mode::Stalls) {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\npartial"
+                    );
+                    let _ = stream.flush();
+                    held.push(stream);
+                } else {
+                    held.push(stream);
+                }
+            }
+        });
+        port
+    }
+
+    /// Runs a whole update against the local server and checks it ends clearly and in time.
+    fn run(mode: Mode) {
+        let error = run_failing(mode);
+        assert_eq!(error, UNREACHABLE);
+        assert!(error.contains("unchanged"));
+    }
+
+    /// Fails an update against the local server and returns the error; checks time and files.
+    fn run_failing(mode: Mode) -> String {
+        let bytes = package(false);
+        let port = serve(mode, bytes);
+        let root = tempfile::tempdir().unwrap();
+        let installed = fixture(root.path());
+        let logs = root.path().join("logs");
+        let fetch = |url: &str, limit: u64, out: &mut dyn Write| {
+            let path = url.split("/download/").nth(1).unwrap();
+            download_with(
+                &format!("http://127.0.0.1:{port}/{path}"),
+                limit,
+                out,
+                TIMEOUTS,
+            )
+        };
+        let started = Instant::now();
+        let error = prepare_in(&Install::Zip(installed.clone()), "v1.2.3", &logs, &fetch)
+            .err()
+            .expect("a blocked network must fail");
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "took {:?}",
+            started.elapsed()
+        );
+        for name in PROGRAMS {
+            assert_eq!(
+                std::fs::read_to_string(installed.join(name)).unwrap(),
+                format!("old {name}")
+            );
+        }
+        assert_eq!(
+            std::fs::read(installed.join("settings.txt")).unwrap(),
+            b"keep"
+        );
+        error
+    }
+
+    #[test]
+    fn a_server_that_never_answers_ends_in_the_clear_message() {
+        run(Mode::Silent);
+    }
+
+    #[test]
+    fn a_download_that_stalls_midway_ends_in_the_clear_message() {
+        run(Mode::Stalls);
+    }
+
+    #[test]
+    fn a_refused_connection_ends_in_the_clear_message() {
+        run(Mode::Refuses);
+    }
+
+    #[test]
+    fn a_connection_that_drops_midway_says_so_not_firewall() {
+        let error = run_failing(Mode::Truncates);
+        assert_ne!(error, UNREACHABLE);
+        assert!(error.contains("interrupted"), "{error}");
+        assert!(error.contains("unchanged"));
+    }
 }
