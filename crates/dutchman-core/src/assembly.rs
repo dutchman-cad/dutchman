@@ -2744,7 +2744,7 @@ impl<'a> Layouts<'a> {
                         self.classify(child, children, external, depth + 1),
                         // A malformed placement never matches; the build reports it.
                         transform(child).unwrap_or([[f64::NAN; 4]; 3]),
-                        child.get("visible").and_then(Value::as_bool) == Some(false),
+                        occurrence_hidden(child, false),
                     )
                 })
                 .collect()
@@ -3377,9 +3377,37 @@ fn slice(
         HistoryOwner::Definition(id) => Some(id).filter(|id| !root_definitions.contains(id)),
         HistoryOwner::Root | HistoryOwner::Unknown => None,
     };
+    // A Fusion root component folded into an embedded part has a file container beside it
+    // (see `products::file_containers`). cadmpeg leaves the history of the document root
+    // unowned. That history has exactly one owner: the folded root's slice when that slice
+    // exists (the root holds bodies), else the loose slice, as before.
+    let folds_root = |id: &str| {
+        id.starts_with("f3d:model:component#")
+            && root_definitions.contains(serde_json::json!([id, "file"]).to_string().as_str())
+    };
+    let folded_root = matches!(owner, HistoryOwner::Definition(id) if folds_root(id));
+    let root_slice_exists = wire
+        .get("product_definitions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|row| {
+            row.get("id")
+                .and_then(Value::as_str)
+                .is_some_and(folds_root)
+                && row
+                    .get("bodies")
+                    .and_then(Value::as_array)
+                    .is_some_and(|bodies| !bodies.is_empty())
+        });
     let owned = |row: &Value| match owner {
-        HistoryOwner::Definition(_) | HistoryOwner::Root => {
-            product_definition(row, &root_definitions) == definition
+        HistoryOwner::Definition(_) => {
+            let owner = product_definition(row, &root_definitions);
+            owner == definition || (folded_root && owner.is_none())
+        }
+        HistoryOwner::Root => {
+            let owner = product_definition(row, &root_definitions);
+            owner == definition && !(owner.is_none() && root_slice_exists)
         }
         HistoryOwner::Unknown => false,
     };
@@ -5277,6 +5305,81 @@ mod tests {
             "Part".to_owned(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_folded_fusion_root_keeps_the_history_no_component_owns() {
+        // cadmpeg leaves root-level features unowned. When the root component is folded into
+        // an embedded part, its slice must still take them.
+        let model = repeated_sketch_part([0.0, 0.0], selected_layout_profile());
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let root = "f3d:model:component#root";
+        let body = wire["model"]["product_definitions"][0]["bodies"].clone();
+        wire["model"]["product_definitions"] = json!([{
+            "id": root, "kind": "part", "bodies": body, "sketches": [], "bom_properties": {},
+            "storage": {"kind": "file", "document": {}}, "tessellations": [], "occurrences": [],
+            "instance_bodies": [], "representations": []
+        }]);
+        wire["model"]["occurrences"] = json!([]);
+        for feature in wire["model"]["features"].as_array_mut().unwrap() {
+            feature
+                .as_object_mut()
+                .unwrap()
+                .remove("product_definition");
+        }
+        let model = Model {
+            ir: serde_json::from_value(wire).unwrap(),
+            ..model
+        };
+        let document = placed_document(&model);
+        let part = only(
+            &model,
+            &document,
+            &["synthetic:model:body#part"],
+            HistoryOwner::Definition(root),
+            "Root".to_owned(),
+        )
+        .unwrap();
+        let kept = feature_ids(&part);
+        assert!(
+            kept.contains(&"synthetic:model:feature#sketch".to_owned()),
+            "{kept:?}"
+        );
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        // With loose bodies as well, each unowned feature and parameter lives in one slice.
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["geometry"]["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "synthetic:model:body#loose", "kind": "general"}));
+        wire["model"]["parameters"] = json!([{
+            "id": "synthetic:model:parameter#length", "name": "length", "expression": "1 mm",
+            "ordinal": 0, "dependencies": [], "properties": {}
+        }]);
+        let with_loose = Model {
+            ir: serde_json::from_value(wire).unwrap(),
+            ..model
+        };
+        let document = placed_document(&with_loose);
+        let slice_of = |bodies: &[&str], owner| {
+            only(&with_loose, &document, bodies, owner, "Slice".to_owned()).unwrap()
+        };
+        let folded = slice_of(
+            &["synthetic:model:body#part"],
+            HistoryOwner::Definition(root),
+        );
+        let loose = slice_of(&["synthetic:model:body#loose"], HistoryOwner::Root);
+        let parameters = |part: &Model| {
+            serde_json::to_value(&part.ir).unwrap()["model"]["parameters"]
+                .as_array()
+                .map_or(0, Vec::len)
+        };
+        for feature in feature_ids(&folded) {
+            assert!(!feature_ids(&loose).contains(&feature), "{feature} twice");
+        }
+        assert_eq!(feature_ids(&folded).len(), 2);
+        assert_eq!(parameters(&folded) + parameters(&loose), 1);
+        assert_eq!(parameters(&folded), 1);
     }
 
     #[test]
@@ -8095,6 +8198,35 @@ mod tests {
 
     fn inside(key: u32) -> Value {
         json!({"kind": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")})
+    }
+
+    #[test]
+    fn layouts_separate_a_suppressed_child_from_a_shown_one() {
+        // Two insertions of one component: its child is suppressed in one and shown in the
+        // other. They are different layouts, not copies.
+        let mut suppressed = placed(2, "block", inside(0), 0.0);
+        suppressed["suppressed"] = json!(true);
+        let mut shown = placed(5, "block", inside(3), 0.0);
+        shown["suppressed"] = json!(false);
+        let rows = [
+            placed(0, "frame", root(), 0.0),
+            suppressed,
+            placed(3, "frame", root(), 50.0),
+            shown,
+        ];
+        let mut children: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+        children
+            .entry(rows[0]["id"].as_str().unwrap())
+            .or_default()
+            .push(&rows[1]);
+        children
+            .entry(rows[2]["id"].as_str().unwrap())
+            .or_default()
+            .push(&rows[3]);
+        let mut layouts = Layouts::default();
+        let a = layouts.classify(&rows[0], &children, &ExternalParts::new(), 0);
+        let b = layouts.classify(&rows[2], &children, &ExternalParts::new(), 0);
+        assert_ne!(a, b);
     }
 
     #[test]
