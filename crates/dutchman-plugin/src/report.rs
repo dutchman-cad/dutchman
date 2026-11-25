@@ -246,10 +246,15 @@ mod tests {
         let mut report = Report::default();
         report.record_missing_inserted_designs(&["Washer".into()]);
         let value = host(&report);
-        assert_eq!(
-            value["summary"],
-            "Incomplete. 1 inserted component comes from other Fusion designs that this .f3d \
-             doesn't contain; export the assembly as a Fusion Archive (.f3z) to bring it along."
+        // The host's one-line summary is at most 240 bytes: it keeps the start of the sentence.
+        let summary = value["summary"].as_str().unwrap();
+        assert!(summary.len() <= 240, "{summary}");
+        assert!(
+            summary.starts_with(
+                "Incomplete. 1 inserted component comes from other Fusion designs that this .f3d \
+                 doesn't contain; convert the whole export folder (or its zip) so the inserted"
+            ),
+            "{summary}"
         );
         assert_eq!(value["details"]["result"], "Incomplete");
     }
