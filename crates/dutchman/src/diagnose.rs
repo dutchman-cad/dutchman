@@ -970,24 +970,13 @@ fn killed_by_system(_status: Option<std::process::ExitStatus>) -> bool {
 }
 
 pub(crate) fn write_file(path: &Path, bytes: &[u8], private: bool) -> Result<(), String> {
-    use std::io::Write;
-    let temporary = path.with_extension("tmp");
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    if private {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    #[cfg(not(unix))]
-    let _ = private;
-    let mut file = options
-        .open(&temporary)
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    file.write_all(bytes)
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    drop(file);
-    std::fs::rename(&temporary, path).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    // A temporary file made fresh beside it, never a fixed `.tmp` name that could be a user's file.
+    let written = if private {
+        dutchman_core::safe_output::write_own_private(path, bytes)
+    } else {
+        dutchman_core::safe_output::write_own(path, bytes)
+    };
+    written.map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 /// What to do next, as fixed codes with the part number they are about.

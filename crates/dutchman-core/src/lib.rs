@@ -798,6 +798,12 @@ fn convert_impl(
     };
     stage(Stage::Input);
     check_output(output, writer)?;
+    if safe_output::same_file(input, output) {
+        return Err(Error::Encode(format!(
+            "{}: the output is the input file; choose another output",
+            output.display()
+        )));
+    }
     if !replace && output.exists() {
         return Err(Error::OutputExists {
             path: output.to_path_buf(),

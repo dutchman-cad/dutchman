@@ -1,7 +1,6 @@
 # File	allowed direct write/rename/delete calls	why. Counts may only go down: see scripts/check-safe-output.py.
 crates/dutchman/src/batch.rs	2	journal file (append only) and the private folder a project ZIP unpacks into
 crates/dutchman/src/diagnose/narrow.rs	3	scratch and kit files in a folder Dutchman made
-crates/dutchman/src/diagnose.rs	2	scratch and kit files in a folder Dutchman made
 crates/dutchman/src/diagnostics/location.rs	3	diagnostic log appended to a path the user named; never truncated
 crates/dutchman/src/diagnostics.rs	1	diagnostic log appended to a path the user named; never truncated
 crates/dutchman/src/investigate/compare.rs	4	the investigation folder Dutchman made, private to it

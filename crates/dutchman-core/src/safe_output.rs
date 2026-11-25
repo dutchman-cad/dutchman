@@ -81,6 +81,33 @@ pub fn is_variant_of(candidate: &Path, base: &Path) -> bool {
             .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Whether `a` and `b` are the same file: the same path once symlinks are followed, or two
+/// names of one file (a hard link). A `b` that does not exist yet is the same as `a` only when
+/// its folder and name are.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    let (Ok(first), Some(second)) = (
+        std::fs::canonicalize(a),
+        std::fs::canonicalize(b).ok().or_else(|| {
+            let parent = b.parent().filter(|p| !p.as_os_str().is_empty());
+            let folder = std::fs::canonicalize(parent.unwrap_or(Path::new("."))).ok()?;
+            Some(folder.join(b.file_name()?))
+        }),
+    ) else {
+        return false;
+    };
+    if first == second {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if let (Ok(x), Ok(y)) = (std::fs::metadata(&first), std::fs::metadata(&second)) {
+            return x.dev() == y.dev() && x.ino() == y.ino();
+        }
+    }
+    false
+}
+
 /// Fills a new temporary file beside `path` with `fill`, syncs it, and moves it to `path`:
 /// over what is there when `replace` is set (atomically), else only if nothing is there
 /// ([`std::io::ErrorKind::AlreadyExists`] otherwise). The temporary file is removed on any
@@ -100,10 +127,14 @@ pub fn write_with(
         .tempfile_in(parent)?;
     fill(temporary.as_file_mut())?;
     // A temporary file is private to its owner; the design is not. A replaced file keeps its mode.
+    #[cfg(not(unix))]
+    let _ = private;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let mode = if replace {
+        let mode = if let Some(private) = private {
+            private
+        } else if replace {
             std::fs::metadata(path).map_or(0o644, |m| m.permissions().mode() & 0o7777)
         } else {
             0o644
@@ -205,6 +236,50 @@ mod tests {
             assert_eq!(std::fs::read(&path).unwrap(), b"mine");
             assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacing_never_writes_through_a_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.sc");
+        std::fs::write(&real, b"the user's file").unwrap();
+        // A hard link keeps the old bytes: the new file is a new file.
+        let linked = dir.path().join("linked.sc");
+        std::fs::hard_link(&real, &linked).unwrap();
+        write(&real, b"new", true).unwrap();
+        assert_eq!(std::fs::read(&real).unwrap(), b"new");
+        assert_eq!(std::fs::read(&linked).unwrap(), b"the user's file");
+        // A symlink is replaced, and what it pointed to is unchanged.
+        let target = dir.path().join("target.sc");
+        std::fs::write(&target, b"elsewhere").unwrap();
+        let link = dir.path().join("link.sc");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        write(&link, b"new", true).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"elsewhere");
+        assert_eq!(std::fs::read(&link).unwrap(), b"new");
+        assert!(!std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_same_file_is_found_through_links_and_new_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.f3d");
+        std::fs::write(&a, b"x").unwrap();
+        let hard = dir.path().join("hard.f3d");
+        std::fs::hard_link(&a, &hard).unwrap();
+        let soft = dir.path().join("soft.f3d");
+        std::os::unix::fs::symlink(&a, &soft).unwrap();
+        assert!(same_file(&a, &a));
+        assert!(same_file(&a, &hard));
+        assert!(same_file(&a, &soft));
+        assert!(same_file(&a, &dir.path().join("./a.f3d")));
+        assert!(!same_file(&a, &dir.path().join("b.sc")));
+        assert!(!same_file(&a, &dir.path().join("missing").join("a.f3d")));
     }
 
     #[test]
