@@ -2298,15 +2298,23 @@ mod tests {
             .iter()
             .find(|job| job.input.ends_with("bracket.prt.7"))
             .unwrap();
-        assert_eq!(bracket.output, existing);
+        // The design already there is kept: the numbered save is written beside it.
+        assert_eq!(bracket.output, out.join("bracket (2).sc"));
         assert!(!bracket.replace);
-        let report = convert_job(bracket, &ConvertOptions::default().writer());
+        assert_eq!(std::fs::read(existing).unwrap(), b"keep this design");
+        // A job that is not allowed to replace still refuses a name that is taken.
+        let mut taken = bracket.clone();
+        taken.output = out.join("bracket.sc");
+        let report = convert_job(&taken, &ConvertOptions::default().writer());
         assert_eq!(report["ok"], false);
         assert!(report["error"]["message"]
             .as_str()
             .unwrap()
             .contains("already exists"));
-        assert_eq!(std::fs::read(existing).unwrap(), b"keep this design");
+        assert_eq!(
+            std::fs::read(out.join("bracket.sc")).unwrap(),
+            b"keep this design"
+        );
     }
 
     #[test]
