@@ -27,6 +27,10 @@ host-tests = ["dep:wasmtime"]
 name = "component"
 required-features = ["host-tests"]
 
+[[test]]
+name = "solidcraft_host"
+required-features = ["host-tests"]
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wasmtime = { version = "50", optional = true, default-features = false, features = ["anyhow", "component-model", "cranelift", "runtime", "std", "parallel-compilation"] }
 

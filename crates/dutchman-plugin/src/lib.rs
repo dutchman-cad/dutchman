@@ -9,11 +9,12 @@ mod preflight;
 #[cfg(any(test, target_arch = "wasm32"))]
 mod progress;
 mod report;
+pub mod settings;
 mod stand_up;
 
 use dutchman_core::{Error, Format, Report, Writer};
 use dutchman_solidcraft::{SolidCraftEvaluator, SolidCraftVersion, SolidCraftWriter, Verification};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 mod limits;
@@ -25,7 +26,11 @@ mod tests;
 /// option, not the command line's `--import-only`.
 pub const EDITABLE_HISTORY_OFF: &str = "Keep editable history is turned off";
 
-#[derive(Default, Deserialize)]
+/// The manifest property that asks for read access to a folder of part files; the grant
+/// SolidCraft hands the plugin is named after it.
+pub const PARTS_FOLDER: &str = "parts_folder";
+
+#[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UpAxis {
     #[default]
@@ -39,6 +44,9 @@ pub struct Options {
     pub editable_history: bool,
     pub up_axis: UpAxis,
     pub include_hidden_bodies: bool,
+    /// The folder the person picked for part files, which SolidCraft grants for this import
+    /// only. The plugin reads it through the grant named [`PARTS_FOLDER`], never by this path.
+    pub parts_folder: Option<String>,
 }
 impl Default for Options {
     fn default() -> Self {
@@ -46,6 +54,7 @@ impl Default for Options {
             editable_history: true,
             up_axis: UpAxis::AsIs,
             include_hidden_bodies: false,
+            parts_folder: None,
         }
     }
 }

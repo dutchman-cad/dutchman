@@ -3,9 +3,13 @@
   "name": "Dutchman",
   "version": "0.2.10",
   "description": "Open Fusion, Inventor, SolidWorks or FreeCAD files with File > Open.",
+  "min_host_version": "0.49.1",
   "capabilities": [
-    "evaluate@0.1",
-    "formats@0.1"
+    "dialog@0.1",
+    "evaluate@0.2",
+    "folders@0.1",
+    "formats@0.2",
+    "user-storage@0.1"
   ],
   "runtime": {
     "module": "dutchman.wasm",
@@ -23,6 +27,7 @@
           "sldasm",
           "fcstd"
         ],
+        "file_first": true,
         "input_schema": {
           "type": "object",
           "x-solidcraft-icon": "icons/dutchman.svg",
@@ -55,6 +60,13 @@
               "title": "Include hidden bodies",
               "default": false,
               "description": "Also include hidden intermediate or consumed shapes that normal conversion leaves out."
+            },
+            "parts_folder": {
+              "type": "string",
+              "title": "Folder with the parts",
+              "format": "directory",
+              "x-solidcraft-grant": "read",
+              "description": "Optional. For an assembly whose parts are not beside it, such as a Fusion export folder: pick the folder that holds them. Dutchman reads that folder for this file only and never writes. Leave it empty to read the folder that holds the file."
             }
           }
         }

@@ -350,3 +350,206 @@ fn folder_refusal_names_the_grant_and_its_purpose() {
         assert!(text.contains(needle), "{needle}: {text}");
     }
 }
+
+fn manifest() -> Value {
+    serde_json::from_str(include_str!("../plugin.json")).unwrap()
+}
+
+#[test]
+fn manifest_registers_one_importer_for_every_format_dutchman_reads() {
+    let manifest = manifest();
+    let entries = manifest["runtime"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(
+        (entry["name"].as_str(), entry["kind"].as_str()),
+        (Some("convert"), Some("importer"))
+    );
+    let extensions: Vec<_> = entry["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        extensions,
+        ["f3d", "f3z", "ipt", "iam", "sldprt", "sldasm", "fcstd"]
+    );
+    // Each registered extension is a file the plugin converts, and the other way round.
+    for extension in &extensions {
+        let name = format!("design.{extension}");
+        let format = dutchman_core::Format::from_path(Path::new(&name)).unwrap();
+        assert!(
+            !matches!(format, dutchman_core::Format::Step),
+            "{extension}: not a native CAD format"
+        );
+    }
+    // The manifest has an input form for exactly the plugin's options and nothing else.
+    let mut properties: Vec<_> = entry["input_schema"]["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    properties.sort();
+    assert_eq!(
+        properties,
+        [
+            "editable_history",
+            "include_hidden_bodies",
+            "parts_folder",
+            "up_axis"
+        ]
+    );
+}
+
+#[test]
+fn manifest_asks_for_the_file_first_and_a_read_only_parts_folder() {
+    let manifest = manifest();
+    let entry = &manifest["runtime"]["entries"][0];
+    assert_eq!(entry["file_first"], true);
+    let folder = &entry["input_schema"]["properties"][crate::PARTS_FOLDER];
+    assert_eq!(folder["type"], "string");
+    assert_eq!(folder["format"], "directory");
+    // Read only, and never a default: SolidCraft counts only a folder the person picks.
+    assert_eq!(folder["x-solidcraft-grant"], "read");
+    assert!(folder.get("default").is_none());
+    // The install grant for assemblies whose parts sit beside them stays.
+    assert_eq!(manifest["runtime"]["permissions"]["input_folder"], true);
+    assert!(manifest["runtime"]["permissions"].get("files").is_none());
+}
+
+#[test]
+fn manifest_names_the_oldest_solidcraft_that_serves_what_it_uses() {
+    let manifest = manifest();
+    let minimum = manifest["min_host_version"].as_str().unwrap();
+    // A strict semantic version with a patch number, as SolidCraft requires.
+    let parts: Vec<_> = minimum.split('.').collect();
+    assert_eq!(parts.len(), 3, "{minimum}");
+    assert!(parts.iter().all(|p| p.parse::<u32>().is_ok()), "{minimum}");
+    let capabilities: Vec<_> = manifest["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    // Everything the component imports or exports is required: a static import cannot be optional.
+    assert_eq!(
+        capabilities,
+        [
+            "dialog@0.1",
+            "evaluate@0.2",
+            "folders@0.1",
+            "formats@0.2",
+            "user-storage@0.1"
+        ]
+    );
+    assert!(manifest.get("optional_capabilities").is_none());
+}
+
+#[test]
+fn only_the_three_dialog_options_are_saved_and_offered() {
+    use crate::settings::{encode, field_defaults};
+    let options = Options {
+        editable_history: false,
+        up_axis: crate::UpAxis::StandUp,
+        include_hidden_bodies: true,
+        parts_folder: Some("/a/folder/that/is/not/saved".into()),
+    };
+    let saved = encode(&options);
+    assert_eq!(
+        serde_json::from_str::<Value>(&saved).unwrap(),
+        serde_json::json!({"editable_history":false,"up_axis":"stand_up","include_hidden_bodies":true})
+    );
+    // What is saved comes back as the form's defaults, and the manifest offers every one.
+    let offered: Value = serde_json::from_str(&field_defaults(Some(&saved))).unwrap();
+    let schema = &manifest()["runtime"]["entries"][0]["input_schema"]["properties"];
+    for (field, default) in [
+        ("editable_history", serde_json::json!(false)),
+        ("up_axis", serde_json::json!("stand_up")),
+        ("include_hidden_bodies", serde_json::json!(true)),
+    ] {
+        assert_eq!(offered["fields"][field]["default"], default);
+        assert!(schema.get(field).is_some());
+    }
+    assert!(offered["fields"].get(crate::PARTS_FOLDER).is_none());
+    assert!(
+        serde_json::from_str::<Options>(&saved).is_ok(),
+        "stored options are valid options"
+    );
+    // Nothing, damage or unknown values change nothing; one valid value still applies.
+    for stored in [
+        None,
+        Some("not json"),
+        Some("[]"),
+        Some("{}"),
+        Some(r#"{"up_axis":"left"}"#),
+    ] {
+        assert_eq!(field_defaults(stored), r#"{"fields":{}}"#, "{stored:?}");
+    }
+    assert_eq!(
+        field_defaults(Some(
+            r#"{"editable_history":"yes","include_hidden_bodies":false}"#
+        )),
+        r#"{"fields":{"include_hidden_bodies":{"default":false}}}"#
+    );
+}
+
+#[test]
+fn picked_folder_refusal_names_its_own_grant_and_not_the_install_grant() {
+    let text = crate::notice::parts_folder_access("rig.sldasm", "no approved directory");
+    for needle in [
+        "parts folder for rig.sldasm",
+        "\"Folder with the parts\"",
+        "not granted",
+        "never writes",
+        "no approved directory",
+    ] {
+        assert!(text.contains(needle), "{needle}: {text}");
+    }
+    assert!(!text.contains("input folder"), "{text}");
+    // The field's title in the message is the title in the manifest.
+    assert_eq!(
+        manifest()["runtime"]["entries"][0]["input_schema"]["properties"][crate::PARTS_FOLDER]
+            ["title"],
+        "Folder with the parts"
+    );
+}
+
+#[test]
+fn assembly_parts_are_read_once_each_and_only_after_the_assembly() {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../dutchman-core/tests/fixtures");
+    let asked: RefCell<Vec<PathBuf>> = RefCell::new(Vec::new());
+    // The reader hands out one file's bytes per call and keeps none: the plugin holds a part's
+    // bytes only while the core decodes that part, so no two parts' bytes are held together.
+    let reader = |path: &Path, limit: u64| {
+        asked.borrow_mut().push(path.into());
+        let bytes = std::fs::read(dir.join(path))
+            .map_err(|e| dutchman_core::Error::Decode(e.to_string()))?;
+        assert!(bytes.len() as u64 <= limit);
+        Ok(bytes)
+    };
+    let resolve = |stored: &str, folder: &Path| resolve(stored, folder, &|c| dir.join(c).is_file());
+    let (design, _) = convert(
+        "placed_cubes.sldasm",
+        Options::default(),
+        &reader,
+        &resolve,
+        None,
+    )
+    .unwrap();
+    assert!(!design.is_empty());
+    let asked = asked.into_inner();
+    assert_eq!(
+        asked[0],
+        Path::new("placed_cubes.sldasm"),
+        "the assembly comes first"
+    );
+    assert!(asked.len() >= 2, "{asked:?}");
+    let mut unique = asked.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), asked.len(), "a file is read once: {asked:?}");
+}
