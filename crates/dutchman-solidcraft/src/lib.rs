@@ -16,6 +16,7 @@ mod assembly;
 pub mod compare;
 mod container;
 mod document;
+pub mod drawing;
 mod evaluator;
 mod linked;
 mod opening;

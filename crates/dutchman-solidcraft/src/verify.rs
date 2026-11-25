@@ -2329,6 +2329,50 @@ pub(crate) fn run_script(
     }
 }
 
+/// Runs `script` on `design` and saves the result to `save`, returning the raw
+/// `--results` JSON: the list of results, or `{results, error}` when a step failed (nothing
+/// is saved then).
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_and_save(
+    cli: &Path,
+    deadline: Instant,
+    dir: &Path,
+    design: &Path,
+    save: &Path,
+    script: &[Value],
+) -> Result<Value, String> {
+    let path = dir.join("drawing-script.json");
+    let output = dir.join("drawing-out.json");
+    let text =
+        serde_json::to_string(script).map_err(|err| format!("cannot write the script: {err}"))?;
+    std::fs::write(&path, text).map_err(|err| format!("cannot stage the script: {err}"))?;
+    let mut child = spawn(cli, |command| {
+        command
+            .arg("run")
+            .arg(&path)
+            .arg("--in")
+            .arg(design)
+            .arg("--save")
+            .arg(save)
+            .arg("--results")
+            .arg("--json-out")
+            .arg(&output)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    })
+    .map_err(|err| launch_failure(cli, err))?;
+    let status = wait(&mut child, cli, deadline)?;
+    let text = std::fs::read_to_string(&output);
+    match text {
+        Ok(text) => serde_json::from_str(&text).map_err(|err| format!("{CLI_NAME} result: {err}")),
+        Err(err) if status.success() => Err(format!("{CLI_NAME} wrote no result: {err}")),
+        Err(_) => {
+            Err(blocked_failure(cli).unwrap_or_else(|| format!("{CLI_NAME} exited with {status}")))
+        }
+    }
+}
+
 /// Starts the CLI, retrying while the system says it is busy being written.
 /// Keeps a console program this one starts from opening a window of its own, as it does when
 /// this one has no console: the desktop app, and the children it converts in. Attached to a
