@@ -19692,7 +19692,8 @@ fn a_join_that_merges_no_body_targets_its_output_body() {
 
 #[test]
 fn a_join_that_loses_a_body_keeps_its_untargeted_mapping() {
-    for (before, after) in [("1:5,5,5;2:5,5,5", "1:5,5,5")] {
+    {
+        let (before, after) = ("1:5,5,5;2:5,5,5", "1:5,5,5");
         let (document, report) = convert(
             &counted_intermediate_join(before, after),
             &SolidCraftWriter::new()
