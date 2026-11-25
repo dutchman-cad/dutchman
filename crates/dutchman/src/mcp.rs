@@ -337,7 +337,7 @@ fn onshape_fetch(args: &Map<String, Value>) -> Result<Value, String> {
 fn tools() -> Value {
     let input = json!({
         "type": "string",
-        "description": "Absolute path of a CAD file. Call formats for supported extensions, reader status and what Dutchman converts. Creo and NX parts share .prt and are distinguished by contents; NX geometry converts, reading Creo geometry is not supported yet.",
+        "description": "Absolute path of a CAD file. Call formats for supported extensions, reader status and what Dutchman converts. Creo and NX parts share .prt and are distinguished by contents; their geometry converts without feature history.",
     });
     let mut convert = option_properties();
     convert.insert("input".to_owned(), input.clone());

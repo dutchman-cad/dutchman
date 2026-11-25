@@ -81,7 +81,7 @@ fn slow_part(name: &str) {
 /// non-STEP source file whose geometry it keeps as restated STEP text. Every newer
 /// SolidCraft upgrades it on open. Keep this fixed for every target, including 0.28:
 /// its format 45 adds nested Browser groups, point cloud properties/filters and print
-/// faces, which this writer does not use. Likewise, 0.48 saves format 66,
+/// faces, which this writer does not use. Likewise, 0.49 saves format 67 (drawing format 6),
 /// which this writer does not emit. Format 23 also keeps older targets readable.
 pub const FORMAT: &str = "solidcraft/23";
 

@@ -272,7 +272,7 @@ The return value is UTF-8 JSON under 1 MiB, in the shape SolidCraft shows to the
 | Field | Shape and meaning |
 |---|---|
 | `summary` | One line, at most 240 bytes, such as `Partly converted; Losses: 2 Info, 1 Degraded` |
-| `items` | At most 4096 rows, with dropped losses first, then degraded losses, then informational losses (source order within each severity). One per retained Dutchman loss: `severity` (`info`, `degraded`, `dropped`), `title` (a plain description of the change; at most 120 bytes), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). SolidCraft shows one line per title with its count and keeps codes and messages under Details. |
+| `items` | At most 4096 rows, with dropped losses first, then degraded losses, then informational losses (source order within each severity). One per retained Dutchman loss: `severity` (`info`, `degraded`, `dropped`), `title` (one plain sentence about the change, at most 120 bytes; a note Dutchman has no plain sentence for keeps its own message here), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). Notes that change nothing the person sees (records STEP has no place for, a placement statistic of nothing) are not in `items`; they stay in `details.losses`. SolidCraft shows one line per title with its count and keeps codes and messages under Details. |
 | `details` | The `dutchman.plugin.report/2` report below. When the whole result exceeds 1 MiB, its `losses` array is left out; items are reduced further if needed, retaining the severity priority. |
 
 When losses exceed the item or byte limit, a reserved final item has code
@@ -296,11 +296,11 @@ part and feature names; archive member paths are replaced with plain description
 | `schema` | Literal `dutchman.plugin.report/2` |
 | `result` | `Converted`, `Partly converted`, `Converted, no history`, or `Incomplete`, using the desktop app's wording |
 | `help` | "Is there a problem? Is something missing?", followed by the Discord invite, DM Dutchy, and GitHub issue links, in that order |
-| `shape_check` | Nullable `{result, reason}` with plain descriptions such as "Not checked" or "No editable history to check" |
+| `shape_check` | Nullable `{result, reason}` with plain descriptions such as "Not checked" or "No editable history to check". A history that was not checked, or only partly, also has `meaning`: it was written without SolidCraft replaying it and comparing the result with the original shape, which is not a warning that the history is wrong, and how to check it (Dutchman Convert with **Check feature history in SolidCraft** turned on, and a STEP export of the same design). |
 | `features` | Nullable list of `{name, feature, result, reason}` in source order; results are `Converted`, `Not needed`, `Left out`, or `Not supported yet` |
 | `assembly` | Nullable `{placed_parts, empty_parts, unplaced_parts, placement_summary, missing_parts}`; `unplaced_parts` rows contain `{part, placements}` for unreadable archive positions and dependent children. These do not count in `placed_parts` or `empty_parts`. `placement_summary` is the plain unreadable-position sentence (or `null`); the headline is `Incomplete`. Missing rows contain `{part, reason, placements}` |
 | `parts` | List of `{name, shape_check, converted_features, source_features}` |
-| `losses` | List of `{level, part_or_feature, reason}`; `level` is `Info`, `Degraded`, or `Dropped` |
+| `losses` | Every note, as `{level, part_or_feature, reason, summary, shown_by_default}`; `level` is `Info`, `Degraded`, or `Dropped`; `summary` is the plain sentence and `shown_by_default` is `false` for notes that change nothing the person sees |
 | `truncation` | Present only when shortened: `omitted_items` count and `details_losses_omitted` boolean |
 
 With Keep editable history off, the reason is `Keep editable history is turned off`.
