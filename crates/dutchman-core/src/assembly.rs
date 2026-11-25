@@ -1045,6 +1045,13 @@ fn local_components_in_document(
         .filter(|(id, _)| world_ids.contains(**id))
         .map(|(_, located)| located.path.clone())
         .collect();
+    let unstored_ids = unstored_poses(&document);
+    let unstored: BTreeSet<Vec<usize>> = tree
+        .paths
+        .iter()
+        .filter(|(id, _)| unstored_ids.contains(**id))
+        .map(|(_, located)| located.path.clone())
+        .collect();
     let mut assembly = Assembly {
         own_part,
         parts,
@@ -1129,7 +1136,7 @@ fn local_components_in_document(
     }
     assembly.remember_placements();
     left_out.extend(
-        place_by_joints_with(&mut assembly, &posed, &world_posed)
+        place_by_joints_with(&mut assembly, &posed, &world_posed, &unstored)
             .into_iter()
             .map(|text| JointNote { text, family: None }),
     );
@@ -1168,6 +1175,41 @@ fn world_posed(document: &Value) -> BTreeSet<String> {
             row.get("native_ref")
                 .and_then(Value::as_str)
                 .is_some_and(|native| posed_refs.contains(native))
+        })
+        .filter_map(|row| Some(row.get("id")?.as_str()?.to_owned()))
+        .collect()
+}
+
+/// The occurrences the file stores no pose for: an identity placement whose Fusion record has
+/// neither a placement matrix nor a current pose. An occurrence with no record to read is
+/// not one: its placement is the pose the file stores.
+fn unstored_poses(document: &Value) -> BTreeSet<String> {
+    let records = |name: &str| {
+        document
+            .pointer(&format!("/native/f3d/{name}"))
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
+    };
+    let unstored_refs: BTreeSet<&str> = records("xref_references")
+        .iter()
+        .chain(records("design_component_occurrences"))
+        .filter(|row| {
+            ["transform", "current_pose"]
+                .iter()
+                .all(|key| row.get(key).is_none_or(Value::is_null))
+        })
+        .filter_map(|row| row.get("id")?.as_str())
+        .collect();
+    document
+        .pointer("/model/occurrences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|row| {
+            row.get("native_ref")
+                .and_then(Value::as_str)
+                .is_some_and(|native| unstored_refs.contains(native))
+                && transform(row).is_ok_and(|placed| same(&placed, &IDENTITY))
         })
         .filter_map(|row| Some(row.get("id")?.as_str()?.to_owned()))
         .collect()
@@ -1321,7 +1363,7 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
 #[cfg(test)]
 /// [`place_by_joints_with`] with no world poses.
 fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec<String> {
-    place_by_joints_with(assembly, posed, &BTreeSet::new())
+    place_by_joints_with(assembly, posed, &BTreeSet::new(), &BTreeSet::new())
 }
 
 /// Place joined parts from stored poses and constraints. Closing joints anchor
@@ -1339,14 +1381,19 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
 ///
 /// `world_posed` are the posed occurrences whose pose is a world
 /// pose (see [`world_posed`]). Such a pose does not follow its holder, so an occurrence a joint
-/// names that holds one is placed where the file puts it: moving it to meet the joint would
-/// carry the posed one away from its pose, or leave it behind.
+/// names that holds one is held at the pose the file stores for it, rather than solved. When
+/// the file stores none (`unstored`, see [`unstored_poses`]), the joint places it, and the
+/// world-posed occurrences inside it stay where they are.
 fn place_by_joints_with(
     assembly: &mut Assembly,
     posed: &BTreeSet<Vec<usize>>,
     world_posed: &BTreeSet<Vec<usize>>,
+    unstored: &BTreeSet<Vec<usize>>,
 ) -> Vec<String> {
     let mut with_world_pose = posed.clone();
+    // The holders of a world pose the file stores no pose for: they pose the parts inside them,
+    // but nothing fixes them, so a joint places them.
+    let mut released = BTreeSet::new();
     for joint in assembly.joints.iter().filter(|joint| !joint.suppressed) {
         for path in [&joint.a, &joint.b] {
             if !path.is_empty()
@@ -1354,6 +1401,9 @@ fn place_by_joints_with(
                     .iter()
                     .any(|inner| inner.len() > path.len() && inner.starts_with(path))
             {
+                if unstored.contains(path) && !posed.contains(path) {
+                    released.insert(path.clone());
+                }
                 with_world_pose.insert(path.clone());
             }
         }
@@ -1397,7 +1447,13 @@ fn place_by_joints_with(
     // it. Internal joints therefore do not anchor their holder in the outer design.
     let mut fixed: BTreeMap<Vec<usize>, Vec<usize>> = BTreeMap::new();
     fixed.insert(Vec::new(), Vec::new());
-    fixed.extend(posed.iter().cloned().map(|path| (path, Vec::new())));
+    fixed.extend(
+        posed
+            .iter()
+            .filter(|path| !released.contains(*path))
+            .cloned()
+            .map(|path| (path, Vec::new())),
+    );
     // A joint between two components holding parts the file poses, which already holds as the
     // file places them, shows both placed in the design: no other joint moves them.
     for (index, row) in assembly.joints.iter().enumerate() {
@@ -1622,6 +1678,7 @@ fn place_by_joints_with(
         } else {
             (a_fixed, b_fixed)
         };
+        let stay: Vec<Vec<usize>> = placed_by_outer.iter().chain(world_posed).cloned().collect();
         match (a_fixed, b_fixed) {
             (true, true) => {
                 let b_frame = compose(&b, &joint.frame_b);
@@ -1644,7 +1701,7 @@ fn place_by_joints_with(
                     assembly,
                     &fixed,
                     posed,
-                    &placed_by_outer,
+                    &stay,
                     &joint.b,
                     &compose(&reach, &inverse(&joint.frame_b)),
                 );
@@ -1656,7 +1713,7 @@ fn place_by_joints_with(
                     &compose(&compose(&b, &joint.frame_b), &inverse(&joint.meeting())),
                     &inverse(&joint.frame_a),
                 );
-                move_keeping_placed(assembly, &fixed, posed, &placed_by_outer, &joint.a, &at);
+                move_keeping_placed(assembly, &fixed, posed, &stay, &joint.a, &at);
                 hold_in(&mut fixed, joint.a.clone(), &scope);
                 hold_in(&mut fixed, joint.b.clone(), &scope);
             }
@@ -6506,19 +6563,85 @@ mod tests {
         };
         let child = BTreeSet::from([vec![0, 0]]);
         let mut moved = build();
-        place_by_joints_with(&mut moved, &child, &BTreeSet::new());
+        place_by_joints_with(&mut moved, &child, &BTreeSet::new(), &BTreeSet::new());
         assert!(
             !near(&world_at(&moved, &[0]).unwrap(), &at([0.0, 0.0, 0.0], 0.0)),
             "the holder moves to the joint when the child's pose follows it"
         );
         let mut kept = build();
-        place_by_joints_with(&mut kept, &child, &child);
+        place_by_joints_with(&mut kept, &child, &child, &BTreeSet::new());
         for (path, x) in [(vec![0], 0.0), (vec![0, 0], 5.0), (vec![1], 0.0)] {
             assert!(
                 near(&world_at(&kept, &path).unwrap(), &at([x, 0.0, 0.0], 0.0)),
                 "{path:?} {:?}",
                 world_at(&kept, &path)
             );
+        }
+    }
+
+    #[test]
+    fn a_joint_places_an_empty_holder_of_a_world_posed_child_the_file_stores_no_pose_for() {
+        // An empty holder (x = 0) carries a world-posed child at x = 5 and is joined to a
+        // carrier at x = 100. With no stored pose the joint places the holder; with one it
+        // stays there. The child stays at its world pose either way.
+        for (record, holder_x) in [
+            (json!({}), 100.0),
+            (json!({"transform": at([0.0, 0.0, 0.0], 0.0)}), 0.0),
+            (
+                json!({"current_pose": {"carrier_record_index": 1, "transform": at([0.0, 0.0, 0.0], 0.0)}}),
+                0.0,
+            ),
+        ] {
+            let mut holder = placed(0, "frame", root(), 0.0);
+            holder["native_ref"] = json!("f3d:Design/BulkStream.dat:design-component-occurrence#5");
+            let (part, mut wire) = nested_wire(
+                false,
+                Some(json!([
+                    holder,
+                    placed(1, "block", inside(0), 5.0),
+                    placed(2, "block", root(), 100.0),
+                ])),
+            );
+            let mut stored = record.clone();
+            stored["id"] = json!("f3d:Design/BulkStream.dat:design-component-occurrence#5");
+            wire["native"]["f3d"]["design_component_occurrences"] = json!([stored]);
+            let holder_id = wire["model"]["occurrences"][0]["id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let unstored = unstored_poses(&wire);
+            assert_eq!(unstored.contains(&holder_id), holder_x == 100.0, "{record}");
+            let model = Model {
+                ir: crate::test_products::read(&wire),
+                ..part
+            };
+            let mut assembly = local_components(&model).unwrap().unwrap().0;
+            assembly.joints = vec![Joint {
+                a: vec![1],
+                b: vec![0],
+                frame_a: IDENTITY,
+                frame_b: IDENTITY,
+                motion: Motion::Rigid,
+                flip: true,
+                suppressed: false,
+            }];
+            let child = BTreeSet::from([vec![0, 0]]);
+            let unstored = if unstored.contains(&holder_id) {
+                BTreeSet::from([vec![0]])
+            } else {
+                BTreeSet::new()
+            };
+            place_by_joints_with(&mut assembly, &child, &child, &unstored);
+            for (path, x) in [(vec![0], holder_x), (vec![0, 0], 5.0), (vec![1], holder_x)] {
+                assert!(
+                    near(
+                        &world_at(&assembly, &path).unwrap(),
+                        &at([x, 0.0, 0.0], 0.0)
+                    ),
+                    "{record} {path:?} {:?}",
+                    world_at(&assembly, &path)
+                );
+            }
         }
     }
 
