@@ -4,14 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use dutchman_core::{Format, Writer};
 use serde_json::{json, Value};
 
 use crate::json as report;
+use crate::schedule::Take;
 use crate::worker::{self, Limits};
 use crate::{ConvertOptions, PartSearch};
 
@@ -1089,7 +1090,8 @@ pub fn run_isolated(
 }
 
 /// Runs `convert` on every job with `workers` threads, as [`run_each`] does, adding each
-/// file's time to its report as `elapsed_ms`.
+/// file's time to its report as `elapsed_ms`. With more than one worker the files start
+/// middle-out: largest first, each only when its predicted memory fits what is free.
 pub(crate) fn run_with(
     work: &[Job],
     workers: usize,
@@ -1097,8 +1099,76 @@ pub(crate) fn run_with(
     convert: impl Fn(&Job, usize) -> Value + Sync,
     on_event: impl Fn(Event) + Sync,
 ) {
-    let next = AtomicUsize::new(0);
+    run_scheduled(
+        work,
+        workers,
+        stop,
+        convert,
+        on_event,
+        &Policy {
+            cost: &|job| crate::schedule::predict(&job.input),
+            free: &dutchman_core::available_memory,
+            ramp: Duration::from_secs(10),
+            poll: Duration::from_millis(500),
+        },
+    );
+}
+
+/// What decides when each file starts: what a file is predicted to cost, how much memory is
+/// free now, how long a started file keeps growing (per GiB it is predicted to reach), and how
+/// often to look again.
+pub(crate) struct Policy<'a> {
+    pub cost: &'a (dyn Fn(&Job) -> crate::schedule::Cost + Sync),
+    pub free: &'a (dyn Fn() -> Option<u64> + Sync),
+    pub ramp: Duration,
+    pub poll: Duration,
+}
+
+/// [`run_with`] with the policy given.
+pub(crate) fn run_scheduled(
+    work: &[Job],
+    workers: usize,
+    stop: &AtomicBool,
+    convert: impl Fn(&Job, usize) -> Value + Sync,
+    on_event: impl Fn(Event) + Sync,
+    policy: &Policy<'_>,
+) {
     let workers = workers.min(work.len()).max(1);
+    let costs: Vec<crate::schedule::Cost> = if workers > 1 {
+        work.iter().map(policy.cost).collect()
+    } else {
+        vec![crate::schedule::Cost::default(); work.len()]
+    };
+    let queue = Mutex::new(if workers > 1 {
+        crate::schedule::Queue::middle_out(&costs, policy.ramp)
+    } else {
+        crate::schedule::Queue::in_order(work.len())
+    });
+    let changed = Condvar::new();
+    // The next file to start, waiting for room when none fits yet.
+    let next = || -> Option<usize> {
+        let mut queue = queue.lock().ok()?;
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                return None;
+            }
+            match queue.take(&costs, (policy.free)(), Instant::now()) {
+                Take::Job(index) => return Some(index),
+                Take::Done => return None,
+                Take::Wait => {
+                    queue = changed.wait_timeout(queue, policy.poll).ok()?.0;
+                }
+            }
+        }
+    };
+    // Frees a file's place when its worker is done, also while a panic unwinds, so the
+    // others never wait on a file that is gone; the panic still ends the batch as before.
+    struct Release<'a>(&'a dyn Fn());
+    impl Drop for Release<'_> {
+        fn drop(&mut self) {
+            (self.0)();
+        }
+    }
     let run = |job: &Job, index: usize| {
         let started = Instant::now();
         let mut report = convert(job, index);
@@ -1112,21 +1182,28 @@ pub(crate) fn run_with(
     let stopped = Mutex::new(Vec::new());
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                if stop.load(Ordering::Relaxed) {
-                    break;
-                }
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(job) = work.get(index) else { break };
-                on_event(Event::Started(index));
-                let report = run(job, index);
-                if workers > 1 && crate::stop::stopped_for_memory(&report) {
-                    if let Ok(mut stopped) = stopped.lock() {
-                        stopped.push((index, report));
+            scope.spawn(|| {
+                while let Some(index) = next() {
+                    let finish = || {
+                        if let Ok(mut queue) = queue.lock() {
+                            queue.finish(index);
+                        }
+                        changed.notify_all();
+                    };
+                    let _release = Release(&finish);
+                    let Some(job) = work.get(index) else {
                         continue;
+                    };
+                    on_event(Event::Started(index));
+                    let report = run(job, index);
+                    if workers > 1 && crate::stop::stopped_for_memory(&report) {
+                        if let Ok(mut stopped) = stopped.lock() {
+                            stopped.push((index, report));
+                            continue;
+                        }
                     }
+                    on_event(Event::Finished(index, report));
                 }
-                on_event(Event::Finished(index, report));
             });
         }
     });
@@ -1382,6 +1459,156 @@ fn make_folder(job: &Job) -> Option<Value> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    fn named_job(name: &str) -> Job {
+        Job {
+            project_files: None,
+            fallback: None,
+            input: PathBuf::from(name),
+            output: PathBuf::from(format!("{name}.sc")),
+            replace: true,
+            search: PartSearch::default(),
+        }
+    }
+
+    /// Runs a fake batch; the predicted peak is the digit in each name, in GiB. Returns the
+    /// start order, the finish events in the order they were told, and the most predicted
+    /// memory running at once.
+    fn fake_batch(
+        names: &[&str],
+        workers: usize,
+        free: Option<u64>,
+    ) -> (Vec<usize>, Vec<usize>, u64) {
+        const GIB: u64 = 1 << 30;
+        let jobs: Vec<Job> = names.iter().map(|n| named_job(n)).collect();
+        let peak_of = |job: &Job| -> u64 {
+            let name = job.input.to_string_lossy();
+            u64::from(name.bytes().find(|b| b.is_ascii_digit()).unwrap() - b'0') * GIB
+        };
+        let started = Mutex::new(Vec::new());
+        let finished = Mutex::new(Vec::new());
+        let running = Mutex::new((0u64, 0u64));
+        run_scheduled(
+            &jobs,
+            workers,
+            &AtomicBool::new(false),
+            |job, _| {
+                let peak = peak_of(job);
+                {
+                    let mut running = running.lock().unwrap();
+                    running.0 += peak;
+                    running.1 = running.1.max(running.0);
+                }
+                std::thread::sleep(Duration::from_millis(30));
+                running.lock().unwrap().0 -= peak;
+                json!({"ok": true, "input": job.input})
+            },
+            |event| match event {
+                Event::Started(i) => started.lock().unwrap().push(i),
+                Event::Finished(i, _) => finished.lock().unwrap().push(i),
+                Event::Progress(..) => {}
+            },
+            &Policy {
+                // Larger digit, larger file; names starting "asm" start first.
+                cost: &|job| {
+                    let name = job.input.to_string_lossy();
+                    let peak = peak_of(job);
+                    crate::schedule::Cost {
+                        work: peak,
+                        peak,
+                        first: name.starts_with("asm"),
+                    }
+                },
+                free: &|| free,
+                ramp: Duration::from_secs(60),
+                poll: Duration::from_millis(5),
+            },
+        );
+        let high = running.lock().unwrap().1;
+        (
+            started.into_inner().unwrap(),
+            finished.into_inner().unwrap(),
+            high,
+        )
+    }
+
+    #[test]
+    fn a_panicking_file_does_not_hang_the_others_waiting_for_room() {
+        const GIB: u64 = 1 << 30;
+        // The panic comes first; the big file waits because nothing fits beside it.
+        let jobs = [named_job("a9"), named_job("b1")];
+        let outcome = std::panic::catch_unwind(|| {
+            run_scheduled(
+                &jobs,
+                2,
+                &AtomicBool::new(false),
+                |job, _| {
+                    if job.input.to_string_lossy() == "a9" {
+                        std::thread::sleep(Duration::from_millis(50));
+                        panic!("forced conversion panic");
+                    }
+                    json!({"ok": true})
+                },
+                |_| {},
+                &Policy {
+                    cost: &|job| {
+                        let (work, peak) = if job.input.to_string_lossy() == "a9" {
+                            (100, 9)
+                        } else {
+                            (1, 100)
+                        };
+                        crate::schedule::Cost {
+                            work,
+                            peak: peak * GIB,
+                            first: false,
+                        }
+                    },
+                    free: &|| Some(8 * GIB),
+                    ramp: Duration::from_secs(60),
+                    poll: Duration::from_millis(5),
+                },
+            );
+        });
+        assert!(outcome.is_err(), "the panic still surfaces");
+    }
+
+    #[test]
+    fn one_job_converts_in_input_order() {
+        let (started, finished, _) = fake_batch(&["a1", "b9", "asm2", "c5"], 1, Some(1 << 40));
+        assert_eq!(started, [0, 1, 2, 3]);
+        assert_eq!(finished, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn many_jobs_start_largest_first_and_every_file_finishes_once() {
+        // Two workers, ample memory: assemblies first, then 9, 5, 2, 1 GiB.
+        let (started, mut finished, _) =
+            fake_batch(&["a1", "b9", "asm2", "c5", "d2"], 2, Some(1 << 40));
+        assert_eq!(&started[..2], &[2, 1]);
+        assert_eq!(started.len(), 5);
+        finished.sort_unstable();
+        assert_eq!(finished, [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_batch_never_runs_more_than_the_free_memory_less_the_margin_allows() {
+        const GIB: u64 = 1 << 30;
+        // 16 GiB free keeps 4 back: 12 GiB at once, so never all of 5+5+5+5.
+        let (started, _, high) = fake_batch(&["a5", "b5", "c5", "d5"], 4, Some(16 * GIB));
+        assert_eq!(started.len(), 4);
+        assert!(high <= 12 * GIB, "ran {} GiB at once", high / GIB);
+    }
+
+    #[test]
+    fn a_file_bigger_than_free_memory_runs_alone_and_the_batch_completes() {
+        const GIB: u64 = 1 << 30;
+        let (started, finished, high) = fake_batch(&["a9", "b1", "c1"], 3, Some(4 * GIB));
+        assert_eq!(started[0], 0);
+        assert_eq!(started.len(), 3);
+        assert_eq!(finished.len(), 3);
+        assert_eq!(finished[0], 0);
+        assert_eq!(high, 9 * GIB);
+    }
 
     /// Stop must reach the already-running child as well as preventing the next job.
     #[cfg(unix)]

@@ -33,6 +33,7 @@ pub mod report_policy;
 pub mod report_send;
 pub mod repro;
 pub mod saved_report;
+pub(crate) mod schedule;
 pub mod share_links;
 pub mod stop;
 pub mod tool_library;

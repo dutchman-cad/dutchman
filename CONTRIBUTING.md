@@ -258,6 +258,13 @@ artifact has lost its executable bit, so `chmod +x` the programs.
 
 A few things reviewers ask about most:
 
+- **Which version a change belongs to.** Better results on formats Dutchman already accepts, a newer
+  cadmpeg pin with no visible change of shape, bug fixes, wording, docs and performance go in a patch
+  release (`0.x.Y`). A new way in (a new format, source or module), a new command, option, setting or
+  app flow, any breaking change (CLI flags or exit codes, output file layout, the plugin manifest,
+  dropping a supported SolidCraft version) or a new newest SolidCraft minor goes in a minor release
+  (`0.X.0`), whose notes carry a "Breaking changes" section when there is one. The full rule is in
+  [docs/releasing.md](docs/releasing.md#choosing-the-version).
 - **SolidCraft versions.** Keep the 0.18.2 opens-in floor, its CI job and all existing writer checks.
   Before starting, run `scripts/solidcraft-window.sh --print`: new work targets only newest plus releases
   published in the last 14 days. Never back-port features or add gates older than that window;
