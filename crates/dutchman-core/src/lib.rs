@@ -916,6 +916,12 @@ fn companion_conflict(path: &Path) -> Error {
 
 /// Writes `bytes` to `output`; when `replace` is not set, only if no file is there.
 fn write_output(output: &Path, bytes: &[u8], replace: bool) -> Result<(), Error> {
+    // Lets a test stop a conversion in its write stage: a write no longer waits on a named pipe.
+    if std::env::var_os("DUTCHMAN_TEST_STALL_WRITE").is_some() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
     safe_output::write(output, bytes, replace).map_err(|source| match source.kind() {
         std::io::ErrorKind::AlreadyExists => Error::OutputExists {
             path: output.to_path_buf(),
