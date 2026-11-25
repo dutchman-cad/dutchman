@@ -1087,12 +1087,14 @@ pub(crate) fn run_scheduled(
             }
         }
     };
-    let done = |index: usize| {
-        if let Ok(mut queue) = queue.lock() {
-            queue.finish(index);
+    // Frees a file's place when its worker is done, also while a panic unwinds, so the
+    // others never wait on a file that is gone; the panic still ends the batch as before.
+    struct Release<'a>(&'a dyn Fn());
+    impl Drop for Release<'_> {
+        fn drop(&mut self) {
+            (self.0)();
         }
-        changed.notify_all();
-    };
+    }
     let run = |job: &Job, index: usize| {
         let started = Instant::now();
         let mut report = convert(job, index);
@@ -1108,8 +1110,14 @@ pub(crate) fn run_scheduled(
         for _ in 0..workers {
             scope.spawn(|| {
                 while let Some(index) = next() {
+                    let finish = || {
+                        if let Ok(mut queue) = queue.lock() {
+                            queue.finish(index);
+                        }
+                        changed.notify_all();
+                    };
+                    let _release = Release(&finish);
                     let Some(job) = work.get(index) else {
-                        done(index);
                         continue;
                     };
                     on_event(Event::Started(index));
@@ -1117,12 +1125,10 @@ pub(crate) fn run_scheduled(
                     if workers > 1 && crate::stop::stopped_for_memory(&report) {
                         if let Ok(mut stopped) = stopped.lock() {
                             stopped.push((index, report));
-                            done(index);
                             continue;
                         }
                     }
                     on_event(Event::Finished(index, report));
-                    done(index);
                 }
             });
         }
@@ -1450,6 +1456,46 @@ mod tests {
             finished.into_inner().unwrap(),
             high,
         )
+    }
+
+    #[test]
+    fn a_panicking_file_does_not_hang_the_others_waiting_for_room() {
+        const GIB: u64 = 1 << 30;
+        // The panic comes first; the big file waits because nothing fits beside it.
+        let jobs = [named_job("a9"), named_job("b1")];
+        let outcome = std::panic::catch_unwind(|| {
+            run_scheduled(
+                &jobs,
+                2,
+                &AtomicBool::new(false),
+                |job, _| {
+                    if job.input.to_string_lossy() == "a9" {
+                        std::thread::sleep(Duration::from_millis(50));
+                        panic!("forced conversion panic");
+                    }
+                    json!({"ok": true})
+                },
+                |_| {},
+                &Policy {
+                    cost: &|job| {
+                        let (work, peak) = if job.input.to_string_lossy() == "a9" {
+                            (100, 9)
+                        } else {
+                            (1, 100)
+                        };
+                        crate::schedule::Cost {
+                            work,
+                            peak: peak * GIB,
+                            first: false,
+                        }
+                    },
+                    free: &|| Some(8 * GIB),
+                    ramp: Duration::from_secs(60),
+                    poll: Duration::from_millis(5),
+                },
+            );
+        });
+        assert!(outcome.is_err(), "the panic still surfaces");
     }
 
     #[test]
