@@ -955,7 +955,7 @@ fn two_part_studio(x: f64) -> Model {
         .as_array_mut()
         .unwrap()
         .push(json!({
-            "id":"synthetic:test:component#file", "storage":{"kind":"file", "document":{}},
+            "id":"synthetic:test:component#zfile", "storage":{"kind":"file", "document":{}},
             "bodies":[], "sketches":[], "bom_properties":{},
             "occurrences":["synthetic:test:occurrence#0", "synthetic:test:occurrence#1"],
             "instance_bodies":[], "representations":[]

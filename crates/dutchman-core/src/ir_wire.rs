@@ -190,6 +190,22 @@ fn sort_arenas(value: &mut Value) {
             }
         }
     }
+    let Some(native) = value.get_mut("native").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for codec in native.values_mut().filter_map(Value::as_object_mut) {
+        for rows in codec.values_mut() {
+            let Some(rows) = rows.as_array_mut() else {
+                continue;
+            };
+            if rows
+                .iter()
+                .all(|row| row.get("id").is_some_and(Value::is_string))
+            {
+                rows.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+            }
+        }
+    }
 }
 
 /// [`from_value`], from text.

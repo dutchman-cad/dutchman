@@ -5447,7 +5447,7 @@ mod tests {
                 .remove("product_definition");
         }
         let model = Model {
-            ir: serde_json::from_value(wire).unwrap(),
+            ir: crate::ir_wire::from_value(wire).unwrap(),
             ..model
         };
         let document = placed_document(&model);
@@ -5476,7 +5476,7 @@ mod tests {
             "ordinal": 0, "dependencies": [], "properties": {}
         }]);
         let with_loose = Model {
-            ir: serde_json::from_value(wire).unwrap(),
+            ir: crate::ir_wire::from_value(wire).unwrap(),
             ..model
         };
         let document = placed_document(&with_loose);
