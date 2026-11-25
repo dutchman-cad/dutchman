@@ -3370,9 +3370,15 @@ fn slice(
         HistoryOwner::Definition(id) => Some(id).filter(|id| !root_definitions.contains(id)),
         HistoryOwner::Root | HistoryOwner::Unknown => None,
     };
+    // A Fusion root component folded into an embedded part has a file container beside it
+    // (see `products::file_containers`). cadmpeg leaves the history of the document root
+    // unowned, so the folded root takes that history as well as what names it.
+    let folded_root = matches!(owner, HistoryOwner::Definition(id)
+        if root_definitions.contains(serde_json::json!([id, "file"]).to_string().as_str()));
     let owned = |row: &Value| match owner {
         HistoryOwner::Definition(_) | HistoryOwner::Root => {
-            product_definition(row, &root_definitions) == definition
+            let owner = product_definition(row, &root_definitions);
+            owner == definition || (folded_root && owner.is_none())
         }
         HistoryOwner::Unknown => false,
     };
@@ -5240,6 +5246,47 @@ mod tests {
             "Part".to_owned(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_folded_fusion_root_keeps_the_history_no_component_owns() {
+        // cadmpeg leaves root-level features unowned. When the root component is folded into
+        // an embedded part, its slice must still take them.
+        let model = repeated_sketch_part([0.0, 0.0], selected_layout_profile());
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let root = "f3d:model:component#root";
+        let body = wire["model"]["product_definitions"][0]["bodies"].clone();
+        wire["model"]["product_definitions"] = json!([{
+            "id": root, "kind": "part", "bodies": body, "sketches": [], "bom_properties": {},
+            "storage": {"kind": "file", "document": {}}, "tessellations": [], "occurrences": [],
+            "instance_bodies": [], "representations": []
+        }]);
+        wire["model"]["occurrences"] = json!([]);
+        for feature in wire["model"]["features"].as_array_mut().unwrap() {
+            feature
+                .as_object_mut()
+                .unwrap()
+                .remove("product_definition");
+        }
+        let model = Model {
+            ir: serde_json::from_value(wire).unwrap(),
+            ..model
+        };
+        let document = placed_document(&model);
+        let part = only(
+            &model,
+            &document,
+            &["synthetic:model:body#part"],
+            HistoryOwner::Definition(root),
+            "Root".to_owned(),
+        )
+        .unwrap();
+        let kept = feature_ids(&part);
+        assert!(
+            kept.contains(&"synthetic:model:feature#sketch".to_owned()),
+            "{kept:?}"
+        );
+        assert_eq!(kept.len(), 2, "{kept:?}");
     }
 
     #[test]
