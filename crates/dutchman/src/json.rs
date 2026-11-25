@@ -538,6 +538,9 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
     if let Some(version) = report.source_version() {
         out.insert("source_version".to_owned(), json!(version));
     }
+    if let Some(up_axis) = report.up_axis().filter(|up| up.worth_stating()) {
+        out.insert("up_axis".to_owned(), up_axis.json());
+    }
     if let Some((requested, used)) = report.threads() {
         out.insert(
             "threads".to_owned(),

@@ -2061,9 +2061,11 @@ human-readable; use reason codes in programs.
 
 ## Output orientation
 
-The CLI options `--stand-up` and `--no-stand-up` (MCP `stand_up` and
-`no_stand_up`) control the saved design orientation. Reports retain the existing
-schemas and source coordinates; these options add no report fields. See
+The CLI options `--stand-up` and `--keep-axes` (alias `--no-stand-up`; MCP `stand_up` and
+`no_stand_up`) control the saved design orientation. When a source states or fails to state
+its up axis, or an option overrides it, the report has an `up_axis` object with `found`,
+`origin`, optionally `reason` and `disagreement`, `mode`, `applied` and `summary`. Source
+coordinates in reports are unchanged. See
 [the command reference](command-line.md) for the rotation and default.
 
 Spatial hole arrays with complete parallel, coplanar directed entries can map as one

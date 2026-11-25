@@ -417,7 +417,7 @@ impl ConvertOptions {
             args.push("--stand-up".into());
         }
         if self.no_stand_up {
-            args.push("--no-stand-up".into());
+            args.push("--keep-axes".into());
         }
         if let Some(cli) = &self.solidcraft {
             args.push("--solidcraft".into());

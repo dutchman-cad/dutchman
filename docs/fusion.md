@@ -468,10 +468,23 @@ candidate edges apart.
 Fusion 360 models in a right-handed coordinate system that defaults to Y-up in older versions
 (Autodesk made Z-up default for new installations around 2019). SolidCraft uses Z-up.
 
-By default, Dutchman preserves the source coordinates unchanged (`--no-stand-up`).
-For models created with Y-up orientation, `--stand-up` rotates the model +90° about +X
-(mapping source +Y to SolidCraft +Z and +Z to -Y). The rotation applies to imported geometry,
-assemblies, and rebuilt history.
+By default (automatic), Dutchman stands a design up when its source states that it is Y-up,
+and keeps the source coordinates when it is Z-up or when nothing states the up axis. It never
+guesses. The Fusion exporter writes each design's `up_axis` (`"y"` or `"z"`, or `null` with
+an `up_axis_error`) in the export folder's `manifest.json`; an export without the field, or a
+design outside an export folder, has an unknown up axis. Standing up rotates the model +90°
+about +X (mapping source +Y to SolidCraft +Z and +Z to -Y), for imported geometry, assemblies
+and rebuilt history.
+
+`--stand-up` always rotates, and `--keep-axes` (or `--no-stand-up`) never does, whatever the
+source says. In an assembly every design shares one frame: the root design's up axis applies,
+and the report names any inserted design that states another.
+
+The report's `up_axis` object gives `found` (`y`, `z` or `unknown`), `origin`
+(`export_manifest`, `file` or `none`), `reason` when unknown, `mode`, `applied` (`stood_up` or
+`kept_axes`) and a `summary` such as "Stood up: the export says this design is Y-up" or
+"Kept the file's axes: up axis unknown (...)". The same sentence is an information line under
+the subject `orientation`.
 
 ## Assembly placements
 

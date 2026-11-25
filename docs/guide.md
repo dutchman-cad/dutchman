@@ -1140,9 +1140,10 @@ Library planning outcomes used by preflight keep empty output ids with
 
 ## Orient a Y-up design
 
-Use `--stand-up` with `convert` or `convert-all` to rotate a Y-up design +90°
-about +X, so its +Y axis becomes SolidCraft's +Z axis. Source axes are preserved
-by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
+A design is stood up (+90° about +X, so +Y becomes SolidCraft's +Z) by default when
+its source states that it is Y-up, as a Fusion export's manifest does; Z-up designs and
+designs of unknown up axis keep their axes. Use `--stand-up` with `convert` or
+`convert-all` to always rotate; `--keep-axes` (or `--no-stand-up`) never rotates. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.

@@ -80,11 +80,12 @@ RailCore Mini import was refused in 0.81 seconds with the existing app message;
 this timing uses the already compiled component. No GUI step is needed for these checks.
 
 The manifest supplies native host forms: Keep editable history (true), Up axis
-(As in the file, `as_is`, the default, or Stand up (Y-up to Z-up), `stand_up`), Include
+(Automatic, `auto`, the default: stand up only when the source states Y-up, otherwise keep the
+file's axes; As in the file, `as_is`, never rotates; or Stand up (Y-up to Z-up), `stand_up`), Include
 hidden bodies (false). The up axis lists its options as `oneOf` entries of `const` and
 `title`, so the host's dropdown shows the titles and sends the value. The schemas use the
 #2829 command contract field shapes and reject unknown fields.
-Defaults retain the CLI's history, visibility and source-coordinate behavior. Include
+Defaults retain the CLI's history and visibility behavior; the automatic up axis keeps the file's axes unless the source states Y-up, which the plugin's host-read files do not yet. Include
 hidden bodies bypasses Dutchman's source visibility filter, which can expose intermediate
 FreeCAD shapes and consumed Fusion bodies. Stand up adds a +90° X rotation (+Y to +Z)
 to a wrapper occurrence only after mapping and checks, preserving editable local features.

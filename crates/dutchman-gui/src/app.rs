@@ -267,6 +267,38 @@ fn select_preset(options: &mut ConvertOptions, preset: Preset) {
     options.no_joints = false;
 }
 
+/// What the options say about standing a design up.
+fn orientation_of(options: &ConvertOptions) -> dutchman_core::Orientation {
+    match options.stand_up_choice() {
+        Some(true) => dutchman_core::Orientation::StandUp,
+        Some(false) => dutchman_core::Orientation::KeepAxes,
+        None => dutchman_core::Orientation::Auto,
+    }
+}
+
+fn set_orientation(options: &mut ConvertOptions, orientation: dutchman_core::Orientation) {
+    options.stand_up = orientation == dutchman_core::Orientation::StandUp;
+    options.no_stand_up = orientation == dutchman_core::Orientation::KeepAxes;
+}
+
+fn orientation_label(orientation: dutchman_core::Orientation) -> &'static str {
+    match orientation {
+        dutchman_core::Orientation::Auto => "Automatic",
+        dutchman_core::Orientation::StandUp => "Stand up (Y-up to Z-up)",
+        dutchman_core::Orientation::KeepAxes => "Keep the file's axes",
+    }
+}
+
+fn orientation_help(orientation: dutchman_core::Orientation) -> &'static str {
+    match orientation {
+        dutchman_core::Orientation::Auto => {
+            "Stands a design up when its source says it is Y-up; keeps the axes when it is Z-up or says nothing."
+        }
+        dutchman_core::Orientation::StandUp => "Always rotates so +Y becomes +Z.",
+        dutchman_core::Orientation::KeepAxes => "Never rotates, even for a design that is Y-up.",
+    }
+}
+
 fn set_choices(options: &mut ConvertOptions, history: bool, sketches: bool, joints: bool) {
     options.import_only = !history;
     options.no_sketches = !sketches;
@@ -311,6 +343,14 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
         .get("no_joints")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    set_orientation(
+        options,
+        settings
+            .get("up_axis")
+            .and_then(Value::as_str)
+            .and_then(dutchman_core::Orientation::from_name)
+            .unwrap_or_default(),
+    );
     settings
         .get("custom")
         .and_then(Value::as_bool)
@@ -389,6 +429,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
         "no_verify": options.no_verify,
         "part_positions": options.effective_part_positions().name(),
+        "up_axis": orientation_of(options).name(),
     })
 }
 
@@ -2795,6 +2836,28 @@ impl App {
                             );
                         }
                     });
+            });
+            ui.horizontal(|ui| {
+                let current = orientation_of(&self.options);
+                let response = egui::ComboBox::from_label("Up axis")
+                    .selected_text(orientation_label(current))
+                    .show_ui(ui, |ui| {
+                        for choice in [
+                            dutchman_core::Orientation::Auto,
+                            dutchman_core::Orientation::StandUp,
+                            dutchman_core::Orientation::KeepAxes,
+                        ] {
+                            let response =
+                                ui.selectable_label(current == choice, orientation_label(choice));
+                            preset_help(&response, orientation_help(choice));
+                            if response.clicked() {
+                                set_orientation(&mut self.options, choice);
+                                ui.close();
+                            }
+                        }
+                    })
+                    .response;
+                preset_help(&response, orientation_help(current));
             });
             let choices = self.options.choices();
             let (mut history, mut sketches, mut joints) =

@@ -252,8 +252,8 @@ fn option_properties() -> Map<String, Value> {
             "minimum": 1,
             "description": "Seconds each SolidCraft check may run before the history is written unverified (default 120).",
         },
-        "stand_up": {"type": "boolean", "default": false, "description": "Rotate Y-up models +90 degrees about +X so +Y becomes +Z. Cannot be combined with no_stand_up."},
-        "no_stand_up": {"type": "boolean", "default": false, "description": "Preserve source axes (the default). Cannot be combined with stand_up."},
+        "stand_up": {"type": "boolean", "default": false, "description": "Rotate the design +90 degrees about +X so +Y becomes +Z, whatever its source says. By default a design is stood up only when its source states it is Y-up. Cannot be combined with no_stand_up."},
+        "no_stand_up": {"type": "boolean", "default": false, "description": "Keep the file's axes and never rotate (the CLI's --keep-axes). Cannot be combined with stand_up."},
         "project": project_property(),
         "search": search_property(),
     });
@@ -992,7 +992,7 @@ mod tests {
         }
         for (arguments, choice, flag) in [
             (json!({"stand_up": true}), Some(true), "--stand-up"),
-            (json!({"no_stand_up": true}), Some(false), "--no-stand-up"),
+            (json!({"no_stand_up": true}), Some(false), "--keep-axes"),
         ] {
             let parsed = options(arguments.as_object().unwrap()).unwrap();
             assert_eq!(parsed.stand_up_choice(), choice);
