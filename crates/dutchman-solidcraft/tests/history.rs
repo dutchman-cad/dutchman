@@ -18508,7 +18508,7 @@ fn hidden_cube_with_history() -> Model {
     let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     wire["geometry"]["bodies"][0]["visible"] = json!(false);
-    wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#root", "kind": "part", "bodies": [body], "bom_properties": {}, "sketches": [], "storage": {"kind":"embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": []}]);
+    wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#root", "kind": "part", "bodies": [body], "bom_properties": {}, "sketches": [], "storage": {"kind":"embedded"}, "occurrences": [], "instance_bodies": [], "representations": []}]);
     Model {
         ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
@@ -18616,7 +18616,7 @@ fn an_unprojected_design_only_history_is_refused_instead_of_silently_mapping_not
         serde_json::from_value(json!({
             "id": "test:design:feature#stored",
             "definition": {"operation": {"kind": "stored", "value": {
-                "bodies": ["synthetic:cube:body#0"], "tessellations": [],
+                "bodies": ["synthetic:cube:body#0"],
                 "origin": {"kind": "base"}
             }}}
         }))

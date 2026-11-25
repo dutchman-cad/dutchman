@@ -801,12 +801,7 @@ fn with_components(nested: bool) -> Model {
     let definitions = wire["model"]["product_definitions"].as_array_mut().unwrap();
     for definition in definitions.iter_mut() {
         definition["storage"] = serde_json::json!({"kind":"embedded"});
-        for field in [
-            "tessellations",
-            "occurrences",
-            "instance_bodies",
-            "representations",
-        ] {
+        for field in ["occurrences", "instance_bodies", "representations"] {
             definition[field] = serde_json::json!([]);
         }
     }
@@ -1017,7 +1012,7 @@ fn with_sketch_of_a_component_without_bodies() -> Model {
         .collect::<Vec<_>>());
     let definitions = wire["model"]["product_definitions"].as_array_mut().unwrap();
     definitions[1]["sketches"] = serde_json::json!([ids[0]]);
-    definitions.push(serde_json::json!({"id": "f3d:model:component#ghost", "kind": "part", "label": "Ghost", "bodies": [], "sketches": [ids[1]], "bom_properties": {}, "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}));
+    definitions.push(serde_json::json!({"id": "f3d:model:component#ghost", "kind": "part", "label": "Ghost", "bodies": [], "sketches": [ids[1]], "bom_properties": {}, "storage":{"kind":"embedded"}, "occurrences":[], "instance_bodies":[], "representations":[]}));
     let mut model = Model {
         ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
