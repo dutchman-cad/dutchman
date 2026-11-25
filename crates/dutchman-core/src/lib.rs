@@ -16,6 +16,7 @@ pub mod estimate;
 mod format;
 mod hidden;
 mod input_edges;
+mod ir_retain;
 mod locate;
 mod memory;
 mod names;
