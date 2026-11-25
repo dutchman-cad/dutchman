@@ -224,4 +224,43 @@ mod tests {
         );
         assert!(folder.auto_update && !state.paused);
     }
+
+    /// The window with two folders listed and Start at login on, Day and Night, at its own size.
+    /// Needs a GPU renderer; set DUTCHMAN_GUI_SCREENSHOTS.
+    #[test]
+    #[ignore = "renders GPU screenshots of the Sync window; set DUTCHMAN_GUI_SCREENSHOTS"]
+    fn sync_window_screenshots() {
+        let out = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+        std::fs::create_dir_all(&out).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(sync_state::FILE_NAME);
+        let mut state = State::default();
+        state.add_folder(
+            PathBuf::from("/Users/demo/Documents/Converted"),
+            Some(PathBuf::from("/Users/demo/Documents/CAD")),
+        );
+        state.add_folder(
+            PathBuf::from("/Users/demo/Projects/Converted"),
+            Some(PathBuf::from("/Users/demo/Projects/CAD")),
+        );
+        state.folders[1].enabled = false;
+        state.start_at_login = true;
+        sync_state::write_to(&file, &state).unwrap();
+        for (theme, name) in [
+            (egui::ThemePreference::Light, "day"),
+            (egui::ThemePreference::Dark, "night"),
+        ] {
+            let state_file = file.clone();
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(SIZE[0], SIZE[1]))
+                .build_eframe(move |cc| Window::new(cc, state_file));
+            harness.ctx.set_theme(theme);
+            harness.run_steps(8);
+            let image = harness.render().unwrap();
+            assert!(image.height() <= image.width());
+            image
+                .save(out.join(format!("sync-window-{name}.png")))
+                .unwrap();
+        }
+    }
 }
