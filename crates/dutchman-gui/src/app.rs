@@ -2836,8 +2836,6 @@ impl App {
                             );
                         }
                     });
-            });
-            ui.horizontal(|ui| {
                 let current = orientation_of(&self.options);
                 let response = egui::ComboBox::from_label("Up axis")
                     .selected_text(orientation_label(current))
