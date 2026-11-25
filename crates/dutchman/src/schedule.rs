@@ -44,22 +44,24 @@ const GIB: u64 = 1 << 30;
 /// public 50 set and three public RailCore II .f3z files. Measured points (input size, peak):
 /// .f3d 0.07 MB 70 MB; 0.65 MB 683 MB; 2.09 MB 593 MB; 2.87 MB 1.37 GB; 5.84 MB 850 MB;
 /// 20.7 MB 3.2 GB (p90 of the 45 .f3d files about 0.5 GB). .f3z 5.95 MB 1.8 GB; 13.2 MB 4.0 GB;
-/// 13.8 MB 5.9 GB; and about 10 GB for the 65 MB Voron master model (earlier runs). The
-/// line is drawn above those points and capped at what was seen, so a big file is predicted
-/// roughly right and never above what a file has used. Formats not measured yet use the
-/// .f3d line, the one Dutchman converts most; refit when they are.
+/// 13.3 MB 4.2 GB; 13.8 MB 5.9 GB; and about 10 GB for the 65 MB Voron master model.
+/// The lines run through those points (not above them): a line above them kept three
+/// RailCore archives, 12 GB together, from running side by side in a 20 GB scope. The quarter
+/// of free memory kept back absorbs the difference. A prediction never passes `cap`, the most
+/// a file of the format has been seen to hold. Formats not measured yet use the .f3d line,
+/// the one Dutchman converts most; refit when they are.
 fn factors(format: Option<Format>) -> Factors {
     match format {
         Some(Format::FusionMultiDocument) => Factors {
             work_milli: 1_000,
-            peak_milli: 400_000,
-            floor: 512 * MIB,
-            cap: 12 * GIB,
+            peak_milli: 300_000,
+            floor: 256 * MIB,
+            cap: 10 * GIB,
         },
         _ => Factors {
             work_milli: 1_000,
-            peak_milli: 450_000,
-            floor: 320 * MIB,
+            peak_milli: 150_000,
+            floor: 128 * MIB,
             cap: 4 * GIB,
         },
     }
@@ -261,18 +263,18 @@ mod tests {
 
     #[test]
     fn predicted_memory_follows_the_measured_points_and_stops_at_the_cap() {
-        let f3d = |mb: u64| cost_of(Some(Format::FusionArchive), mb << 20).peak;
-        // Above what was measured at 2.87 MB (1.4 GB) and 0.65 MB (0.7 GB), within a few times.
-        assert!(f3d(3) > 1_400_000_000 && f3d(3) < 3 * GIB);
-        assert!(f3d(1) > 700_000_000);
-        // The 20.7 MB file held 3.2 GB: predicted at the cap, not past it.
-        assert_eq!(f3d(21), 4 * GIB);
-        // A small file is near the floor.
-        assert!(cost_of(Some(Format::FusionArchive), 70_000).peak < GIB / 2);
-        // An archive of 13.8 MB held 5.9 GB; the 65 MB one about 10 GB.
-        let f3z = |mb: u64| cost_of(Some(Format::FusionMultiDocument), mb << 20).peak;
-        assert!(f3z(14) > 5_900_000_000);
-        assert!(f3z(65) >= 10 * GIB && f3z(65) <= 12 * GIB);
+        let f3d = |bytes: u64| cost_of(Some(Format::FusionArchive), bytes).peak;
+        let f3z = |bytes: u64| cost_of(Some(Format::FusionMultiDocument), bytes).peak;
+        let mb = |n: u64| n * 1_000_000;
+        // The 20.7 MB file held 3.2 GB; a small file is near the floor.
+        assert!(f3d(20_700_000) > 5 * GIB / 2 && f3d(20_700_000) <= 4 * GIB);
+        assert!(f3d(70_000) < GIB / 4);
+        // The 13.8 MB archives held 4 to 5.9 GB; the 65 MB one about 10 GB, the cap.
+        assert!(f3z(13_800_000) > 4 * GIB && f3z(13_800_000) < 6 * GIB);
+        assert_eq!(f3z(mb(65)), 10 * GIB);
+        // Three RailCore archives fit a 20 GB scope's budget together, as they ran.
+        let budget = 20 * GIB - margin(20 * GIB);
+        assert!(3 * f3z(13_800_000) <= budget);
     }
 
     /// Starts files as a worker would, one reading of free memory each time.
