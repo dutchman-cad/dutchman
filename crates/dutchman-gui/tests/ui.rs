@@ -24,8 +24,6 @@ use dutchman_gui::App;
 /// never the real diagnostics folder (CI runs these tests without the test-support feature).
 fn test_app(cc: &eframe::CreationContext<'_>) -> App {
     dutchman_gui::worker::convert_in_process_for_tests();
-    // The Export from Fusion button is there on Windows and macOS; lay it out on Linux too.
-    dutchman_gui::fusion_export::install::offer_everywhere_for_tests();
     static FOLDER: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     let folder = FOLDER.get_or_init(|| {
         std::env::temp_dir().join(format!(
@@ -34,7 +32,10 @@ fn test_app(cc: &eframe::CreationContext<'_>) -> App {
         ))
     });
     dutchman_gui::set_diagnostics_folder(folder.clone());
-    App::new(cc)
+    let mut app = App::new(cc);
+    // Windows and macOS offer "Export from Fusion…"; the layout tests see it on Linux too.
+    app.offer_everywhere_for_tests();
+    app
 }
 use eframe::egui::{self, ThemePreference};
 use egui_kittest::kittest::Queryable;
@@ -294,19 +295,19 @@ fn header_version_screenshots() {
 fn fusion_install_screenshots() {
     use dutchman_gui::fusion_export::agent::{Agent, Presence};
     use dutchman_gui::fusion_export::install::Step;
-    use dutchman_gui::fusion_export::panel::Install;
+    use dutchman_gui::fusion_export::installer::Install;
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
     let mut index = String::new();
-    let agent = |busy: bool| Agent {
+    let agent = || Agent {
         jobs_dir: "/Users/someone/.cad-export/jobs".into(),
         features: vec!["export".into(), "cancel".into()],
         version: "0.4.0".into(),
         busy: None,
         job: None,
         fusion_version: Some("2.0.21508".into()),
-        pid: 41237,
-        fusion_busy: busy,
+        pid: Some(41237),
+        updated: None,
     };
     let cases = [
         (
@@ -329,13 +330,13 @@ fn fusion_install_screenshots() {
         ),
         (
             "fusion-4-running",
-            Presence::Running(agent(false)),
+            Presence::Running(agent()),
             Install::Idle,
             "The exporter is running in Fusion.",
         ),
         (
             "fusion-5-busy",
-            Presence::Unresponsive(agent(true)),
+            Presence::Unresponsive(agent()),
             Install::Idle,
             "Fusion is busy: the heartbeat is stale but Fusion is still running.",
         ),
@@ -5856,6 +5857,25 @@ fn connected_onshape_keeps_results_in_their_own_column() {
     }
 }
 
+/// Windows and macOS offer "Export from Fusion…" in the Convert bar (the tests offer it
+/// everywhere): it must not make the left column overflow at 1280x800.
+#[test]
+fn the_fusion_button_in_the_convert_bar_keeps_the_left_column_inside() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let out = tempfile::tempdir().unwrap();
+        let h = many_results_onshape_harness(out.path(), theme, true);
+        let button = h.get_by_label("Export from Fusion…").rect();
+        let convert = h.get_by_label("Convert").rect();
+        assert!(
+            (button.center().y - convert.center().y).abs() < 1.0,
+            "the button is on the Convert bar's row"
+        );
+        assert!(h.get_by_label("Open diagnostics folder").rect().bottom() <= convert.top());
+        assert!(button.right() <= 1280.0);
+        assert!(!h.state().page_scrolls());
+    }
+}
+
 /// Synthetic result cards, identical in both revisions for screenshot comparison.
 #[cfg(feature = "test-support")]
 #[test]
@@ -6468,4 +6488,69 @@ fn report_buttons_screenshots() {
         );
     }
     std::fs::write(dir.join("report-buttons.md"), index).unwrap();
+}
+
+/// A synthetic drawing file whose sheets are not decoded yet: the Results card reports it.
+#[test]
+#[ignore = "renders the drawing result cards with a GPU; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn drawing_screenshots() {
+    if std::env::var_os("DUTCHMAN_DRAWING_SCREENSHOT_CHILD").is_none() {
+        let state = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "drawing_screenshots"])
+            .env("DUTCHMAN_DRAWING_SCREENSHOT_CHILD", "1")
+            .env("HOME", state.path())
+            .env("LOCALAPPDATA", state.path())
+            .env("XDG_STATE_HOME", state.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let mut index = String::new();
+    // The app has no German text yet: the German set shows a long German file name.
+    for (language, name) in [
+        ("en", "Frame-assembly.idw"),
+        (
+            "de",
+            "Zeichnung-Rahmenbaugruppe-Seitenwand-Ueberarbeitung-Fertigung.dwg",
+        ),
+    ] {
+        let input = work.path().join(name);
+        let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        if name.ends_with(".dwg") {
+            bytes = b"AC1032\0\0\0\0\0\0\0".to_vec();
+        }
+        bytes.extend([0_u8; 64]);
+        std::fs::write(&input, bytes).unwrap();
+        for (theme, mode) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().add_inputs([input.clone()]);
+            harness
+                .state_mut()
+                .set_out_dir(work.path().join(format!("{language}-{mode}")));
+            harness.state_mut().set_verify(false);
+            convert(&mut harness);
+            assert_eq!(harness.state().rows()[0].status, Status::Failed);
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("drawing-not-decoded-{language}"),
+                mode,
+                "A drawing file that is accepted and reported as not decoded yet.",
+            );
+        }
+    }
+    std::fs::write(dir.join("drawings.md"), index).unwrap();
 }

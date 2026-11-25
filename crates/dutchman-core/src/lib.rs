@@ -12,6 +12,7 @@ pub mod camtools;
 mod companion;
 pub mod contents;
 mod decode;
+pub mod drawing;
 mod error;
 pub mod estimate;
 mod export_folder;
@@ -79,6 +80,10 @@ pub struct Model {
     /// The input file's text when it is a STEP file whose geometry is used unchanged: writers
     /// hand it on as it is instead of restating the decoded model as STEP.
     pub source_step: Option<String>,
+    /// Whether a writer puts the part's solids in one body. A circuit board's overlay is one
+    /// closed solid per area, and its plating one per plated hole: each is one thing to the
+    /// person, so SolidCraft holds each as one body of several pieces, not a body per piece.
+    pub merge_bodies: bool,
 }
 
 impl Model {
@@ -363,7 +368,7 @@ pub fn read_drawings(input: &Path, report: &mut Report) -> Result<Model, Error> 
     let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
         path: input.to_path_buf(),
     })?;
-    if !format.can_convert() {
+    if !format.can_convert() || format.is_drawing() {
         return Err(Error::NotSupportedYet { format });
     }
     check_input(input)?;

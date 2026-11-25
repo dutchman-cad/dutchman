@@ -40,6 +40,7 @@ fn model(kind: &str) -> Model {
         name: "Synthetic".to_owned(),
         source_file: None,
         source_step: None,
+        merge_bodies: false,
         assembly: None,
     };
     if kind == "partial" {
@@ -85,6 +86,7 @@ fn two_bodies(second: &str) -> Model {
         name: "Synthetic".to_owned(),
         source_file: None,
         source_step: None,
+        merge_bodies: false,
         assembly: None,
     }
 }

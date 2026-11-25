@@ -33,6 +33,7 @@ fn placed_twice() -> Model {
         name: "pair".to_owned(),
         source_file: Some("pair.iam".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: Some(Assembly {
             own_part: None,
             joints: Vec::new(),
@@ -658,6 +659,7 @@ fn nested() -> Model {
         name: "top".to_owned(),
         source_file: Some("top.iam".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: Some(Assembly {
             own_part: None,
             joints: Vec::new(),
@@ -2977,6 +2979,7 @@ fn holder(
         name: name.to_owned(),
         source_file: Some("repeats.f3d".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: Some(Assembly {
             own_part: None,
             joints: Vec::new(),

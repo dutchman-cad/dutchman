@@ -21,14 +21,10 @@ pub struct Pin {
 }
 
 /// The pinned exporter release: version, zip and hash change together, here only.
-///
-/// This is the protocol release's release candidate (rc.2). Its URL answers only once 0.4.0 is
-/// released; the released zip is rebuilt, so replace `sha256` with the published
-/// `FusionBulkExport-0.4.0.zip.sha256` then.
 pub const PIN: Pin = Pin {
-    version: "0.4.0",
-    zip_url: "https://github.com/cad-lifeboat/fusion-bulk-export/releases/download/v0.4.0/FusionBulkExport-0.4.0.zip",
-    sha256: "2dfc7e45d962fd971200a39e2eb1ab9ddf24f4804457d8af8a2dc2bb64b62a27",
+    version: "0.4.1",
+    zip_url: "https://github.com/cad-lifeboat/fusion-bulk-export/releases/download/v0.4.1/FusionBulkExport-0.4.1.zip",
+    sha256: "3d6e826382254d54c4b4261778bc04e682563c1e164cdfe5200bf9739a47a2d7",
 };
 
 /// Where the exporter announces its newest release; only used to say a newer one exists.
@@ -46,21 +42,6 @@ pub const DOWNLOAD_DEADLINE: Duration = Duration::from_secs(5 * 60);
 const MAX_ZIP_BYTES: u64 = 64 << 20;
 const MAX_ENTRIES: usize = 5000;
 const MAX_UNPACKED_BYTES: u64 = 256 << 20;
-
-/// Whether this computer can run Fusion, so the install is offered: Windows and macOS.
-pub fn supported() -> bool {
-    cfg!(any(windows, target_os = "macos", test))
-        || FORCED.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-static FORCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Offers the entry on any computer, so UI tests lay out the same window on Linux as on
-/// Windows and macOS. Test use only.
-#[doc(hidden)]
-pub fn offer_everywhere_for_tests() {
-    FORCED.store(true, std::sync::atomic::Ordering::Relaxed);
-}
 
 /// Fusion's AddIns folder for this person.
 pub fn addins_dir() -> Option<PathBuf> {
@@ -319,7 +300,10 @@ fn download(options: &Options) -> Result<Vec<u8>, Failure> {
                 ),
             )
             .call()
-            .map_err(|e| fail(&e))?;
+            .map_err(|e| match e {
+                ureq::Error::Status(code, _) => Failure::Download(refused(code)),
+                e => fail(&e),
+            })?;
         if matches!(response.status(), 301 | 302 | 303 | 307 | 308) {
             url = response
                 .header("Location")
@@ -351,6 +335,19 @@ fn download(options: &Options) -> Result<Vec<u8>, Failure> {
         return Ok(bytes);
     }
     Err(fail(&"too many redirects"))
+}
+
+/// What a refused download says, in plain words with a way forward.
+fn refused(code: u16) -> String {
+    match code {
+        404 | 410 => "this version is not published yet. Try again later, or use the project \
+                      page link above to install the exporter by hand."
+            .to_owned(),
+        _ => format!(
+            "the download server answered with an error ({code}). Try again later, or use the \
+             project page link above to install the exporter by hand."
+        ),
+    }
 }
 
 fn short(text: &str) -> String {
@@ -642,6 +639,39 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_release_is_a_plain_message_with_a_way_forward() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut stream = stream;
+                let mut buf = [0u8; 2048];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nnot found",
+                );
+            }
+        });
+        let addins = tempfile::tempdir().unwrap();
+        let o = options(
+            addins.path(),
+            format!("http://127.0.0.1:{port}/x.zip"),
+            b"",
+            "0.4.0",
+        );
+        let started = std::time::Instant::now();
+        let Err(why) = run(&o, false) else {
+            panic!("a 404 installs nothing");
+        };
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let text = why.to_string();
+        assert!(text.contains("not published yet"), "{text}");
+        assert!(text.contains("project page"), "{text}");
+        assert!(!text.contains("404") && !text.contains("http"), "{text}");
+        assert!(entries(addins.path()).is_empty());
+    }
+
+    #[test]
     fn a_refused_connection_is_a_download_failure() {
         let port = TcpListener::bind("127.0.0.1:0")
             .unwrap()
@@ -888,22 +918,22 @@ mod tests {
         assert!(latest_release_at(&serve(b"{}".to_vec())).is_err());
     }
 
-    /// The real release candidate's three files (a folder named by `DUTCHMAN_FX_RC_DIR`);
+    /// The real release's three files (a folder named by `DUTCHMAN_FX_RC_DIR`);
     /// skipped when it is not set. The hash comes from the release's own
     /// `.sha256` file, never from the pin, which changes when the final zip is rebuilt.
     #[test]
-    fn the_real_release_candidate_installs() {
+    fn the_real_release_installs() {
         let Some(dir) = std::env::var_os("DUTCHMAN_FX_RC_DIR").map(PathBuf::from) else {
             eprintln!("DUTCHMAN_FX_RC_DIR not set; skipped");
             return;
         };
-        let zip = std::fs::read(dir.join("FusionBulkExport-0.4.0.zip")).unwrap();
-        let sum = std::fs::read_to_string(dir.join("FusionBulkExport-0.4.0.zip.sha256")).unwrap();
+        let zip = std::fs::read(dir.join("FusionBulkExport-0.4.1.zip")).unwrap();
+        let sum = std::fs::read_to_string(dir.join("FusionBulkExport-0.4.1.zip.sha256")).unwrap();
         let url = serve(zip);
         let addins = tempfile::tempdir().unwrap();
         plant(addins.path(), "0.3.5");
         let o = Options {
-            version: "0.4.0".into(),
+            version: "0.4.1".into(),
             zip_url: url,
             sha256: sum.split_whitespace().next().unwrap().into(),
             addins: addins.path().to_path_buf(),
@@ -913,12 +943,12 @@ mod tests {
             allow_http: true,
         };
         let done = run(&o, false).unwrap();
-        assert_eq!(done.version, "0.4.0");
+        assert_eq!(done.version, "0.4.1");
         let folder = addins.path().join(ADDIN);
         for file in ["install-stamp.json", "FusionBulkExport.manifest"] {
             let v: Value =
                 serde_json::from_str(&std::fs::read_to_string(folder.join(file)).unwrap()).unwrap();
-            assert_eq!(v["version"], "0.4.0", "{file}");
+            assert_eq!(v["version"], "0.4.1", "{file}");
         }
         assert!(!folder.join("old-file.py").exists());
     }

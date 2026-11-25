@@ -150,7 +150,7 @@ pub struct App {
     download_root: Option<tempfile::TempDir>,
     doctor: Option<crate::doctor::Page>,
     onshape: crate::onshape::Panel,
-    fusion: crate::fusion_export::panel::Panel,
+    fusion_export: crate::fusion_export::Panel,
     intake: crate::paste::Inbox,
     output_picker: Box<dyn Fn(Sender<Message>, egui::Context)>,
     clipboard: Box<dyn Fn() -> (Vec<PathBuf>, String)>,
@@ -472,7 +472,7 @@ impl App {
             download_root: None,
             doctor: None,
             onshape: crate::onshape::Panel::new(&cc.egui_ctx),
-            fusion: crate::fusion_export::panel::Panel::new(),
+            fusion_export: crate::fusion_export::Panel::new(),
             intake: crate::paste::Inbox::new(),
             output_picker: Box::new(|sender, ctx| worker::pick(Pick::Output, sender, ctx)),
             clipboard: Box::new(crate::paste::clipboard),
@@ -648,15 +648,56 @@ impl App {
         offered: bool,
         presence: crate::fusion_export::agent::Presence,
         installed: Option<&str>,
-        step: crate::fusion_export::panel::Install,
+        step: crate::fusion_export::installer::Install,
     ) {
-        self.fusion.preview(offered, presence, installed, step);
+        self.fusion_export
+            .preview_install(offered, presence, installed, step);
     }
 
     /// Supplies a saved account for UI previews without contacting Onshape.
     #[doc(hidden)]
     pub fn preview_onshape(&mut self, user: Option<&str>) {
         self.onshape.preview(user);
+    }
+
+    /// Points "Export from Fusion" at a test home and offers it on any system (UI tests and
+    /// screenshots only).
+    #[doc(hidden)]
+    pub fn preview_fusion_export(&mut self, env: crate::fusion_export::Env) {
+        self.fusion_export.preview(env);
+    }
+
+    /// Offers "Export from Fusion…" on any system (UI tests only).
+    #[doc(hidden)]
+    pub fn offer_everywhere_for_tests(&mut self) {
+        self.fusion_export.offer();
+    }
+
+    /// The designs and folders added to convert, for UI tests.
+    #[doc(hidden)]
+    pub fn inputs_for_test(&self) -> &[PathBuf] {
+        &self.inputs
+    }
+
+    /// Where the "Export from Fusion" window is, for UI tests.
+    #[doc(hidden)]
+    pub fn fusion_export_stage(&self) -> crate::fusion_export::Stage {
+        self.fusion_export.stage()
+    }
+
+    /// Converts the folder an export from Fusion wrote, like a folder dropped on the window:
+    /// it becomes an input and the conversion starts unless one is already running. The
+    /// manifest reader will replace the body of this function.
+    pub fn convert_export_folder(&mut self, dir: PathBuf, ctx: &egui::Context) {
+        self.add_inputs([dir]);
+        if self.running() {
+            self.notice = Some(
+                "The folder exported from Fusion is queued. Press Convert when the current conversion ends."
+                    .into(),
+            );
+        } else {
+            self.start(ctx);
+        }
     }
 
     /// Completes a connection save for headless UI tests without storing real keys.
@@ -2096,6 +2137,12 @@ impl App {
             let (_, clipboard) = (self.clipboard)();
             self.onshape.offer_link(&clipboard);
         }
+        if let Some(folder) = self.fusion_export.poll(ctx) {
+            self.convert_export_folder(folder, ctx);
+        }
+        if let Some(notice) = self.fusion_export.take_notice() {
+            self.notice = Some(notice);
+        }
         self.receive_links(ctx);
         self.take_dropped_files(ctx);
         self.refresh_estimates(ctx);
@@ -2199,7 +2246,9 @@ impl App {
         {
             self.queue_link(crate::paste::Source::Onshape(link), ctx);
         }
-        self.fusion.window(ctx, self.header_bottom);
+        if let Some(folder) = self.fusion_export.window(ctx, self.header_bottom) {
+            self.convert_export_folder(folder, ctx);
+        }
         self.download_window(ctx);
         self.approval_window(ctx);
         let can_restart =
@@ -3140,13 +3189,19 @@ impl App {
                     ui.label(dutchman::tool_library::WORDS);
                 });
             });
-            if self.fusion.offered()
+            if self.fusion_export.offered()
                 && ui
-                    .button("Export from Fusion")
-                    .on_hover_text("Find the Fusion exporter in your Fusion, or install it")
+                    .add_enabled(
+                        !self.running() && !self.updater.blocks_conversions(),
+                        egui::Button::new("Export from Fusion…"),
+                    )
+                    .on_hover_text(
+                        "Ask the Fusion exporter in your Fusion to export designs, then convert them. \
+                         If the exporter is missing, you can install it from here",
+                    )
                     .clicked()
             {
-                self.fusion.toggle(ui.ctx());
+                self.fusion_export.toggle();
             }
         });
         if self.running() && self.diagnostic_stopped {

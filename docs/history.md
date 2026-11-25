@@ -227,9 +227,11 @@ without rounding. A genuine contradiction names the designation's dimensions and
 secondary numbers and asks you to check the source thread table.
 
 UNC/UNF designations are checked in millimetres (25.4 mm per inch), with pitch expressed as
-millimetres or threads per inch. Even when those numbers agree, a separate UNC/UNF cosmetic
-Thread feature remains not supported yet by SolidCraft; this limitation is reported rather
-than mislabeling it as an ISO metric thread. Tapped-hole support is separate.
+millimetres or threads per inch. When those numbers agree, a UNC, UNF or UNEF thread is written as a Thread feature in
+SolidCraft's Unified form (`#2-56 UNC`, `1/4-20 UNC`), keeping a class the source names
+(`-2A` external, `-2B` internal), on targets with Unified thread support. No SolidCraft release
+has it yet, so every target reports "Unified threads need a SolidCraft release with Unified
+thread support" rather than mislabeling the thread as ISO metric. Tapped-hole support is separate.
 
 The face must resolve to a complete cylindrical band between two circular rims. Historical
 face IDs without input surface geometry remain unresolved; Dutchman does not infer faces
