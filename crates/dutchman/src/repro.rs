@@ -455,7 +455,7 @@ fn narrow(
         ("features", "feature"),
         ("sketches", "sketch"),
     ] {
-        let document = serde_json::to_value(&model.ir).map_err(|e| e.to_string())?;
+        let document = dutchman_core::ir_wire::to_value(&model.ir).map_err(|e| e.to_string())?;
         if ["geometry", "model"]
             .iter()
             .filter_map(|home| document.get(home).and_then(Value::as_object))
@@ -569,7 +569,7 @@ fn kinds(model: &Model) -> Value {
     let mut features = std::collections::BTreeMap::<String, u64>::new();
     // Only enum discriminants from CADIR are accepted; source-native kind/name strings
     // cannot enter the anonymous output.
-    let document = serde_json::to_value(&model.ir).unwrap_or(Value::Null);
+    let document = dutchman_core::ir_wire::to_value(&model.ir).unwrap_or(Value::Null);
     for surface in &model.ir.geometry.surfaces {
         let value = serde_json::to_value(&surface.geometry).unwrap_or(Value::Null);
         let geometry = if value.get("kind").and_then(Value::as_str) == Some("solved") {

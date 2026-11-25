@@ -99,7 +99,7 @@ pub(super) fn decode(bytes: &[u8]) -> ResultModel {
     ResultModel { model, report }
 }
 pub(super) fn wire(result: &ResultModel) -> Value {
-    let mut wire = serde_json::to_value(result.ir()).unwrap();
+    let mut wire = crate::ir_wire::to_value(result.ir()).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()

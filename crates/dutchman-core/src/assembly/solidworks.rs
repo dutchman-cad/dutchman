@@ -216,7 +216,7 @@ mod tests {
     }
 
     fn assembly_wire(cube: &Model, rows: Vec<Value>) -> Value {
-        let mut wire = serde_json::to_value(&cube.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&cube.ir).unwrap();
         wire["geometry"]["bodies"] = json!([]);
         wire["model"]["product_definitions"] = json!([]);
         wire["model"]["occurrences"] = json!(rows);
@@ -289,7 +289,7 @@ mod tests {
                 occurrence(5, "bad.sldprt", json!({"kind":"root"})),
             ],
         );
-        let mut wire = serde_json::to_value(&source.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&source.ir).unwrap();
         let prototype = wire["model"]["occurrences"][1]["prototype"].clone();
         wire["model"]["product_definitions"]
             .as_array_mut()

@@ -10,7 +10,8 @@ pub(super) fn resolve(
     open: &mut Vec<PathBuf>,
 ) -> Result<Option<Assembly>, Error> {
     let mut model = source.clone();
-    let document = serde_json::to_value(&model.ir).map_err(|err| Error::Decode(err.to_string()))?;
+    let document =
+        crate::ir_wire::to_value(&model.ir).map_err(|err| Error::Decode(err.to_string()))?;
     let objects = document
         .pointer("/native/fcstd/objects")
         .and_then(Value::as_array)
@@ -154,7 +155,7 @@ pub(super) fn resolve(
             if row.get("linked_prototype").is_some() && placement != IDENTITY {
                 let mut holder = only(
                     &selected,
-                    &serde_json::to_value(&selected.ir)
+                    &crate::ir_wire::to_value(&selected.ir)
                         .map_err(|err| (Stage::Map, err.to_string()))?,
                     &[],
                     HistoryOwner::Unknown,
@@ -252,7 +253,7 @@ pub(super) fn resolve(
 /// Select the linked definition, never the other objects in the same document. Definition
 /// geometry is already in its own frame; LinkTransform decides whether to carry its pose.
 fn select(model: &Model, object: &str) -> Result<(Model, Placement3x4), String> {
-    let mut document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
+    let mut document = crate::ir_wire::to_value(&model.ir).map_err(|err| err.to_string())?;
     if let Some(model) = document.get_mut("model") {
         products::project(model)?;
     }
@@ -480,7 +481,7 @@ mod tests {
         }
         model.ir.model.product_definitions.clear();
         model.ir.model.occurrences.clear();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["native"]["fcstd"] = json!({"objects": [{
             "id": "test:source:object#body", "name": "Standalone"
         }]});
@@ -506,7 +507,7 @@ mod tests {
         )
         .unwrap();
         let body = model.ir.geometry.bodies[0].id.as_str();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["product_definitions"] = json!([
             {"id": "test:assembly:product_definition#part", "kind": "part", "source_name": "TargetPart", "bom_properties": {}, "bodies": [], "sketches": []},
             {"id": "test:assembly:product_definition#body", "kind": "object", "source_name": "Body", "bodies": [body], "bom_properties": {}, "sketches": []},
@@ -567,7 +568,7 @@ struct Claimed {
 /// the document's original Body. cadmpeg does not say which Body a feature belongs to, so a
 /// feature is given to the Body it depends on, and a sketch to the Body whose features use it.
 fn claim_linked_bodies(model: &mut Model, report: &mut Report) {
-    let Ok(mut document) = serde_json::to_value(&model.ir) else {
+    let Ok(mut document) = crate::ir_wire::to_value(&model.ir) else {
         report.push(
             Severity::Degraded,
             "assembly",
@@ -586,7 +587,7 @@ fn claim_linked_bodies(model: &mut Model, report: &mut Report) {
     }
     let text = document.to_string();
     // cadmpeg is third-party code; a panic in it is a reason, not a crash.
-    let Ok(Ok(ir)) = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text)) else {
+    let Ok(Ok(ir)) = std::panic::catch_unwind(|| crate::ir_wire::from_str(&text)) else {
         report.push(
             Severity::Degraded,
             "assembly",

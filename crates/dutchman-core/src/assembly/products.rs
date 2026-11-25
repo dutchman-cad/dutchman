@@ -771,7 +771,7 @@ mod tests {
             parameter.product_definition = Some(root.id.clone());
         }
         model.ir.model.product_definitions = vec![root];
-        let document = serde_json::to_value(&model.ir).unwrap();
+        let document = crate::ir_wire::to_value(&model.ir).unwrap();
         let bodies = model
             .ir
             .geometry

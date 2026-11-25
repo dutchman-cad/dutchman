@@ -80,8 +80,8 @@ pub(crate) fn finish(
         // The converted core type has only three motion families. Read the neutral wire for
         // the other workbench families; never decode a native file here. A direct
         // occurrence correspondence is required, not guessed.
-        let wire =
-            serde_json::to_value(&model.ir).map_err(|error| Error::Encode(error.to_string()))?;
+        let wire = dutchman_core::ir_wire::to_value(&model.ir)
+            .map_err(|error| Error::Encode(error.to_string()))?;
         let raw = wire
             .pointer("/model/assembly_joints")
             .and_then(Value::as_array);

@@ -405,7 +405,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/generated_unit_cube.f3d");
         let mut model = crate::read(Format::FusionArchive, &path, &mut Report::default()).unwrap();
-        let mut ir = serde_json::to_value(&model.ir).unwrap();
+        let mut ir = crate::ir_wire::to_value(&model.ir).unwrap();
         ir["model"]["features"] = Value::Array(
             rows.iter()
                 .map(|(ordinal, suppressed)| {
@@ -413,7 +413,7 @@ mod tests {
                 })
                 .collect(),
         );
-        model.ir = serde_json::from_value(ir).unwrap();
+        model.ir = crate::ir_wire::from_value(ir).unwrap();
         model
     }
 

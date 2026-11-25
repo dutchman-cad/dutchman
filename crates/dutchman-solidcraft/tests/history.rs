@@ -33,7 +33,7 @@ fn line(key: u32, a: [f64; 2], b: [f64; 2]) -> Value {
 /// `extent` (`None`: one-sided blind) from `profile`.
 fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Model {
     let ir = cadmpeg_ir::examples::unit_cube().unwrap();
-    let mut wire = serde_json::to_value(&ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&ir).unwrap();
     wire["geometry"]["bodies"][0]["color"] = json!({"r": 0.8, "g": 0.2, "b": 0.1, "a": 1.0});
     let model = &mut wire["model"];
     model["sketches"] = json!([{
@@ -110,7 +110,7 @@ fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Mode
         {"id": "f3d:model:parameter#2", "owner": "f3d:model:feature#1", "ordinal": 1, "name": "side", "expression": "10 mm", "value": {"kind": "length", "value": 10.0}, "dependencies": [], "properties": {}},
     ]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         fidelity: None,
         name: "cube".to_owned(),
         source_file: Some("cube.f3d".to_owned()),
@@ -139,7 +139,7 @@ fn loft_section(section: Value) -> Value {
 
 fn loft_history(top: f64, change: impl FnOnce(&mut Value)) -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let model = &mut wire["model"];
     let mut sketches = model["sketches"].as_array().unwrap().clone();
     let (a, b) = (5.0 - top / 2.0, 5.0 + top / 2.0);
@@ -191,7 +191,7 @@ fn loft_history(top: f64, change: impl FnOnce(&mut Value)) -> Model {
     // The extrude's length parameter has no feature to own it now.
     model["parameters"] = json!([model["parameters"][1].clone()]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -202,7 +202,7 @@ const PATH: &str = "f3d:model:sketch#3";
 /// drawn in a sketch on XZ; `change` edits the sweep's definition.
 fn sweep_history(change: impl FnOnce(&mut Value)) -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let model = &mut wire["model"];
     let mut sketches = model["sketches"].as_array().unwrap().clone();
     sketches.push(json!({
@@ -229,7 +229,7 @@ fn sweep_history(change: impl FnOnce(&mut Value)) -> Model {
     ]);
     model["parameters"] = json!([model["parameters"][1].clone()]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -291,7 +291,7 @@ fn spatial_id(key: u32) -> String {
 /// and the sweep's definition.
 fn spatial_sweep_history(change: impl FnOnce(&mut Vec<Value>, &mut Value)) -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let model = &mut wire["model"];
     model["spatial_sketches"] = json!([{"id": SPATIAL, "name": "Rail", "profiles": []}]);
     let mut entities = vec![
@@ -327,7 +327,7 @@ fn spatial_sweep_history(change: impl FnOnce(&mut Vec<Value>, &mut Value)) -> Mo
     ]);
     model["parameters"] = json!([model["parameters"][1].clone()]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -589,7 +589,7 @@ fn whole_sketch_paths_require_one_non_construction_curve() {
         (false, true, None),
     ] {
         let base = sweep_history(|d| d["path"] = json!({"kind": "sketch", "value": PATH}));
-        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
         let entities = wire["model"]["sketch_entities"].as_array_mut().unwrap();
         if empty {
             entities.retain(|entity| entity["sketch"] != PATH);
@@ -600,7 +600,7 @@ fn whole_sketch_paths_require_one_non_construction_curve() {
             entities.push(extra);
         }
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..base
         };
         let (document, report) = convert(
@@ -637,7 +637,7 @@ fn railed_sweep_history(whole_sketch: bool) -> Model {
             d["guide_rail"]["path"] = json!({"kind": "sketch", "value": RAIL});
         }
     });
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let model = &mut wire["model"];
     let mut rail_sketch = model["sketches"]
         .as_array()
@@ -668,7 +668,7 @@ fn railed_sweep_history(whole_sketch: bool) -> Model {
         json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Rail sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": RAIL}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
     );
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -1042,7 +1042,7 @@ fn pointed_loft(vertex: bool, first: bool) -> Model {
     if !vertex {
         return model;
     }
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["geometry"]["points"]
         .as_array_mut()
         .unwrap()
@@ -1060,7 +1060,7 @@ fn pointed_loft(vertex: bool, first: bool) -> Model {
     feature_row(&mut wire, "f3d:model:feature#2")["definition"]["value"]["value"]["sections"]
         [index] = loft_section(json!({"kind": "vertex", "value": "synthetic:apex:vertex#0"}));
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -1094,11 +1094,11 @@ fn resolved_loft_point_ends_become_sketch_points() {
 #[test]
 fn generated_loft_apex_names_do_not_shadow_source_features() {
     let model = pointed_loft(false, false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     feature_row(&mut wire, "f3d:model:feature#3")["name"] = json!("Loft apex 3");
     feature_row(&mut wire, "f3d:model:feature#2")["name"] = json!("Loft apex 3 (2)");
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (document, _) = convert(
@@ -1121,7 +1121,7 @@ fn shared_sketch_loft() -> Model {
             "regions": [{"kind": "loops", "outer": 1, "holes": []}]},
         }));
     });
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketches"][0]["profiles"]
         .as_array_mut()
@@ -1144,7 +1144,7 @@ fn shared_sketch_loft() -> Model {
         "u_axis": {"x": 0.0, "y": 1.0, "z": 0.0},
     });
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -1156,7 +1156,7 @@ fn a_loft_section_taking_several_loops_of_its_sketch_is_refused() {
         json!({"kind": "sketch_profiles", "value": {"sketch": SKETCH, "profiles": [0, 1]}}),
     ] {
         let model = shared_sketch_loft();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let loft = wire["model"]["features"]
             .as_array_mut()
             .unwrap()
@@ -1165,7 +1165,7 @@ fn a_loft_section_taking_several_loops_of_its_sketch_is_refused() {
             .unwrap();
         loft["definition"]["value"]["value"]["sections"][0] = loft_section(section);
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..model
         };
         let (document, report) = convert(
@@ -1290,7 +1290,7 @@ fn railed_loft(top: f64) -> Model {
             {"kind": "sketch_curves", "value": {"sketch": RAIL, "curves": ["f3d:model:sketch-entity#31"]}}
         ]});
     });
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketches"].as_array_mut().unwrap().push(json!({
         "id": RAIL,
@@ -1318,7 +1318,7 @@ fn railed_loft(top: f64) -> Model {
         .unwrap();
     loft["ordinal"] = json!(3);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -1327,7 +1327,7 @@ fn railed_loft(top: f64) -> Model {
 /// construction line and a standalone point.
 fn whole_sketch_railed_loft(split: bool) -> Model {
     let model = railed_loft(10.0);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     let loft = m["features"]
         .as_array_mut()
@@ -1358,7 +1358,7 @@ fn whole_sketch_railed_loft(split: bool) -> Model {
     point["sketch"] = json!(RAIL);
     entities.extend([construction, point]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -1521,14 +1521,14 @@ fn ruled_and_surface_lofts_map_to_what_solidcraft_builds() {
         );
     }
     let railed = railed_loft(10.0);
-    let mut wire = serde_json::to_value(&railed.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&railed.ir).unwrap();
     for feature in wire["model"]["features"].as_array_mut().unwrap() {
         if feature["definition"]["value"]["kind"] == "loft" {
             feature["definition"]["value"]["value"]["ruled"] = json!(true);
         }
     }
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..railed
     };
     let (_, report) = convert(
@@ -1628,7 +1628,7 @@ fn types(document: &Value) -> Vec<(String, bool)> {
 
 fn transition_geometry_history(property: Option<&str>) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let features = wire["model"]["features"].as_array_mut().unwrap();
     let mut cut = features[1].clone();
     cut["id"] = json!("f3d:model:feature#3");
@@ -1648,7 +1648,7 @@ fn transition_geometry_history(property: Option<&str>) -> Model {
     later["definition"]["value"]["value"]["op"] = json!("cut");
     later["definition"]["value"]["value"]["extent"]["side"]["termination"]["length"] = json!(1.0);
     features.extend([cut, later]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -1862,7 +1862,7 @@ fn target_050_keeps_the_previous_compatible_history_document() {
 fn as_built_joints_between_features_do_not_stop_history() {
     for source_tag in ["As-built", "As-built Joint"] {
         let model = cube_with_history(10.0, first_profile(), None);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["features"][1]["ordinal"] = json!(2);
         wire["model"]["features"]
             .as_array_mut()
@@ -1874,7 +1874,7 @@ fn as_built_joints_between_features_do_not_stop_history() {
                 "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": source_tag, "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [],
             }));
         let changed = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..model
         };
         let (document, report) = convert(
@@ -1903,7 +1903,7 @@ fn as_built_joints_between_features_do_not_stop_history() {
 #[test]
 fn a_native_feature_named_as_built_still_stops_history() {
     let model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][1]["ordinal"] = json!(3);
     wire["model"]["features"]
         .as_array_mut()
@@ -1914,7 +1914,7 @@ fn a_native_feature_named_as_built_still_stops_history() {
         .unwrap()
         .push(json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Renamed joint", "source_tag": "As-built", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "As-built", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     let changed = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (_, report) = convert(
@@ -1993,10 +1993,10 @@ fn reference_sketch_history() -> Model {
         *definition =
             json!({"kind": "native", "value": {"kind": "Reference blocker", "parameters": {}}});
     });
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     feature_row(&mut wire, "f3d:model:feature#3")["ordinal"] = json!(2);
     feature_row(&mut wire, "f3d:model:feature#2")["ordinal"] = json!(1);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -2051,9 +2051,9 @@ fn flattened_history_keeps_mapped_sketches_hidden_in_source_order() {
 #[test]
 fn flattened_history_leaves_out_a_sketch_with_an_unresolved_plane() {
     let mut model = reference_sketch_history();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketches"][0]["placement"] = json!({"kind": "unresolved"});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -2073,10 +2073,10 @@ fn flattened_history_leaves_out_a_sketch_with_an_unresolved_plane() {
 #[test]
 fn flattened_history_leaves_out_a_sketch_that_does_not_map() {
     let mut model = reference_sketch_history();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketch_entities"][0]["geometry"] =
         json!({"kind": "native", "native_kind": "Reference curve"});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -2093,9 +2093,9 @@ fn flattened_history_leaves_out_a_sketch_that_does_not_map() {
 #[test]
 fn reference_sketches_preserve_duplicate_source_names() {
     let mut model = reference_sketch_history();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     feature_row(&mut wire, "f3d:model:feature#3")["name"] = json!("Base sketch");
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -2185,9 +2185,9 @@ fn a_displaced_replay_uses_only_the_imported_final_body() {
     let Some(cli) = solidcraft() else { return };
     for offset in [-4.0, 7.0] {
         let mut model = cube_with_history(10.0, first_profile(), None);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["sketches"][0]["placement"]["frame"]["origin"]["z"] = json!(offset);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
         let (document, report) = convert(&model, &writer);
         assert_reference_sketches(&document, 1);
@@ -2308,7 +2308,7 @@ fn every_measured_replay_difference_removes_the_edited_body_and_reports_the_amou
 #[test]
 fn a_measured_difference_keeps_the_source_base_before_the_failed_edit() {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     let features = wire["model"]["features"].as_array_mut().unwrap();
     for feature in features.iter_mut() {
@@ -2328,10 +2328,10 @@ fn a_measured_difference_keeps_the_source_base_before_the_failed_edit() {
             }}
         }),
     );
-    let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+    let nests = dutchman_core::ir_wire::to_value(&based_cube_changed_later(true).ir).unwrap();
     wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
     wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#0");
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let writer = SolidCraftWriter::new()
         .evaluator(std::sync::Arc::new(MeasuredReplayDifference("position")));
     let (document, report) = convert(&model, &writer);
@@ -2350,7 +2350,7 @@ fn a_measured_difference_keeps_the_source_base_before_the_failed_edit() {
 #[test]
 fn a_retained_prefix_with_a_measured_source_state_difference_uses_the_final_import() {
     let mut model = partial_history_model();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -2359,7 +2359,7 @@ fn a_retained_prefix_with_a_measured_source_state_difference_uses_the_final_impo
         .unwrap()["source_properties"] = json!({
         "body_centers": "1:5,5,12", "body_centers_exact": "1"
     });
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let writer =
         SolidCraftWriter::new().evaluator(std::sync::Arc::new(RecordedEvaluator::default()));
     let (document, report) = convert(&model, &writer);
@@ -2567,7 +2567,7 @@ fn a_converted_dimension_drives_the_geometry_in_solidcraft() {
 /// to 10 mm out from Z, turned about the Z axis by `extent`.
 fn ring_history(extent: Value) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketches"][0]["placement"]["frame"]["normal"] = json!({"x": 0.0, "y": 1.0, "z": 0.0});
     // On XZ, sketch v runs along -Z.
@@ -2582,16 +2582,16 @@ fn ring_history(extent: Value) -> Model {
                     "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
                     "direction": {"x": 0.0, "y": 0.0, "z": 1.0},
                 }, "extent": extent}}, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
 fn changed_ring(change: impl FnOnce(&mut Value)) -> Model {
     let mut model = ring_history(json!({"kind": "one_sided",
         "termination": {"kind": "angle", "angle": std::f64::consts::TAU}}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     change(&mut wire["model"]["features"][1]["definition"]["value"]["value"]["construction"]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -2608,7 +2608,7 @@ fn written(model: &Model) -> (Vec<u8>, Report) {
 
 fn helical_history(change: impl FnOnce(&mut Value)) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketch_constraints"] = json!([]);
     m["sketch_entities"] = json!([entity(
@@ -2639,7 +2639,7 @@ fn helical_history(change: impl FnOnce(&mut Value)) -> Model {
         "tolerance": 0.0001, "allow_multi_profile_faces": false
     }}}}});
     change(&mut m["features"][1]["definition"]["value"]["operation"]["value"]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -2707,13 +2707,13 @@ fn helical_sweeps_keep_the_profile_axis_law_hand_and_operation() {
                             &cube_with_history(10.0, first_profile(), None).ir,
                         )
                         .unwrap();
-                        let mut wire = serde_json::to_value(&model.ir).unwrap();
+                        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
                         let features = wire["model"]["features"].as_array_mut().unwrap();
                         features[1]["ordinal"] = json!(2);
                         let mut block = base["model"]["features"][1].clone();
                         block["id"] = json!("f3d:model:feature#block");
                         features.insert(1, block);
-                        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+                        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
                     }
                     let (document, report) = convert(
                         &model,
@@ -2873,7 +2873,7 @@ fn one_sided_revolves_follow_the_oriented_axis() {
                 for placed in [false, true] {
                     let mut model = ring_history(json!({"kind": "one_sided",
                     "termination": {"kind": "angle", "angle": std::f64::consts::PI / 3.0}}));
-                    let mut wire = serde_json::to_value(&model.ir).unwrap();
+                    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
                     wire["model"]["sketches"][0]["placement"]["frame"]["normal"]["y"] =
                         json!(normal);
                     wire["model"]["features"][1]["definition"]["value"]["value"]["construction"]
@@ -2899,7 +2899,7 @@ fn one_sided_revolves_follow_the_oriented_axis() {
                             "direction": {"x": axis, "y": 0.0, "z": 0.0}
                         });
                     }
-                    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+                    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
                     let (design, report) = written(&model);
                     assert!(
                         history_line(&report).starts_with("2 of 2 features rebuilt"),
@@ -2967,7 +2967,7 @@ fn one_sided_revolves_keep_selected_curves_and_a_sketch_axis() {
     for axis in [1.0, -1.0] {
         let mut model = ring_history(json!({"kind": "one_sided",
             "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         // Move the axis to the inner profile edge. Its sketch line runs opposite +Z.
         let construction = &mut wire["model"]["features"][1]["definition"]["value"]["value"]
             ["construction"]["value"];
@@ -2982,7 +2982,7 @@ fn one_sided_revolves_keep_selected_curves_and_a_sketch_axis() {
             .as_array_mut()
             .unwrap()
             .push(line(5, [-10.0, 0.0], [-10.0, -10.0]));
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -3014,7 +3014,7 @@ fn one_sided_revolves_bound_circular_profiles() {
     for radial in [7.0, -7.0, 0.0] {
         let mut model = ring_history(json!({"kind": "one_sided",
             "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["sketch_entities"] = json!([entity(
             1,
             json!({"kind": "circle",
@@ -3024,7 +3024,7 @@ fn one_sided_revolves_bound_circular_profiles() {
             ["profile"] = whole_sketch();
         wire["model"]["sketches"][0]["profiles"] =
             json!([[{"entity": "f3d:model:sketch-entity#1", "reversed": false}]]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (design, report) = written(&model);
         if radial == 0.0 {
             assert!(history_line(&report).contains("sweep side is not proven"));
@@ -3057,14 +3057,14 @@ fn one_sided_revolves_bound_circular_profiles() {
 fn a_one_sided_revolve_with_profiles_on_both_sides_names_the_missing_proof() {
     let mut model = ring_history(json!({"kind": "one_sided",
         "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     for entity in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
         for end in ["start", "end"] {
             let point = &mut entity["geometry"][end];
             point["u"] = json!(point["u"].as_f64().unwrap() - 7.5);
         }
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = written(&model);
     assert!(history_line(&report)
         .contains("selected profile curves must lie on one side of the oriented axis"));
@@ -3422,7 +3422,7 @@ const HOLES: &str = "f3d:model:sketch#3";
 /// (5, 5) and a simple hole of `diameter` drilled down from it; `change` edits the hole.
 fn holed_cube(diameter: f64, change: impl FnOnce(&mut Value)) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketches"].as_array_mut().unwrap().push(
         json!({"id": HOLES, "name": "Holes", "placement": {"kind": "resolved", "frame": {
@@ -3438,7 +3438,7 @@ fn holed_cube(diameter: f64, change: impl FnOnce(&mut Value)) -> Model {
     let features = m["features"].as_array_mut().unwrap();
     features.push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Hole sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": HOLES}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     features.push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Hole", "suppressed": false, "dependencies": ["f3d:model:feature#3", "f3d:model:feature#2"], "definition": {"kind": "operation", "value": hole}, "source_properties": {}, "source_content": [], "outputs": []}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -3466,14 +3466,14 @@ fn a_simple_hole_at_a_sketch_circle_becomes_a_solidcraft_hole() {
 /// 10 x 10 footprint.
 fn holed_box(height: f64) -> Model {
     let mut model = historical_hole(false, directed([5.0, 5.0, 10.0], [0.0, 0.0, -1.0]));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let identity = [
         [1.0, 0.0, 0.0, 0.0],
         [0.0, 1.0, 0.0, 0.0],
         [0.0, 0.0, 1.0, 0.0],
     ];
     wire["model"]["features"][1]["definition"]["value"] = block([10.0, 10.0, height], identity);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -4009,7 +4009,7 @@ fn countersink_to_face_with_later_box(to_tip: bool) -> Model {
         hole["bottom"] = json!({"kind": "angled",
             "included_angle": 118_f64.to_radians(), "depth_to_tip": to_tip});
     });
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -4019,7 +4019,7 @@ fn countersink_to_face_with_later_box(to_tip: bool) -> Model {
                 [1.0, 0.0, 0.0, 20.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]
             ])}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []
         }));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -4061,7 +4061,7 @@ fn countersink_to_face_with_a_drill_point_keeps_later_history() {
 fn pointed_to_face_holes_still_require_a_proven_earlier_cap() {
     for native in [false, true] {
         let mut model = countersink_to_face_with_later_box(false);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         if native {
             wire["model"]["features"][3]["definition"]["value"]["value"]["extent"]["face"] =
                 json!({"kind": "native", "value": "unresolved-face"});
@@ -4069,7 +4069,7 @@ fn pointed_to_face_holes_still_require_a_proven_earlier_cap() {
             // The saved bottom is z=0; the earlier extrusion instead starts at z=2.
             wire["model"]["sketches"][0]["placement"]["frame"]["origin"]["z"] = json!(2.0);
         }
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (_, report) = convert(
             &model,
             &SolidCraftWriter::new()
@@ -4133,11 +4133,11 @@ fn solidcraft_replays_countersink_to_face_with_a_later_fillet() {
         return;
     }
     let mut model = countersink_to_face_with_later_box(false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // Reuse the synthetic vertical-corner input geometry, after the hole instead
     // of directly after the extrusion. This edge is unchanged by the hole.
     let blend = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
-    let source = serde_json::to_value(&blend.ir).unwrap();
+    let source = dutchman_core::ir_wire::to_value(&blend.ir).unwrap();
     let mut fillet = source["model"]["features"][2].clone();
     fillet["id"] = json!("f3d:model:feature#5");
     fillet["ordinal"] = json!(4);
@@ -4148,7 +4148,7 @@ fn solidcraft_replays_countersink_to_face_with_a_later_fillet() {
     features.push(fillet);
     wire["model"]["feature_input_topologies"] = source["model"]["feature_input_topologies"].clone();
     wire["model"]["feature_input_topologies"][0]["input_of"] = json!("f3d:model:feature#5");
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (bytes, report) = written_with(&model, &replaying(&cli));
     assert!(
         history_line(&report).starts_with("5 of 5 features rebuilt"),
@@ -4242,10 +4242,10 @@ fn historical_hole(round: bool, placement: Value) -> Model {
             .remove("feature_input")
             .unwrap();
     });
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["feature_input_topologies"] = json!([{"id": HOLE_INPUT, "input_of": "f3d:model:feature#4", "edges": [], "faces": [HOLE_FACE], "edge_geometry": input["edge_geometry"], "bodies": [], "face_owners": [], "vertices": []}]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -4305,7 +4305,7 @@ fn a_hole_on_a_historical_plane_is_proven_against_the_cap_it_drills_into() {
 fn a_hole_on_a_historical_plane_the_cube_never_had_is_refused() {
     // The bottom of the cube is a cap too, but this plane is neither of the extrude's.
     let model = historical_hole(false, directed([5.0, 5.0, 10.0], [0.0, 0.0, -1.0]));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     for row in wire["model"]["feature_input_topologies"][0]["edge_geometry"]
         .as_array_mut()
         .unwrap()
@@ -4315,7 +4315,7 @@ fn a_hole_on_a_historical_plane_the_cube_never_had_is_refused() {
         }
     }
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let why = mapped_hole(&model).unwrap_err();
@@ -4327,7 +4327,7 @@ fn a_hole_on_a_historical_plane_the_cube_never_had_is_refused() {
 /// input boundary describes the resulting top face, never the saved final B-rep.
 fn curved_hole(rounded: bool, placement: Value) -> Model {
     let model = historical_hole(false, placement);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let earlier = if rounded {
         let blend = blend_on(
             cube_with_history(10.0, first_profile(), None),
@@ -4336,7 +4336,7 @@ fn curved_hole(rounded: bool, placement: Value) -> Model {
             false,
             0.0,
         );
-        let blend = serde_json::to_value(&blend.ir).unwrap();
+        let blend = dutchman_core::ir_wire::to_value(&blend.ir).unwrap();
         wire["model"]["feature_input_topologies"]
             .as_array_mut()
             .unwrap()
@@ -4393,7 +4393,7 @@ fn curved_hole(rounded: bool, placement: Value) -> Model {
         ));
     }
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -4504,7 +4504,7 @@ fn solidcraft_replays_curved_hole_entries_after_a_vertical_fillet_or_through_hol
 fn solidcraft_replays_a_later_curved_hole_after_signing_a_bottom_entry_axis() {
     let Some(cli) = curved_hole_cli() else { return };
     let model = curved_hole(false, axis_through([7.0, 5.0, -2.0], [0.0, 0.0, 1.0]));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // Same source boundary orientation as the top, but on the bottom plane: replay
     // has to turn the unsigned axis inward before proving the later top face.
     for row in wire["model"]["feature_input_topologies"][0]["edge_geometry"]
@@ -4546,7 +4546,7 @@ fn solidcraft_replays_a_later_curved_hole_after_signing_a_bottom_entry_axis() {
         .unwrap()
         .push(state);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (bytes, report) = written_with(&model, &replaying(&cli));
@@ -4572,12 +4572,12 @@ fn solidcraft_refuses_curved_hole_entries_with_wrong_side_or_unproven_boundaries
         history_line(&report)
     );
     // The circle has another centre/radius, so it cannot prove the earlier hole's rim.
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][3]["definition"]["value"]["value"]["placements"] =
         json!([directed([7.0, 5.0, 10.0], [0.0, 0.0, -1.0])]);
     wire["model"]["feature_input_topologies"][0]["edge_geometry"][4]["interior"]["x"] = json!(1.0);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (_, report) = written_with(&model, &replaying(&cli));
@@ -4680,7 +4680,7 @@ fn a_hole_can_select_sketch_points_or_circle_centres() {
                 "sketch": HOLES, "entities": ["f3d:model:sketch-entity#9"]}});
             hole["profile_filter"] = json!(if point { "points" } else { "circles" });
         });
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let entities = wire["model"]["sketch_entities"].as_array_mut().unwrap();
         if point {
             entities.last_mut().unwrap()["geometry"] =
@@ -4692,7 +4692,7 @@ fn a_hole_can_select_sketch_points_or_circle_centres() {
             } else {
                 json!({"kind": "circle", "center": {"u": 3.0, "v": 3.0}, "radius": 1.0})
             }, "endpoint_refs": []}));
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -5113,10 +5113,10 @@ fn holes_refuse_unproven_faces_and_unsupported_geometry() {
                     "kind": "faces", "value": ["synthetic:cube:face#top"]}});
             }
         });
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["side"]
             ["termination"]["length"] = json!(8.0);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (_, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -5165,7 +5165,7 @@ fn solidcraft_drills_spatial_and_to_face_holes_and_drilled_forms() {
 /// 10 mm.
 fn triangle_history() -> Model {
     let mut model = cube_with_history(10.0, whole_sketch(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketches"][0]["profiles"] = json!([]);
     m["sketch_entities"] = json!([
@@ -5208,7 +5208,7 @@ fn triangle_history() -> Model {
     m["parameters"][1]["value"] = json!({"kind": "length", "value": 40.0});
     let theta = 30.0_f64.atan2(40.0);
     m["parameters"].as_array_mut().unwrap().push(json!({"id": "f3d:model:parameter#3", "owner": "f3d:model:feature#1", "ordinal": 2, "name": "theta", "expression": format!("{} deg", theta.to_degrees()), "value": {"kind": "angle", "value": theta}, "dependencies": [], "properties": {}}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -5267,7 +5267,7 @@ fn crossed_profile_history(region: bool) -> Model {
         first_profile()
     };
     let mut model = cube_with_history(10.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     let member = |key: u32, reversed: bool| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "reversed": reversed});
     m["sketches"][0]["profiles"] = json!([
@@ -5296,7 +5296,7 @@ fn crossed_profile_history(region: bool) -> Model {
         line(9, [30.0, 10.0], [20.0, 10.0]),
         line(10, [20.0, 10.0], [20.0, 0.0]),
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -5366,7 +5366,7 @@ fn stray_curve_history(change: impl FnOnce(&mut Value)) -> Model {
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
         "regions": [{"kind": "loops", "outer": 0, "holes": []}]}});
     let mut model = cube_with_history(10.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketch_entities"]
         .as_array_mut()
         .unwrap()
@@ -5375,7 +5375,7 @@ fn stray_curve_history(change: impl FnOnce(&mut Value)) -> Model {
             line(6, [2.0, 2.0], [4.0, 3.0]),
         ]);
     change(&mut wire["model"]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -5442,7 +5442,7 @@ fn whole_and_trimmed_history() -> Model {
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
         "regions": [{"kind": "loops", "outer": 0, "holes": [1]}]}});
     let mut model = cube_with_history(2.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketch_entities"]
         .as_array_mut()
@@ -5467,7 +5467,7 @@ fn whole_and_trimmed_history() -> Model {
             boundary(1, [0.0, 0.3]), boundary(5, [0.0, 1.0]),
             boundary(3, [0.7, 1.0]), boundary(4, [0.0, 1.0])], "hole_boundaries": []}]}});
     m["features"].as_array_mut().unwrap().push(cut);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -5525,7 +5525,7 @@ fn whole_and_notch_history() -> Model {
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
         "regions": [{"kind": "loops", "outer": 0, "holes": [1]}]}});
     let mut model = cube_with_history(2.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketch_entities"].as_array_mut().unwrap().extend([
         line(5, [3.0, 10.0], [3.0, 8.0]),
@@ -5552,7 +5552,7 @@ fn whole_and_notch_history() -> Model {
             boundary(3, [0.5, 0.7]), boundary(5, [0.0, 1.0]),
             boundary(7, [0.0, 1.0]), boundary(8, [0.0, 1.0])], "hole_boundaries": []}]}});
     m["features"].as_array_mut().unwrap().push(cut);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -5607,7 +5607,7 @@ fn narrow_gap_history(width: f64) -> Model {
         {"kind": "trimmed", "outer_boundary": [boundary(5), boundary(6), boundary(7), boundary(8)], "hole_boundaries": []}
     ]}});
     let mut model = cube_with_history(2.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketch_entities"]
         .as_array_mut()
         .unwrap()
@@ -5617,7 +5617,7 @@ fn narrow_gap_history(width: f64) -> Model {
             line(7, [20.0 + width, 10.0], [20.0, 10.0]),
             line(8, [20.0, 10.0], [20.0, 0.0]),
         ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -5654,7 +5654,7 @@ fn narrow_annulus_history(width: f64) -> Model {
         {"kind": "trimmed", "outer_boundary": [boundary(6)], "hole_boundaries": []}
     ]}});
     let mut model = cube_with_history(2.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketch_entities"]
         .as_array_mut()
         .unwrap()
@@ -5662,7 +5662,7 @@ fn narrow_annulus_history(width: f64) -> Model {
             circle(5, [20.0, 0.0], 1.0),
             circle(6, [20.0, 0.0], 1.0 - width),
         ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -5693,7 +5693,7 @@ fn trimmed_narrow_annulus_and_its_disc_select_exactly_their_own_interiors() {
 /// to it even though the source annulus stays centred at (20, 0).
 fn merged_centre_annulus_history(width: f64) -> Model {
     let mut model = narrow_annulus_history(width);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let entities = wire["model"]["sketch_entities"].as_array_mut().unwrap();
     entities.retain(|e| {
         e["id"] != "f3d:model:sketch-entity#5" && e["id"] != "f3d:model:sketch-entity#6"
@@ -5710,7 +5710,7 @@ fn merged_centre_annulus_history(width: f64) -> Model {
         circle(5, [20.0, 0.0], 0.01),
         circle(6, [20.0, 0.0], 0.01 - width),
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -5787,7 +5787,7 @@ fn shared_circle_regions() -> Model {
             {"entity": "f3d:model:sketch-entity#2", "parameter_range": [0.0, 1.0], "reversed": true}], "hole_boundaries": []}
     ]}});
     let mut model = cube_with_history(2.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketches"][0]["profiles"] = json!([
         [{"entity": "f3d:model:sketch-entity#1", "reversed": false}]
     ]);
@@ -5799,7 +5799,7 @@ fn shared_circle_regions() -> Model {
     ]);
     // Keep the example body's end cap from purporting to prove a circular profile.
     wire["model"]["features"][1]["outputs"] = json!([]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -5839,7 +5839,7 @@ fn solidcraft_replays_regions_resolved_by_a_shared_circle() {
 fn trimmed_half_disc_revolve(upper: bool, angle: f64) -> Model {
     let mut model = ring_history(json!({"kind": "one_sided",
         "termination": {"kind": "angle", "angle": angle}}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketch_entities"] = json!([circle(1, [0.0, 0.0], 4.0), line(2, [-8.0, 0.0], [8.0, 0.0])]);
     m["sketches"][0]["profiles"] =
@@ -5858,7 +5858,7 @@ fn trimmed_half_disc_revolve(upper: bool, angle: f64) -> Model {
     construction["profile"] = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
         "regions": [regions[usize::from(!upper)].clone()]}});
     construction["axis"]["direction"] = json!({"x": 1.0, "y": 0.0, "z": 0.0});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -5919,7 +5919,7 @@ fn unused_loop_history(tab: bool) -> Model {
     let profile =
         json!({"kind": "sketch_regions", "value": {"sketch": SKETCH, "regions": [region]}});
     let mut model = cube_with_history(10.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let id =
         |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "reversed": false});
     let (entities, loops) = if tab {
@@ -5947,7 +5947,7 @@ fn unused_loop_history(tab: bool) -> Model {
         .as_array_mut()
         .unwrap()
         .extend(loops);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -5998,10 +5998,10 @@ fn solidcraft_replays_a_region_beside_a_loop_no_feature_takes() {
 /// The square and the tab beside it, both taken by the extrude.
 fn tab_taken_history() -> Model {
     let mut model = unused_loop_history(true);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]["value"]["value"]
         ["regions"] = json!([{"kind": "loops", "outer": 0, "holes": []}, {"kind": "loops", "outer": 1, "holes": []}]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -6040,7 +6040,7 @@ fn crossing_holes_history() -> Model {
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
         "regions": [{"kind": "loops", "outer": 0, "holes": [1, 2]}]}});
     let mut model = cube_with_history(10.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let id =
         |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "reversed": false});
     let source = &mut wire["model"];
@@ -6055,7 +6055,7 @@ fn crossing_holes_history() -> Model {
         .as_array_mut()
         .unwrap()
         .extend([json!([id(11)]), json!([id(12), id(13), id(14), id(15)])]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -6101,7 +6101,7 @@ fn listed_square_history() -> Model {
     let profile = json!({"kind": "sketch_profiles", "value": {"sketch": SKETCH,
         "profiles": [0]}});
     let mut model = cube_with_history(10.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let id =
         |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "reversed": false});
     let source = &mut wire["model"];
@@ -6114,7 +6114,7 @@ fn listed_square_history() -> Model {
         .as_array_mut()
         .unwrap()
         .extend([json!([id(11)]), json!([id(12)])]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -6176,7 +6176,7 @@ fn a_curve_another_feature_names_stays_real_geometry() {
 #[test]
 fn overlapping_crossing_curves_keep_the_refusal() {
     let mut model = crossed_profile_history(false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // A second line along a diagonal, in the crossed loop too: a line in no loop would bound
     // nothing selected and be construction.
     wire["model"]["sketch_entities"]
@@ -6189,7 +6189,7 @@ fn overlapping_crossing_curves_keep_the_refusal() {
         .as_array_mut()
         .unwrap();
     crossed.extend([member(false), member(true)]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -6205,7 +6205,7 @@ fn overlapping_crossing_curves_keep_the_refusal() {
 /// A bow tie uses each curve once but intersects itself between curve endpoints.
 fn bow_tie_profile() -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketch_constraints"] = json!([]);
     wire["model"]["sketch_entities"] = json!([
         line(1, [0.0, 0.0], [10.0, 10.0]),
@@ -6213,7 +6213,7 @@ fn bow_tie_profile() -> Model {
         line(3, [0.0, 10.0], [10.0, 0.0]),
         line(4, [10.0, 0.0], [0.0, 0.0]),
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -6244,7 +6244,7 @@ fn nested_native_profile(radii: &[f64]) -> Model {
         "sketch": SKETCH, "selections": ["inventor:native:profile-selection#1"],
     }});
     let mut model = cube_with_history(10.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketch_constraints"] = json!([]);
     let entities: Vec<Value> = radii
@@ -6264,7 +6264,7 @@ fn nested_native_profile(radii: &[f64]) -> Model {
         .collect();
     m["sketch_entities"] = json!(entities);
     m["sketches"][0]["profiles"] = json!(profiles);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -6319,7 +6319,7 @@ fn panel_region() -> Model {
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
         "regions": [{"kind": "loops", "outer": 0, "holes": (2..22).rev().collect::<Vec<_>>()}]}});
     let mut model = cube_with_history(10.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketch_constraints"] = json!([]);
     let mut entities = vec![
@@ -6361,7 +6361,7 @@ fn panel_region() -> Model {
     }
     m["sketch_entities"] = json!(entities);
     m["sketches"][0]["profiles"] = json!(profiles);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -6403,7 +6403,7 @@ fn explicit_regions_keep_unused_layout_lines_out_of_their_holes() {
         json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
         "regions": [{"kind": "trimmed", "outer_boundary": [{"entity": "f3d:model:sketch-entity#9", "parameter_range": [0.0, 1.0], "reversed": false}], "hole_boundaries": []}]}}),
     ] {
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let mut other = wire["model"]["features"][1].clone();
         other["id"] = json!("synthetic:panel:feature#3");
         other["ordinal"] = json!(2);
@@ -6416,7 +6416,7 @@ fn explicit_regions_keep_unused_layout_lines_out_of_their_holes() {
             .unwrap()
             .push(other);
         let mut shared = model.clone();
-        shared.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        shared.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(&shared, &writer);
         if wire["model"]["features"][2]["definition"]["value"]["value"]["profile"]["value"]["kind"]
             == "native"
@@ -6429,7 +6429,7 @@ fn explicit_regions_keep_unused_layout_lines_out_of_their_holes() {
             .iter()
             .all(|c| c["construction"] == false));
         wire["model"]["features"][2]["suppressed"] = json!(true);
-        shared.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        shared.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, _) = convert(&shared, &writer);
         // The layout lines are entities 5 to 8, found by id: the curves are in cadmpeg's id order.
         let keys: Vec<u32> = (1..=28).collect();
@@ -6472,10 +6472,10 @@ fn an_inventor_shaped_extrude_needs_confirmation_for_several_profiles() {
     );
     // The same sketch with its loop listed twice, as two profiles.
     let mut model = cube_with_history(10.0, inventor_profile, Some(extent));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let profiles = wire["model"]["sketches"][0]["profiles"].clone();
     wire["model"]["sketches"][0]["profiles"] = json!([profiles[0], profiles[0]]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(&model, &writer);
     assert_reference_sketches(&document, 1);
     assert_eq!(
@@ -6655,7 +6655,7 @@ fn assembly_with_face_colours() -> Model {
     let mut model = assembly_of_histories();
     let assembly = model.assembly.as_mut().unwrap();
     for (part, recolour) in assembly.parts.iter_mut().zip([true, false]) {
-        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&part.ir).unwrap();
         if recolour {
             wire["geometry"]["bodies"][0]["color"] =
                 json!({"r": 0.0, "g": 1.0, "b": 0.0, "a": 1.0});
@@ -6666,7 +6666,7 @@ fn assembly_with_face_colours() -> Model {
                 }
             }
         }
-        part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        part.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     }
     model
 }
@@ -6755,20 +6755,20 @@ fn inspecting_an_assembly_maps_each_parts_history() {
 /// The cube history followed by a pattern of its extrude, laid out by `layout`.
 fn patterned(layout: Value) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
         .push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Copies", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {"seeds": [{"kind": "feature", "value": "f3d:model:feature#2"}], "pattern": layout}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
 /// Change a synthetic pattern's operands without passing through a native decoder.
 fn pattern_seeds(mut model: Model, seeds: Value) -> Model {
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][2]["definition"]["value"]["value"]["seeds"] = seeds;
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -7093,7 +7093,7 @@ fn compatibility_floor_blocks_composite_chains_but_keeps_single_stages() {
             .push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Later copies", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {"seeds": [{"kind": "feature", "value": "f3d:model:feature#3"}], "pattern": {"kind": "mirror", "plane_origin": {"x": 0.0, "y": 20.0, "z": 0.0},
                     "plane_normal": {"x": 0.0, "y": 1.0, "z": 0.0}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..patterned(layout)
         };
         let (_, report) = convert(&model, &writer);
@@ -7175,12 +7175,12 @@ fn later_patterns_can_select_a_whole_composite_mirror_result() {
             "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}},
         {"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 60.0, "count": 3, "omitted_instances": [], "symmetric": false}}
     ]}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // Colliding source and helper names must still select the right timeline features.
     wire["model"]["features"][0]["name"] = json!("Copies stage 1");
     wire["model"]["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Copies", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {"seeds": [{"kind": "feature", "value": "f3d:model:feature#3"}], "pattern": {"kind": "linear", "direction": {"x": 0.0, "y": 1.0, "z": 0.0}, "spacing": 30.0, "count": 2, "omitted_instances": [], "symmetric": false}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (document, report) = convert(&model, &composite_writer());
@@ -7286,7 +7286,7 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
                     .abs()
                     < 1e-9
             );
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
             for feature in wire["model"]["features"].as_array_mut().unwrap() {
                 if feature["name"] == "PolarPattern" {
                     feature["definition"]["value"]["operation"]["value"]["pattern"]["axis_dir"] =
@@ -7295,7 +7295,7 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
             }
             if let Some(cli) = cli.clone() {
                 let axis_only = Model {
-                    ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                    ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
                     ..model.clone()
                 };
                 let (_, report) = convert(
@@ -7320,7 +7320,7 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
                 }
             }
             Model {
-                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
                 ..model
             }
         } else {
@@ -7354,7 +7354,7 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
 /// Reuse the sweep fixture's mapped path sketch, lengthened to contain three copies.
 fn path_pattern(whole_sketch: bool) -> Model {
     let mut model = sweep_history(|_| {});
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     for row in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
         if row["id"] == "f3d:model:sketch-entity#21" {
             row["geometry"]["end"]["v"] = json!(60.0);
@@ -7377,7 +7377,7 @@ fn path_pattern(whole_sketch: bool) -> Model {
             "curves": ["f3d:model:sketch-entity#21"]}})
     };
     features.push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Copies", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {"seeds": [{"kind": "feature", "value": "f3d:model:feature#2"}], "pattern": {"kind": "curve_driven", "path": path, "spacing": 20.0, "count": 3}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -7511,10 +7511,10 @@ fn patterns_refuse_unnamed_bodies_and_excessive_rectangular_products() {
         ),
         json!([{"kind": "bodies", "value": {"kind": "bodies", "value": ["synthetic:cube:body#0"]}}]),
     );
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][1]["outputs"] = json!([]);
     let unnamed = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (_, report) = convert(
@@ -7652,13 +7652,13 @@ fn bounds(cli: &Path, design: &[u8]) -> Vec<([f64; 3], [f64; 3])> {
 #[test]
 fn a_face_colour_becomes_a_face_look_on_that_face() {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     for face in wire["geometry"]["faces"].as_array_mut().unwrap() {
         if face["id"] == "synthetic:cube:face#top" {
             face["color"] = json!({"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0});
         }
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -7733,7 +7733,7 @@ fn nonuniform_spline_profiles_keep_one_closed_loop_and_extrude() {
             "regions": [{"kind": "loops", "outer": 0, "holes": []}]}}),
     ] {
         let mut model = cube_with_history(10., profile, None);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let m = &mut wire["model"];
         m["sketch_entities"] = json!([
             entity(1, nonuniform_spline_geometry()),
@@ -7741,7 +7741,7 @@ fn nonuniform_spline_profiles_keep_one_closed_loop_and_extrude() {
         ]);
         m["sketches"][0]["profiles"] = json!([[{"entity": "f3d:model:sketch-entity#1", "reversed": false}, {"entity": "f3d:model:sketch-entity#2", "reversed": false}]]);
         m["sketch_constraints"] = json!([]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -7791,14 +7791,14 @@ fn nonuniform_spline_sweep_paths_expand_the_source_curve() {
                 json!({"kind": "sketch_curves", "value": {"sketch": PATH, "curves": ["f3d:model:sketch-entity#20"]}})
             };
         });
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         for entity in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
             if entity["sketch"] == PATH {
                 entity["id"] = json!("f3d:model:sketch-entity#20");
                 entity["geometry"] = nonuniform_spline_geometry();
             }
         }
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -7821,7 +7821,7 @@ fn nonuniform_spline_sweep_paths_expand_the_source_curve() {
 #[test]
 fn nonuniform_spline_constraints_follow_chain_endpoints_and_fixed_pieces() {
     let mut model = bounded_conic_history(nonuniform_spline_geometry(), [0., 0.], [10., 0.]);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let mut tangent = line(3, [10., 0.], [12., -4.]);
     tangent["construction"] = json!(true);
     wire["model"]["sketch_entities"]
@@ -7843,7 +7843,7 @@ fn nonuniform_spline_constraints_follow_chain_endpoints_and_fixed_pieces() {
         {"id": "f3d:model:sketch-constraint#5", "sketch": SKETCH,
          "definition": {"kind": "curvature", "first": "f3d:model:sketch-entity#1", "second": "f3d:model:sketch-entity#3"}}
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -7885,7 +7885,7 @@ fn nonuniform_spline_constraints_follow_chain_endpoints_and_fixed_pieces() {
 #[test]
 fn nonuniform_spline_projected_copies_keep_every_control_point() {
     let mut model = bounded_conic_history(nonuniform_spline_geometry(), [0., 0.], [10., 0.]);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let mut copy = entity(3, nonuniform_spline_geometry());
     copy["construction"] = json!(true);
     wire["model"]["sketch_entities"]
@@ -7896,7 +7896,7 @@ fn nonuniform_spline_projected_copies_keep_every_control_point() {
         {"id": "f3d:model:sketch-constraint#1", "sketch": SKETCH,
          "definition": {"kind": "projected_copy", "source": "f3d:model:sketch-entity#1", "result": "f3d:model:sketch-entity#3"}}
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -7953,7 +7953,7 @@ fn nonuniform_spline_projected_copies_keep_every_control_point() {
 
 fn periodic_spline_profile(profile: Value) -> Model {
     let mut model = cube_with_history(10.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketches"][0]["profiles"] =
         json!([[{"entity": "f3d:model:sketch-entity#1", "reversed": false}]]);
     wire["model"]["sketch_constraints"] = json!([]);
@@ -7966,7 +7966,7 @@ fn periodic_spline_profile(profile: Value) -> Model {
                 {"u": 10.0, "v": 10.0}, {"u": -10.0, "v": 10.0},
                 {"u": -10.0, "v": -10.0}, {"u": 10.0, "v": -10.0}]}}})
     )]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -7994,12 +7994,12 @@ fn periodic_spline_profiles_keep_editable_history_and_profile_selections() {
 #[test]
 fn weighted_periodic_splines_name_solidcrafts_missing_weights() {
     let mut model = periodic_spline_profile(whole_sketch());
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let curve = &mut wire["model"]["sketch_entities"][0]["geometry"]["curve"];
     let points = curve["poles"]["points"].as_array().unwrap().clone();
     curve["poles"] = json!({"kind": "rational", "points": points.iter().enumerate()
         .map(|(i, p)| json!({"point": p, "weight": if i % 4 == 0 { 2.0 } else { 1.0 }})).collect::<Vec<_>>()});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -8027,7 +8027,7 @@ fn solidcraft_extrudes_a_closed_periodic_spline_profile() {
 fn solidcraft_extrudes_a_spline_profile() {
     let Some(cli) = solidcraft() else { return };
     let mut model = cube_with_history(10.0, whole_sketch(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketches"][0]["profiles"] = json!([]);
     wire["model"]["sketch_constraints"] = json!([]);
     wire["model"]["sketch_entities"] = json!([
@@ -8040,7 +8040,7 @@ fn solidcraft_extrudes_a_spline_profile() {
                 {"u": 0.0, "v": 0.0}, {"u": 15.0, "v": 30.0}, {"u": 30.0, "v": 0.0}]}}})
         ),
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     // Under a quadratic arch: base × control height / 3 = 300 mm², extruded 10 mm.
     let got = volumes(&cli, &written(&model).0);
     assert_eq!(got.len(), 1, "{got:?}");
@@ -8152,12 +8152,12 @@ fn solidcraft_mirrors_the_features_across_the_plane() {
 /// The example cube's model with a history of one primitive feature, `definition`.
 fn primitive_history(definition: Value) -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let model = &mut wire["model"];
     model["features"] = json!([{"id": "f3d:model:feature#2", "ordinal": 0, "name": "Ball", "suppressed": false, "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": definition}, "dependencies": [], "source_properties": {}, "source_content": []}]);
     model["parameters"] = json!([]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -8647,7 +8647,7 @@ fn solidcraft_turns_the_coil_the_way_cadir_says() {
 #[test]
 fn a_helix_surface_is_written_to_the_step_and_needs_no_note() {
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let model = &mut wire["geometry"];
     // One of the cube's faces on a coil's swept surface, as Fusion stores a coil's.
     let surface = model["faces"][0]["surface"].clone();
@@ -8668,7 +8668,7 @@ fn a_helix_surface_is_written_to_the_step_and_needs_no_note() {
                      "axis": {"x": 0.0, "y": 0.0, "z": 1.0}},
             "profile": {"kind": "circle", "angle": 0.0, "radius": 1.0}}}, "record_bounds": [null, null, null, null]}]);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let (_, report) = convert(&model, &SolidCraftWriter::new().import_only(true));
@@ -8693,20 +8693,20 @@ fn a_helix_surface_is_written_to_the_step_and_needs_no_note() {
 /// the cube's body as it is, as Fusion holds a body modelled directly or imported.
 fn based_cube() -> Model {
     let mut model = holed_cube(4.0, |_| {});
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     let m = &mut wire["model"];
     let features = m["features"].as_array_mut().unwrap();
     features.retain(|feature| feature["ordinal"].as_u64() >= Some(2));
     features.push(json!({"id": "f3d:model:feature#1", "ordinal": 0, "name": "Base Feature 1", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "base_feature", "value": {"bodies": {"kind": "resolved", "value": {"bodies": [body], "native": "f3d:base#1"}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
 /// Synthetic stored geometry uses the same cube body as the base-feature tests.
 fn stored_cube(with_hole: bool) -> Model {
     let mut model = based_cube();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     let features = wire["model"]["features"].as_array_mut().unwrap();
     if !with_hole {
@@ -8717,7 +8717,7 @@ fn stored_cube(with_hole: bool) -> Model {
         json!({"kind":"operation", "value": {"kind": "stored_geometry", "value": {}}});
     base["outputs"] = json!([body]);
     base["name"] = json!("Stored solid");
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -8793,9 +8793,9 @@ fn stored_geometry_alone_becomes_an_import_without_lost_history() {
 #[test]
 fn stored_geometry_without_bodies_is_refused_specifically() {
     let mut model = stored_cube(false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][0]["outputs"] = json!([]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -8872,7 +8872,7 @@ fn a_base_feature_is_imported_where_it_stands_in_the_timeline() {
 fn pasted_copies_are_imported_where_the_paste_stands_in_the_timeline() {
     // The base feature replaced by a copy/paste whose output, the copy, is the cube's body.
     let mut model = based_cube();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     let features = wire["model"]["features"].as_array_mut().unwrap();
     let paste = features.iter_mut().find(|f| f["ordinal"] == 0).unwrap();
@@ -8880,7 +8880,7 @@ fn pasted_copies_are_imported_where_the_paste_stands_in_the_timeline() {
         "value": {"bodies": {"kind": "resolved", "value": {"native": "f3d:paste#1"}}}}});
     paste["outputs"] = json!([body]);
     paste["name"] = json!("Paste 1");
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -8903,7 +8903,7 @@ fn pasted_copies_are_imported_where_the_paste_stands_in_the_timeline() {
 /// base feature's own body as the source keeps it: a history body with a nest of its own.
 fn based_cube_changed_later(nested: bool) -> Model {
     let mut model = based_cube();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     wire["model"]["features"]
         .as_array_mut()
@@ -8930,7 +8930,7 @@ fn based_cube_changed_later(nested: bool) -> Model {
             "topology": topology,
         }]);
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -8976,14 +8976,14 @@ fn a_base_feature_imports_its_own_body_when_the_source_keeps_it() {
     assert!(first.get("_step").is_none() && first.get("_bodies").is_none());
     // A second history body for the same base feature leaves it unclear which is its own.
     let mut doubled = based_cube_changed_later(true);
-    let mut wire = serde_json::to_value(&doubled.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&doubled.ir).unwrap();
     let mut second = wire["model"]["history_bodies"][0].clone();
     second["id"] = json!("synthetic:history-body:nest#h1");
     wire["model"]["history_bodies"]
         .as_array_mut()
         .unwrap()
         .push(second);
-    doubled.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    doubled.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(&doubled, &writer);
     assert!(base(&report)
         .reason
@@ -8994,7 +8994,7 @@ fn a_base_feature_imports_its_own_body_when_the_source_keeps_it() {
 /// A missing recipe with only synthetic cube topology, optionally retained at its producer.
 fn fallback_cube(stored: bool, later: bool, op: &str) -> Model {
     let mut model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][1]["definition"]["value"]["value"]["profile"] = json!({"kind": "planar", "value": {"kind": "unresolved", "value": "synthetic:external:profile#1"}});
     wire["model"]["features"][1]["definition"]["value"]["value"]["op"] = json!(op);
     if !later {
@@ -9004,11 +9004,11 @@ fn fallback_cube(stored: bool, later: bool, op: &str) -> Model {
             .retain(|f| f["ordinal"].as_u64() < Some(2));
     }
     if stored {
-        let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+        let nests = dutchman_core::ir_wire::to_value(&based_cube_changed_later(true).ir).unwrap();
         wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
         wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#2");
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -9110,10 +9110,10 @@ fn a_sketchless_extrude_whose_body_a_later_fillet_changes_says_why_it_stops() {
     // cadmpeg names an Extrude whose profile chain has no Sketch by its scope record, and
     // keeps the profile native; the body the extrude makes exists only as the design ends.
     let mut model = fallback_cube(false, true, "new_body");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][1]["definition"]["value"]["value"]["profile"] =
         json!({"kind": "planar", "value": {"kind": "native", "value": "synthetic:profile#1"}});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let mut report = Report::default();
     report.push_coded(
         Severity::Degraded,
@@ -9146,11 +9146,11 @@ fn a_sketchless_extrude_whose_body_a_later_fillet_changes_says_why_it_stops() {
 #[test]
 fn a_stored_result_reports_an_external_profile_only_for_the_affected_feature() {
     let mut model = fallback_cube(true, true, "new_body");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // An unresolved carrier alone says nothing about whether it is external.
     wire["model"]["features"][1]["definition"]["value"]["value"]["profile"] =
         json!({"kind": "planar", "value": {"kind": "unresolved", "value": "synthetic:profile#1"}});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     for (subject, detail, external) in [
         ("source", "feature \"Block\": profile sketch absent", true),
         ("source", "feature \"Other\": profile sketch absent", false),
@@ -9206,7 +9206,7 @@ fn an_ordinary_loft_refusal_keeps_its_reason_with_a_stored_result() {
             {"kind": "edges", "value": []}
         ]});
     });
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let producer = wire["model"]["features"]
         .as_array()
         .unwrap()
@@ -9214,10 +9214,10 @@ fn an_ordinary_loft_refusal_keeps_its_reason_with_a_stored_result() {
         .find(|row| row["definition"]["value"]["kind"] == "loft")
         .unwrap()["id"]
         .clone();
-    let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+    let nests = dutchman_core::ir_wire::to_value(&based_cube_changed_later(true).ir).unwrap();
     wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
     wire["model"]["history_bodies"][0]["produced_by"] = producer;
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -9235,11 +9235,11 @@ fn an_ordinary_loft_refusal_keeps_its_reason_with_a_stored_result() {
 #[test]
 fn measured_inference_precedes_an_eligible_stored_result() {
     let mut model = unresolved_square_selection(&[]);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
+    let nests = dutchman_core::ir_wire::to_value(&based_cube_changed_later(true).ir).unwrap();
     wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
     wire["model"]["history_bodies"][0]["produced_by"] = wire["model"]["features"][1]["id"].clone();
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let mut report = Report::default();
     report.push_coded(
         Severity::Degraded,
@@ -9275,12 +9275,12 @@ fn measured_inference_precedes_an_eligible_stored_result() {
 fn a_sketch_with_no_timeline_row_is_written_before_the_extrude_that_uses_it() {
     // The source keeps the cube's sketch only in its sketch arena: no sketch feature names it.
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
         .retain(|feature| feature["name"] != "Base sketch");
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -9312,12 +9312,12 @@ fn a_sketch_with_no_timeline_row_is_written_before_the_extrude_that_uses_it() {
 fn a_base_feature_proven_to_hold_no_bodies_builds_nothing() {
     // A second base feature the source proves empty, after the one holding the cube.
     let mut model = based_cube();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
         .push(json!({"id": "f3d:model:feature#9", "ordinal": 9, "name": "Base Feature 2", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "base_feature", "value": {"bodies": {"kind": "resolved", "value": {"bodies": [], "native": "f3d:base#2"}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -9347,12 +9347,12 @@ fn a_base_feature_proven_to_hold_no_bodies_builds_nothing() {
 #[test]
 fn a_base_feature_holding_every_body_writes_no_second_copy() {
     let mut model = based_cube();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
         .retain(|feature| feature["ordinal"] == 0);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let writer = SolidCraftWriter::new().verification(Verification::Off);
     let (document, _) = convert(&model, &writer);
     assert_eq!(types(&document)[0], ("import".to_owned(), false));
@@ -9381,12 +9381,12 @@ fn solidcraft_drills_into_the_imported_base_body() {
 fn a_base_feature_alone_is_verified_against_the_original() {
     let Some(cli) = solidcraft() else { return };
     let mut model = based_cube();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
         .retain(|feature| feature["ordinal"] == 0);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::With(cli)),
@@ -9401,14 +9401,14 @@ fn a_base_feature_alone_is_verified_against_the_original() {
 /// same square, `thickness` thick on `side` of the sketch.
 fn flanged_cube(thickness: f64, side: &str) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     for feature in wire["model"]["features"].as_array_mut().unwrap() {
         if feature["definition"]["value"]["kind"] == "extrude" {
             feature["name"] = json!("BaseFlange 1");
             feature["definition"] = json!({"kind":"operation", "value": {"kind": "sheet_metal_base_flange", "value": {"profile": whole_sketch(), "thickness": thickness, "side": side}}});
         }
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -9464,7 +9464,7 @@ fn solidcraft_builds_the_base_flange_as_the_original() {
 /// conversion tests cannot accidentally select curves from the final body.
 fn contour_flange_model(change: Value) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketches"][0]["profiles"] = json!([]);
     m["sketch_entities"] = json!([
@@ -9491,7 +9491,7 @@ fn contour_flange_model(change: Value) -> Model {
             "kind": "sheet_metal_contour_flange", "value": {"construction": definition},
         },
     });
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -9534,7 +9534,7 @@ fn contour_flanges_keep_the_open_section_bend_rule_and_signed_travel() {
 #[test]
 fn contour_flanges_keep_arc_entities_in_source_order() {
     let mut model = contour_flange_model(json!({}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketch_entities"][1] = entity(
         2,
         json!({
@@ -9542,7 +9542,7 @@ fn contour_flanges_keep_arc_entities_in_source_order() {
             "start_angle": -std::f64::consts::FRAC_PI_2, "end_angle": 0.0,
         }),
     );
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -9684,13 +9684,13 @@ fn solidcraft_replays_a_contour_bend_with_the_source_radius_and_thickness() {
 /// A base sheet followed by a synthetic operation on its front top edge.
 fn sheet_operation(mut definition: Value) -> Model {
     let mut model = flanged_cube(10.0, "forward");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     definition["value"]["edges"] = json!({"kind": "edges", "value": ["synthetic:cube:edge#4"]});
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
         .push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Sheet wall", "suppressed": false, "definition": {"kind": "operation", "value": definition}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -9715,7 +9715,7 @@ fn edge_flanges_refuse_final_body_edge_selections() {
 /// have their own geometry, unrelated to final-body edge numbering.
 fn input_edge_flange(back: bool, position: &str, angle: f64, radius: f64) -> Model {
     let mut model = flanged_cube(1.0, "forward");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let state = "test:sheet:feature-input#wall";
     let edges = [
         "test:sheet:historical-edge#front",
@@ -9741,7 +9741,7 @@ fn input_edge_flange(back: bool, position: &str, angle: f64, radius: f64) -> Mod
         .push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Sheet wall", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sheet_metal_edge_flange", "value": {"edges": {"kind": "historical", "value": {
                     "state": state, "edges": [edges[usize::from(back)]], "native": "synthetic edge",
                 }}, "height": {"kind": "distance", "value": 30.0}, "angle": angle, "height_datum": "outer_faces", "bend_position": position, "width": {"kind": "full_edge"}, "bend_radius": radius}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -9845,9 +9845,9 @@ fn edge_flanges_refuse_unproven_picks_and_unexpressible_options() {
     ];
     for (path, value, reason) in mutations {
         let mut model = input_edge_flange(false, "outside", std::f64::consts::FRAC_PI_2, 2.0);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         *wire.pointer_mut(path).unwrap() = value;
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (_, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -9864,7 +9864,7 @@ fn edge_flanges_refuse_unproven_picks_and_unexpressible_options() {
 fn edge_flanges_refuse_bases_without_a_proven_rectangular_body() {
     for extra_body in [false, true] {
         let mut model = input_edge_flange(false, "outside", std::f64::consts::FRAC_PI_2, 2.0);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         if extra_body {
             let mut other = wire["model"]["features"][1].clone();
             other["id"] = json!("f3d:model:feature#4");
@@ -9880,7 +9880,7 @@ fn edge_flanges_refuse_bases_without_a_proven_rectangular_body() {
             wire["model"]["sketch_entities"][0]["geometry"]["end"]["u"] = json!(9.0);
             wire["model"]["sketch_entities"][1]["geometry"]["start"]["u"] = json!(9.0);
         }
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (_, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -9929,13 +9929,13 @@ fn solidcraft_replays_input_edge_flanges_with_the_expected_shape() {
         let mut model = input_edge_flange(back, position, degrees.to_radians(), radius);
         let mut points = vec![[5.0, if back { 10.0 } else { 0.0 }, 1.0]];
         if both {
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
             wire["model"]["features"][2]["definition"]["value"]["value"]["edges"]["value"]
                 ["edges"] = json!([
                 "test:sheet:historical-edge#front",
                 "test:sheet:historical-edge#back",
             ]);
-            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
             points.push([5.0, 10.0, 1.0]);
             let (document, report) = convert(
                 &model,
@@ -10055,7 +10055,7 @@ fn attached_plate(near: f64, radius: f64, extra: bool) -> Model {
 /// As `attached_plate`, attached along the first `attached` of the front and back edges.
 fn attached_plate_on(near: f64, radius: f64, extra: bool, attached: usize) -> Model {
     let mut model = flanged_cube(1.0, "forward");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     let point = |x, y, z| json!({"x": x, "y": y, "z": z});
     let edges = [
@@ -10113,7 +10113,7 @@ fn attached_plate_on(near: f64, radius: f64, extra: bool, attached: usize) -> Mo
     features.push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Plate", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sheet_metal_attached_plate", "value": {"profile": {"kind": "sketch", "value": PLATE}, "thickness": 1.0, "side": "forward", "attachment": attachment("plate")}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     features.push(json!({"id": "f3d:model:feature#5", "ordinal": 4, "name": "Bend", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sheet_metal_bend", "value": {"plate": "f3d:model:feature#4", "attachment": attachment("bend"), "inside_radius": radius, "relief": {"form": "style_default", "width": 1.0, "depth": 0.5,
                        "minimum_remnant": 0.0, "seam_gap": 0.0}, "transition": {"form": "style_default", "radius": 0.0}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -10213,7 +10213,7 @@ fn an_attached_plate_that_is_not_a_plain_edge_flange_is_refused() {
 /// source B-rep remains the test cube; these tests inspect/replay the unverified history.
 fn polygon_attached_plate(points: &[[f64; 2]], edge: usize, top: bool) -> Model {
     let mut model = attached_plate(3.0, 2.0, false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketch_constraints"] = json!([]);
     m["sketch_entities"]
@@ -10257,7 +10257,7 @@ fn polygon_attached_plate(points: &[[f64; 2]], edge: usize, top: bool) -> Model 
         );
         state["edge_geometry"][0]["tangent"] = point(ux, uy, 0.0);
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -10307,10 +10307,10 @@ fn translated_attached_plates_keep_rectangular_and_concave_base_edges() {
                     if points.len() > 4 {
                         // Inset the plate at the concave edge: the flush-face proof must
                         // use the outward winding sign, not just admit a nonzero area.
-                        let mut wire = serde_json::to_value(&model.ir).unwrap();
+                        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
                         wire["model"]["sketches"][1]["placement"]["frame"]["origin"]["x"] =
                             json!(translated[edge][0] - 1.0);
-                        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+                        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
                     }
                     let (document, report) = convert(
                         &model,
@@ -10357,9 +10357,9 @@ fn attached_plates_use_the_actual_concave_base_edge_on_either_face_and_winding()
         let edge = if reverse { 1 } else { 3 };
         for top in [false, true] {
             let mut model = polygon_attached_plate(&points, edge, top);
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
             wire["model"]["sketches"][1]["placement"]["frame"]["origin"]["x"] = json!(9.0);
-            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
             let (document, report) = convert(
                 &model,
                 &SolidCraftWriter::new().verification(Verification::Off),
@@ -10392,9 +10392,9 @@ fn attached_plates_accept_explicit_single_base_profile_selections() {
         json!({"kind":"sketch_regions", "value":{"sketch":SKETCH, "regions":[{"kind":"loops", "outer":0, "holes":[]}]}}),
     ] {
         let mut model = polygon_attached_plate(&L_BASE, 3, true);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["features"][1]["definition"]["value"]["value"]["profile"] = profile;
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -10434,10 +10434,10 @@ fn attached_plates_refuse_unproven_nonrectangular_base_picks() {
         ),
     ] {
         let mut model = polygon_attached_plate(&L_BASE, 3, true);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let plate = plate_input_index(&wire);
         wire["model"]["feature_input_topologies"][plate]["edge_geometry"][0][field] = point;
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (_, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -10477,7 +10477,7 @@ fn attached_plates_name_base_profiles_that_cannot_be_proven() {
         );
     }
     let mut model = polygon_attached_plate(&L_BASE, 3, true);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // A second disjoint closed region is not the single base body this proof requires.
     for (i, (a, b)) in [
         ([40.0, 0.0], [50.0, 0.0]),
@@ -10492,7 +10492,7 @@ fn attached_plates_name_base_profiles_that_cannot_be_proven() {
             .unwrap()
             .push(line(10 + i as u32, a, b));
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -10508,7 +10508,7 @@ fn attached_plates_name_base_profiles_that_cannot_be_proven() {
 #[test]
 fn attached_plates_name_curved_base_profiles_and_thickness_edge_picks() {
     let mut model = polygon_attached_plate(&L_BASE, 3, true);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketch_entities"]
         .as_array_mut()
         .unwrap()
@@ -10518,7 +10518,7 @@ fn attached_plates_name_curved_base_profiles_and_thickness_edge_picks() {
                 "kind": "circle", "center": {"u": 5.0, "v": 5.0}, "radius": 2.0,
             }),
         ));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -10530,7 +10530,7 @@ fn attached_plates_name_curved_base_profiles_and_thickness_edge_picks() {
     );
 
     let mut model = polygon_attached_plate(&L_BASE, 3, true);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let plate = plate_input_index(&wire);
     wire["model"]["feature_input_topologies"][plate]["edge_geometry"][0] = json!({
         "edge": "test:sheet:historical-edge#front",
@@ -10540,7 +10540,7 @@ fn attached_plates_name_curved_base_profiles_and_thickness_edge_picks() {
         "supports": [], "tangent": {"x":0.0,"y":0.0,"z":1.0},
         "faces": ["test:sheet:historical-face#top", "test:sheet:historical-face#rim"],
     });
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -10617,7 +10617,7 @@ fn solidcraft_replays_attached_plates_on_nonrectangular_base_edges() {
 /// The example cube under a timeline of `features`, each `(name, definition)`.
 fn cube_under(features: &[(&str, Value)]) -> Model {
     let ir = cadmpeg_ir::examples::unit_cube().unwrap();
-    let mut wire = serde_json::to_value(&ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&ir).unwrap();
     wire["model"]["features"] = features
         .iter()
         .enumerate()
@@ -10626,7 +10626,7 @@ fn cube_under(features: &[(&str, Value)]) -> Model {
         })
         .collect();
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         fidelity: None,
         name: "cube".to_owned(),
         source_file: Some("cube.ipt".to_owned()),
@@ -10693,13 +10693,13 @@ fn a_design_cadmpeg_decodes_no_feature_of_has_no_history_to_flatten() {
     );
     // A native feature after a valid extrusion retains that editable prefix.
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     if let Some(features) = wire["model"]["features"].as_array_mut() {
         features.push(
             json!({"id": "f3d:model:feature#9", "ordinal": 9, "name": "Base1", "suppressed": false, "definition": {"kind": "operation", "value": native}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
         );
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let mut report = Report::default();
     let outcome = SolidCraftWriter::new().plan(&model, &mut report);
     assert!(
@@ -10722,7 +10722,7 @@ fn a_design_cadmpeg_decodes_no_feature_of_has_no_history_to_flatten() {
 /// parameters from: `W1` = 20 mm, `half` = W1 / 2 and an angle.
 fn parameters_alone() -> Model {
     let ir = cadmpeg_ir::examples::unit_cube().unwrap();
-    let mut wire = serde_json::to_value(&ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&ir).unwrap();
     for home in ["geometry", "model"] {
         if let Some(arenas) = wire[home].as_object_mut() {
             for rows in arenas.values_mut() {
@@ -10738,7 +10738,7 @@ fn parameters_alone() -> Model {
         {"id": "f3d:model:parameter#3", "ordinal": 2, "name": "tilt", "expression": "15 deg", "value": {"kind": "angle", "value": 15.0_f64.to_radians()}, "dependencies": [], "properties": {}},
     ]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         fidelity: None,
         name: "Parameters".to_owned(),
         source_file: Some("Parameters.f3d".to_owned()),
@@ -10775,9 +10775,9 @@ fn a_design_of_parameters_alone_is_written_with_its_parameters() {
 
     // A design with neither geometry nor parameters still has nothing to write.
     let mut empty = parameters_alone();
-    let mut wire = serde_json::to_value(&empty.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&empty.ir).unwrap();
     wire["model"]["parameters"] = json!([]);
-    empty.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    empty.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     assert!(writer.convertible(&empty).is_err());
 }
 
@@ -10793,9 +10793,9 @@ fn solidcraft_opens_a_design_of_parameters_alone() {
 /// Change only the extrusion definition of the synthetic cube history.
 fn changed_extrude(change: impl FnOnce(&mut Value)) -> Model {
     let mut model = cube_with_history(10.0, whole_sketch(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     change(&mut wire["model"]["features"][1]["definition"]["value"]["value"]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -10861,14 +10861,14 @@ fn plane_ended_extrude(z: f64, datum: bool, change: impl FnOnce(&mut Value)) -> 
         change(definition);
     });
     if datum {
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["features"][1]["ordinal"] = json!(2);
         wire["model"]["features"][1]["dependencies"] = json!(["f3d:model:feature#3"]);
         wire["model"]["features"]
             .as_array_mut()
             .unwrap()
             .push(json!({"id": "f3d:model:feature#3", "ordinal": 1, "name": "End plane", "suppressed": false, "dependencies": [], "outputs": [], "definition": {"kind": "operation", "value": {"kind": "datum_plane", "value": {"frame": frame}}}, "source_properties": {}, "source_content": []}));
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     }
     model
 }
@@ -10909,7 +10909,7 @@ fn parallel_plane_ended_extrudes_use_free_to_object_points() {
 #[test]
 fn plane_ended_extrudes_follow_a_placed_sketch_normal() {
     let mut model = plane_ended_extrude(10.0, false, |_| {});
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketches"][0]["placement"]["frame"] = json!({
         "origin": {"x": 5.0, "y": 2.0, "z": 3.0},
         "normal": {"x": 1.0, "y": 0.0, "z": 0.0},
@@ -10921,7 +10921,7 @@ fn plane_ended_extrudes_follow_a_placed_sketch_normal() {
         "normal": {"x": 2.0, "y": 0.0, "z": 0.0},
         "u_axis": {"x": 0.0, "y": 0.0, "z": 1.0}
     });
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -11019,7 +11019,7 @@ fn unsupported_plane_and_vertex_extrude_ends_name_the_blocker() {
 /// An earlier cube followed by another extrusion using its top face as an end or start.
 fn face_ended_extrude(from_face: bool, offset: f64, resolved: bool) -> Model {
     let mut model = cube_with_history(10.0, whole_sketch(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let selection = if resolved {
         json!({"kind": "resolved", "value": {
             "faces": ["synthetic:cube:face#top"], "native": "synthetic top face"
@@ -11049,7 +11049,7 @@ fn face_ended_extrude(from_face: bool, offset: f64, resolved: bool) -> Model {
         });
     }
     wire["model"]["features"].as_array_mut().unwrap().push(next);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -11057,7 +11057,7 @@ fn face_ended_extrude(from_face: bool, offset: f64, resolved: bool) -> Model {
 /// source (`face_surface`, `work_plane`, ...) is `source`.
 fn extrude_ending_at_plane(z: f64, source: Option<&str>) -> Model {
     let mut model = face_ended_extrude(false, 0.0, false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let mut termination = json!({
         "kind": "to_plane", "native": "synthetic plane", "plane": {
             "origin": {"x": 0.0, "y": 5.0, "z": z},
@@ -11070,7 +11070,7 @@ fn extrude_ending_at_plane(z: f64, source: Option<&str>) -> Model {
     }
     wire["model"]["features"][2]["definition"]["value"]["value"]["extent"]["side"]["termination"] =
         termination;
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -11097,7 +11097,7 @@ fn plane_started_extrudes_start_at_the_plane_offset() {
     // The fixture's second extrude starts 12 mm above the sketch and runs down to the top
     // face; the same start given as a plane gives the same start offset.
     let mut model = face_ended_extrude(false, 0.0, false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][2]["definition"]["value"]["value"]["start"] = json!({
         "kind": "from_plane", "native": "synthetic plane", "source": "face_surface", "plane": {
             "origin": {"x": 0.0, "y": 0.0, "z": 12.0},
@@ -11105,7 +11105,7 @@ fn plane_started_extrudes_start_at_the_plane_offset() {
             "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
         }
     });
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -11366,11 +11366,11 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
         ),
     ] {
         let mut model = face_ended_extrude(false, 0.0, false);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let termination = &mut wire["model"]["features"][2]["definition"]["value"]["value"]
             ["extent"]["side"]["termination"];
         termination["face"] = selection;
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -11419,11 +11419,11 @@ fn a_face_at_an_angle_to_the_sketch_is_gated_to_solidcraft_0_44() {
         (None, detected_reason),
     ] {
         let mut model = face_ended_extrude(false, 0.0, false);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["features"][2]["definition"]["value"]["value"]["extent"]["side"]
             ["termination"]["face"] =
             json!({"kind": "faces", "value": ["synthetic:cube:face#front"]});
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let writer = SolidCraftWriter::new()
             .verification(Verification::Off)
             .target_version(target.map(|t| t.parse().unwrap()));
@@ -11439,7 +11439,7 @@ fn a_face_at_an_angle_to_the_sketch_is_gated_to_solidcraft_0_44() {
 /// A small tilted sketch above a cube; its sweep meets the horizontal top obliquely.
 fn slanted_face_extent(from: bool, historical: bool) -> Model {
     let mut model = face_ended_extrude(from, 0.0, false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let sketch = "test:slanted:sketch#2";
     let mut placed = wire["model"]["sketches"][0].clone();
     placed["id"] = json!(sketch);
@@ -11486,7 +11486,7 @@ fn slanted_face_extent(from: bool, historical: bool) -> Model {
     if historical {
         // The same top face resolved only from input boundary samples, as Onshape supplies it.
         let source = face_extrude(true, |_| {});
-        let source = serde_json::to_value(&source.ir).unwrap();
+        let source = dutchman_core::ir_wire::to_value(&source.ir).unwrap();
         wire["model"]["feature_input_topologies"] =
             source["model"]["feature_input_topologies"].clone();
         let selection = json!({"kind": "historical", "value": {
@@ -11500,7 +11500,7 @@ fn slanted_face_extent(from: bool, historical: bool) -> Model {
             definition["extent"]["side"]["termination"]["face"] = selection;
         }
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -11561,14 +11561,14 @@ fn solidcraft_rebuilds_a_slanted_face_end_with_the_expected_volume() {
 #[test]
 fn a_two_sided_extrude_can_end_at_a_face_along_the_positive_normal() {
     let mut model = face_ended_extrude(false, 0.0, false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let definition = &mut wire["model"]["features"][2]["definition"]["value"]["value"];
     let first = definition["extent"]["side"].clone();
     definition["direction"] = json!({"kind": "profile_normal"});
     definition["start"] = json!({"kind": "offset_profile_plane", "offset": 5.0});
     definition["extent"] = json!({"kind": "two_sided", "first": first,
         "second": {"termination": {"kind": "blind", "length": 2.0}}});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -11588,10 +11588,10 @@ fn a_two_sided_extrude_can_end_at_a_face_along_the_positive_normal() {
 #[test]
 fn a_face_end_does_not_silently_reverse_the_extrude() {
     let mut model = face_ended_extrude(false, 0.0, false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][2]["definition"]["value"]["value"]["direction"] =
         json!({"kind": "profile_normal"});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -11603,7 +11603,7 @@ fn a_face_end_does_not_silently_reverse_the_extrude() {
 /// another relation cannot hide a missing mapping by already determining the sketch.
 fn sketch_relation_history(definition: Value) -> Model {
     let mut model = cube_with_history(10.0, whole_sketch(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let rows = wire["model"]["sketch_entities"].as_array_mut().unwrap();
     let mut extra = vec![
         entity(
@@ -11637,7 +11637,7 @@ fn sketch_relation_history(definition: Value) -> Model {
     wire["model"]["sketch_constraints"] = json!([{
         "id": "f3d:model:sketch-constraint#1", "sketch": SKETCH, "definition": definition,
     }]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -11809,14 +11809,14 @@ fn fixed_curves_hold_the_radius_and_ellipse_radius_dimensions_use_the_minor_radi
                 json!(["f3d:model:sketch-entity#5", "f3d:model:sketch-entity#6"]);
         }
         let mut model = sketch_relation_history(definition);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let value = if kind == "repeated_diameter" {
             4.0
         } else {
             2.0
         };
         wire["model"]["parameters"].as_array_mut().unwrap().push(json!({"id": "f3d:model:parameter#3", "name": "round_size", "expression": format!("{value} mm"), "value": {"kind": "length", "value": value}, "ordinal": 0, "dependencies": [], "properties": {}}));
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -11841,11 +11841,11 @@ fn fixed_curves_hold_the_radius_and_ellipse_radius_dimensions_use_the_minor_radi
 
 fn bounded_conic_history(geometry: Value, start: [f64; 2], end: [f64; 2]) -> Model {
     let mut model = cube_with_history(10.0, whole_sketch(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketches"][0]["profiles"] = json!([]);
     wire["model"]["sketch_constraints"] = json!([]);
     wire["model"]["sketch_entities"] = json!([entity(1, geometry), line(2, end, start)]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -11949,7 +11949,7 @@ fn static_pattern_and_projected_copy_relations_map_to_point_and_radius_associati
     for definition in cases {
         let kind = definition["kind"].as_str().unwrap();
         let mut model = sketch_relation_history(definition.clone());
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         // Entity 6, found by id: the arena is written in id order, so it is not the sixth row.
         let entity6 = wire["model"]["sketch_entities"]
             .as_array_mut()
@@ -11962,7 +11962,7 @@ fn static_pattern_and_projected_copy_relations_map_to_point_and_radius_associati
         } else if kind == "circular_pattern" {
             entity6["geometry"]["center"] = json!({"u": -10.0, "v": -10.0});
         }
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -12001,12 +12001,12 @@ fn static_pattern_and_projected_copy_relations_map_to_point_and_radius_associati
 fn vertical_axis_angles_use_a_fixed_construction_axis_and_keep_the_parameter() {
     let mut model = sketch_relation_history(json!({"kind": "angle_to_axis", "axis": "vertical",
         "entity": "f3d:model:sketch-entity#1", "parameter": "f3d:model:parameter#3"}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["parameters"]
         .as_array_mut()
         .unwrap()
         .push(json!({"id": "f3d:model:parameter#3", "name": "theta", "expression": "90 deg", "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2}, "ordinal": 0, "dependencies": [], "properties": {}}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -12031,12 +12031,12 @@ fn vertical_axis_angles_use_a_fixed_construction_axis_and_keep_the_parameter() {
 fn solver_only_sketch_relations_are_counted_without_flattening() {
     let mut model =
         sketch_relation_history(json!({"kind": "scalar_equality", "first": 1, "second": 2}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketch_constraints"].as_array_mut().unwrap().push(json!({
         "id": "f3d:model:sketch-constraint#2", "sketch": SKETCH,
         "definition": {"kind": "angle_difference", "first": 1, "second": 2, "difference": 3, "value": 0.0},
     }));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -12128,7 +12128,7 @@ fn major_elliptical_arcs_are_exact_conic_chains_in_a_whole_sketch() {
 #[test]
 fn virtual_relations_are_counted_and_inactive_or_disabled_relations_are_quiet() {
     let mut model = sketch_relation_history(json!({"kind": "disabled"}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketch_constraints"]
         .as_array_mut()
         .unwrap()
@@ -12138,7 +12138,7 @@ fn virtual_relations_are_counted_and_inactive_or_disabled_relations_are_quiet() 
             json!({"id": "f3d:model:sketch-constraint#3", "sketch": SKETCH, "active": false,
             "definition": {"kind": "scalar_equality", "first": 1, "second": 2}}),
         ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -12160,13 +12160,13 @@ fn virtual_relations_are_counted_and_inactive_or_disabled_relations_are_quiet() 
 // Body features use only synthetic CADIR and the example cube's topology.
 fn modifying(definition: Value) -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
         .push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Modify", "suppressed": false, "definition": {"kind": "operation", "value": definition}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -12331,7 +12331,7 @@ fn body_mirrors_select_named_bodies_and_keep_the_plane() {
 
 fn combined_spheres(operation: &str, keep_tools: bool) -> Model {
     let base = primitive_history(sphere());
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let model = &mut wire["geometry"];
     // A second, independent synthetic topology, with its own arena identities.
     for arena in [
@@ -12354,7 +12354,7 @@ fn combined_spheres(operation: &str, keep_tools: bool) -> Model {
         json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Boolean", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "combine", "value": {"operands": {"target": cube_body(), "tools": {"kind": "bodies", "value": ["synthetic:tool:body#0"]}}, "op": operation, "keep_tools": keep_tools, "destination": "target_component"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
     ]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -12364,7 +12364,7 @@ fn combined_spheres(operation: &str, keep_tools: bool) -> Model {
 /// side of a plane through the cube's +X face.
 fn split_cube(x: f64, shifted: bool, after: Option<Value>) -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let model = &mut wire["geometry"];
     let mut outputs = vec![json!("synthetic:cube:body#0")];
     if shifted {
@@ -12399,14 +12399,14 @@ fn split_cube(x: f64, shifted: bool, after: Option<Value>) -> Model {
         );
     }
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
 
 /// The largest X any of the example cube's points has.
 fn cube_right(model: &Model) -> f64 {
-    let wire = serde_json::to_value(&model.ir).unwrap();
+    let wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["geometry"]["points"]
         .as_array()
         .unwrap()
@@ -12467,7 +12467,7 @@ fn split_history_cli() -> Option<PathBuf> {
 fn split_of_a_consumed_cube(kept: bool) -> Model {
     let base = split_cube(0.0, false, None);
     let middle = cube_right(&base) - 5.0;
-    let mut wire = serde_json::to_value(&split_cube(middle, false, None).ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&split_cube(middle, false, None).ir).unwrap();
     let mut topology = serde_json::Map::new();
     for arena in [
         "regions", "shells", "faces", "loops", "coedges", "edges", "vertices", "surfaces",
@@ -12496,7 +12496,7 @@ fn split_of_a_consumed_cube(kept: bool) -> Model {
         }]);
     }
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -12542,7 +12542,7 @@ fn a_split_of_a_body_that_exists_only_earlier_imports_it_first() {
 /// consumed by the Split, which works on the body the Base Feature's import already named.
 fn split_of_a_based_cube() -> Model {
     let model = split_of_a_consumed_cube(true);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#1");
     wire["model"]["features"].as_array_mut().unwrap().insert(
         0,
@@ -12552,7 +12552,7 @@ fn split_of_a_based_cube() -> Model {
             "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
     );
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -12562,7 +12562,7 @@ fn split_of_a_based_cube() -> Model {
 #[test]
 fn a_split_with_a_native_target_splits_the_body_it_consumed() {
     let model = split_of_a_based_cube();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let split = wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -12571,7 +12571,7 @@ fn a_split_with_a_native_target_splits_the_body_it_consumed() {
         .unwrap();
     split["definition"]["value"]["value"]["targets"] = json!({"kind": "native", "value": "n"});
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let writer = split_writer();
@@ -12603,10 +12603,10 @@ fn a_split_of_a_base_features_body_does_not_import_it_twice() {
 #[test]
 fn a_split_reuses_a_base_import_selected_by_the_final_body_identity() {
     let model = split_of_a_based_cube();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][0]["definition"]["value"]["value"]["bodies"] = json!({"kind": "resolved", "value": {"bodies": ["synthetic:cube:body#0"], "native": "synthetic selection"}});
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (document, report) = convert(&model, &split_writer());
@@ -12623,7 +12623,7 @@ fn a_split_reuses_a_base_import_selected_by_the_final_body_identity() {
 #[test]
 fn a_split_with_several_consumed_history_bodies_is_refused_by_name() {
     let model = split_of_a_consumed_cube(true);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let mut other = wire["model"]["history_bodies"][0].clone();
     other["id"] = json!("synthetic:history-body:other#h1");
     wire["model"]["history_bodies"]
@@ -12631,7 +12631,7 @@ fn a_split_with_several_consumed_history_bodies_is_refused_by_name() {
         .unwrap()
         .push(other);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (document, report) = convert(&model, &split_writer());
@@ -12666,7 +12666,7 @@ fn solidcraft_splits_a_base_features_body_into_two_halves() {
 /// (`lift` raises one corner off it, so the face is not flat), or `selection` instead.
 fn split_by_face(lift: f64, selection: Option<Value>) -> Model {
     let model = split_cube(5.0, false, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let state = "test:split:feature-input#4";
     let face = "test:split:historical-face#tool";
     let side = |k: usize| format!("test:split:historical-face#side{k}");
@@ -12709,7 +12709,7 @@ fn split_by_face(lift: f64, selection: Option<Value>) -> Model {
     let split = features.iter_mut().find(|f| f["name"] == "Split").unwrap();
     split["definition"]["value"]["value"]["tool"] = json!({"kind": "faces", "value": selection});
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -12730,7 +12730,7 @@ fn a_body_split_by_a_flat_face_splits_along_its_plane() {
 /// rectangle on the plane x = 5 and another on the plane x = `second`.
 fn split_by_two_faces(second: f64) -> Model {
     let model = split_cube(5.0, false, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let state = "test:split:feature-input#4";
     let mut geometry: Vec<Value> = Vec::new();
     let mut edges: Vec<String> = Vec::new();
@@ -12771,7 +12771,7 @@ fn split_by_two_faces(second: f64) -> Model {
         "kind": "historical", "value": {
             "state": state, "faces": tools, "native": "synthetic selection"}}});
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -12796,7 +12796,7 @@ fn a_body_split_by_two_separate_coplanar_faces_splits_along_their_plane() {
 /// Two rectangles on x = 5 that meet at y = 4 and share their boundary edge.
 fn split_by_adjacent_faces() -> Model {
     let model = split_by_two_faces(5.0);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let state = &mut wire["model"]["feature_input_topologies"][0];
     let geometry = state["edge_geometry"].as_array_mut().unwrap();
     for row in geometry.iter_mut().skip(4) {
@@ -12816,7 +12816,7 @@ fn split_by_adjacent_faces() -> Model {
         .unwrap()
         .retain(|id| id != "test:split:historical-edge#13");
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -12961,7 +12961,7 @@ fn split_pieces_that_cannot_be_told_apart_are_not_selected_later() {
 #[test]
 fn splitting_by_faces_of_the_final_model_is_refused_by_name() {
     let mut model = split_cube(0.0, false, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let split = wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -12970,7 +12970,7 @@ fn splitting_by_faces_of_the_final_model_is_refused_by_name() {
         .unwrap();
     split["definition"]["value"]["value"]["tool"] =
         json!({"kind": "faces", "value": cube_faces(&["top"])});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -13017,7 +13017,7 @@ fn booleans_map_target_tools_operation_and_retention() {
 #[test]
 fn a_boolean_whose_operands_keep_a_native_member_per_body_maps_those_bodies() {
     let mut model = combined_spheres("cut", false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let boolean = wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -13029,7 +13029,7 @@ fn a_boolean_whose_operands_keep_a_native_member_per_body_maps_those_bodies() {
             {"body": "synthetic:cube:body#0", "native": "body:1"}]}},
         "tools": {"kind": "resolved_set", "value": {"members": [
             {"body": "synthetic:tool:body#0", "native": "body:2"}]}}});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -13044,7 +13044,7 @@ fn a_boolean_whose_operands_keep_a_native_member_per_body_maps_those_bodies() {
 #[test]
 fn a_boolean_referencing_a_removed_tool_reports_a_history_blocker() {
     let mut model = combined_spheres("cut", false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // Match core's consumed-body filtering: preserve history, remove the tool's topology.
     for (arena, values) in wire["geometry"].as_object_mut().unwrap() {
         if arena == "features" {
@@ -13058,7 +13058,7 @@ fn a_boolean_referencing_a_removed_tool_reports_a_history_blocker() {
             });
         }
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -13150,7 +13150,7 @@ fn solidcraft_replays_body_mirror_and_booleans() {
 fn later_body_mirrors_require_boolean_tools_to_be_retained() {
     for keep_tools in [false, true] {
         let base = combined_spheres("join", keep_tools);
-        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
         let mut mirror = body_mirror_definition();
         mirror["value"]["seeds"][0]["value"] = json!({"kind": "resolved", "value": {
             "bodies": ["synthetic:tool:body#0"], "native": "Tool"}});
@@ -13159,7 +13159,7 @@ fn later_body_mirrors_require_boolean_tools_to_be_retained() {
             .unwrap()
             .push(json!({"id": "f3d:model:feature#5", "ordinal": 3, "name": "Mirror tool", "suppressed": false, "definition": {"kind": "operation", "value": mirror}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..base
         };
         let (document, report) = convert(
@@ -13209,7 +13209,7 @@ fn symmetric_blend(kind: &str, dimension: Value, opposite: bool) -> Model {
 /// `base` with a blend of one of its two symmetric vertical edges, which run from `z0` to
 /// `z0 + 10` mm: at (0, 0), or at (10, 10) when `opposite`.
 fn blend_on(base: Model, kind: &str, dimension: Value, opposite: bool, z0: f64) -> Model {
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let mut group = json!({"edges": {"kind": "historical", "value": {
         "state": "f3d:model:feature-input-topology#1",
         "edges": [if opposite { "opposite" } else { "near" }],
@@ -13238,7 +13238,7 @@ fn blend_on(base: Model, kind: &str, dimension: Value, opposite: bool, z0: f64) 
     };
     wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["near", "opposite"], "faces": ["front", "left", "back", "right"], "edge_geometry": [sample("near", 0.0), sample("opposite", 10.0)], "bodies": [], "face_owners": [], "vertices": []}]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -13259,7 +13259,7 @@ fn closed_circle_blend_from(hole: bool, seam: f64, sketch_based: bool) -> Model 
             "placement": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "op": "new_body"
         }}))
     };
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let m = &mut wire["model"];
     if sketch_based {
         if hole {
@@ -13272,7 +13272,7 @@ fn closed_circle_blend_from(hole: bool, seam: f64, sketch_based: bool) -> Model 
             }});
         } else {
             let cylinder = cube_with_history(10.0, whole_sketch(), None);
-            *m = serde_json::to_value(&cylinder.ir).unwrap()["model"].clone();
+            *m = dutchman_core::ir_wire::to_value(&cylinder.ir).unwrap()["model"].clone();
             m["sketch_entities"] = json!([entity(
                 1,
                 json!({"kind": "circle", "center": {"u": 0.0, "v": 0.0}, "radius": 5.0})
@@ -13348,7 +13348,7 @@ fn closed_circle_blend_from(hole: bool, seam: f64, sketch_based: bool) -> Model 
         "kind": "circle", "center": {"x": c, "y": c, "z": 10.0}, "axis": {"x": 0.0, "y": 0.0, "z": 1.0}, "ref_direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "radius": r
     }}}));
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -13364,11 +13364,11 @@ fn closed_circle_blends_keep_older_targets_and_non_circular_curves_refused() {
         history_line(&report).contains("closed input circles need SolidCraft 0.44 patch 1"),
         "{report:?}"
     );
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     wire["model"]["feature_input_topologies"][0]["edge_geometry"][0]["tangent"] =
         json!({"x": 1.0, "y": 0.0, "z": 0.0});
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let writer = SolidCraftWriter::new()
@@ -13384,7 +13384,7 @@ fn closed_circle_blends_keep_older_targets_and_non_circular_curves_refused() {
 #[test]
 fn closed_blends_distinguish_missing_historical_carriers_from_non_circular_curves() {
     let base = closed_circle_blend(true, 0.71);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     // A historical identity is independent of the geometry topology's identities. Keep the
     // same samples, but do not give this selection an exact stored carrier.
     let edge = json!("synthetic:historical:edge#0");
@@ -13403,7 +13403,7 @@ fn closed_blends_distinguish_missing_historical_carriers_from_non_circular_curve
         .unwrap()["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
         json!([edge]);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let writer = SolidCraftWriter::new()
@@ -13423,13 +13423,13 @@ fn closed_blends_distinguish_missing_historical_carriers_from_non_circular_curve
 #[test]
 fn closed_circle_blends_refuse_ellipses_whose_samples_alias_a_circle() {
     let base = closed_circle_blend(false, 0.0);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let carrier = &mut wire["model"]["feature_input_topologies"][0]["edge_geometry"][0]["carrier"];
     carrier["curve"] = json!({"kind": "ellipse", "center": {"x": 0.0, "y": 0.0, "z": 10.0},
         "axis": {"x": 0.0, "y": 0.0, "z": 1.0}, "major_direction": {"x": 1.0, "y": 0.0, "z": 0.0},
         "major_radius": 5.0, "minor_radius": 3.0});
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let writer = SolidCraftWriter::new()
@@ -13553,7 +13553,7 @@ fn solidcraft_chamfers_closed_boss_and_hole_edges() {
     for hole in [false, true] {
         for seam in [0.0, 0.71, 2.5] {
             let base = closed_circle_blend_from(hole, seam, true);
-            let mut wire = serde_json::to_value(&base.ir).unwrap();
+            let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
             let operation = &mut wire["model"]["features"]
                 .as_array_mut()
                 .unwrap()
@@ -13565,7 +13565,7 @@ fn solidcraft_chamfers_closed_boss_and_hole_edges() {
             group["spec"] = json!({"kind": "distance", "distance": setback});
             operation["value"]["flip_direction"] = json!(false);
             let model = Model {
-                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
                 ..base
             };
             let (bytes, report) = written_with(&model, &writer);
@@ -13619,7 +13619,7 @@ fn solidcraft_replays_closed_circle_work_with_a_connected_straight_edge_chain() 
         return;
     };
     let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let model = &mut wire["model"];
     model["feature_input_topologies"][0]["edge_geometry"] = json!([
         {"edge": "near", "start": {"x": 0, "y": 0, "z": 10},
@@ -13632,7 +13632,7 @@ fn solidcraft_replays_closed_circle_work_with_a_connected_straight_edge_chain() 
     model["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
         json!(["near", "opposite"]);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let (document, report) = convert(&model, &replaying(&cli));
@@ -13669,7 +13669,7 @@ fn solidcraft_replays_closed_circle_work_with_a_connected_straight_edge_chain() 
 /// topology and SolidCraft's replay, never that final B-rep, select the blend edges.
 fn multibody_blend(kind: &str, dimension: Value) -> Model {
     let base = input_blend(kind, dimension, false);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let m = &mut wire["geometry"];
     let mut body = m["bodies"][0].clone();
     body["id"] = json!("synthetic:lower:body#0");
@@ -13720,7 +13720,7 @@ fn multibody_blend(kind: &str, dimension: Value) -> Model {
         .push(later_state);
     m["features"].as_array_mut().unwrap().push(later);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -14050,10 +14050,10 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
     let cube = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 0);
     let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
     let check = |cli: &Path, change: fn(&mut Value), reason: &str| {
-        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
         change(&mut wire["model"]);
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..base.clone()
         };
         let (document, report) = convert(&model, &replaying(cli));
@@ -14252,7 +14252,7 @@ fn with_prism_body(
 /// `base` with the geometry of its bodies replaced by `prisms`, the `k`th in the `k`th region
 /// and body, each in a shell of its own.
 fn with_prism_bodies(base: Model, prisms: &[Prism]) -> Model {
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let template = wire["geometry"]["shells"][0].clone();
     let mut arenas: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
     let mut shells = Vec::new();
@@ -14273,7 +14273,7 @@ fn with_prism_bodies(base: Model, prisms: &[Prism]) -> Model {
     for (arena, rows) in arenas {
         geometry[arena] = Value::from(rows);
     }
-    let mut ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let mut ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     ir.finalize();
     Model { ir, ..base }
 }
@@ -14415,7 +14415,7 @@ fn prism_rows(prism: &Prism, k: usize, shell: &Value) -> Vec<(&'static str, Vec<
 /// on_front)` taken off the top and the front face. Without, it stays the uncut cube.
 fn chamfered_cube(spec: Value, cut: Option<(f64, f64)>) -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let group = json!({"spec": spec, "edges": {"kind": "historical", "value": {
         "state": "f3d:model:feature-input-topology#1", "edges": ["top-front"],
         "native": "synthetic input edge"}}});
@@ -14426,7 +14426,7 @@ fn chamfered_cube(spec: Value, cut: Option<(f64, f64)>) -> Model {
         "faces": ["front", "top"]});
     wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front"], "faces": ["front", "top"], "edge_geometry": [sample], "bodies": [], "face_owners": [], "vertices": []}]);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let Some((on_top, on_front)) = cut else {
@@ -14547,7 +14547,7 @@ fn unequal_chamfers_need_their_face_on_the_source_body_and_in_solidcraft() {
 /// from the face facing up most, so the cube's chamfer takes no flip and the block's does.
 fn chamfered_stack() -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let g = &mut wire["geometry"];
     let mut body = g["bodies"][0].clone();
     body["id"] = json!("synthetic:lower:body#0");
@@ -14579,7 +14579,7 @@ fn chamfered_stack() -> Model {
     };
     m["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front", "bottom-front"], "faces": ["front", "top", "lower-front", "bottom"], "edge_geometry": [sample("top-front", 10.0, ["front", "top"]), sample("bottom-front", -10.0, ["lower-front", "bottom"])], "bodies": [], "face_owners": [], "vertices": []}]);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     // Cross-sections on the side face (X = 0), counter-clockwise in (Y, Z), run along X.
@@ -14678,7 +14678,7 @@ const BORE: f64 = 2.5;
 /// unequal chamfer cut it.
 fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
     let base = holed_cube(2.0 * BORE, |_| {});
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let mut group = json!({"edges": {"kind": "historical", "value": {
         "state": "f3d:model:feature-input-topology#1", "edges": ["synthetic:rim:edge#hole-top"],
         "native": "synthetic input edge"}}});
@@ -14743,7 +14743,7 @@ fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
             "ends": {"start": id("vertex"), "end": id("vertex")}}));
     }
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -15030,7 +15030,7 @@ fn solidcraft_blends_the_input_edge_and_matches_the_expected_body() {
 fn solidcraft_refuses_a_blend_whose_midpoint_lies_on_two_rebuilt_edges() {
     let Some(cli) = solidcraft() else { return };
     let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let model = &mut wire["model"];
     let mut earlier = model["features"][1].clone();
     earlier["id"] = json!("f3d:model:feature#4");
@@ -15038,7 +15038,7 @@ fn solidcraft_refuses_a_blend_whose_midpoint_lies_on_two_rebuilt_edges() {
     model["features"].as_array_mut().unwrap().push(earlier);
     model["features"][2]["ordinal"] = json!(4);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let (_, report) = written_with(&model, &replaying(&cli));
@@ -15057,7 +15057,7 @@ fn a_distance_angle_chamfer_requires_perpendicular_input_faces() {
                "angle": std::f64::consts::FRAC_PI_4}),
         false,
     );
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     // A parallelogram has the same selected vertical edge, but oblique support faces.
     let entities = &mut wire["model"]["sketch_entities"];
     entities[1]["geometry"]["end"]["u"] = json!(20.0);
@@ -15066,7 +15066,7 @@ fn a_distance_angle_chamfer_requires_perpendicular_input_faces() {
     entities[3]["geometry"]["start"]["u"] = json!(10.0);
     wire["model"]["sketch_constraints"] = json!([]);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let parallelogram = [[0.0, 0.0], [10.0, 0.0], [20.0, 10.0], [10.0, 10.0]];
@@ -15085,11 +15085,11 @@ fn a_fillet_of_tangency_weight_one_maps_as_a_circular_fillet() {
     let cli = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 0);
     let writer = replaying(&cli.path);
     for (weight, maps) in [(1.0, true), (0.999, false), (2.0, false)] {
-        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
         wire["model"]["features"][2]["definition"]["value"]["value"]["groups"][0]
             ["tangency_weight"] = json!(weight);
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..base.clone()
         };
         let (document, report) = convert(&model, &writer);
@@ -15175,11 +15175,11 @@ fn a_fillet_remains_mapped_when_standing_up() {
 #[test]
 fn blends_keep_multiple_picks_and_groups_and_refuse_repeated_geometry_and_weights() {
     let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     wire["model"]["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"]["value"]
         ["edges"] = json!(["near", "opposite"]);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base.clone()
     };
     let cli = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 0);
@@ -15194,7 +15194,7 @@ fn blends_keep_multiple_picks_and_groups_and_refuse_repeated_geometry_and_weight
     wire["model"]["feature_input_topologies"][0]["edge_geometry"][1] = sample;
     wire["model"]["feature_input_topologies"][0]["edge_geometry"][1]["edge"] = json!("opposite");
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base.clone()
     };
     let (_, report) = convert(&model, &writer);
@@ -15203,7 +15203,7 @@ fn blends_keep_multiple_picks_and_groups_and_refuse_repeated_geometry_and_weight
         "{report:?}"
     );
     for multiple_groups in [false, true] {
-        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
         let groups = &mut wire["model"]["features"][2]["definition"]["value"]["value"]["groups"];
         if multiple_groups {
             let group = groups[0].clone();
@@ -15212,7 +15212,7 @@ fn blends_keep_multiple_picks_and_groups_and_refuse_repeated_geometry_and_weight
             groups[0]["tangency_weight"] = json!(0.5);
         }
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..base.clone()
         };
         let (_, report) = convert(&model, &writer);
@@ -15238,7 +15238,7 @@ fn signed_axis_dimensions_keep_their_expression_and_drive_positive_magnitudes() 
         ("vertical_distance", 2, "y"),
     ] {
         let mut model = cube_with_history(10.0, first_profile(), None);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let m = &mut wire["model"];
         let id = format!("f3d:model:sketch-entity#{edge}");
         m["sketch_constraints"][4]["definition"] = json!({
@@ -15259,7 +15259,7 @@ fn signed_axis_dimensions_keep_their_expression_and_drive_positive_magnitudes() 
         m["parameters"][1]["value"]["value"] = json!(-10.0);
         m["parameters"][1]["dependencies"] = json!(["f3d:model:parameter#3"]);
         m["parameters"].as_array_mut().unwrap().push(json!({"id": "f3d:model:parameter#3", "name": "span", "expression": "10 mm", "value": {"kind": "length", "value": 10.0}, "ordinal": 0, "dependencies": [], "properties": {}}));
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, _) = convert(&model, &SolidCraftWriter::new());
         let dimension = &document["features"][0]["sketch"]["constraints"][4];
         assert_eq!(dimension["type"], format!("distance_{axis}"));
@@ -15303,7 +15303,7 @@ fn used_datum_helpers_keep_the_resolved_dependent_sketch_and_replay() {
             "y_axis": {"x": 0.0, "y": 1.0, "z": 0.0},
             "z_axis": {"x": 0.0, "y": 0.0, "z": 1.0}}}}),
     ] {
-        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
         let features = wire["model"]["features"].as_array_mut().unwrap();
         for feature in features.iter_mut() {
             feature["ordinal"] = json!(feature["ordinal"].as_u64().unwrap() + 1);
@@ -15314,7 +15314,7 @@ fn used_datum_helpers_keep_the_resolved_dependent_sketch_and_replay() {
             json!({"id": "f3d:model:feature#datum", "ordinal": 0, "name": "Attachment", "suppressed": false, "definition": {"kind": "operation", "value": definition}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
         );
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..base.clone()
         };
         let (document, report) = convert(&model, &SolidCraftWriter::default());
@@ -15385,14 +15385,14 @@ fn freecad_cc0_negative_distance_replays_without_flattening() {
 fn helper_info_survives_mapping_and_replay_fallbacks() {
     for blocked in [true, false] {
         let base = cube_with_history(if blocked { 10.0 } else { 20.0 }, first_profile(), None);
-        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
         let features = wire["model"]["features"].as_array_mut().unwrap();
         features.push(json!({"id": "f3d:model:feature#unused", "ordinal": 4, "name": "Unused point", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "datum_point", "value": {"position": {"x": 0.0, "y": 0.0, "z": 0.0}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         if blocked {
             features.push(json!({"id": "f3d:model:feature#unknown", "ordinal": 3, "name": "Later", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         }
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..base
         };
         let (_, report) = convert(&model, &SolidCraftWriter::default());
@@ -15416,11 +15416,11 @@ fn helper_info_survives_mapping_and_replay_fallbacks() {
 /// A valid extrusion, then a blocker, a resolved sketch, and a later extrusion.
 fn partial_history_model() -> Model {
     let mut model = reference_sketch_history();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     feature_row(&mut wire, "f3d:model:feature#3")["ordinal"] = json!(3);
     feature_row(&mut wire, "f3d:model:feature#2")["ordinal"] = json!(2);
     let cube = cube_with_history(10.0, first_profile(), None);
-    let cube = serde_json::to_value(&cube.ir).unwrap();
+    let cube = dutchman_core::ir_wire::to_value(&cube.ir).unwrap();
     let mut extrude = cube["model"]["features"][1].clone();
     extrude["id"] = json!("f3d:model:feature#4");
     extrude["ordinal"] = json!(1);
@@ -15435,7 +15435,7 @@ fn partial_history_model() -> Model {
         .as_array_mut()
         .unwrap()
         .push(extrude);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -15775,7 +15775,7 @@ fn a_partial_history_for_a_solidcraft_without_the_remove_feature_keeps_the_hidde
 fn partial_history_appearance_bindings_reach_the_visible_original() {
     for named_prefix in [false, true] {
         let mut model = partial_history_model();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let body = wire["geometry"]["bodies"][0]["id"].clone();
         if !named_prefix {
             for feature in wire["model"]["features"].as_array_mut().unwrap() {
@@ -15792,7 +15792,7 @@ fn partial_history_appearance_bindings_reach_the_visible_original() {
             {"id": "synthetic:test:binding#body", "target": {"entity": {"kind":"body","value":body}}, "appearance": "synthetic:test:appearance#red", "channels": {}},
             {"id": "synthetic:test:binding#face", "target": {"entity": {"kind":"face","value":"synthetic:cube:face#top"}}, "appearance": "synthetic:test:appearance#blue", "channels": {}}
         ]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (doc, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -15895,12 +15895,12 @@ fn partial_history_appearance_bindings_reach_the_visible_original() {
 }
 
 fn with_later_blocker(mut model: Model) -> Model {
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
         .push(json!({"id": "f3d:model:feature#99", "ordinal": 99, "name": "Later blocker", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -16061,12 +16061,12 @@ fn a_blocker_keeps_the_prefix_and_later_resolved_sketches() {
 #[test]
 fn partial_history_keeps_a_sketch_without_a_timeline_row() {
     let mut model = partial_history_model();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
         .retain(|feature| feature["ordinal"] != 3);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -16088,9 +16088,9 @@ fn partial_history_keeps_a_sketch_without_a_timeline_row() {
 #[test]
 fn partial_history_is_not_required_to_keep_sketches_without_timeline_rows() {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"] = json!([]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let writer = SolidCraftWriter::new().verification(Verification::Off);
     let (document, report) = convert(&model, &writer);
     assert_reference_sketches(&document, 1);
@@ -16100,7 +16100,7 @@ fn partial_history_is_not_required_to_keep_sketches_without_timeline_rows() {
         Check::NotApplicable(_)
     ));
     wire["model"]["sketches"][0]["placement"] = json!({"kind": "unresolved"});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(&model, &writer);
     assert!(report
         .losses()
@@ -16111,9 +16111,9 @@ fn partial_history_is_not_required_to_keep_sketches_without_timeline_rows() {
 #[test]
 fn a_later_unresolved_sketch_is_reported_without_losing_the_prefix() {
     let mut model = partial_history_model();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketches"][1]["placement"] = json!({"kind": "unresolved"});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -16398,7 +16398,7 @@ fn a_later_sketch_that_fails_replay_does_not_discard_the_valid_body_prefix() {
     let Some(cli) = solidcraft() else { return };
     for (bound, blocked) in [(true, true), (false, true), (false, false)] {
         let mut model = partial_history_model();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         if !bound {
             wire["model"]["features"]
                 .as_array_mut()
@@ -16419,7 +16419,7 @@ fn a_later_sketch_that_fails_replay_does_not_discard_the_valid_body_prefix() {
         "id": "f3d:model:sketch-constraint#99", "sketch": TOP,
         "definition": {"kind": "distance", "entities": ["f3d:model:sketch-entity#11"], "parameter": "f3d:model:parameter#99"}
     }));
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
@@ -16530,7 +16530,7 @@ fn a_cc0_sheet_edit_drives_geometry_with_a_synthetic_neutral_sketch_binding() {
 fn spreadsheet_function_expressions_evaluate_in_solidcraft() {
     let Some(cli) = solidcraft() else { return };
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // The sketch's side parameter drives two dimensions, so doubling it quadruples volume.
     let side = wire["model"]["parameters"]
         .as_array_mut()
@@ -16541,7 +16541,7 @@ fn spreadsheet_function_expressions_evaluate_in_solidcraft() {
     side["expression"] =
         json!("min(max(20 mm, abs(-30 mm)), sqrt(400) * 1 mm) * sin(30) + 0 * pi * 1 mm");
     side.as_object_mut().unwrap().remove("value");
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let bytes = written(&model).0;
     let initial = volumes(&cli, &bytes);
     assert_eq!(initial.len(), 1);
@@ -16592,10 +16592,10 @@ fn sketch_choice_keeps_required_profiles_but_not_reference_sketches() {
     for before_blocker in [false, true] {
         let mut model = partial_history_model();
         if before_blocker {
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
             feature_row(&mut wire, "f3d:model:feature#3")["ordinal"] = json!(2);
             feature_row(&mut wire, "f3d:model:feature#2")["ordinal"] = json!(3);
-            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         }
         let (document, report) = convert(&model, &writer);
         assert_partial(&document, &report, 1);
@@ -16626,7 +16626,7 @@ fn sketch_choice_keeps_required_profiles_but_not_reference_sketches() {
 #[test]
 fn a_face_extrude_reapplied_to_a_base_body_stored_as_the_design_ends_is_refused() {
     let model = face_extrude(true, |_| {});
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     let features = wire["model"]["features"].as_array_mut().unwrap();
     // The cube comes from a base feature holding the body as the design ends, and the face
@@ -16640,7 +16640,7 @@ fn a_face_extrude_reapplied_to_a_base_body_stored_as_the_design_ends_is_refused(
         .unwrap();
     extrude["outputs"] = json!([body]);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (_, report) = convert(
@@ -16664,7 +16664,7 @@ fn face_extrudes_on_imported_history_bases_require_matching_results() {
                 definition["direction"] = json!({"kind": "reversed_profile_normal"});
             }
         });
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let body = wire["geometry"]["bodies"][0]["id"].clone();
         let base = &mut wire["model"]["features"][1];
         base["definition"] = json!({"kind": "operation", "value": {
@@ -16672,10 +16672,10 @@ fn face_extrudes_on_imported_history_bases_require_matching_results() {
                 "bodies": [body], "native": "synthetic:base#1"
             }}}
         }});
-        let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+        let nests = dutchman_core::ir_wire::to_value(&based_cube_changed_later(true).ir).unwrap();
         wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
         wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#2");
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let writer = SolidCraftWriter::new()
             .replay(Verification::With(cli.clone()))
             .verification(if checked {
@@ -16736,7 +16736,7 @@ fn face_extrudes_on_imported_history_bases_require_matching_results() {
 /// the geometry of the edges around it. `change` edits the extrude's definition.
 fn face_extrude(up: bool, change: impl FnOnce(&mut Value)) -> Model {
     let model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let z = if up { 10.0 } else { 0.0 };
     let point = |x: f64, y: f64| json!({"x": x, "y": y, "z": z});
     let state = "test:face:feature-input#3";
@@ -16777,7 +16777,7 @@ fn face_extrude(up: bool, change: impl FnOnce(&mut Value)) -> Model {
         .unwrap()
         .push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Face extrude", "suppressed": false, "dependencies": ["f3d:model:feature#2"], "definition": {"kind": "operation", "value": definition}, "source_properties": {}, "source_content": [], "outputs": []}));
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -16891,7 +16891,7 @@ fn offset_face_body_binding_preserves_older_targets() {
 fn offset_faces_count_live_bodies_instead_of_source_aliases() {
     for second_body in [false, true] {
         let mut model = face_move(json!({"kind": "offset", "distance": 2.0}));
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let body = wire["geometry"]["bodies"][0]["id"].clone();
         let mut extra = wire["model"]["features"][1].clone();
         wire["model"]["features"][1]["definition"] = json!({"kind": "operation", "value": {
@@ -16901,7 +16901,7 @@ fn offset_faces_count_live_bodies_instead_of_source_aliases() {
         }});
         // The historical base import binds both the final source ID and its
         // historical ID to the same written body name through the real mapper.
-        let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+        let nests = dutchman_core::ir_wire::to_value(&based_cube_changed_later(true).ir).unwrap();
         wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
         wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#2");
         if second_body {
@@ -16921,7 +16921,7 @@ fn offset_faces_count_live_bodies_instead_of_source_aliases() {
                 "members": [{"kind": "body", "id": "test:face:generated-body#second"}]
             }]);
         }
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         for target in ["0.18.2", "0.44.1", "0.45.0"] {
             let (doc, report) = convert(
                 &model,
@@ -16972,12 +16972,12 @@ fn offset_faces_count_live_bodies_instead_of_source_aliases() {
 #[test]
 fn offset_faces_refuse_input_topology_without_unique_body_ownership() {
     let mut model = face_move(json!({"kind": "offset", "distance": 2.0}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["feature_input_topologies"][0]["bodies"] = json!([
         "test:face:historical-body#one",
         "test:face:historical-body#two"
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (doc, report) = convert(
         &model,
         &SolidCraftWriter::new()
@@ -17002,7 +17002,7 @@ fn solidcraft_offsets_coincident_local_faces_on_their_own_bodies() {
     let mut model = assembly_of_histories();
     let first = face_move(json!({"kind": "offset", "distance": 2.0}));
     let mut second = face_move(json!({"kind": "offset", "distance": 1.0}));
-    let mut wire = serde_json::to_value(&second.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&second.ir).unwrap();
     // The earlier body's offset top and the later body's input top both lie
     // at z=12 in their components' local frames. Placements stay separate.
     wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["side"]["termination"]
@@ -17017,7 +17017,7 @@ fn solidcraft_offsets_coincident_local_faces_on_their_own_bodies() {
             edge[key]["z"] = json!(12.0);
         }
     }
-    second.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    second.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let assembly = model.assembly.as_mut().unwrap();
     assembly.parts = vec![
         Model {
@@ -17053,7 +17053,7 @@ fn solidcraft_offsets_coincident_local_faces_on_their_own_bodies() {
 fn solidcraft_offsets_an_annular_face_from_its_interior() {
     let Some(cli) = solidcraft() else { return };
     let mut model = nested_native_profile(&[10.0, 4.0]);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let template =
         serde_json::to_value(&face_move(json!({"kind": "offset", "distance": 2.0})).ir).unwrap();
     wire["model"]["features"]
@@ -17083,7 +17083,7 @@ fn solidcraft_offsets_an_annular_face_from_its_interior() {
         })
         .collect::<Vec<_>>());
     wire["model"]["feature_input_topologies"] = json!([topology]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let writer = replaying(&cli).target_version(Some("0.45.0".parse().unwrap()));
     let (doc, report) = convert(&model, &writer);
     let offset = doc["features"]
@@ -17160,10 +17160,10 @@ fn a_historical_face_extrude_without_a_replay_waits_for_one() {
 #[test]
 fn a_historical_face_without_edge_geometry_is_refused_for_that_reason() {
     let model = face_extrude(true, |_| {});
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["feature_input_topologies"][0]["edge_geometry"] = json!([]);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (_, report) = convert(
@@ -17211,7 +17211,7 @@ fn solidcraft_extrudes_a_historical_face_along_its_outward_normal() {
 /// `change` edits the loft's definition.
 fn face_loft(up: bool, top: f64, change: impl FnOnce(&mut Value)) -> Model {
     let model = face_extrude(up, |_| {});
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let z = if up { 20.0 } else { -10.0 };
     let (a, b) = (5.0 - top / 2.0, 5.0 + top / 2.0);
     let sketch = "f3d:model:sketch#9";
@@ -17262,7 +17262,7 @@ fn face_loft(up: bool, top: f64, change: impl FnOnce(&mut Value)) -> Model {
     features.push(json!({"id": "f3d:model:feature#9", "ordinal": 2, "name": "Far sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": sketch}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     features.push(loft);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -17322,7 +17322,7 @@ fn solidcraft_lofts_from_a_historical_face() {
 /// at Y = 0, which no face of the cube can merge with.
 fn face_extrude_then_chamfer(up: bool) -> Model {
     let model = face_extrude(up, |_| {});
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let z = if up { 15.0 } else { -5.0 };
     let state = "test:face:feature-input#4";
     wire["model"]["feature_input_topologies"]
@@ -17344,7 +17344,7 @@ fn face_extrude_then_chamfer(up: bool) -> Model {
                 "spec": {"kind": "distance", "distance": 1.0},
             }], "flip_direction": false}}}, "source_properties": {}, "source_content": []}));
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -17378,7 +17378,7 @@ fn sketch_entity_distances_keep_expressions_driving_geometry() {
         json!(["f3d:model:sketch-entity#7", "f3d:model:sketch-entity#5"]),
     ] {
         let mut model = cube_with_history(10.0, first_profile(), None);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let m = &mut wire["model"];
         m["sketch_entities"].as_array_mut().unwrap().extend([
             entity(
@@ -17397,7 +17397,7 @@ fn sketch_entity_distances_keep_expressions_driving_geometry() {
         m["parameters"][1]["expression"] = json!("Width / 2");
         m["parameters"][1]["dependencies"] = json!(["f3d:model:parameter#3"]);
         m["parameters"].as_array_mut().unwrap().push(json!({"id": "f3d:model:parameter#3", "name": "Width", "expression": "20 mm", "value": {"kind": "length", "value": 20.0}, "ordinal": 0, "dependencies": [], "properties": {}}));
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, _) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -17425,14 +17425,14 @@ fn sketch_entity_distances_keep_expressions_driving_geometry() {
 /// kind names it) reading a user parameter `Height`.
 fn cube_with_height_parameter(sign: f64) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let parameters = wire["model"]["parameters"].as_array_mut().unwrap();
     parameters[0]["expression"] = json!("Height");
     parameters[0]["value"]["value"] = json!(sign * 10.0);
     parameters[0]["dependencies"] = json!(["f3d:model:parameter#3"]);
     parameters[0]["properties"] = json!({"source_kind": "AlongDistance"});
     parameters.push(json!({"id": "f3d:model:parameter#3", "name": "Height", "expression": "10 mm", "value": {"kind": "length", "value": 10.0}, "ordinal": 0, "dependencies": [], "properties": {}}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -17462,7 +17462,7 @@ fn an_extrude_distance_follows_the_parameter_that_sets_it() {
 /// `source_properties`, with the user parameter `Height` (20 mm) behind it.
 fn cube_with_bound_distance_parameter() -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let parameters = wire["model"]["parameters"].as_array_mut().unwrap();
     parameters[0].as_object_mut().unwrap().remove("owner");
     parameters[0]["expression"] = json!("(Height) / (2 ul)");
@@ -17470,7 +17470,7 @@ fn cube_with_bound_distance_parameter() -> Model {
     parameters.push(json!({"id": "f3d:model:parameter#3", "name": "Height", "expression": "20 mm", "value": {"kind": "length", "value": 20.0}, "ordinal": 0, "dependencies": [], "properties": {}}));
     wire["model"]["features"][1]["source_properties"] =
         json!({"extent_distance_parameter": "f3d:model:parameter#1"});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -17496,9 +17496,9 @@ fn an_inventor_extrude_distance_keeps_its_expression_and_follows_the_user_parame
 #[test]
 fn an_inventor_extrude_distance_keeps_its_value_when_the_bound_parameter_differs() {
     let mut model = cube_with_bound_distance_parameter();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["parameters"][0]["value"]["value"] = json!(7.0);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -17623,7 +17623,7 @@ fn an_inventor_part_keeps_its_parameter_expressions() {
     }
     // The extrude distance is bound to d5 when the decoder records which parameter sets it
     // (cadmpeg's `extent_distance_parameter`); before that it is the plain 30 mm.
-    let wire = serde_json::to_value(&model.ir).unwrap();
+    let wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let decoder_binds_distance = wire["model"]["features"]
         .as_array()
         .is_some_and(|features| {
@@ -17649,9 +17649,9 @@ fn an_inventor_part_keeps_its_parameter_expressions() {
 #[test]
 fn an_extrude_distance_keeps_its_value_when_no_single_parameter_matches() {
     let mut model = cube_with_height_parameter(1.0);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["parameters"][0]["value"]["value"] = json!(7.0);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -17663,12 +17663,12 @@ fn an_extrude_distance_keeps_its_value_when_no_single_parameter_matches() {
 fn a_partial_revolve_angle_follows_the_parameter_that_sets_it() {
     let mut model = ring_history(json!({"kind": "one_sided",
         "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["parameters"] = json!([
         {"id": "f3d:model:parameter#1", "owner": "f3d:model:feature#2", "name": "d1", "expression": "Turn", "dependencies": ["f3d:model:parameter#2"], "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2}, "properties": {"source_kind": "AlongAngle"}, "ordinal": 0},
         {"id": "f3d:model:parameter#2", "name": "Turn", "expression": "90 deg", "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2}, "ordinal": 0, "dependencies": [], "properties": {}},
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -17688,14 +17688,14 @@ fn a_partial_revolve_angle_follows_the_parameter_that_sets_it() {
 #[test]
 fn selecting_nested_loops_leaves_the_inner_one_a_hole() {
     let mut model = nested_native_profile(&[5.0, 3.0]);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]["value"] =
         json!({"kind": "sketch_profiles", "value": {"sketch": SKETCH, "profiles": [1, 0]}});
     // End where the synthetic final cube has no face: this test is about the written profile,
     // not the end-cap comparison.
     wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["side"]["termination"]
         ["length"] = json!(5.0);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -17714,7 +17714,7 @@ fn selecting_nested_loops_leaves_the_inner_one_a_hole() {
 #[test]
 fn a_loose_corner_is_held_so_a_parameter_edit_moves_only_what_it_drives() {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // The square is drawn away from the origin and nothing pins where: its corner floats.
     for entity in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
         for end in ["start", "end"] {
@@ -17724,7 +17724,7 @@ fn a_loose_corner_is_held_so_a_parameter_edit_moves_only_what_it_drives() {
             }
         }
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -17752,7 +17752,7 @@ fn a_loose_corner_is_held_so_a_parameter_edit_moves_only_what_it_drives() {
 /// `Height` tall with its top left corner tied to the sketch origin by a point entity there.
 fn block_with_height_parameter() -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketches"][0]["placement"]["frame"]["normal"] = json!({"x": 0.0, "y": 1.0, "z": 0.0});
     // On XZ, sketch v runs along -Z.
@@ -17797,14 +17797,14 @@ fn block_with_height_parameter() -> Model {
         {"id": "f3d:model:parameter#2", "owner": "f3d:model:feature#1", "ordinal": 0, "name": "d2", "expression": "Height", "dependencies": ["f3d:model:parameter#3"], "value": {"kind": "length", "value": 10.0}, "properties": {}},
         {"id": "f3d:model:parameter#3", "name": "Height", "expression": "10 mm", "value": {"kind": "length", "value": 10.0}, "ordinal": 0, "dependencies": [], "properties": {}},
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
 #[test]
 fn a_sketch_on_the_end_of_a_feature_moves_with_the_dimensions_that_place_it() {
     let mut model = block_with_height_parameter();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     let pocket = "f3d:model:sketch#2";
     // The pocket sketch lies at z = Height, drawn with its axes turned half a turn.
@@ -17826,7 +17826,7 @@ fn a_sketch_on_the_end_of_a_feature_moves_with_the_dimensions_that_place_it() {
     m["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Pocket sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": pocket}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     m["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Pocket", "suppressed": false, "dependencies": ["f3d:model:feature#2", "f3d:model:feature#3"], "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {"kind": "sketch_profiles", "value": {"sketch": pocket, "profiles": [0]}}}, "direction": {"kind": "reversed_profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided",
                 "side": {"termination": {"kind": "blind", "length": 2.0}}}, "op": "cut"}}}, "source_properties": {}, "source_content": [], "outputs": []}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -17864,14 +17864,14 @@ fn a_sketch_on_the_end_of_a_feature_moves_with_the_dimensions_that_place_it() {
 #[test]
 fn an_empty_base_region_does_not_consume_an_import_name() {
     let mut model = based_cube();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     let empty = json!({"id": "test:model:region#empty", "body": body, "shells": []});
     wire["geometry"]["regions"]
         .as_array_mut()
         .unwrap()
         .insert(0, empty);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -17900,12 +17900,12 @@ fn an_empty_base_region_does_not_consume_an_import_name() {
 #[test]
 fn an_omitted_base_region_does_not_discard_history_or_shift_body_colours() {
     let mut model = based_cube();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     // A nonempty region whose shell is unavailable: the exporter omits it.
     wire["geometry"]["regions"].as_array_mut().unwrap().insert(0,
         json!({"id": "test:model:region#omitted", "body": body, "shells": ["test:model:shell#missing"]}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -17923,7 +17923,7 @@ fn an_omitted_base_region_does_not_discard_history_or_shift_body_colours() {
 #[test]
 fn an_offset_datum_with_independent_sketch_consumers_does_not_stop_history() {
     let model = cube_with_history(10.0, whole_sketch(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     for feature in wire["model"]["features"].as_array_mut().unwrap() {
         feature["ordinal"] = json!(feature["ordinal"].as_u64().unwrap() + 1);
     }
@@ -17933,7 +17933,7 @@ fn an_offset_datum_with_independent_sketch_consumers_does_not_stop_history() {
         .unwrap()
         .push(json!({"id": "test:model:feature#offset", "ordinal": 0, "name": "Offset datum", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "datum_offset_plane", "value": {"distance": -7.0}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     let changed = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (document, report) = convert(
@@ -17952,10 +17952,10 @@ fn an_offset_datum_with_independent_sketch_consumers_does_not_stop_history() {
         .unwrap()
         .iter()
         .any(|f| f["type"] == "extrude"));
-    let mut unresolved = serde_json::to_value(&changed.ir).unwrap();
+    let mut unresolved = dutchman_core::ir_wire::to_value(&changed.ir).unwrap();
     unresolved["model"]["sketches"][0]["placement"] = json!({"kind": "unresolved"});
     let changed = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&unresolved.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&unresolved.to_string()).unwrap(),
         ..changed
     };
     let (_, report) = convert(
@@ -17976,13 +17976,13 @@ fn an_offset_datum_with_independent_sketch_consumers_does_not_stop_history() {
 #[test]
 fn a_body_split_uses_the_signed_offset_datum_frame() {
     let model = split_cube(0.0, false, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][2]["definition"] = json!({"kind":"operation", "value": {"kind": "datum_offset_plane", "value": {"reference": {"kind": "resolved_plane", "frame": {
             "origin": {"x": 9.0, "y": 0.0, "z": 0.0},
             "normal": {"x": 2.0, "y": 0.0, "z": 0.0},
             "u_axis": {"x": 0.0, "y": 3.0, "z": 0.0}}}, "distance": -5.0}}});
     let changed = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (document, report) = convert(
@@ -18067,7 +18067,7 @@ fn shells_map_historical_input_faces_and_signed_direction() {
 #[test]
 fn shells_require_their_own_historical_input_faces() {
     let model = historical_shell(false);
-    let original = serde_json::to_value(&model.ir).unwrap();
+    let original = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     for missing_geometry in [true, false] {
         let mut wire = original.clone();
         if missing_geometry {
@@ -18076,7 +18076,7 @@ fn shells_require_their_own_historical_input_faces() {
             wire["model"]["feature_input_topologies"][0]["input_of"] = json!("f3d:model:feature#2");
         }
         let changed = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..model.clone()
         };
         let (document, report) = convert(
@@ -18103,13 +18103,13 @@ fn shells_require_their_own_historical_input_faces() {
 #[test]
 fn a_body_the_source_leaves_unnamed_gets_a_name_later_features_can_target() {
     let model = cube_with_history(10.0, whole_sketch(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["geometry"]["bodies"][0]
         .as_object_mut()
         .unwrap()
         .remove("name");
     let changed = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (document, report) = convert(
@@ -18133,7 +18133,7 @@ fn a_body_the_source_leaves_unnamed_gets_a_name_later_features_can_target() {
 #[test]
 fn a_join_before_any_body_makes_and_names_the_first_body() {
     let model = cube_with_history(10.0, whole_sketch(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["geometry"]["bodies"][0]
         .as_object_mut()
         .unwrap()
@@ -18144,7 +18144,7 @@ fn a_join_before_any_body_makes_and_names_the_first_body() {
         }
     }
     let changed = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (document, report) = convert(
@@ -18176,7 +18176,7 @@ fn through_all_cuts_require_a_body_before_the_cut_in_ordinal_order() {
     const CUT_SKETCH: &str = "test:model:sketch#cut";
     for with_boss in [false, true] {
         let model = cube_with_history(10.0, whole_sketch(), None);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let mut cut = wire["model"]["features"][1].clone();
         cut["id"] = json!("test:model:feature#cut");
         cut["name"] = json!("Through cut");
@@ -18216,7 +18216,7 @@ fn through_all_cuts_require_a_body_before_the_cut_in_ordinal_order() {
         features.push(cut);
         features.reverse();
         let changed = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..model
         };
         let (document, report) = convert(
@@ -18265,7 +18265,7 @@ fn through_all_cuts_require_a_body_before_the_cut_in_ordinal_order() {
 /// in its square, as a second profile loop.
 fn cube_with_circle_profile(length: f64, profile: Value, radius: f64) -> Model {
     let mut model = cube_with_history(length, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let sketch = &mut wire["model"];
     sketch["sketch_entities"]
         .as_array_mut()
@@ -18277,7 +18277,7 @@ fn cube_with_circle_profile(length: f64, profile: Value, radius: f64) -> Model {
     let loops = sketch["sketches"][0]["profiles"][0].clone();
     sketch["sketches"][0]["profiles"] =
         json!([loops, [{"entity": "f3d:model:sketch-entity#5", "reversed": false}]]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -18461,9 +18461,9 @@ fn a_host_evaluator_skips_parameter_verification_for_history_without_parameters(
     let host = std::sync::Arc::new(RecordedEvaluator::default());
     let writer = SolidCraftWriter::new().evaluator(host.clone());
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["parameters"] = json!([]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(&model, &writer);
     assert_eq!(report.outcome().unwrap().mode, Mode::History);
     assert_eq!(report.outcome().unwrap().check, Check::Verified);
@@ -18511,9 +18511,9 @@ fn unresolved_square_selection(selected: &[u32]) -> Model {
     let profile = json!({"kind": "sketch_selection", "value": {"sketch": SKETCH,
         "selections": if ids.is_empty() {vec!["synthetic:native:selection#one".to_owned()]} else {ids}}});
     let mut model = cube_with_history(10.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketches"][0]["profiles"] = json!([]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -18606,13 +18606,13 @@ fn an_inferred_partial_profile_needs_known_bodies_at_its_own_source_state() {
         (None, false),
     ] {
         let mut model = unresolved_square_selection(&[]);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         if let Some(center) = center {
             wire["model"]["features"][1]["source_properties"] =
                 json!({"body_centers": center, "body_centers_exact": "cube"});
         }
         wire["model"]["features"].as_array_mut().unwrap().push(json!({"id": "synthetic:cube:feature#later", "ordinal": 2, "name": "Later", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Reference blocker", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (_, report) = convert(
             &model,
             &SolidCraftWriter::new().evaluator(std::sync::Arc::new(RecordedEvaluator::default())),
@@ -18640,12 +18640,12 @@ fn an_inferred_partial_profile_needs_known_bodies_at_its_own_source_state() {
 /// design's component so it is a part of the design and not a consumed tool.
 fn hidden_cube_with_history() -> Model {
     let model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     wire["geometry"]["bodies"][0]["visible"] = json!(false);
     wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#root", "kind": "part", "bodies": [body], "bom_properties": {}, "sketches": [], "storage": {"kind":"embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": []}]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -18722,9 +18722,9 @@ fn solidcraft_replays_a_loop_around_another_loop_the_selection_names() {
 #[test]
 fn a_cut_before_any_feature_builds_a_body_is_refused_when_mapping() {
     let mut model = cube_with_history(10.0, json!({"kind": "sketch", "value": SKETCH}), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][1]["definition"]["value"]["value"]["op"] = json!("cut");
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -18777,7 +18777,7 @@ fn an_unprojected_design_only_history_is_refused_instead_of_silently_mapping_not
 /// names the feature the history is rolled back before.
 fn design_cube(features: Vec<Value>, sketches: &[(u32, u32)], rollback: Option<u32>) -> Model {
     let ir = cadmpeg_ir::examples::unit_cube().unwrap();
-    let mut wire = serde_json::to_value(&ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&ir).unwrap();
     let id = |n: u32| format!("se:design:feature#{n}");
     let sketch = |n: u32| format!("se:design:sketch#{n}");
     let members: Vec<Value> = features
@@ -18821,7 +18821,7 @@ fn design_cube(features: Vec<Value>, sketches: &[(u32, u32)], rollback: Option<u
     design["sketches"] = Value::Array(rows);
     design["sketch_entities"] = Value::Array(entities);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         fidelity: None,
         name: "cube".to_owned(),
         source_file: Some("cube.par".to_owned()),
@@ -19089,10 +19089,10 @@ fn design_features_map_in_timeline_order() {
     );
     let model = design_cube(vec![first, second], &[(1, 1), (2, 2)], None);
     // The arena holds the later feature first; the timeline orders them.
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["design"]["features"].as_array_mut().unwrap().reverse();
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     let (document, _) = projected(model);
@@ -19150,7 +19150,7 @@ fn dividing_line() -> Model {
         json!({"kind": "at_origin"}),
         design_amount(10.0),
     ));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["design"]["sketch_entities"]
         .as_array_mut()
         .unwrap()
@@ -19160,7 +19160,7 @@ fn dividing_line() -> Model {
                 "start": {"u": 0.0, "v": 5.0}, "end": {"u": 10.0, "v": 5.0}}}},
             "roles": [], "native_options": {}, "source_settings": {}}),
         );
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -19207,12 +19207,12 @@ fn a_design_extent_the_design_leaves_unstated_is_refused_not_guessed() {
         json!({"kind": "at_origin"}),
         design_amount(10.0),
     ));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["design"]["features"][0]["definition"]["operation"]["value"]
         .as_object_mut()
         .unwrap()
         .remove("span");
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = projected(model);
     assert!(
         history_line(&report).contains("native is not mapped yet"),
@@ -19224,8 +19224,8 @@ fn a_design_extent_the_design_leaves_unstated_is_refused_not_guessed() {
 #[test]
 fn projection_leaves_a_document_with_model_history_alone() {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let before = serde_json::to_value(&model.ir.model).unwrap();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let before = dutchman_core::ir_wire::to_value(&model.ir).unwrap()["model"].clone();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["design"] = serde_json::to_value(
         design_cube(
             vec![design_feature(
@@ -19244,10 +19244,13 @@ fn projection_leaves_a_document_with_model_history_alone() {
     )
     .unwrap()["design"]
         .clone();
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let mut report = Report::default();
     dutchman_core::design_history::project(&mut model.ir, &mut report);
-    assert_eq!(serde_json::to_value(&model.ir.model).unwrap(), before);
+    assert_eq!(
+        dutchman_core::ir_wire::to_value(&model.ir).unwrap()["model"].clone(),
+        before
+    );
     assert!(report.losses().is_empty());
 }
 
@@ -19255,11 +19258,11 @@ fn projection_leaves_a_document_with_model_history_alone() {
 fn a_native_symmetric_extrude_keeps_its_literal_distance() {
     for namespace in ["f3d:", "inventor:"] {
         let mut model = cube_with_height_parameter(1.0);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["kind"] =
             json!("symmetric");
         model.ir =
-            cadmpeg_ir::CadIr::from_json(&wire.to_string().replace("f3d:", namespace)).unwrap();
+            dutchman_core::ir_wire::from_str(&wire.to_string().replace("f3d:", namespace)).unwrap();
         let (doc, _) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -19273,16 +19276,16 @@ fn a_native_symmetric_extrude_keeps_its_literal_distance() {
 fn native_parameters_do_not_change_a_fallback_without_mapped_sketches() {
     for namespace in ["f3d:", "inventor:"] {
         let mut model = cube_with_height_parameter(1.0);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["sketches"][0]["placement"] = json!({"kind":"unresolved"});
         wire["model"]["sketch_constraints"] = json!([]);
         model.ir =
-            cadmpeg_ir::CadIr::from_json(&wire.to_string().replace("f3d:", namespace)).unwrap();
+            dutchman_core::ir_wire::from_str(&wire.to_string().replace("f3d:", namespace)).unwrap();
         let writer = SolidCraftWriter::new().verification(Verification::Off);
         let (with_parameters, _) = written_with(&model, &writer);
         wire["model"]["parameters"] = json!([]);
         model.ir =
-            cadmpeg_ir::CadIr::from_json(&wire.to_string().replace("f3d:", namespace)).unwrap();
+            dutchman_core::ir_wire::from_str(&wire.to_string().replace("f3d:", namespace)).unwrap();
         let (without_parameters, _) = written_with(&model, &writer);
         assert_eq!(
             with_parameters, without_parameters,
@@ -19309,7 +19312,7 @@ fn spatial_044_model() -> Model {
             json!({"kind": "point", "position": xyz([0.0, 0.0, 30.0])}),
         ));
     });
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let model = &mut wire["model"];
     model["parameters"].as_array_mut().unwrap().push(json!({"id": "f3d:model:parameter#44", "owner": "f3d:model:feature#3", "ordinal": 44, "name": "rise", "expression": "30 mm", "value": {"kind": "length", "value": 30.0}, "dependencies": [], "properties": {}}));
     model["spatial_sketch_constraints"] = json!([
@@ -19319,7 +19322,7 @@ fn spatial_044_model() -> Model {
         {"id": "f3d:model:sketch-constraint#444", "sketch": SPATIAL, "definition": {"kind": "tangent", "first": spatial_id(1), "second": spatial_id(2)}},
     ]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -19408,10 +19411,10 @@ fn spatial_044_older_targets_keep_the_legacy_sketch_bytes() {
             .iter()
             .any(|l| l.detail.starts_with("4 constraints not carried:")));
         // Changing neutral relations cannot alter the legacy geometry representation.
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["spatial_sketch_constraints"] = json!([]);
         let no_relations = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..model.clone()
         };
         let (without, _) = convert(
@@ -19455,7 +19458,7 @@ fn spatial_044_extrude(lift: f64) -> Model {
             json!({"kind": "line", "start": xyz([0.0,0.0,0.0]), "end": xyz([0.0,0.0,8.0])}),
         ));
     });
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     wire["model"]["spatial_sketches"][0]["profiles"] = json!([{ "origin": xyz([0.0,0.0,0.0]), "normal": xyz([0.0,0.0,1.0]), "u_axis": xyz([1.0,0.0,0.0]), "boundary": (1..=4).map(|i| json!({"entity": spatial_id(i), "reversed": false})).collect::<Vec<_>>() }]);
     wire["model"]["spatial_sketch_constraints"] = json!([
         {"id":"f3d:model:sketch-constraint#4444", "sketch":SPATIAL, "definition":{"kind":"repeated_line_length","entities":(1..=4).map(spatial_id).collect::<Vec<_>>(),"parameter":"f3d:model:parameter#2"}},
@@ -19466,7 +19469,7 @@ fn spatial_044_extrude(lift: f64) -> Model {
     ]);
     feature_row(&mut wire, "f3d:model:feature#2")["definition"]["value"] = json!({"kind":"extrude", "value": {"profile": {"kind": "spatial_sketch_profiles", "value": {"sketch": SPATIAL, "profiles": [0]}}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 10.0}}}, "op": "new_body"}});
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -19587,7 +19590,7 @@ fn spatial_044_constraints_and_extrude_replay_against_the_source_cube() {
     evaluated(&cli, &path_bytes);
     // A straight 3D path makes dimension edits measurable independently of spline fitting.
     let base = spatial_044_model();
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     wire["model"]["spatial_sketch_entities"]
         .as_array_mut()
         .unwrap()
@@ -19630,7 +19633,7 @@ fn spatial_044_constraints_and_extrude_replay_against_the_source_cube() {
     rise["expression"] = json!("10 mm");
     rise["value"]["value"] = json!(10.0);
     let straight = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let (bytes, proof) = written_with(&straight, &writer);
@@ -19650,8 +19653,8 @@ fn spatial_044_failed_constraint_replay_retries_the_solved_geometry() {
         return;
     };
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
-    let spatial = serde_json::to_value(&spatial_044_model().ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
+    let spatial = dutchman_core::ir_wire::to_value(&spatial_044_model().ir).unwrap();
     for key in [
         "spatial_sketches",
         "spatial_sketch_entities",
@@ -19685,7 +19688,7 @@ fn spatial_044_failed_constraint_replay_retries_the_solved_geometry() {
         .unwrap()
         .push(parameter);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let (doc, report) = convert(
@@ -19721,12 +19724,12 @@ fn spatial_044_failed_constraint_replay_retries_the_solved_geometry() {
 #[test]
 fn spatial_044_independent_sketches_survive_an_earlier_blocker() {
     let base = spatial_044_model();
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     feature_row(&mut wire, "f3d:model:feature#3")["ordinal"] = json!(2);
     feature_row(&mut wire, "f3d:model:feature#2")["ordinal"] = json!(3);
     wire["model"]["features"].as_array_mut().unwrap().push(json!({"id":"f3d:model:feature#44", "ordinal":1, "name":"Earlier blocker", "suppressed":false,"definition":{"kind":"operation","value":{"kind":"native","value":{"kind":"Synthetic unsupported operation","parameters":{}}}},"dependencies":[],"source_properties":{},"source_content":[],"outputs":[]}));
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let (doc, report) = convert(&model, &spatial_044_writer());
@@ -19756,7 +19759,7 @@ fn two_square_selection() -> Model {
     let profile = json!({"kind": "sketch_selection", "value": {"sketch": SKETCH,
         "selections": ["synthetic:native:selection#one"]}});
     let mut model = cube_with_history(10.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketch_constraints"] = json!([]);
     m["sketch_entities"] = json!([
@@ -19775,7 +19778,7 @@ fn two_square_selection() -> Model {
             .collect()
     };
     m["sketches"][0]["profiles"] = json!([ring(1), ring(5)]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -20016,14 +20019,14 @@ fn split_square_selection() -> Model {
     let profile = json!({"kind": "sketch_selection", "value": {"sketch": SKETCH,
         "selections": ["synthetic:native:selection#half"]}});
     let mut model = cube_with_history(10.0, profile, None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketch_constraints"] = json!([]);
     m["sketch_entities"]
         .as_array_mut()
         .unwrap()
         .push(line(5, [5.0, -1.0], [5.0, 11.0]));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -20070,7 +20073,7 @@ fn an_annulus_disc_and_remote_region_cannot_claim_uniqueness_from_shared_centroi
         ..MeasuringEvaluator::default()
     });
     let mut model = two_square_selection();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketch_entities"] = json!([
         circle(1, [2.5, 5.0], (24.0 / std::f64::consts::PI).sqrt()),
@@ -20081,7 +20084,7 @@ fn an_annulus_disc_and_remote_region_cannot_claim_uniqueness_from_shared_centroi
     ]);
     let ring = |id| json!([{"entity": format!("f3d:model:sketch-entity#{id}"), "reversed": false}]);
     m["sketches"][0]["profiles"] = json!([ring(1), ring(2), ring(3)]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(&model, &SolidCraftWriter::new().evaluator(host.clone()));
     let extrude = &report.outcome().unwrap().features[1];
     assert_eq!(
@@ -20205,14 +20208,14 @@ fn output_links_name_saved_features_and_inspection_writes_nothing() {
 #[test]
 fn fallback_links_only_the_saved_reference_sketch() {
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // Both rows deliberately have the same name; links must follow emission.
     for feature in wire["model"]["features"].as_array_mut().unwrap() {
         feature["name"] = json!("Same");
     }
     wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]["value"] =
         json!({"kind": "sketch_profiles", "value": {"sketch": SKETCH, "profiles": [99]}});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -20252,7 +20255,7 @@ fn measured_regions_require_complete_surface_comparisons_when_checking_the_final
 /// final extrude. The saved topology includes that result, independently of the recipe.
 fn scoped_extrude(operation: &str) -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     for arena in [
         "points", "vertices", "curves", "edges", "coedges", "loops", "surfaces", "faces", "shells",
         "regions", "bodies",
@@ -20329,7 +20332,7 @@ fn scoped_extrude(operation: &str) -> Model {
         .unwrap()
         .extend([second, scoped]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -20338,7 +20341,7 @@ fn scoped_extrude(operation: &str) -> Model {
 /// A later independent cube makes the join intermediate, with an exact stored centre.
 fn intermediate_coincident_join() -> Model {
     let mut model = scoped_extrude("join");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // The saved second cube belongs to the later extrusion. The consumed body's
     // identity is available only from its producer, not the final topology.
     wire["model"]["features"][2]["outputs"] = json!(["synthetic:consumed:body#0"]);
@@ -20354,7 +20357,7 @@ fn intermediate_coincident_join() -> Model {
         .as_array_mut()
         .unwrap()
         .push(later);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -20523,12 +20526,12 @@ fn scoped_extrudes_keep_older_target_bytes() {
     let cli = solidcraft();
     for operation in ["join", "cut", "intersect"] {
         let model = scoped_extrude(operation);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         // The previous mapper ignored modified-body outputs. Removing them is the
         // legacy mapping of precisely the same geometry and construction recipe.
         wire["model"]["features"][3]["outputs"] = json!([]);
         let legacy = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..model.clone()
         };
         for target in ["0.18.2", "0.25.1", "0.40.1", "0.43.0", "0.43.9"] {
@@ -20594,7 +20597,7 @@ fn scoped_extrudes_are_confirmed_against_source_bodies() {
 /// topology under the producer's identity. No native files are used.
 fn consumed_boolean_tool(history_producer: Option<&str>) -> Model {
     let mut model = combined_spheres("cut", false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let mut topology = serde_json::Map::new();
     for (arena, rows) in wire["geometry"].as_object_mut().unwrap() {
         if let Some(rows) = rows.as_array_mut() {
@@ -20633,7 +20636,7 @@ fn consumed_boolean_tool(history_producer: Option<&str>) -> Model {
             "topology": topology,
         }]);
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -20684,7 +20687,7 @@ fn unproved_consumed_boolean_tools_remain_blocked_on_every_target() {
             _ => Some("f3d:model:feature#3"),
         };
         let mut model = consumed_boolean_tool(producer);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         if proof == "ambiguous bodies" {
             let mut other = wire["model"]["history_bodies"][0].clone();
             other["id"] = json!("synthetic:history-body:tool#1");
@@ -20698,7 +20701,7 @@ fn unproved_consumed_boolean_tools_remain_blocked_on_every_target() {
                 .unwrap()
                 .push(json!("synthetic:other:body#0"));
         }
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         for target in ["0.18.2", "0.43.0", "0.44.0"] {
             let (document, report) = convert(
                 &model,
@@ -20766,14 +20769,14 @@ fn generated_combine_tools_require_a_single_declared_producer_result() {
         ),
     ] {
         let mut model = combined_spheres("cut", false);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["feature_result_topologies"] = json!([{
             "id":"synthetic:history-result:state#0", "output_of":"f3d:model:feature#3", "members":members
         }]);
         wire["model"]["features"][2]["definition"]["value"]["value"]["operands"]["tools"] = json!({
             "kind":"generated", "value":{"bodies":[{"feature":"f3d:model:feature#3", "local_id":selected}], "native":"opaque tool"}
         });
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         for target in ["0.43.0", "0.44.0"] {
             let (document, report) = convert(
                 &model,
@@ -20823,7 +20826,7 @@ fn scoped_extrudes_keep_the_previous_mapping_without_source_proof() {
 fn scoped_extrude_cuts_can_select_several_bodies_and_leave_another_whole() {
     let Some(cli) = solidcraft() else { return };
     let mut model = scoped_extrude("cut");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     for arena in [
         "points", "vertices", "curves", "edges", "coedges", "loops", "surfaces", "faces", "shells",
         "regions", "bodies",
@@ -20855,7 +20858,7 @@ fn scoped_extrude_cuts_can_select_several_bodies_and_leave_another_whole() {
         .as_array_mut()
         .unwrap()
         .insert(3, third);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new()
@@ -20884,11 +20887,11 @@ fn scoped_extrude_cuts_can_select_several_bodies_and_leave_another_whole() {
 fn scoped_extrudes_reject_targets_that_disagree_with_the_source() {
     let Some(cli) = solidcraft() else { return };
     let mut model = scoped_extrude("cut");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // Both names resolve, but the second body is whole in the saved source.
     wire["model"]["features"][3]["outputs"] =
         json!(["synthetic:cube:body#0", "synthetic:other:body#0"]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new()
@@ -20913,7 +20916,7 @@ fn scoped_extrudes_reject_targets_that_disagree_with_the_source() {
 fn body_mirror_outputs_name_consumed_generated_boolean_tools() {
     let Some(cli) = solidcraft() else { return };
     let mut model = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // Independently construct the saved result: a box from -10 to +10 along X.
     // The recipe instead builds the original cube, reflects it, then joins the pair.
     fn widen(value: &mut Value) {
@@ -20965,7 +20968,7 @@ fn body_mirror_outputs_name_consumed_generated_boolean_tools() {
     ]);
     wire["model"]["feature_result_topologies"] = json!([{"id":"synthetic:history-result:state#0",
         "output_of":"f3d:model:feature#3", "members":[{"kind":"body", "id":"reflected"}]}]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new()
@@ -21005,7 +21008,7 @@ fn body_mirror_outputs_name_consumed_generated_boolean_tools() {
 fn clockwise_rounded_plate(flipped: bool) -> Model {
     use std::f64::consts::{FRAC_PI_2, PI};
     let mut model = cube_with_history(5.0, whole_sketch(), None);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let arc = |key, center: [f64; 2], radius, start, end| {
         entity(
             key,
@@ -21044,7 +21047,7 @@ fn clockwise_rounded_plate(flipped: bool) -> Model {
     if flipped {
         wire["model"]["sketches"][0]["placement"]["frame"]["normal"]["z"] = json!(-1.0);
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -21053,7 +21056,7 @@ fn clockwise_rounded_corners_and_slot_arcs_keep_source_sweeps_and_midpoints() {
     use std::f64::consts::TAU;
     for flipped in [false, true] {
         let model = clockwise_rounded_plate(flipped);
-        let source = serde_json::to_value(&model.ir).unwrap();
+        let source = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -21300,11 +21303,11 @@ fn opaque_generated_edge_identities_are_supported_cadir_but_need_source_geometry
         };
         let model = input_blend(kind, dimension, false);
         for identity in ["3,8,12", "opaque generated edge", "n:sketch-entity:side"] {
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
             wire["model"]["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"] = json!({"kind": "generated", "value": {
                 "edges": [{"feature": "f3d:model:feature#2", "local_id": identity}], "native": "synthetic selection"}});
             let model = Model {
-                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
                 ..model.clone()
             };
             let (_, report) = convert(&model, &spatial_hole_writer());
@@ -21331,7 +21334,7 @@ fn variable_fillet_without_radius_origin_keeps_source_geometry() {
             {"parameter": 1.0, "radius": 1.0}]}),
             false,
         );
-        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
         let m = &mut wire["model"];
         m["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
             json!(["near", "opposite"]);
@@ -21359,7 +21362,7 @@ fn variable_fillet_without_radius_origin_keeps_source_geometry() {
             }
         }
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..base
         };
         let (document, report) = convert(
@@ -21392,13 +21395,13 @@ fn variable_fillet_generated_edge_without_radius_origin_keeps_source_geometry() 
                 {"parameter": 1.0, "radius": end}]}),
             false,
         );
-        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
         wire["model"]["feature_input_topologies"] = json!([]);
         wire["model"]["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"] = json!({"kind": "generated", "value": {
                 "edges": [{"feature": "f3d:model:feature#2", "local_id": "synthetic-edge"}],
                 "native": "synthetic selection"}});
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..base
         };
         let (document, report) = convert(
@@ -21426,7 +21429,7 @@ fn unresolved_revolve_before_trimmed_cuts(explicit_all: bool) -> Model {
     use std::f64::consts::{FRAC_PI_2, PI, TAU};
     let mut model = ring_history(json!({"kind":"one_sided",
         "termination":{"kind":"angle", "angle":TAU}}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["parameters"] = json!([]);
     m["sketch_entities"] = json!([
@@ -21524,7 +21527,7 @@ fn unresolved_revolve_before_trimmed_cuts(explicit_all: bool) -> Model {
         "edges":["synthetic:shared:edge#0"], "edge_geometry":[{"edge":"synthetic:shared:edge#0",
             "start":{"x":10,"y":8,"z":0},"end":{"x":10,"y":8,"z":26},
             "interior":{"x":10,"y":8,"z":13},"supports": [], "tangent":{"x":0,"y":0,"z":1},"faces":[]}]}]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -21602,7 +21605,7 @@ fn unresolved_revolve_synthetic_control_has_more_regions_than_its_stored_loop() 
 fn unresolved_revolve_keeps_construction_and_reference_helpers() {
     let mut model = ring_history(json!({"kind":"one_sided",
         "termination":{"kind":"angle","angle":std::f64::consts::TAU}}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["features"][1]["definition"]["value"]["value"]["construction"]["value"]["profile"] = json!({"kind":"sketch_selection", "value":{"sketch":SKETCH,
             "selections":["synthetic:native:selection#0"]}});
@@ -21616,7 +21619,7 @@ fn unresolved_revolve_keeps_construction_and_reference_helpers() {
             "direction":{"u":0,"v":1}}),
         ),
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -21800,9 +21803,9 @@ fn feature_profiles_take_the_complete_bound_sketch_for_extrudes_and_revolves() {
     let partial = json!({"kind": "one_sided", "termination": {
         "kind": "angle", "angle": std::f64::consts::FRAC_PI_2}});
     let mut no_profile_table = cube_with_history(10.0, whole_sketch(), None);
-    let mut wire = serde_json::to_value(&no_profile_table.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&no_profile_table.ir).unwrap();
     wire["model"]["sketches"][0]["profiles"] = json!([]);
-    no_profile_table.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    no_profile_table.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     for (mut model, path) in [
         (
             cube_with_history(10.0, whole_sketch(), None),
@@ -21823,10 +21826,10 @@ fn feature_profiles_take_the_complete_bound_sketch_for_extrudes_and_revolves() {
     ] {
         let (expected, expected_report) = convert(&model, &writer);
         assert_eq!(expected_report.outcome().unwrap().mode, Mode::History);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         *wire.pointer_mut(path).unwrap() =
             json!({"kind": "feature", "value": "f3d:model:feature#1"});
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (actual, report) = convert(&model, &writer);
         assert_eq!(report.outcome().unwrap().mode, Mode::History, "{report:?}");
         assert_eq!(actual, expected);
@@ -21851,7 +21854,7 @@ fn feature_profiles_require_an_earlier_active_resolved_planar_sketch() {
             json!({"kind": "feature", "value": "f3d:model:feature#1"}),
             None,
         );
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         match case {
             "missing" => {
                 wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]["value"]
@@ -21873,7 +21876,7 @@ fn feature_profiles_require_an_earlier_active_resolved_planar_sketch() {
             }
             _ => assert_eq!(case, "not_sketch", "unknown rejection case"),
         }
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(&model, &writer);
         assert_ne!(
             report.outcome().unwrap().mode,
@@ -21909,14 +21912,14 @@ fn feature_profiles_still_compare_the_selected_area_with_the_source_cap() {
         json!({"kind": "feature", "value": "f3d:model:feature#1"}),
         None,
     );
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     for entity in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
         for end in ["start", "end"] {
             let u = &mut entity["geometry"][end]["u"];
             *u = json!(u.as_f64().unwrap() * 2.0);
         }
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new()
@@ -21966,7 +21969,7 @@ fn feature_profiles_do_not_treat_reference_axes_as_profile_geometry() {
         json!({"kind": "feature", "value": "f3d:model:feature#1"}),
         None,
     );
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["sketches"][0]["profiles"] = json!([]);
     wire["model"]["sketch_constraints"] = json!([]);
     wire["model"]["sketch_entities"] = json!([
@@ -21985,7 +21988,7 @@ fn feature_profiles_do_not_treat_reference_axes_as_profile_geometry() {
             json!({"kind": "point", "position": {"u": 0.0, "v": 0.0}})
         ),
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new()
@@ -22026,7 +22029,7 @@ fn multi_region_boxes() -> Model {
         }
     }
     let base = cube_with_history(10.0, first_profile(), None);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     let mut second: Value = serde_json::from_str(
         &wire["geometry"]
             .to_string()
@@ -22080,7 +22083,7 @@ fn multi_region_boxes() -> Model {
     extrude["definition"]["value"]["value"]["op"] = json!("join");
     m["features"].as_array_mut().unwrap().push(extrude);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     }
 }
@@ -22121,10 +22124,10 @@ fn multi_region_history_and_import_verify_in_solidcraft() {
 fn multi_region_history_rejects_a_shortened_lump_in_solidcraft() {
     let Some(cli) = solidcraft() else { return };
     let mut model = multi_region_boxes();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][3]["definition"]["value"]["value"]["extent"]["side"]["termination"]
         ["length"] = json!(5.0);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = written_with(
         &model,
         &SolidCraftWriter::new().verification(Verification::With(cli)),
@@ -22255,7 +22258,7 @@ fn copying_body_moves_keep_the_source_and_name_the_copy() {
 #[test]
 fn body_moves_rebuild_from_a_captured_base_with_two_identity_aliases() {
     let base = based_cube_changed_later(true);
-    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -22287,7 +22290,7 @@ fn body_moves_rebuild_from_a_captured_base_with_two_identity_aliases() {
     }
     wire["model"]["feature_input_topologies"] = json!(inputs);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
     };
     let writer = SolidCraftWriter::new()
@@ -22394,7 +22397,7 @@ fn solidcraft_replays_body_moves_and_later_features_with_source_centroids() {
             &SolidCraftWriter::new().verification(Verification::Off),
         )
         .0;
-        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&base.ir).unwrap();
         let mut later = wire["model"]["features"][2].clone();
         later["id"] = json!("f3d:model:feature#4");
         later["ordinal"] = json!(3);
@@ -22405,7 +22408,7 @@ fn solidcraft_replays_body_moves_and_later_features_with_source_centroids() {
             .unwrap()
             .push(later);
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..base
         };
         let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));

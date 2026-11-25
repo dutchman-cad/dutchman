@@ -32,7 +32,7 @@ pub fn topology(model: &Model) -> Vec<Value> {
     let shells: std::collections::BTreeMap<_, _> = topology
         .shells
         .iter()
-        .filter(|s| topology.shell_faces(&s.id).take(2).count() > 1)
+        .filter(|s| topology.stated_shell_faces(&s.id).take(2).count() > 1)
         .map(|s| (&s.id, &s.region))
         .collect();
     let regions: std::collections::BTreeMap<_, _> =
@@ -47,7 +47,7 @@ pub fn topology(model: &Model) -> Vec<Value> {
         .faces
         .iter()
         .enumerate()
-        .filter(|(_, face)| face.loops.is_empty() && surfaces.contains(&face.surface))
+        .filter(|(_, face)| face.loops.stated().next().is_none() && surfaces.contains(&face.surface))
         .filter_map(|(index, face)| {
             let region = shells.get(&face.shell)?;
             let body = bodies.get(regions.get(region)?)?;

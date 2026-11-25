@@ -313,7 +313,11 @@ pub(crate) fn onshape_step(
         .enter_nested("Onshape STEP member")
         .map_err(|error| Error::Decode(error.to_string()))?;
     let decoded = codec
-        .decode_with_context(ctx, root)
+        .decode_with_context(
+            ctx,
+            root,
+            &cadmpeg_ir::report::strictness::Strictness::default(),
+        )
         .map_err(|error| decode_failure(Format::Step, error))?;
     let (ir, decoded_report, fidelity) = decoded.into_parts();
     if !decoded_report.geometry_transferred() {
@@ -474,7 +478,11 @@ fn decode_unguarded(
     }
     let reading_name = path.file_name().map(|name| name.to_string_lossy());
     let reading = progress.map(|p| p.stage_step(crate::StepKind::Reading, reading_name.as_deref()));
-    let options = DecodeOptions { depth, policy };
+    let options = DecodeOptions {
+        depth,
+        policy,
+        strictness: cadmpeg_ir::report::strictness::Strictness::default(),
+    };
     let decode = || codec.decode(&mut Cursor::new(bytes), &options);
     let members = progress.and_then(|p| p.members.clone()).map(|sink| {
         std::rc::Rc::new(Members {

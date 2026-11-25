@@ -139,10 +139,10 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/generated_unit_cube.f3d");
         let model = crate::read(Format::FusionArchive, &path, &mut Report::default()).unwrap();
-        let mut ir = serde_json::to_value(&model.ir).unwrap();
+        let mut ir = crate::ir_wire::to_value(&model.ir).unwrap();
         ir["model"]["features"] = features;
         ir["model"]["parameters"] = parameters;
-        let ir = cadmpeg_ir::CadIr::from_json(&ir.to_string()).unwrap();
+        let ir = crate::ir_wire::from_str(&ir.to_string()).unwrap();
         Model { ir, ..model }
     }
 

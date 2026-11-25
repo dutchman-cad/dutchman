@@ -146,7 +146,7 @@ mod tests {
             if format == Format::SolidWorksPart {
                 return Ok(model);
             }
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
             let nested = path == Path::new("nested.sldasm");
             let member = if nested {
                 "cube.sldprt"

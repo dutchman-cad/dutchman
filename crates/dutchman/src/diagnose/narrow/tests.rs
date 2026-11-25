@@ -356,14 +356,14 @@ fn part(name: &str, features: u64) -> Model {
         .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
     let mut model =
         dutchman_core::read(Format::FusionArchive, &path, &mut Report::default()).unwrap();
-    let mut ir = serde_json::to_value(&model.ir).unwrap();
+    let mut ir = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let rows: Vec<Value> = (1..=features)
         .map(|at| {
             json!({"id": format!("f3d:model:feature#{}", at + 1000), "ordinal": at, "name": format!("SecretFeature{at}"), "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []})
         })
         .collect();
     ir["model"]["features"] = Value::Array(rows);
-    model.ir = serde_json::from_value(ir).unwrap();
+    model.ir = dutchman_core::ir_wire::from_value(ir).unwrap();
     model.name = name.to_owned();
     model
 }

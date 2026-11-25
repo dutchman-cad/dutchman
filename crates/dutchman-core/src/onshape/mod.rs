@@ -130,7 +130,9 @@ fn part_studio_bodies(model: &mut Model) {
     if roots.next().is_some()
         || !root.bodies.is_empty()
         || !root.sketches.is_empty()
-        || !root.tessellations.is_empty()
+        || rows.tessellations.iter().any(|mesh| {
+            matches!(&mesh.of, cadmpeg_ir::tessellation::Meshed::Display { definition } if *definition == root.id)
+        })
         || !root.instance_bodies.is_empty()
         || !root.representations.is_empty()
         || root.active == Some(false)
@@ -166,7 +168,7 @@ fn part_studio_bodies(model: &mut Model) {
     }
     // Each placement is named by its row and its owner; any other mention keeps the
     // product structure as decoded. The file wrapper must also have no other users.
-    let Ok(text) = serde_json::to_string(&model.ir) else {
+    let Ok(text) = crate::ir_wire::to_string(&model.ir) else {
         return;
     };
     let named = |id: &str| text.matches(&format!("\"{id}\"")).count();

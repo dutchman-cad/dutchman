@@ -1385,7 +1385,7 @@ fn describe_feature(
     };
     let name = row.name.clone();
     let id = row.id.as_str().to_owned();
-    let Ok(wire) = serde_json::to_value(&part.ir) else {
+    let Ok(wire) = dutchman_core::ir_wire::to_value(&part.ir) else {
         return (None, name);
     };
     let wire = wire.get("model").unwrap_or(&Value::Null);

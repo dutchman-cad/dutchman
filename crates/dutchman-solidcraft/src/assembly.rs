@@ -1865,7 +1865,7 @@ fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none(
         {"id": "test:model:feature#unresolved", "ordinal": 2, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "unresolved"}}}}, "dependencies": [], "source_properties": {}, "source_content": []}
     ]);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         fidelity: None,
         name: "synthetic".to_owned(),
         source_file: None,
