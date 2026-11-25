@@ -302,8 +302,16 @@ pub fn assembly_references(
             .map(|definition| (definition.id.as_str(), definition))
             .collect();
         for row in value.as_array().into_iter().flatten().take(MAX_PLACEMENTS) {
-            // The document root is now a definition rather than a placed holder.
+            // The document root is a definition the file itself holds, placed by a
+            // synthetic row. Its name is the input's own, so it is not a reference.
             // Its direct children can themselves be saved local sub-assemblies.
+            if row
+                .get("file_root_component")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            {
+                continue;
+            }
             let definition = row
                 .pointer("/prototype/definition")
                 .and_then(serde_json::Value::as_str)
@@ -1166,5 +1174,55 @@ mod missing_links_tests {
             missing_linked_component_names(&definitions, &occurrences),
             ["direct", "tagged", "old", "absent", "old absent"]
         );
+    }
+
+    #[test]
+    fn a_solidworks_assembly_is_not_its_own_reference() {
+        use super::*;
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        for fixture in [
+            "local_cubes.sldasm",
+            "nested_cubes.sldasm",
+            "placed_cubes.sldasm",
+        ] {
+            let source = fixtures.join(fixture);
+            let model = decode_file(
+                Format::SolidWorksAssembly,
+                &source,
+                &mut Report::default(),
+                None,
+            )
+            .unwrap();
+            // Save the assembly under the name its own root component carries (a placed
+            // sub-assembly's name is a reference, so only the root counts).
+            let roots: Vec<_> = model
+                .ir
+                .model
+                .product_definitions
+                .iter()
+                .filter(|definition| {
+                    matches!(
+                        definition.storage,
+                        cadmpeg_ir::products::Storage::File { source: None, .. }
+                    )
+                })
+                .filter_map(|definition| definition.source_name.clone())
+                .collect();
+            for name in roots {
+                let dir = tempfile::tempdir().unwrap();
+                let input = dir.path().join(format!("{name}.sldasm"));
+                if std::fs::copy(&source, &input).is_err() {
+                    continue;
+                }
+                let found = assembly_references(&input, &PartSearch::default()).unwrap();
+                let own = input.canonicalize().unwrap();
+                assert!(
+                    found
+                        .iter()
+                        .all(|path| path.canonicalize().unwrap_or_else(|_| path.clone()) != own),
+                    "{fixture} saved as {name}.sldasm lists itself: {found:?}"
+                );
+            }
+        }
     }
 }
