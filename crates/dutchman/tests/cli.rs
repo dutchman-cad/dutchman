@@ -1155,7 +1155,7 @@ fn an_existing_design_is_never_replaced() {
         let out = dutchman(
             &args
                 .into_iter()
-                .chain(["--out-dir", &out_dir, &cube, &unit])
+                .chain(["--out-dir", out_dir.as_str(), cube.as_str(), unit.as_str()])
                 .collect::<Vec<_>>(),
         );
         json_of(&out)

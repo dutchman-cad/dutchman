@@ -1089,16 +1089,15 @@ fn run_cli() -> ExitCode {
                         options.output_extension()
                     })
             });
-            if derived {
-                if input == output
+            if derived
+                && (input == output
                     || std::fs::canonicalize(&input)
                         .ok()
                         .zip(std::fs::canonicalize(&output).ok())
-                        .is_some_and(|(input, output)| input == output)
-                {
-                    eprintln!("dutchman: default output {} is the input file; choose another output with -o PATH", output.display());
-                    return ExitCode::from(2);
-                }
+                        .is_some_and(|(input, output)| input == output))
+            {
+                eprintln!("dutchman: default output {} is the input file; choose another output with -o PATH", output.display());
+                return ExitCode::from(2);
             }
             let output = dutchman::resolve_output(&output, options.replace);
             if !json {
