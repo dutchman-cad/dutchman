@@ -89,6 +89,12 @@ geometry and hands over finished areas.
 - The module sets the stacking through `z`. Dutchman moves nothing.
 - Dutchman caps the faces of all thick overlays in a package at 250,000 (each extruded area costs 2 plus its edge count,
   holes included). An overlay that would pass the cap is drawn as a sheet, with a `Degraded` note naming it.
+- `metallic` and `roughness` are optional on every overlay and every part, each a number from 0 to 1. When given, they
+  are written into the body's appearance beside the colour (SolidCraft's PBR look: `metallic`, `roughness` clamped to
+  at least 0.045, and a fixed dielectric IOR of 1.5; a missing one of the pair is 0 for `metallic` and 0.5 for
+  `roughness`). A value out of range refuses that overlay or part by name. When both are missing nothing extra is
+  written. They go with a colour: on a part without `color`, and on an overlay with an `opacity` below 1, SolidCraft's
+  look cannot hold them and they are left out with a `Degraded` note.
 - `color` is optional, `#rrggbb` in sRGB. Without it: masked copper and mask are solder mask green, bare copper gold,
   silkscreen white. A value that is not `#rrggbb` refuses that overlay or part by name, and the rest converts.
 - `opacity` is optional and appears on `mask` only: a number from 0 to 1 (1 = opaque). Dutchman passes it through to

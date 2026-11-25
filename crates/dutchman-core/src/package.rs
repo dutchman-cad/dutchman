@@ -105,6 +105,10 @@ struct PartEntry {
     #[serde(default)]
     color: Option<String>,
     #[serde(default)]
+    metallic: Option<f64>,
+    #[serde(default)]
+    roughness: Option<f64>,
+    #[serde(default)]
     notes: Vec<Value>,
 }
 
@@ -124,6 +128,10 @@ struct OverlayEntry {
     thickness: Option<f64>,
     #[serde(default)]
     color: Option<String>,
+    #[serde(default)]
+    metallic: Option<f64>,
+    #[serde(default)]
+    roughness: Option<f64>,
     #[serde(default)]
     opacity: Option<f64>,
     #[serde(default)]
@@ -270,7 +278,7 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
     let mut placed: BTreeMap<String, Placement3x4> = BTreeMap::new();
     let mut dropped_parts: BTreeSet<String> = BTreeSet::new();
     // The coloured copy of a model for each (model, colour) a part asks for.
-    let mut variants: BTreeMap<(String, String), usize> = BTreeMap::new();
+    let mut variants: BTreeMap<(String, String, String), usize> = BTreeMap::new();
 
     for value in &manifest.parts {
         let entry: PartEntry = match serde_json::from_value(value.clone()) {
@@ -383,17 +391,51 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
             dropped_parts.insert(entry.name);
             continue;
         }
+        let mut look = match surface(entry.metallic, entry.roughness) {
+            Ok(look) => look,
+            Err(why) => {
+                left_out(
+                    report,
+                    &mut assembly,
+                    Some(&entry.name),
+                    Some(file),
+                    format!("part \"{}\" is left out: {why}", clip(&entry.name, 64)),
+                );
+                dropped_parts.insert(entry.name);
+                continue;
+            }
+        };
+        if look.is_some() && entry.color.is_none() {
+            report.push_at(
+                Stage::Input,
+                Severity::Degraded,
+                format!("part \"{}\"", clip(&entry.name, 64)),
+                "its metallic and roughness are not applied: they go with a `color`".to_owned(),
+            );
+            look = None;
+        }
         let index = match entry.color.as_deref() {
             None => index,
             Some(text) => {
                 let colored = parse_color(text)
                     .ok_or_else(|| format!("its colour `{}` is not #rrggbb", clip(text, 16)));
-                let key = (entry.model.clone(), text.to_ascii_lowercase());
+                let key = (
+                    entry.model.clone(),
+                    text.to_ascii_lowercase(),
+                    surface_key(look),
+                );
                 let made = colored.and_then(|rgb| match variants.get(&key) {
                     Some(at) => Ok(*at),
                     None => {
-                        let at =
-                            colour_variant(&mut assembly, index, rgb, text, &entry.model, report)?;
+                        let at = colour_variant(
+                            &mut assembly,
+                            index,
+                            rgb,
+                            text,
+                            look,
+                            &entry.model,
+                            report,
+                        )?;
                         variants.insert(key, at);
                         Ok(at)
                     }
@@ -499,6 +541,23 @@ fn drop_unplaced_parts(assembly: &mut Assembly) {
     assembly.identities = identities;
 }
 
+/// A body's `metallic` and `roughness`, each 0 to 1, as the pair SolidCraft's look takes. A
+/// value left out is 0 for `metallic` and 0.5 for `roughness`; neither given is no pair. A value
+/// outside 0 to 1 is an error that names it.
+fn surface(metallic: Option<f64>, roughness: Option<f64>) -> Result<Option<[f64; 2]>, String> {
+    for (what, value) in [("metallic", metallic), ("roughness", roughness)] {
+        if let Some(v) = value {
+            if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
+                return Err(format!("its {what} {v} is not a number from 0 to 1"));
+            }
+        }
+    }
+    Ok(match (metallic, roughness) {
+        (None, None) => None,
+        (m, r) => Some([m.unwrap_or(0.0), r.unwrap_or(0.5)]),
+    })
+}
+
 /// A copy of part `index` whose bodies carry the colour `text`, as appearance bindings, the way
 /// every reader gives a body its colour. A model that is a sheet (no solid bodies) keeps its
 /// own look, with a note.
@@ -507,6 +566,7 @@ fn colour_variant(
     index: usize,
     rgb: [f64; 3],
     text: &str,
+    surface: Option<[f64; 2]>,
     model: &str,
     report: &mut Report,
 ) -> Result<usize, String> {
@@ -537,13 +597,14 @@ fn colour_variant(
     copy.source_step = None;
     copy.fidelity = None;
     let hex = text.trim_start_matches('#').to_ascii_lowercase();
-    bind_body_colour(&mut copy, rgb, 1.0, &hex)?;
+    bind_body_colour(&mut copy, rgb, 1.0, surface, &hex)?;
     let at = assembly.parts.len();
     assembly.parts.push(copy);
     assembly.definitions.push(None);
-    assembly
-        .identities
-        .push(Some(format!("{PARTS_SCHEMA}:{model}:{hex}")));
+    assembly.identities.push(Some(format!(
+        "{PARTS_SCHEMA}:{model}:{hex}{}",
+        surface_key(surface)
+    )));
     Ok(at)
 }
 
@@ -551,12 +612,19 @@ fn colour_variant(
 /// binding per body, replacing its other body and face bindings, so the writer records the look by body.
 /// The faces' and bodies' own colours are cleared, so the binding alone gives the look. `key`
 /// names the appearance and its bindings.
-fn bind_body_colour(part: &mut Model, rgb: [f64; 3], alpha: f64, key: &str) -> Result<(), String> {
+fn bind_body_colour(
+    part: &mut Model,
+    rgb: [f64; 3],
+    alpha: f64,
+    surface: Option<[f64; 2]>,
+    key: &str,
+) -> Result<(), String> {
     let key = if alpha < 1.0 {
         format!("{key}-a{}", (alpha * 1000.0).round())
     } else {
         key.to_owned()
     };
+    let key = format!("{key}{}", surface_key(surface));
     let appearance = format!("dutchman:parts:appearance#{key}");
     part.ir.model.appearance_bindings.retain(|binding| {
         !matches!(
@@ -572,10 +640,14 @@ fn bind_body_colour(part: &mut Model, rgb: [f64; 3], alpha: f64, key: &str) -> R
         .iter()
         .any(|a| a.id.as_str() == appearance)
     {
+        let properties = match surface {
+            Some([metallic, roughness]) => json!({"metallic": metallic, "roughness": roughness}),
+            None => json!({}),
+        };
         let made = serde_json::from_value(json!({
             "id": appearance,
             "base_color": {"r": rgb[0], "g": rgb[1], "b": rgb[2], "a": alpha},
-            "properties": {},
+            "properties": properties,
             "textures": [],
         }));
         match made {
@@ -611,6 +683,13 @@ fn bind_body_colour(part: &mut Model, rgb: [f64; 3], alpha: f64, key: &str) -> R
         body.color = None;
     }
     Ok(())
+}
+
+/// The part of an appearance's name that tells apart its `metallic` and `roughness`.
+fn surface_key(surface: Option<[f64; 2]>) -> String {
+    surface.map_or_else(String::new, |[m, r]| {
+        format!("-m{}r{}", (m * 1000.0).round(), (r * 1000.0).round())
+    })
 }
 
 /// One colour component in 0 to 1 as two hex digits.
@@ -919,6 +998,24 @@ fn overlays(
                 None
             }
         };
+        let look = match surface(entry.metallic, entry.roughness) {
+            Ok(look) => look,
+            Err(why) => {
+                dropped(report, format!("{why}; it is left out"));
+                continue;
+            }
+        };
+        let look = if look.is_some() && transparency.is_some_and(|t| t > 0.0) {
+            report.push_at(
+                Stage::Input,
+                Severity::Degraded,
+                subject.clone(),
+                "its metallic and roughness are not applied: SolidCraft takes them on an opaque look only".to_owned(),
+            );
+            None
+        } else {
+            look
+        };
         let Some(part_name) = entry.part.as_deref() else {
             dropped(
                 report,
@@ -1070,7 +1167,7 @@ fn overlays(
                     rgb_hex(color[1]),
                     rgb_hex(color[2])
                 );
-                if let Err(why) = bind_body_colour(&mut model, color, opacity, &hex) {
+                if let Err(why) = bind_body_colour(&mut model, color, opacity, look, &hex) {
                     report.push_at(Stage::Input, Severity::Degraded, subject.clone(), why);
                 }
                 let index = assembly.parts.len();
@@ -2835,6 +2932,110 @@ mod tests {
         }
         assert!(!mentions(&report, Severity::Dropped, "overlay"));
         assert!(!mentions(&report, Severity::Degraded, "thickness"));
+    }
+
+    fn appearance_properties(assembly: &Assembly, name: &str) -> Vec<BTreeMap<String, f64>> {
+        let p = assembly
+            .placements
+            .iter()
+            .find(|p| p.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("no placement {name}"));
+        let model = &assembly.parts[p.part].ir.model;
+        // The appearances a binding names; the STEP text may carry unused ones.
+        let used: BTreeSet<String> = serde_json::to_value(&model.appearance_bindings)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|b| b["appearance"].as_str().map(str::to_owned))
+            .collect();
+        model
+            .appearances
+            .iter()
+            .filter(|a| used.contains(a.id.as_str()))
+            .map(|a| serde_json::from_value(serde_json::to_value(&a.properties).unwrap()).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn metallic_and_roughness_reach_the_appearance_and_missing_ones_add_nothing() {
+        let dir = package("surface");
+        write_models(&dir);
+        let mut copper = overlay("Copper", holed());
+        copper["metallic"] = json!(0.0);
+        copper["roughness"] = json!(0.45);
+        let mut mask = overlay("Mask", holed());
+        mask["kind"] = json!("mask");
+        mask["roughness"] = json!(0.35);
+        let plain = overlay("Plain", holed());
+        let mut m = manifest(json!({"overlays": [copper, mask, plain]}));
+        m["parts"][0]["color"] = json!("#c8b27a");
+        m["parts"][0]["metallic"] = json!(1.0);
+        m["parts"][0]["roughness"] = json!(0.2);
+        m["parts"][1]["color"] = json!("#336699");
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        let want = |m: f64, r: f64| {
+            vec![BTreeMap::from([
+                ("metallic".to_owned(), m),
+                ("roughness".to_owned(), r),
+            ])]
+        };
+        assert_eq!(appearance_properties(&assembly, "Copper"), want(0.0, 0.45));
+        // Roughness alone: metallic 0.
+        assert_eq!(appearance_properties(&assembly, "Mask"), want(0.0, 0.35));
+        assert_eq!(
+            appearance_properties(&assembly, "Plain"),
+            vec![BTreeMap::new()]
+        );
+        let board = &assembly.placements[0];
+        let board_props: Vec<_> = assembly.parts[board.part]
+            .ir
+            .model
+            .appearances
+            .iter()
+            .map(|a| a.properties.len())
+            .collect();
+        assert_eq!(board_props, [2]);
+        // A part with a colour and nothing else has none.
+        let cube = &assembly.placements[1];
+        assert!(assembly.parts[cube.part]
+            .ir
+            .model
+            .appearances
+            .iter()
+            .all(|a| a.properties.is_empty()));
+        assert!(report
+            .losses()
+            .iter()
+            .all(|l| l.severity != Severity::Dropped));
+    }
+
+    #[test]
+    fn metallic_or_roughness_out_of_range_refuses_that_overlay_or_part_by_name() {
+        let dir = package("surface-range");
+        write_models(&dir);
+        let mut bad = overlay("Shiny", holed());
+        bad["metallic"] = json!(1.5);
+        let mut worse = overlay("Rough", holed());
+        worse["roughness"] = json!(-0.1);
+        let mut m = manifest(json!({"overlays": [bad, worse, overlay("Fine", holed())]}));
+        m["parts"][1]["roughness"] = json!(2);
+        m["parts"][1]["color"] = json!("#336699");
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert!(mentions(&report, Severity::Dropped, "overlay \"Shiny\""));
+        assert!(mentions(&report, Severity::Dropped, "metallic"));
+        assert!(mentions(&report, Severity::Dropped, "overlay \"Rough\""));
+        assert!(mentions(&report, Severity::Dropped, "roughness"));
+        let names: Vec<_> = assembly
+            .placements
+            .iter()
+            .filter_map(|p| p.name.as_deref())
+            .collect();
+        assert!(names.contains(&"Fine"));
+        assert!(!names.contains(&"Shiny") && !names.contains(&"Rough"));
+        assert!(!names.contains(&"C1"), "{names:?}");
     }
 
     #[test]

@@ -454,3 +454,54 @@ fn a_thick_overlay_is_a_closed_solid_of_the_expected_volume() {
     let bottom = find("Copper bottom");
     assert!((bottom["bbox"]["max"][2].as_f64().unwrap() + 2.0).abs() < 1e-9);
 }
+
+#[test]
+fn metallic_and_roughness_reach_the_design_look_as_pbr() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("board.step"), cube_step()).unwrap();
+    let square = json!([[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]]);
+    let manifest = json!({
+        "schema": PARTS_SCHEMA,
+        "models": [{"id": "board", "file": "board.step"}],
+        "parts": [{"name": "Board", "model": "board", "color": "#c8b27a",
+                   "metallic": 0.0, "roughness": 0.5}],
+        "overlays": [
+            {"name": "Copper", "kind": "copper", "part": "Board", "z": 1.0,
+             "metallic": 0.0, "roughness": 0.45, "areas": [{"outer": square, "holes": []}]},
+            {"name": "Silk", "kind": "silkscreen", "part": "Board", "z": 1.0,
+             "areas": [{"outer": square, "holes": []}]},
+        ],
+    });
+    let (bytes, report) = write(dir.path(), manifest.to_string().as_bytes());
+    assert!(
+        report
+            .losses()
+            .iter()
+            .all(|loss| loss.severity != dutchman_core::Severity::Dropped),
+        "{:?}",
+        report.losses()
+    );
+    let doc = document(&bytes);
+    let bodies = doc["appearances"]["bodies"].as_object().unwrap();
+    let pbr_of = |what: &str| {
+        let found: Vec<&Value> = bodies
+            .iter()
+            .filter(|(name, _)| name.as_str() == what)
+            .map(|(_, look)| look)
+            .collect();
+        assert_eq!(found.len(), 1, "{what}: {bodies:?}");
+        found[0]["pbr"].clone()
+    };
+    assert_eq!(
+        pbr_of("Body (Copper)"),
+        json!({"metallic": 0.0, "roughness": 0.45, "dielectric_ior": 1.5})
+    );
+    assert_eq!(
+        pbr_of("Body"),
+        json!({"metallic": 0.0, "roughness": 0.5, "dielectric_ior": 1.5})
+    );
+    assert!(pbr_of("Body (Silk)").is_null(), "no values, no pbr");
+    if let Some(cli) = cli() {
+        assert_eq!(evaluate(&cli, &bytes).len(), 3);
+    }
+}
