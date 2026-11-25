@@ -117,6 +117,15 @@ pub fn write_with(
     replace: bool,
     fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
+    write_with_mode(path, replace, None, fill)
+}
+
+fn write_with_mode(
+    path: &Path,
+    replace: bool,
+    private: Option<u32>,
+    fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -152,6 +161,17 @@ pub fn write_with(
             .map(drop)
             .map_err(|e| e.error)
     }
+}
+
+/// [`write`] with replacing, for a file Dutchman owns outright (a report it regenerates).
+pub fn write_own(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    write(path, bytes, true)
+}
+
+/// [`write_own`], readable by its owner only (a private report or key file).
+pub fn write_own_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    write_with_mode(path, true, Some(0o600), |file| file.write_all(bytes))
 }
 
 /// Writes `bytes` to exactly `path`, atomically (see [`write_with`]).
