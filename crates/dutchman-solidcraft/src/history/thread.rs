@@ -162,13 +162,16 @@ fn designation_size(source: &str) -> Result<(f64, f64, bool), String> {
     }
     let unified = upper
         .strip_suffix(" UNC")
-        .or_else(|| upper.strip_suffix(" UNF"));
+        .or_else(|| upper.strip_suffix(" UNF"))
+        .or_else(|| upper.strip_suffix(" UNEF"));
     let parsed = unified.and_then(|size| {
         let (diameter, tpi) = size.trim().split_once('-')?;
         let inches = if let Some((n, d)) = diameter.split_once('/') {
             let n = n.parse::<f64>().ok()?;
             let d = d.parse::<f64>().ok()?;
             (d > 0.0).then_some(n / d)?
+        } else if let Some(gauge) = numbered_size(diameter) {
+            gauge
         } else {
             diameter.parse::<f64>().ok()?
         };
@@ -179,6 +182,18 @@ fn designation_size(source: &str) -> Result<(f64, f64, bool), String> {
             .then_some((major, pitch, true))
     });
     parsed.ok_or_else(|| "its cosmetic thread designation is not supported yet".to_owned())
+}
+
+/// Unified numbered screw sizes #0 to #12 give a gauge number, not inches: the major
+/// diameter is 0.060 + 0.013 x N inches. A bare integer 0..=12 or one with a leading
+/// hash is a gauge; fractions, decimals and inch marks are not.
+fn numbered_size(text: &str) -> Option<f64> {
+    let digits = text.trim().strip_prefix('#').unwrap_or(text.trim());
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let gauge = digits.parse::<u32>().ok().filter(|n| *n <= 12)?;
+    Some(0.060 + 0.013 * f64::from(gauge))
 }
 
 /// A cosmetic annotation does not change topology. Its final face can therefore supply a
@@ -413,6 +428,59 @@ mod tests {
             assert!(reason.contains("agrees with its numbers"), "{reason}");
             assert!(reason.contains("not supported yet by SolidCraft"));
         }
+    }
+
+    #[test]
+    fn numbered_unified_sizes_use_the_gauge_diameter() {
+        let model = model();
+        for (designation, diameter, pitch, tpi) in [
+            ("2-56 UNC", 2.1844, 0.4536, 56.0),
+            ("#2-56 UNC", 2.1844, 0.4536, 56.0),
+            ("#10-32 UNF", 4.826, 0.79375, 32.0),
+            ("#0-80 UNF", 1.524, 0.3175, 80.0),
+            ("12-24 UNC", 5.4864, 1.0583, 24.0),
+            ("1/4-20 UNC", 6.35, 1.27, 20.0),
+        ] {
+            let (major, lead, inch) = designation_size(designation).unwrap();
+            assert!(inch && (major - diameter).abs() < 1e-9, "{designation}");
+            assert!((lead - 25.4 / tpi).abs() < 1e-9, "{designation}");
+            let mut d = definition();
+            d["standard"] = json!("ANSI Unified Screw Threads");
+            d["designation"] = json!(designation);
+            d["diameter"] = json!(diameter);
+            d["pitch"] = json!(pitch);
+            let reason = map(
+                &json!({}),
+                &d,
+                &mut Context::testing(&model),
+                &mut Report::default(),
+            )
+            .unwrap_err();
+            assert!(
+                reason.contains("agrees with its numbers"),
+                "{designation}: {reason}"
+            );
+        }
+        assert!(designation_size("13-20 UNC").is_ok_and(|(major, _, _)| major > 300.0));
+        assert!(designation_size("#13-20 UNC").is_err());
+    }
+
+    #[test]
+    fn a_wrong_size_for_a_numbered_thread_is_still_refused() {
+        let model = model();
+        let mut d = definition();
+        d["standard"] = json!("ANSI Unified Screw Threads");
+        d["designation"] = json!("2-56 UNC");
+        d["diameter"] = json!(50.8);
+        d["pitch"] = json!(0.4536);
+        let reason = map(
+            &json!({}),
+            &d,
+            &mut Context::testing(&model),
+            &mut Report::default(),
+        )
+        .unwrap_err();
+        assert!(reason.contains("specifies diameter 2.18"), "{reason}");
     }
 
     #[test]
