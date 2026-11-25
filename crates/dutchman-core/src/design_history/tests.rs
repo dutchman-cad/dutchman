@@ -388,7 +388,7 @@ fn a_rollback_is_not_a_suppression() {
 fn a_feature_out_of_scope_stops_the_history_with_a_reason() {
     let mut ir = design_only(
         vec![
-            feature(1, "Vendor step", native("vendor")),
+            feature(1, "Vendor step", native("test:vendor")),
             feature(2, "Block", extrude(1, Some(blind(5.0)), new_body())),
         ],
         vec![square_sketch(1, 2)],

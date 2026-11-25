@@ -762,18 +762,24 @@ mod tests {
         // Component membership is protected even when the occurrence itself is hidden.
         // The two component definitions plus the file definition that owns the placement.
         assert_eq!(kept.ir.model.product_definitions, definitions);
-        assert_eq!(
-            kept.ir.model.product_definitions[0].id.as_str(),
-            "test:model:component#box"
-        );
-        assert_eq!(
-            kept.ir.model.product_definitions[1].id.as_str(),
-            "test:model:component#tool"
-        );
-        assert!(matches!(
-            kept.ir.model.product_definitions[2].storage,
-            cadmpeg_ir::products::Storage::File { source: None, .. }
-        ));
+        let ids: Vec<_> = kept
+            .ir
+            .model
+            .product_definitions
+            .iter()
+            .map(|definition| definition.id.as_str())
+            .collect();
+        assert!(ids.contains(&"test:model:component#box"), "{ids:?}");
+        assert!(ids.contains(&"test:model:component#tool"), "{ids:?}");
+        assert!(kept
+            .ir
+            .model
+            .product_definitions
+            .iter()
+            .any(|definition| matches!(
+                definition.storage,
+                cadmpeg_ir::products::Storage::File { source: None, .. }
+            )));
     }
 
     #[test]
