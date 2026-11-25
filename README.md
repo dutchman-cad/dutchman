@@ -137,8 +137,14 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 | IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
 | Circuit board | `.PcbDoc` | Reads geometry with the electronics module | – | Placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately) |
 | Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
+| Inventor drawing | `.idw` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
+| SolidWorks drawing | `.slddrw` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
+| Fusion drawing | `.f2d` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
+| DWG drawing | `.dwg` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
+| DXF drawing | `.dxf` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
+| Solid Edge drawing | `.dft` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
 
-FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
+FreeCAD TechDraw pages are written into the converted SolidCraft design as a drawing (sheets and views), and also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
 
 Fusion tool libraries (`.tools`, `.json`) also convert to CamCraft's `.camtools` (`dutchman library.tools`): tool geometry, holder and cutting data, with every tool and field CamCraft has no place for named in the report. See docs/camcraft-tools.md.
 
