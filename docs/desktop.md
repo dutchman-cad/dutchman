@@ -231,8 +231,13 @@ is wrong; turn on **Check feature history in SolidCraft** and use **Add matching
 Expanded **Losses** lists wrap long feature ids inside their result card. Ordinary text
 wraps at spaces.
 
-A converted design opens in SolidCraft from its card: the app that `SOLIDCRAFT_APP` names, else
-`solidcraft` on `PATH` or beside Dutchman, else the system's app for `.sc` files. When an Inventor assembly's part
+A converted design opens in SolidCraft from its card, in the SolidCraft the version pill shows
+when you chose a `solidcraft-cli`: on macOS the `.app` that `solidcraft-cli` sits in (`open -a`),
+on Linux the `solidcraft` app, AppImage or Flatpak of the same install, on Windows the
+`SolidCraft.exe` beside it. If that install has only the command-line tool, the card says so and
+opens nothing. With no `solidcraft-cli` chosen it is the app that `SOLIDCRAFT_APP` names, else
+`solidcraft` on `PATH` or beside Dutchman, else the system's app for `.sc` files, and the status
+line says when the system's app was used. When an Inventor assembly's part
 files are not found, its card names them: **Search a folder…** or **Find a file…** converts it
 again, searching there too. The app follows the system's light or dark setting, or can be set to
 Day or Night, and its **Output format** choice also offers a FreeCAD macro.

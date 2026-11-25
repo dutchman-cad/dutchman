@@ -3249,7 +3249,16 @@ impl App {
     /// Does what a button on a result card or in the report panel asked for.
     fn act(&mut self, action: Action, ctx: &egui::Context) -> Result<(), String> {
         match action {
-            Action::Open(path) => platform::open_in_solidcraft(&path),
+            Action::Open(path) => {
+                let chosen = self.options.solidcraft.clone();
+                let how = platform::open_in_solidcraft(&path, chosen.as_deref())?;
+                if how == platform::Opened::SystemDefault {
+                    self.notice = Some(
+                        "No SolidCraft is chosen, so the design opened with the system's default app for it, which may be another SolidCraft release. Choose a solidcraft-cli in the SolidCraft version window to open it in that release.".into(),
+                    );
+                }
+                Ok(())
+            }
             Action::Reveal(path) => platform::reveal(&path),
             Action::Check(index) => {
                 if let Some(row) = self.rows.get(index) {
