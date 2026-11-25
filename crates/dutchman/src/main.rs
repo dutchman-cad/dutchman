@@ -215,6 +215,8 @@ enum Command {
     },
     /// Convert files dropped into an inbox, polling until shutdown.
     Watch(dutchman::watch::Command),
+    /// Convert designs again when their source files change, using the link records beside them.
+    Sync(dutchman::sync::Command),
     #[command(external_subcommand)]
     External(Vec<OsString>),
     /// Drive SolidCraft from plain-language requests with Pilot.
@@ -859,6 +861,14 @@ fn run_cli() -> ExitCode {
             }
         },
         Command::Watch(command) => match dutchman::watch::run_with_progress(command, quiet) {
+            Ok(true) => ExitCode::SUCCESS,
+            Ok(false) => ExitCode::FAILURE,
+            Err(err) => {
+                eprintln!("dutchman: {err}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::Sync(command) => match dutchman::sync::run(&command) {
             Ok(true) => ExitCode::SUCCESS,
             Ok(false) => ExitCode::FAILURE,
             Err(err) => {

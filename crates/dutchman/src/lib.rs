@@ -36,6 +36,7 @@ pub mod repro;
 pub mod saved_report;
 pub mod share_links;
 pub mod stop;
+pub mod sync;
 pub mod watch;
 pub mod worker;
 

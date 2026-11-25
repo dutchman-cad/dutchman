@@ -214,6 +214,7 @@ For other clients:
 - [The FreeCAD add-on](docs/freecad-addon.md): open other CAD formats in FreeCAD through Dutchman.
 - [The desktop app](docs/desktop.md): presets, estimates, the SolidCraft version pill, and updates.
 - [The command line](docs/command-line.md): options, `inspect`, `contents`, whole folders, and watching a folder.
+- [Keep a converted design up to date](docs/keep-up-to-date.md): `dutchman sync` converts a design again when its source file changes.
 - [Choosing what to keep](docs/presets.md): Fast, Standard, Full, and the memory and time estimate.
 - [Troubleshooting](docs/troubleshooting.md): common problems and diagnostic logs.
 - [Find what breaks in a large private file](docs/diagnose.md): `dutchman diagnose` ranks the failing, slow and large parts by number, and `--part` converts one.

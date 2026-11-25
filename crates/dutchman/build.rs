@@ -19,6 +19,18 @@ fn main() {
         "cargo:rustc-env=DUTCHMAN_TARGET={}",
         std::env::var("TARGET").unwrap_or_default()
     );
+    // The commit a release is built from, for the link records to name: given by the build
+    // (`DUTCHMAN_COMMIT`, else the CI's `GITHUB_SHA`); a build without one records none.
+    println!("cargo:rerun-if-env-changed=DUTCHMAN_COMMIT");
+    println!("cargo:rerun-if-env-changed=GITHUB_SHA");
+    let commit = ["DUTCHMAN_COMMIT", "GITHUB_SHA"]
+        .iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .map(|value| value.trim().to_owned())
+        .find(|value| !value.is_empty() && value.chars().all(|c| c.is_ascii_hexdigit()));
+    if let Some(commit) = commit {
+        println!("cargo:rustc-env=DUTCHMAN_COMMIT={commit}");
+    }
     println!(
         "cargo:rustc-env=DUTCHMAN_CADMPEG_VERSION={}",
         version.unwrap_or_else(|| "unknown".to_owned())

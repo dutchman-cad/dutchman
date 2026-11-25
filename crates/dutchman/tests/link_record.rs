@@ -132,6 +132,7 @@ fn converting_again_rewrites_the_same_record() {
     let mut second = read_record(&record_path);
     for record in [&mut first, &mut second] {
         record.as_object_mut().unwrap().remove("converted_at");
+        record["source"].as_object_mut().unwrap().remove("read_at");
     }
     assert_eq!(first, second);
     let leftovers: Vec<_> = std::fs::read_dir(output.parent().unwrap())

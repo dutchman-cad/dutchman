@@ -435,19 +435,20 @@ with status 141, as other command-line tools do, instead of printing a panic.
 Every conversion that writes a design also writes `<output stem>.link.json` beside it
 (`part.sc` gets `part.link.json`). The record says which source file the design came from and
 which bytes of it, so a later run can tell that the source changed, and so SolidCraft can find
-the source again. Later releases read it to re-convert changed sources in place and to list
-designs that changed since they were converted.
+the source again. [`dutchman sync`](keep-up-to-date.md) reads it to re-convert changed sources
+in place.
 
 ```json
 {
   "schema": "dutchman.link/1",
-  "source": {"path": "../in/part.f3d", "sha256": "...", "size": 41210, "modified": "2026-11-22T09:15:00Z"},
+  "source": {"path": "../in/part.f3d", "sha256": "...", "size": 41210,
+             "modified": "2026-11-22T09:15:00Z", "read_at": "2026-11-22T09:15:03Z"},
   "output": {"file": "part.sc", "sha256": "..."},
-  "dutchman": {"version": "0.2.10"},
+  "dutchman": {"version": "0.2.10", "commit": "..."},
   "cadmpeg": {"version": "0.3.1+f1338aa"},
   "options": {"to": "solidcraft", "preset": "standard", "history": true, "sketches": true,
               "joints": true, "part_positions": "smart", "stand_up": null,
-              "solidcraft_version": "0.44.1", "part": null},
+              "solidcraft_version": "0.44.1", "part": null, "project": null, "search": []},
   "converted_at": "2026-11-22T09:15:07Z"
 }
 ```
@@ -455,8 +456,11 @@ designs that changed since they were converted.
 - `source.path` is relative to the output's folder (with `/` separators) when the two share
   a folder above the root, otherwise absolute. `sha256` and `size` describe the source as it was
   when the conversion began, so a file saved during the conversion shows as changed afterwards.
-- `options` holds what changes the result; folders searched for an assembly's part files are
-  not recorded.
+- `options` holds what changes the result, and the `project` and `search` folders an
+  assembly's part files are looked for in (named like the source), so a later run converts the
+  same way. `dutchman.commit` is present in builds that know the commit they were made from.
+  `source.read_at` is when the source was read: a size and time are only trusted as "not
+  changed" when they are older than that by a margin.
 - The record is written whole or not at all. A failed conversion, a refused overwrite and a
   conversion that wrote no file leave an existing record as it was. `dutchman watch` writes
   it with each published design and owns it like the design.
@@ -466,6 +470,17 @@ designs that changed since they were converted.
   should stay private. Pass `--no-link-record` (MCP: `link_record: false`) to write none. The
   desktop app always writes one, since keeping designs up to date relies on it; the hosted web
   converter writes none.
+
+## Keep designs up to date: sync
+
+```sh
+dutchman sync FOLDER [--json] [--no-verify] [--timeout SECONDS]
+dutchman sync FOLDER --watch [--interval SECONDS] [--settle SECONDS]
+```
+
+Finds every link record under `FOLDER`, compares its source's SHA-256 with the record, and
+converts again only the sources that changed, with the options the record holds. See
+[Keep a converted design up to date](keep-up-to-date.md).
 
 ## Watch a folder
 

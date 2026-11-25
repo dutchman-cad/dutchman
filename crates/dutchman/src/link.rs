@@ -29,6 +29,9 @@ pub struct Source {
     sha256: Option<String>,
     size: Option<u64>,
     modified: Option<SystemTime>,
+    /// When the file was read: a save in the same second as `modified` can leave size and time
+    /// as they were, so a stamp is only trusted when it is older than this by a margin.
+    read_at: SystemTime,
 }
 
 impl Source {
@@ -48,8 +51,44 @@ impl Source {
             sha256: sha256.into().filter(|_| meta.is_some()),
             size: meta.as_ref().map(std::fs::Metadata::len),
             modified: meta.and_then(|meta| meta.modified().ok()),
+            read_at: SystemTime::now(),
         }
     }
+
+    /// A source whose size and time `meta` gave, taken before `sha256` was.
+    pub fn with_metadata(sha256: String, meta: &std::fs::Metadata) -> Self {
+        Self {
+            sha256: Some(sha256),
+            size: Some(meta.len()),
+            modified: meta.modified().ok(),
+            read_at: SystemTime::now(),
+        }
+    }
+}
+
+/// Whether `meta`, the source as it is now, has the size and time `record` names, and those were
+/// taken long enough after the file was last saved that a later save could not share them.
+/// `true` lets a caller skip reading the whole file.
+pub fn stamp_unchanged(record: &Value, meta: &std::fs::Metadata) -> bool {
+    let Some(source) = record.get("source") else {
+        return false;
+    };
+    let (Some(size), Some(modified), Some(read_at)) = (
+        source.get("size").and_then(Value::as_u64),
+        source.get("modified").and_then(Value::as_str),
+        source.get("read_at").and_then(Value::as_str),
+    ) else {
+        return false;
+    };
+    let Ok(now) = meta.modified() else {
+        return false;
+    };
+    let margin = std::time::Duration::from_secs(2);
+    size == meta.len()
+        && modified == rfc3339(now)
+        && now
+            .checked_add(margin)
+            .is_some_and(|safe| rfc3339(safe).as_str() <= read_at)
 }
 
 /// The source as it is before converting, unless no record will be written.
@@ -137,18 +176,19 @@ pub fn record(
             "sha256": source.sha256,
             "size": source.size,
             "modified": source.modified.map(rfc3339),
+            "read_at": rfc3339(source.read_at),
         },
         "output": {"file": file_name, "sha256": output_digest},
         "dutchman": dutchman,
         "cadmpeg": {"version": crate::anon::CADMPEG_VERSION},
-        "options": options_json(options, report),
+        "options": options_json(options, report, &folder)?,
         "converted_at": rfc3339(SystemTime::now()),
     }))
 }
 
-/// The options that change what is written. Where part files are searched for is left out: it
-/// names folders, and only finds the same files.
-fn options_json(options: &ConvertOptions, report: &Value) -> Value {
+/// The options that change what is written, and the folders part files are searched in (named
+/// like the source: relative to `folder`, else absolute), so a later run can convert the same way.
+fn options_json(options: &ConvertOptions, report: &Value, folder: &Path) -> Result<Value, String> {
     let choices = options.choices();
     let target = options.solidcraft_version.map_or_else(
         || {
@@ -159,7 +199,17 @@ fn options_json(options: &ConvertOptions, report: &Value) -> Value {
         },
         |version| Some(version.to_string()),
     );
-    json!({
+    let project = options
+        .project
+        .as_deref()
+        .map(|path| source_path(folder, path))
+        .transpose()?;
+    let search = options
+        .search
+        .iter()
+        .map(|path| source_path(folder, path))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(json!({
         "to": match options.to {
             OutputFormat::Solidcraft => "solidcraft",
             OutputFormat::Freecad => "freecad",
@@ -178,7 +228,87 @@ fn options_json(options: &ConvertOptions, report: &Value) -> Value {
             "children": part.children,
             "stop_at_feature": part.stop_at_feature,
         })),
-    })
+        "project": project,
+        "search": search,
+    }))
+}
+
+/// The options `record` was converted with, to convert its source again the same way. Folders it
+/// names relatively are taken from `folder`, the record's own folder.
+pub fn options_from_record(record: &Value, folder: &Path) -> Result<ConvertOptions, String> {
+    use clap::ValueEnum;
+    let recorded = record.get("options").ok_or("the record has no options")?;
+    let text = |key: &str| recorded.get(key).and_then(Value::as_str);
+    let flag = |key: &str| recorded.get(key).and_then(Value::as_bool);
+    let mut options = ConvertOptions {
+        to: match text("to") {
+            Some("solidcraft") | None => OutputFormat::Solidcraft,
+            Some("freecad") => OutputFormat::Freecad,
+            Some("fcstd") => OutputFormat::Fcstd,
+            Some("dxf") => return Err("DXF pages cannot be kept up to date".to_owned()),
+            Some(other) => return Err(format!("unknown output format {other:?} in the record")),
+        },
+        ..ConvertOptions::default()
+    };
+    if let Some(name) = text("preset") {
+        options.preset = crate::choices::Preset::from_str(name, true)
+            .map_err(|_| format!("unknown preset {name:?} in the record"))?;
+    }
+    // A switch is only needed where it narrows the preset.
+    let preset = crate::choices::Choices::of(options.preset);
+    options.import_only = preset.history && flag("history") == Some(false);
+    options.no_sketches = preset.sketches && flag("sketches") == Some(false);
+    options.no_joints = preset.joints && flag("joints") == Some(false);
+    if let Some(name) = text("part_positions") {
+        options.part_positions = name.parse()?;
+    }
+    match flag("stand_up") {
+        Some(true) => options.stand_up = true,
+        Some(false) => options.no_stand_up = true,
+        None => {}
+    }
+    if let Some(version) = text("solidcraft_version") {
+        options.solidcraft_version =
+            Some(version.parse().map_err(|err| {
+                format!("bad SolidCraft version {version:?} in the record: {err}")
+            })?);
+    }
+    let folder_path = |name: &str| {
+        let path = Path::new(name);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            folder.join(path)
+        }
+    };
+    options.project = text("project").map(folder_path);
+    options.search = recorded
+        .get("search")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(folder_path)
+        .collect();
+    options.part = recorded
+        .get("part")
+        .filter(|part| part.is_object())
+        .map(|part| {
+            Ok::<_, String>(dutchman_core::PartSelection {
+                number: part
+                    .get("number")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or("the record's part has no number")?,
+                children: part.get("children").and_then(Value::as_bool) == Some(true),
+                stop_at_feature: part
+                    .get("stop_at_feature")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok()),
+            })
+        })
+        .transpose()?;
+    Ok(options)
 }
 
 /// `source` as the record names it: relative to `folder` (the output's folder) with `/`

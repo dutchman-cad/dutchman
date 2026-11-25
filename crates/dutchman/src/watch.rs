@@ -633,15 +633,38 @@ fn emit(
     message: &str,
     report: Option<&Value>,
 ) -> Result<(), String> {
+    write_event(
+        SCHEMA,
+        command.json,
+        (outcome, outcome),
+        path,
+        started,
+        message,
+        report,
+    )
+}
+
+/// Writes one line on stdout: a JSON event of `schema` when `json` is set (`event` is the first
+/// of `names`), else text led by the second name. Shared with `dutchman sync`.
+pub(crate) fn write_event(
+    schema: &str,
+    json: bool,
+    names: (&str, &str),
+    path: &Path,
+    started: Instant,
+    message: &str,
+    report: Option<&Value>,
+) -> Result<(), String> {
+    let (outcome, label) = names;
     let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let event = json!({"schema": SCHEMA, "event": outcome, "path": path.to_string_lossy(), "elapsed_ms": elapsed, "message": message, "report": report});
+    let event = json!({"schema": schema, "event": outcome, "path": path.to_string_lossy(), "elapsed_ms": elapsed, "message": message, "report": report});
     let mut stdout = std::io::stdout().lock();
-    if command.json {
+    if json {
         writeln!(stdout, "{event}")
     } else {
         writeln!(
             stdout,
-            "{outcome} {} ({elapsed} ms) {message}",
+            "{label} {} ({elapsed} ms) {message}",
             one_line(&path.to_string_lossy()),
             message = one_line(message)
         )
