@@ -12,6 +12,7 @@
 //! ignored, a field of an unexpected type reads as absent) and indexed once, by file, by design
 //! id and by file stem; the parsed manifest is cached until the file changes.
 
+use crate::{SourceUpAxis, UpAxisFinding, UpAxisOrigin};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
@@ -89,6 +90,10 @@ struct RawEntry {
     moved_files: Vec<RawFile>,
     #[serde(default, deserialize_with = "lenient_list")]
     references: Vec<RawReference>,
+    #[serde(default, deserialize_with = "lenient")]
+    up_axis: Option<String>,
+    #[serde(default, deserialize_with = "lenient")]
+    up_axis_error: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -134,6 +139,8 @@ struct Entry {
     /// Where an older version's files went, relative to the manifest's folder.
     moved: Vec<String>,
     references: Vec<RawReference>,
+    /// The up axis the export states for the design, or why it could not.
+    up_axis: UpAxisFinding,
 }
 
 /// A manifest, parsed and indexed once.
@@ -229,6 +236,29 @@ fn load(path: &Path) -> Result<Arc<Manifest>, String> {
     Ok(manifest)
 }
 
+/// What an entry's `up_axis` and `up_axis_error` state: `"y"` or `"z"`; anything else, `null`
+/// and a missing field alike, is unknown, with the export's own reason when it gives one.
+fn up_axis_of_row(axis: Option<&str>, error: Option<String>) -> UpAxisFinding {
+    let origin = UpAxisOrigin::ExportManifest;
+    match axis.map(str::trim) {
+        Some(axis) if axis.eq_ignore_ascii_case("y") => {
+            UpAxisFinding::stated(SourceUpAxis::Y, origin)
+        }
+        Some(axis) if axis.eq_ignore_ascii_case("z") => {
+            UpAxisFinding::stated(SourceUpAxis::Z, origin)
+        }
+        Some(_) => UpAxisFinding::unknown(
+            origin,
+            "the export states an up axis Dutchman does not know",
+        ),
+        None => UpAxisFinding::unknown(
+            origin,
+            non_empty(error.map(|error| error.trim().to_owned()))
+                .unwrap_or_else(|| "the export does not state the up axis".to_owned()),
+        ),
+    }
+}
+
 fn status_of(status: Option<&str>) -> Status {
     match status {
         None | Some("done") => Status::Done,
@@ -270,6 +300,7 @@ fn parse(reader: impl std::io::Read, folder: &Path) -> Result<Manifest, String> 
                 .into_iter()
                 .filter_map(|file| non_empty(file.moved_to))
                 .collect(),
+            up_axis: up_axis_of_row(row.up_axis.as_deref(), row.up_axis_error),
             references: row
                 .references
                 .into_iter()
@@ -483,6 +514,29 @@ impl Manifest {
             None => Ok((path.to_owned(), None, version)),
         }
     }
+}
+
+/// The up axis the export folder's manifest states for `design`, or why it states none.
+pub(crate) fn up_axis(design: &Path, top: Option<&Path>) -> UpAxisFinding {
+    let none = |reason: String| UpAxisFinding::unknown(UpAxisOrigin::None, reason);
+    let manifest = match manifest_for(design, top) {
+        None => return none(format!("no export {MANIFEST} covers this design")),
+        Some(Err(why)) => return none(why),
+        Some(Ok(manifest)) => manifest,
+    };
+    let Ok(real) = design.canonicalize() else {
+        return none("the design file cannot be found".to_owned());
+    };
+    // Several entries may list one file; the first that states an axis speaks for it.
+    let entries = manifest.entries_of(&real);
+    entries
+        .iter()
+        .find(|entry| entry.up_axis.axis != SourceUpAxis::Unknown)
+        .or(entries.first())
+        .map_or_else(
+            || none(format!("the export {MANIFEST} does not list this design")),
+            |entry| entry.up_axis.clone(),
+        )
 }
 
 /// What the manifest of the export folder `design` is in says it inserts: `None` when no
@@ -834,5 +888,38 @@ mod tests {
         assert!(inserted(&dir.path().join("Asm v3.f3d"), None)
             .unwrap()
             .is_err());
+    }
+
+    #[test]
+    fn the_up_axis_is_read_from_the_manifest_entry() {
+        let states = |extra: serde_json::Value| {
+            let mut asm = entry("urn:a:1", "Asm", 3, json!([]));
+            asm.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let dir = export(json!({"entries": [asm]}));
+            up_axis(&dir.path().join("Asm v3.f3d"), None)
+        };
+        let y = states(json!({"up_axis": "y"}));
+        assert_eq!(
+            (y.axis, y.origin),
+            (SourceUpAxis::Y, UpAxisOrigin::ExportManifest)
+        );
+        assert_eq!(states(json!({"up_axis": "Z"})).axis, SourceUpAxis::Z);
+        let null = states(json!({"up_axis": null, "up_axis_error": "no settings"}));
+        assert_eq!(null.axis, SourceUpAxis::Unknown);
+        assert_eq!(null.reason.as_deref(), Some("no settings"));
+        let missing = states(json!({}));
+        assert_eq!(missing.axis, SourceUpAxis::Unknown);
+        assert_eq!(missing.origin, UpAxisOrigin::ExportManifest);
+        // A value of another type, or another axis, never guesses.
+        assert_eq!(states(json!({"up_axis": 7})).axis, SourceUpAxis::Unknown);
+        assert_eq!(states(json!({"up_axis": "x"})).axis, SourceUpAxis::Unknown);
+        // No manifest: unknown, from nothing.
+        let none = up_axis(Path::new("/nonexistent/design.f3d"), None);
+        assert_eq!(
+            (none.axis, none.origin),
+            (SourceUpAxis::Unknown, UpAxisOrigin::None)
+        );
     }
 }
