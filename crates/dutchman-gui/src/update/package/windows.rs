@@ -273,7 +273,7 @@ fn apply_zip(path: &Path, stem: &str, installed: &Path) -> Result<(), String> {
         })?;
     let mut remaining = MAX_UNPACKED;
     for name in PROGRAMS {
-        if !installed.join(name).is_file() || installed.join(format!("{name}.old")).exists() {
+        if !installed.join(name).is_file() || installed.join(backup_name(name)).exists() {
             return Err(
                 "Close other Dutchman copies and restart before updating this portable folder."
                     .into(),
@@ -308,8 +308,10 @@ fn apply_zip(path: &Path, stem: &str, installed: &Path) -> Result<(), String> {
         remaining = remaining.saturating_sub(size);
     }
     // Refresh bundled guidance along with the programs, including older portable copies
-    // that did not yet contain it. Only these owned top-level paths can be replaced.
+    // that did not yet contain it. Only the files the package lists are replaced, one by
+    // one, so a folder of the user's own (a `docs` they made, say) keeps everything else.
     let mut guides = [false; 3];
+    let mut guide_files: Vec<String> = Vec::new();
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
         let name = entry.name().map_err(|e| e.to_string())?.into_owned();
@@ -350,69 +352,105 @@ fn apply_zip(path: &Path, stem: &str, installed: &Path) -> Result<(), String> {
             return Err("The update ZIP guide size does not match.".into());
         }
         remaining = remaining.saturating_sub(size);
+        guide_files.push(relative.to_owned());
     }
     if guides.iter().any(|v| *v) && !guides.iter().all(|v| *v) {
         return Err("The update ZIP guidance is incomplete. Open the release page.".into());
     }
-    let mut targets = PROGRAMS.to_vec();
+    let mut targets: Vec<String> = PROGRAMS.iter().map(|n| (*n).to_owned()).collect();
     if guides.iter().all(|v| *v) {
-        targets.extend(GUIDES);
+        targets.extend(guide_files);
     }
-    for name in &targets {
-        if installed.join(format!("{name}.old")).exists() {
-            return Err(
-                "Close other Dutchman copies and restart before updating this portable folder."
-                    .into(),
-            );
-        }
+    if installed.join(STATE).exists()
+        || targets
+            .iter()
+            .any(|name| installed.join(backup_name(name)).exists())
+    {
+        return Err(
+            "Close other Dutchman copies and restart before updating this portable folder.".into(),
+        );
     }
-    let mut renamed = Vec::new();
-    let mut replaced = Vec::new();
+    // Written before anything moves: the next start deletes exactly these backups and nothing else.
+    let listed: Vec<String> = targets
+        .iter()
+        .filter(|name| installed.join(name).is_file())
+        .map(|name| backup_name(name))
+        .collect();
+    std::fs::write(installed.join(STATE), listed.join("\n")).map_err(|e| e.to_string())?;
+    let mut renamed: Vec<&str> = Vec::new();
+    let mut replaced: Vec<&str> = Vec::new();
     let result = (|| {
-        for name in targets.iter().copied() {
-            if installed.join(name).exists() {
-                std::fs::rename(installed.join(name), installed.join(format!("{name}.old")))?;
+        for name in &targets {
+            if installed.join(name).is_file() {
+                std::fs::rename(installed.join(name), installed.join(backup_name(name)))?;
                 renamed.push(name);
             }
         }
-        for name in targets {
-            std::fs::rename(stage.path().join(name), installed.join(name))?;
+        for name in &targets {
+            let to = installed.join(name);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::rename(stage.path().join(name), to)?;
             replaced.push(name);
         }
         Ok::<_, std::io::Error>(())
     })();
     if let Err(error) = result {
         for name in replaced {
-            remove_backup(&installed.join(name));
+            let _ = std::fs::remove_file(installed.join(name));
         }
         let mut restore_errors = Vec::new();
         for name in renamed.into_iter().rev() {
-            if let Err(e) =
-                std::fs::rename(installed.join(format!("{name}.old")), installed.join(name))
+            if let Err(e) = std::fs::rename(installed.join(backup_name(name)), installed.join(name))
             {
                 restore_errors.push(format!("{name}: {e}"));
             }
         }
+        if restore_errors.is_empty() {
+            let _ = std::fs::remove_file(installed.join(STATE));
+        }
         return Err(format!("Could not replace the portable programs: {error}. {}Open the release page for a manual update.",
-            if restore_errors.is_empty() { "The original programs were restored. ".into() } else { format!("Restore the .old backups: {}. ", restore_errors.join("; ")) }));
+            if restore_errors.is_empty() { "The original programs were restored. ".into() } else { format!("Restore the .dutchman-old backups: {}. ", restore_errors.join("; ")) }));
     }
     Ok(())
 }
 
-fn remove_backup(path: &Path) {
-    if path.is_dir() {
-        let _ = std::fs::remove_dir_all(path);
-    } else {
-        let _ = std::fs::remove_file(path);
-    }
+/// Lists the backups of the last update, one relative path per line. Only these are ever
+/// deleted, so a user's own `.old` files and folders are never touched.
+const STATE: &str = ".dutchman-update-state";
+
+/// The name a replaced file is parked under until the next start.
+fn backup_name(name: &str) -> String {
+    format!("{name}.dutchman-old")
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(super) fn cleanup(install: &Install) {
-    if let Install::Zip(folder) = install {
-        for name in PROGRAMS.into_iter().chain(GUIDES) {
-            remove_backup(&folder.join(format!("{name}.old")));
+    let Install::Zip(folder) = install else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(folder.join(STATE)) else {
+        return;
+    };
+    let mut kept = Vec::new();
+    for line in text.lines().filter(|l| !l.is_empty()) {
+        let path = Path::new(line);
+        let safe = line.ends_with(".dutchman-old")
+            && path
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)));
+        if safe && path.components().count() > 0 {
+            let full = folder.join(path);
+            if full.is_file() && std::fs::remove_file(&full).is_err() {
+                kept.push(line);
+            }
         }
+    }
+    if kept.is_empty() {
+        let _ = std::fs::remove_file(folder.join(STATE));
+    } else {
+        let _ = std::fs::write(folder.join(STATE), kept.join("\n"));
     }
 }
 

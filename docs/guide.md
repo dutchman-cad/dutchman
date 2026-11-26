@@ -334,8 +334,8 @@ Convert; see [the desktop guide](desktop.md).
 ## Reading the loss report
 
 Each note leads with one plain sentence: what is missing or different, and what you can do
-about it. Notes that change nothing you see (records STEP has no place for, a placement
-statistic of nothing) are left out of the default view. `--verbose` prints every note as
+about it. Notes that change nothing you see (records STEP has no place for or keeps as they are,
+an edge tolerance, a timeline folder, a placement statistic of nothing) are left out of the default view. `--verbose` prints every note as
 Dutchman wrote it, `LEVEL: SUBJECT: MESSAGE` with the code first in the subject, and the JSON
 report always keeps every note, with the sentence added as `summary`
 ([JSON report](json.md)). A note without a plain sentence yet prints as before. The sentences
@@ -648,8 +648,8 @@ targets keep the original final geometry with a named version refusal.
 
 Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
 secondary numeric values. ISO metric table designations tolerate decimal rounding and
-floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
-separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
+floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, and a Unified thread is written once a
+SolidCraft release supports Unified Thread designations; until then it is reported. See
 [cosmetic threads](history.md) for details.
 
 Separate modeled Thread features keep their helical shape in the imported final geometry

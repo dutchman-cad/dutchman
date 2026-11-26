@@ -377,6 +377,7 @@ mod bundle_tests {
             source_file: None,
             assembly: None,
             source_step: None,
+            merge_bodies: false,
         };
         assert!(!model.ir.fragment);
         assert!(model

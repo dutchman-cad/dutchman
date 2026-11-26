@@ -115,6 +115,7 @@ fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Mode
         name: "cube".to_owned(),
         source_file: Some("cube.f3d".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: None,
     }
 }
@@ -6487,6 +6488,7 @@ fn assembly_of_histories() -> Model {
         name: name.to_owned(),
         source_file: Some(format!("{name}.ipt")),
         source_step: None,
+        merge_bodies: false,
         ..cube_with_history(10.0, first_profile(), None)
     };
     let at = |x: f64| {
@@ -6507,6 +6509,7 @@ fn assembly_of_histories() -> Model {
         name: "pair".to_owned(),
         source_file: Some("pair.iam".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: Some(dutchman_core::Assembly {
             own_part: None,
             joints: Vec::new(),
@@ -10528,6 +10531,7 @@ fn cube_under(features: &[(&str, Value)]) -> Model {
         name: "cube".to_owned(),
         source_file: Some("cube.ipt".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: None,
     }
 }
@@ -10639,6 +10643,7 @@ fn parameters_alone() -> Model {
         name: "Parameters".to_owned(),
         source_file: Some("Parameters.f3d".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: None,
     }
 }
@@ -18687,6 +18692,7 @@ fn design_cube(features: Vec<Value>, sketches: &[(u32, u32)], rollback: Option<u
         source_file: Some("cube.par".to_owned()),
         source_step: None,
         assembly: None,
+        merge_bodies: false,
     }
 }
 

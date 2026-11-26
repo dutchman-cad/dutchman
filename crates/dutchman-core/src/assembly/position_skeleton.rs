@@ -187,6 +187,7 @@ fn level<'a>(
                     source_file: None,
                     assembly: None,
                     source_step: None,
+                    merge_bodies: false,
                 });
                 inner.placements.push(Placement {
                     unproven: false,
@@ -209,6 +210,7 @@ fn level<'a>(
             source_file: None,
             assembly: inner,
             source_step: None,
+            merge_bodies: false,
         });
         assembly.placements.push(Placement {
             unproven: false,
