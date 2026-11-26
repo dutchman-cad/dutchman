@@ -16920,7 +16920,8 @@ fn solidcraft_offsets_an_annular_face_from_its_interior() {
     let mut model = nested_native_profile(&[10.0, 4.0]);
     let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let template =
-        serde_json::to_value(&face_move(json!({"kind": "offset", "distance": 2.0})).ir).unwrap();
+        dutchman_core::ir_wire::to_value(&face_move(json!({"kind": "offset", "distance": 2.0})).ir)
+            .unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
