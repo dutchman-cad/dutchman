@@ -446,7 +446,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
 const LARGE_ESTIMATE: &str = "A large conversion: it can take a while and use much of this \
      computer's memory. If it seems stuck, tell us in \"Is there a problem? Is something missing?\"";
 
-/// An estimate shown in the warning colour: five minutes or more, or more than half the free
+/// An estimate shown in the warning color: five minutes or more, or more than half the free
 /// memory (or 8 GB when the free memory is not known).
 fn large_estimate(estimate: &Estimate, available: Option<u64>) -> bool {
     let memory = available
@@ -3642,7 +3642,7 @@ impl App {
             let unfinished = row
                 .is_some_and(|(_, row)| matches!(row.status, Status::Waiting | Status::Converting));
             let intro = match &steps {
-                Some(steps) => Some(steps.intro),
+                Some(steps) => Some(steps.intro.as_str()),
                 None if unfinished => Some(report_panel::RUNNING_INTRO),
                 None => None,
             };
@@ -4028,13 +4028,13 @@ fn row_ui(
         return action;
     }
     if let Some(message) = &view.error {
-        // A drawing that is not read yet is not a failure: its note is in the warning colour.
-        let colour = if view.status == present::Status::NotSupported {
+        // A drawing that is not read yet is not a failure: its note is in the warning color.
+        let color = if view.status == present::Status::NotSupported {
             p.lantern_text
         } else {
             p.danger
         };
-        text_with_links(ui, message, colour);
+        text_with_links(ui, message, color);
         if let Some((path, ready)) = log {
             if let Err(message) = platform::log_controls(ui, path, ready) {
                 action = Some(Action::Notice(message));
