@@ -355,6 +355,29 @@ fn occurrence_hidden(occurrence: &Value, part_hidden: bool) -> bool {
         || part_hidden
 }
 
+/// Reports the occurrences placed hidden because the source suppresses them.
+fn note_suppressed(suppressed: &[String], report: &mut Report) {
+    if suppressed.is_empty() {
+        return;
+    }
+    let shown: Vec<&str> = suppressed.iter().take(5).map(String::as_str).collect();
+    report.push(
+        Severity::Info,
+        "suppressed components",
+        format!(
+            "{} component(s) the source suppresses are placed hidden, at their position ({}{}); \
+             show them in SolidCraft to use them",
+            suppressed.len(),
+            shown.join(", "),
+            if suppressed.len() > shown.len() {
+                ", ..."
+            } else {
+                ""
+            }
+        ),
+    );
+}
+
 /// Decodes one file, without reading the parts an assembly places.
 pub(crate) type Decode<'a> = dyn Fn(Format, &Path, &mut Report) -> Result<Model, Error> + 'a;
 
@@ -511,6 +534,7 @@ pub(crate) fn resolve(
     let mut placements = Vec::new();
     let mut left_out: Vec<LeftOut> = Vec::new();
     let mut nested = 0usize;
+    let mut suppressed_names: Vec<String> = Vec::new();
     for occurrence in &occurrences {
         let name = occurrence
             .get("name")
@@ -619,16 +643,22 @@ pub(crate) fn resolve(
             }
         };
         match transform(occurrence) {
-            Ok(transform) => placements.push(Placement {
-                unproven: occurrence
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| unproven.contains(id)),
-                hidden: false,
-                name,
-                part,
-                transform,
-            }),
+            Ok(transform) => {
+                let hidden = suppresses(occurrence);
+                if hidden {
+                    suppressed_names.push(name.clone().unwrap_or_else(|| file.to_owned()));
+                }
+                placements.push(Placement {
+                    unproven: occurrence
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| unproven.contains(id)),
+                    hidden,
+                    name,
+                    part,
+                    transform,
+                });
+            }
             Err(why) => leave_out(
                 report,
                 &mut left_out,
@@ -638,6 +668,7 @@ pub(crate) fn resolve(
             ),
         }
     }
+    note_suppressed(&suppressed_names, report);
     if nested > 0 {
         report.push(
             Severity::Info,
@@ -956,24 +987,7 @@ fn local_components_in_document(
             ),
         );
     }
-    if !tree.suppressed.is_empty() {
-        let shown: Vec<&str> = tree.suppressed.iter().take(5).map(String::as_str).collect();
-        report.push(
-            Severity::Info,
-            "suppressed components",
-            format!(
-                "{} component(s) the source suppresses are placed hidden, at their position ({}{}); \
-                 show them in SolidCraft to use them",
-                tree.suppressed.len(),
-                shown.join(", "),
-                if tree.suppressed.len() > shown.len() {
-                    ", ..."
-                } else {
-                    ""
-                }
-            ),
-        );
-    }
+    note_suppressed(&tree.suppressed, report);
     if tree.placed != occurrences.len() {
         return Err(
             "some components are placed inside components the design does not place".to_owned(),
@@ -4087,6 +4101,33 @@ mod tests {
                 crate::locate::tests::absolute_for_tests(project.dir.path()).display()
             )]
         );
+    }
+
+    #[test]
+    fn inventor_assembly_places_a_suppressed_occurrence_hidden_and_reports_it() {
+        let mut suppressed = occurrence(1, "cube.ipt", root(), 30.0);
+        suppressed["suppressed"] = json!(true);
+        suppressed["name"] = json!("Gone");
+        let mut shown = occurrence(2, "cube.ipt", root(), 60.0);
+        shown["suppressed"] = json!(false);
+        let project = Project::new(&[(
+            "top.iam",
+            vec![occurrence(0, "cube.ipt", root(), 0.0), suppressed, shown],
+        )]);
+        let mut report = Report::default();
+        let top = project.read("top.iam", &mut report).unwrap();
+        let assembly = top.assembly.unwrap();
+        let hidden: Vec<bool> = assembly.placements.iter().map(|p| p.hidden).collect();
+        assert_eq!(hidden, [false, true, false]);
+        assert_eq!(assembly.placements[1].transform[0][3], 30.0);
+        let notes: Vec<&crate::Loss> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.subject == "suppressed components")
+            .collect();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].severity, Severity::Info);
+        assert!(notes[0].detail.contains("Gone"));
     }
 
     #[test]

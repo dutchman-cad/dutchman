@@ -207,10 +207,7 @@ fn unified_gate(ctx: &Context) -> Result<(), String> {
     if crate::VersionGate::UnifiedThread.supported(ctx.target_version) {
         return Ok(());
     }
-    let [major, minor] = crate::NEWEST_SOLIDCRAFT;
-    Err(format!(
-        "Unified threads need a SolidCraft release with Unified thread support (newer than {major}.{minor})"
-    ))
+    Err("Unified threads need SolidCraft 0.50 or newer".to_owned())
 }
 
 /// Splits a trailing ASME B1.1 class (`-2A` external, `-2B` internal) off an upper-case
@@ -524,48 +521,59 @@ mod tests {
         ("1/4-20 UNC-2B", 6.35, 1.27),
     ];
 
+    fn unified_result_for(
+        target: &str,
+        designation: &str,
+        diameter: f64,
+        pitch: f64,
+    ) -> Result<Value, String> {
+        let model = model();
+        let mut ctx = Context::testing(&model);
+        ctx.target_version = target.parse().unwrap();
+        map(
+            &json!({}),
+            &unified_definition(designation, diameter, pitch),
+            &mut ctx,
+            &mut Report::default(),
+        )
+    }
+
     #[test]
-    fn unified_threads_are_refused_while_no_release_supports_them() {
+    fn unified_threads_are_refused_before_050() {
         for (designation, diameter, pitch) in UNIFIED_CASES {
-            let reason = unified_result(designation, diameter, pitch).unwrap_err();
+            let reason = unified_result_for("0.49.1", designation, diameter, pitch).unwrap_err();
             assert_eq!(
-                reason,
-                "Unified threads need a SolidCraft release with Unified thread support (newer than 0.49)",
+                reason, "Unified threads need SolidCraft 0.50 or newer",
                 "{designation}"
             );
         }
-        // Every known target refuses; so does a thread with no designation.
-        let model = model();
         for minor in 19..=49 {
-            let mut ctx = Context::testing(&model);
-            ctx.target_version = format!("0.{minor}.0").parse().unwrap();
-            let reason = map(
-                &json!({}),
-                &unified_definition("1/4-20 UNC", 6.35, 1.27),
-                &mut ctx,
-                &mut Report::default(),
-            )
-            .unwrap_err();
-            assert!(
-                reason.contains("Unified thread support"),
-                "0.{minor}: {reason}"
-            );
+            let reason =
+                unified_result_for(&format!("0.{minor}.0"), "1/4-20 UNC", 6.35, 1.27).unwrap_err();
+            assert!(reason.contains("0.50 or newer"), "0.{minor}: {reason}");
         }
+        let model = model();
+        let mut ctx = Context::testing(&model);
+        ctx.target_version = "0.49.1".parse().unwrap();
         let mut d = unified_definition("1/4-20 UNC", 6.35, 1.27);
         d.as_object_mut().unwrap().remove("designation");
-        let reason = map(
-            &json!({}),
-            &d,
-            &mut Context::testing(&model),
-            &mut Report::default(),
-        )
-        .unwrap_err();
-        assert!(reason.contains("Unified thread support"), "{reason}");
+        let reason = map(&json!({}), &d, &mut ctx, &mut Report::default()).unwrap_err();
+        assert!(reason.contains("0.50 or newer"), "{reason}");
+    }
+
+    #[test]
+    fn a_quarter_twenty_unc_thread_is_a_thread_feature_on_050_and_falls_back_on_049() {
+        let written = unified_result_for("0.50.0", "1/4-20 UNC", 6.35, 1.27).unwrap();
+        assert_eq!(written["type"], "thread");
+        assert_eq!(written["designation"], "1/4-20 UNC");
+        let newer = unified_result_for("0.51.0", "1/4-20 UNC", 6.35, 1.27).unwrap();
+        assert_eq!(newer["type"], "thread");
+        let reason = unified_result_for("0.49.1", "1/4-20 UNC", 6.35, 1.27).unwrap_err();
+        assert!(reason.contains("0.50 or newer"), "{reason}");
     }
 
     #[test]
     fn a_supporting_target_gets_solidcrafts_unified_designation() {
-        let _forced = crate::verify::tests_force::force_unified_thread();
         for (designation, diameter, pitch, expected) in [
             ("2-56 UNC", 2.1844, 0.4536, "#2-56 UNC"),
             ("#2-56 UNC-2A", 2.1844, 0.4536, "#2-56 UNC-2A"),
@@ -581,7 +589,7 @@ mod tests {
             assert_eq!(out["type"], "thread");
             assert_eq!(out["designation"], expected, "{designation}");
         }
-        // A wrong size is still refused with the forced capability on.
+        // A wrong size is still refused.
         let reason = unified_result("#2-56 UNC-2A", 6.35, 0.4536).unwrap_err();
         assert!(reason.contains("specifies diameter 2.18"), "{reason}");
     }
@@ -755,7 +763,11 @@ mod tests {
                 json!("M3x0.6"),
                 "specifies diameter 3 mm and pitch 0.6 mm",
             ),
-            ("standard", json!("UNC"), "Unified thread support"),
+            (
+                "standard",
+                json!("UNC"),
+                "requires a designation that names its size",
+            ),
             ("standard", json!("Trapezoidal metric"), "ISO metric"),
             ("designation", json!("M3x0.5-LH"), "class or hand"),
             ("extent", Value::Null, "extent is not resolved"),

@@ -18,6 +18,7 @@ mod error;
 pub mod estimate;
 mod export_folder;
 mod format;
+mod fusion_archive;
 mod hidden;
 mod input_edges;
 mod ir_retain;

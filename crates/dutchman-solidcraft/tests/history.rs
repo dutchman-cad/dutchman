@@ -1841,6 +1841,24 @@ fn target_049_keeps_the_previous_compatible_history_document() {
 }
 
 #[test]
+fn target_050_keeps_the_previous_compatible_history_document() {
+    let model = cube_with_history(10.0, first_profile(), None);
+    let write = |target: &str| {
+        convert(
+            &model,
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(target.parse().unwrap())),
+        )
+        .0
+    };
+    let previous = write("0.49.0");
+    let newest = write("0.50.0");
+    assert_eq!(newest["format"], "solidcraft/23");
+    assert_eq!(newest, previous);
+}
+
+#[test]
 fn as_built_joints_between_features_do_not_stop_history() {
     for source_tag in ["As-built", "As-built Joint"] {
         let model = cube_with_history(10.0, first_profile(), None);
@@ -12088,6 +12106,41 @@ fn unresolved_modeled_thread() -> Model {
         "designation": "M8x1.25", "diameter": 8.0, "pitch": 1.25,
         "modeled": true, "extent": {"kind": "blind", "length": 5.0}
     }}))
+}
+
+/// A 1/4-20 UNC cosmetic thread on the synthetic cube's right face.
+fn quarter_twenty_unc_thread() -> Model {
+    modifying(json!({"kind": "cosmetic_thread", "value": {
+        "face": cube_faces(&["right"]), "standard": "ANSI Unified Screw Threads",
+        "designation": "1/4-20 UNC", "diameter": 6.35, "pitch": 1.27,
+        "modeled": false, "extent": {"kind": "blind", "length": 5.0}
+    }}))
+}
+
+/// The thread mapper's own tests prove the written Thread feature on a cylinder; this checks
+/// the target gate through a whole conversion (the cube's plane is no cylinder, so on 0.50 the
+/// refusal is about the face, not about Unified support).
+#[test]
+fn a_unified_thread_is_gated_by_target_through_a_conversion() {
+    let reason = |target: &str| {
+        let (_, report) = convert(
+            &quarter_twenty_unc_thread(),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(target.parse().unwrap())),
+        );
+        let outcome = report.outcome().unwrap();
+        outcome
+            .features
+            .iter()
+            .find(|f| f.kind == "cosmetic_thread")
+            .unwrap()
+            .reason
+            .clone()
+            .unwrap_or_default()
+    };
+    assert!(reason("0.49.1").contains("Unified threads need SolidCraft 0.50 or newer"));
+    assert!(!reason("0.50.0").contains("Unified threads need"));
 }
 
 #[test]

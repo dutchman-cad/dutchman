@@ -201,8 +201,8 @@ faces without input surface geometry. Unspecified modeled construction, when an 
 can be placed, adds a Degraded loss explaining that only the cosmetic annotation is kept.
 Cosmetic thread contradictions name the designation’s nominal dimensions and secondary numeric
 values. Decimal rounding and floating-point conversion noise are accepted for metric labels.
-A matching UNC/UNF designation is written as a Unified Thread on a SolidCraft release with
-Unified thread support, and reports that missing support instead of a numeric conflict until then. These use the existing loss fields; no report schema or field changes.
+A matching UNC/UNF designation is written as a Unified Thread for SolidCraft 0.50 and newer,
+and earlier targets report that missing support. These use the existing loss fields; no report schema or field changes.
 When reached in the timeline, a `cosmetic_thread` feature with `modeled: true` adds a
 Degraded loss with code `history/modeled-thread-retained`.
 Its `detail` includes the source designation when available and explains that hand,
@@ -568,9 +568,9 @@ asking for its body-producing feature to resolve first. Source storage order doe
 change replay order: the neutral ordinal controls it.
 
 SolidCraft version presentation uses minors: `solidcraft.target` and
-`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.49"`), changing their
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.50"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
-`"0.44.0"`). Status comparisons use minors, so all 0.49 patches are current; 0.50 is newer
+`"0.44.0"`). Status comparisons use minors, so all 0.50 patches are current; 0.51 is newer
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.
@@ -703,7 +703,7 @@ For older targets, `history.features[].reason` says
 line explains the blocker. `--solidcraft-version x.y.z` selects the target on `convert`,
 `convert-all`, and `watch`; it must be at least 0.18.2. By default the found verification
 CLI's version is used, even with `--no-verify`, else the newest release known at build
-time (currently 0.49). The supported rolling 14-day window is currently 0.40–0.49;
+time (currently 0.50). The supported rolling 14-day window is currently 0.40–0.50;
 older targets down to 0.18.2 retain the existing feature simplifications.
 When a written coil or flat entry-recess tip uses the newer mapping, the history line
 includes the actual target, such as `target SolidCraft 0.25 patch 1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip
