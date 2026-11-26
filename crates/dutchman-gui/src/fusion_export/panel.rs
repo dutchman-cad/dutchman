@@ -42,6 +42,8 @@ pub struct Panel {
     install: Install,
     latest: Option<String>,
     options: Option<Options>,
+    /// The last install stopped at a development copy; offer to install beside it.
+    dev_copy: bool,
     frozen: bool,
     sender: Sender<Message>,
     receiver: Receiver<Message>,
@@ -65,6 +67,7 @@ impl Panel {
             install: Install::Idle,
             latest: None,
             options: None,
+            dev_copy: false,
             frozen: false,
             sender,
             receiver,
@@ -143,15 +146,19 @@ impl Panel {
                     self.installed = Some(done.version.clone());
                     self.install = Install::Done(done.version);
                 }
-                Message::Finished(Err(why)) => self.install = Install::Failed(why.to_string()),
+                Message::Finished(Err(why)) => {
+                    self.dev_copy = why == Failure::DevCopy;
+                    self.install = Install::Failed(why.to_string());
+                }
                 Message::Latest(version) => self.latest = Some(version),
             }
         }
     }
 
-    fn start_install(&mut self, ctx: &egui::Context) {
+    fn start_install(&mut self, ctx: &egui::Context, mode: install::Mode) {
+        self.dev_copy = false;
         let options = match self.options.clone().map_or_else(Options::pinned, Ok) {
-            Ok(options) => options,
+            Ok(options) => Options { mode, ..options },
             Err(why) => {
                 self.install = Install::Failed(why.to_string());
                 return;
@@ -309,6 +316,11 @@ impl Panel {
             switch_on_steps(ui);
             self.newer_note(ui, have);
             if !behind {
+                if self.installed.as_deref() == Some(install::PIN.version)
+                    && ui.button("Repair: reinstall this version").clicked()
+                {
+                    self.start_install(ui.ctx(), install::Mode::Repair);
+                }
                 return;
             }
             ui.add_space(theme::SPACE_2);
@@ -325,7 +337,10 @@ impl Panel {
         }
         ui.add_space(theme::SPACE_2);
         if ui.button("Install the Fusion exporter").clicked() {
-            self.start_install(ui.ctx());
+            self.start_install(ui.ctx(), install::Mode::Install);
+        }
+        if self.dev_copy && ui.button("Install it and keep my copy beside it").clicked() {
+            self.start_install(ui.ctx(), install::Mode::KeepDevCopy);
         }
         ui.horizontal_wrapped(|ui| {
             ui.label(format!(
@@ -527,6 +542,7 @@ mod tests {
             stall_timeout: Duration::from_secs(2),
             deadline: Duration::from_secs(20),
             allow_http: true,
+            mode: install::Mode::Install,
         });
         let mut h = harness(panel);
         h.run();
