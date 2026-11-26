@@ -22434,6 +22434,7 @@ fn legacy_cube(
         source_file: Some("cube.par".to_owned()),
         source_step: None,
         assembly: None,
+        merge_bodies: false,
     }
 }
 
