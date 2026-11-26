@@ -141,7 +141,10 @@ pub fn add(
             crate::verify::run_and_save(cli, deadline, dir.path(), design, &saved, &script)?;
         let Some(error) = result.get("error").filter(|e| !e.is_null()) else {
             let written = summarize(&saved, refused)?;
-            std::fs::copy(&saved, design)
+            // `design` is the file this run just wrote; replace it atomically so a crash
+            // part-way never leaves a half-written design.
+            std::fs::read(&saved)
+                .and_then(|bytes| dutchman_core::safe_output::write_own(design, &bytes))
                 .map_err(|err| format!("cannot replace the design: {err}"))?;
             return Ok(written);
         };

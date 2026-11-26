@@ -12,6 +12,7 @@ publish = false
 base64 = { version = "0.22", optional = true }
 flate2 = { version = "1", optional = true }
 dutchman-launcher.workspace = true
+icu_normalizer = { version = "2", default-features = false, features = ["compiled_data"] }
 cadmpeg-core.workspace = true
 cadmpeg-codec-f3d.workspace = true
 cadmpeg-ir.workspace = true

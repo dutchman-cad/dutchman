@@ -282,6 +282,7 @@ pub struct Report {
     /// Linked components the source file places but doesn't contain: how many, and why the
     /// design can't be verified complete.
     missing_links: Option<(u64, String)>,
+    up_axis: Option<crate::UpAxisReport>,
 }
 
 /// How much of an assembly was placed: every placement its file and its placed sub-assemblies'
@@ -681,6 +682,34 @@ impl Report {
         self.source_version.get_or_insert(version);
     }
 
+    /// What the source states about its up axis and what the writer did about it.
+    pub fn up_axis(&self) -> Option<&crate::UpAxisReport> {
+        self.up_axis.as_ref()
+    }
+
+    /// Records what the source states about its up axis, with a note when the designs of an
+    /// assembly disagree. The first one recorded is kept.
+    pub fn record_up_axis(&mut self, found: crate::UpAxisFinding, disagreement: Option<String>) {
+        if self.up_axis.is_none() {
+            self.up_axis = Some(crate::UpAxisReport {
+                found,
+                applied: None,
+                disagreement,
+            });
+        }
+    }
+
+    /// Records the orientation a writer applied. A source no reader recorded anything for is
+    /// recorded as unknown.
+    pub fn record_orientation(&mut self, mode: crate::Orientation, stands_up: bool) {
+        let entry = self.up_axis.get_or_insert_with(|| crate::UpAxisReport {
+            found: crate::UpAxisFinding::default(),
+            applied: None,
+            disagreement: None,
+        });
+        entry.applied = Some((mode, stands_up));
+    }
+
     /// Requested and bounded maximum Dutchman part workers, excluding child-process threads.
     pub fn threads(&self) -> Option<(usize, usize)> {
         self.threads
@@ -907,6 +936,9 @@ impl Report {
 
     /// Records every loss of `other`, after this report's own.
     pub fn append(&mut self, other: Report) {
+        if let Some(up) = other.up_axis.clone() {
+            self.record_up_axis(up.found, up.disagreement);
+        }
         for checks in other.verification_checks {
             self.record_verification_checks(checks);
         }
@@ -931,6 +963,9 @@ impl Report {
 
     /// Records every loss of `other` under `prefix` (`part.ipt: …`), after this report's own.
     pub fn append_prefixed(&mut self, other: Report, prefix: &str) {
+        if let Some(up) = other.up_axis.clone() {
+            self.record_up_axis(up.found, up.disagreement);
+        }
         for checks in other.verification_checks {
             self.record_verification_checks(checks);
         }
