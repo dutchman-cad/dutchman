@@ -312,7 +312,9 @@ there. An extrude whose region cannot be checked this way stays kept and is mark
 `profile_unverified` in the JSON report (see [json.md](json.md)).
 
 Face extrusions on imported bases require a matching final source result after the
-input face is proved. An intermediate result, an unavailable check, or a measured
+input face is proved. A chain of face extrudes on one imported body is judged by the last
+extrude's result, and an extrude of a face the source records at the opposite end of an
+identical profile is written from the end the next feature's face or the final shape confirms. An intermediate result, an unavailable check, or a measured
 mismatch keeps the final imported shape and reports
 `a face extrude on an imported base is not supported yet without a matching source result check`.
 
