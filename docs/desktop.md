@@ -413,7 +413,7 @@ builds all stop it, and the built-in copy is used.
 The bottom of the main window says: "Dutchman is in active development and provided as is. Keep a
 copy of your designs somewhere else, just in case." **More** opens this section.
 
-- Dutchman is provided as is, without warranty, under the Apache-2.0 licence (see `LICENSE`).
+- Dutchman is provided as is, without warranty, under the Apache-2.0 license (see `LICENSE`).
   Dutchman is in active development, and there is a small chance that something goes wrong.
 - Dutchman only reads your original files. It never changes them.
 - Converted files are written to the output folder you choose, as new `.sc` designs and reports.
