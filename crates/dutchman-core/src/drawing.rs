@@ -174,7 +174,7 @@ fn dwg_version(version: &str) -> Option<&'static str> {
     })
 }
 
-/// What to tell a user whose drawing is recognised but whose sheets are not read yet. The
+/// What to tell a user whose drawing is recognized but whose sheets are not read yet. The
 /// result card shows it under the line that says the sheets are not supported yet, and above
 /// the help steps that ask for a PDF or DXF export, so it says only what was not done.
 pub fn not_decoded_message(format: Format) -> String {

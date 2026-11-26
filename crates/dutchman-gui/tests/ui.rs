@@ -6520,12 +6520,12 @@ fn a_drawing_that_is_not_read_yet_is_not_supported_yet_not_failed() {
             harness.query_by_label_contains("0 failed").is_none(),
             "{name}"
         );
-        // One statement: recognised, but not supported yet. Never "accepted" beside "cannot".
+        // One statement: recognized, but not supported yet. Never "accepted" beside "cannot".
         // The design list line and the card both say it, in the same words.
         assert_eq!(
             harness
                 .query_all_by_label_contains(
-                    "recognised, but reading its sheets isn't supported yet"
+                    "recognized, but reading its sheets isn't supported yet"
                 )
                 .count(),
             2,
@@ -6589,13 +6589,15 @@ fn failed_card_for_drawing(name: &str) -> (Harness<'static, App>, tempfile::Temp
 #[ignore = "renders the drawing result cards with a GPU; set DUTCHMAN_GUI_SCREENSHOTS"]
 fn drawing_screenshots() {
     if std::env::var_os("DUTCHMAN_DRAWING_SCREENSHOT_CHILD").is_none() {
-        let state = tempfile::tempdir().unwrap();
+        // Neutral paths, so no screenshot shows the machine that rendered it.
+        let state = PathBuf::from("/tmp/demo");
+        std::fs::create_dir_all(&state).unwrap();
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", "drawing_screenshots"])
             .env("DUTCHMAN_DRAWING_SCREENSHOT_CHILD", "1")
-            .env("HOME", state.path())
-            .env("LOCALAPPDATA", state.path())
-            .env("XDG_STATE_HOME", state.path())
+            .env("HOME", &state)
+            .env("LOCALAPPDATA", &state)
+            .env("XDG_STATE_HOME", &state)
             .status()
             .unwrap();
         assert!(status.success());
@@ -6603,7 +6605,8 @@ fn drawing_screenshots() {
     }
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
-    let work = tempfile::tempdir().unwrap();
+    let work = PathBuf::from("/tmp/demo/in");
+    std::fs::create_dir_all(&work).unwrap();
     let mut index = String::new();
     // The app has no German text yet: the German set shows a long German file name.
     for (language, name) in [
@@ -6613,7 +6616,7 @@ fn drawing_screenshots() {
             "Zeichnung-Rahmenbaugruppe-Seitenwand-Ueberarbeitung-Fertigung.dwg",
         ),
     ] {
-        let input = work.path().join(name);
+        let input = work.join(name);
         let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
         if name.ends_with(".dwg") {
             bytes = b"AC1032\0\0\0\0\0\0\0".to_vec();
@@ -6631,7 +6634,11 @@ fn drawing_screenshots() {
             harness.state_mut().add_inputs([input.clone()]);
             harness
                 .state_mut()
-                .set_out_dir(work.path().join(format!("{language}-{mode}")));
+                .set_out_dir(PathBuf::from("/tmp/demo/out"));
+            harness
+                .state_mut()
+                .set_diagnostic_log(PathBuf::from("/tmp/demo/log.jsonl"));
+            harness.state_mut().preview_solidcraft(Some("0.49.1"));
             harness.state_mut().set_verify(false);
             convert(&mut harness);
             assert_eq!(harness.state().rows()[0].status, Status::Failed);
@@ -6642,7 +6649,7 @@ fn drawing_screenshots() {
                 &mut index,
                 &format!("drawing-not-decoded-{language}"),
                 mode,
-                "A drawing file that is recognised and reported as not supported yet.",
+                "A drawing file that is recognized and reported as not supported yet.",
             );
         }
     }

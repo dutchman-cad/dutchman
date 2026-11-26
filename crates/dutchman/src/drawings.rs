@@ -92,7 +92,7 @@ fn not_decoded(format: Format, input: &Path) -> Value {
                 "file",
                 code::FORMAT_NOT_DECODED,
                 format!(
-                    "{} is recognised{detail}, but reading its sheets and views isn't supported yet",
+                    "{} is recognized{detail}, but reading its sheets and views isn't supported yet",
                     format.name()
                 ),
             );
