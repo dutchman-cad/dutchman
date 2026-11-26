@@ -524,6 +524,95 @@ pub fn failure_at(
     })
 }
 
+/// Makes a report that did not convert say why: a message, its stage, a kind and a reason
+/// code. A child that stopped without a report, an error whose message came out empty and a
+/// result with `ok` false and no error each get a named reason here, so a failure is never
+/// bare. An assembly with parts left out keeps its report, and gains a `reason`.
+pub fn ensure_reason(report: &mut Value) {
+    if report.get("ok") == Some(&Value::Bool(true)) {
+        return;
+    }
+    let unplaced = unplaced_message(report);
+    let Some(fields) = report.as_object_mut() else {
+        return;
+    };
+    let blank = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .is_none_or(|s| s.trim().is_empty())
+    };
+    if !fields.contains_key("error") {
+        if let Some(mut message) = unplaced {
+            let count = |key: &str| {
+                fields
+                    .get("completeness")
+                    .and_then(|c| c.get(key))
+                    .and_then(Value::as_u64)
+            };
+            if let (Some(placed), Some(placements)) = (count("placed"), count("placements")) {
+                message = format!("{placed} of {placements} parts placed: {message}");
+            }
+            fields.insert(
+                "reason".into(),
+                json!({"stage": "project", "kind": "incomplete", "code": "unplaced_parts",
+                       "message": message}),
+            );
+            return;
+        }
+        fields.insert("error".into(), json!({}));
+    }
+    if !fields.get("error").is_some_and(Value::is_object) {
+        fields.insert("error".into(), json!({}));
+    }
+    let Some(error) = fields.get_mut("error").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let stage = error
+        .get("stage")
+        .and_then(Value::as_str)
+        .unwrap_or("input")
+        .to_owned();
+    // A message that is empty, or only the label of a cause nobody filled in.
+    let text = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let empty_cause = text.ends_with(':');
+    if blank(error.get("message")) || empty_cause {
+        let prefix = if empty_cause {
+            format!("{text} ")
+        } else {
+            String::new()
+        };
+        let message = if stage == "decode" || stage == "project" {
+            format!(
+                "{prefix}the reader stopped at the {stage} stage and gave no reason; for an \
+                 archive, a design inside it could not be read"
+            )
+        } else {
+            format!("{prefix}the conversion stopped at the {stage} stage and gave no reason")
+        };
+        error.insert("message".into(), json!(message));
+        error.insert("empty_reason".into(), json!(true));
+    }
+    if blank(error.get("stage")) {
+        error.insert("stage".into(), json!(stage));
+    }
+    if blank(error.get("kind")) {
+        error.insert("kind".into(), json!("unknown"));
+    }
+    if blank(error.get("code")) {
+        let code = error
+            .get("cause")
+            .or_else(|| error.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned();
+        error.insert("code".into(), json!(code));
+    }
+}
+
 /// The fields every successful report shares: what was (or would be) written, and the losses.
 pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value> {
     let mut out = Map::new();

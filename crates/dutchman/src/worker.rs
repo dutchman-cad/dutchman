@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use dutchman_core::Stage;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::batch::Job;
 use crate::json::{self, CONVERT};
@@ -833,10 +833,12 @@ fn convert_once(
                 text
             })
         });
+        let tail = Arc::new(Mutex::new(Vec::new()));
         let stderr = child.stderr.take().map(|err| {
             let stage = Arc::clone(&stage);
             let reading = Arc::clone(&reading);
-            scope.spawn(move || follow_stages(err, &stage, &reading, on_progress, log))
+            let tail = Arc::clone(&tail);
+            scope.spawn(move || follow_stages(err, &stage, &reading, on_progress, log, &tail))
         });
 
         let stopped = supervise(
@@ -866,6 +868,15 @@ fn convert_once(
                 upstream_of(at),
             )
         };
+        // The same, with the kind of stop and its reason code named.
+        let fail_as = |kind: &str, code: String, message: String| {
+            let mut report = fail(message);
+            if let Some(error) = report.get_mut("error").and_then(Value::as_object_mut) {
+                error.insert("kind".into(), json!(kind));
+                error.insert("code".into(), json!(code));
+            }
+            report
+        };
         let stuck = match &stopped {
             Stopped::Stuck(design) => Some(design.clone()),
             _ => None,
@@ -873,10 +884,20 @@ fn convert_once(
         let report = match stopped {
             Stopped::Exited(status) => match serde_json::from_str::<Value>(text.trim()) {
                 Ok(report) if report.is_object() => report,
-                _ => fail(format!(
-                    "the converter stopped unexpectedly while at the {} stage ({status})",
-                    at.id()
-                )),
+                _ => {
+                    let printed = tail.lock().map(|tail| tail.clone()).unwrap_or_default();
+                    let failed_design = reading
+                        .lock()
+                        .ok()
+                        .and_then(|reading| reading.failed_design.clone());
+                    let (code, mut message) = describe_exit(status, &printed, at);
+                    if let Some(design) = failed_design {
+                        message.push_str(&format!(
+                            "; a design inside the archive could not be read: {design}"
+                        ));
+                    }
+                    fail_as("worker_exit", code, message)
+                }
             },
             Stopped::Stuck(design) => {
                 let ran = limit_phrase(limits.design);
@@ -884,39 +905,138 @@ fn convert_once(
                     "; to give it longer, set {DESIGN_LIMIT_ENV} to more minutes (0 for no \
                      limit) and convert again"
                 );
-                fail(match design {
-                    Some(design) => format!(
+                fail_as(
+                    "stuck_design",
+                    "design_limit".into(),
+                    match design {
+                        Some(design) => format!(
                         "stopped reading the design \"{design}\": it ran past {ran}, Dutchman's \
                          limit for one design{raise}"
                     ),
-                    None => format!(
-                        "stopped: a design ran past {ran} while at the {} stage, Dutchman's \
+                        None => format!(
+                            "stopped: a design ran past {ran} while at the {} stage, Dutchman's \
                          limit for one design{raise}",
-                        at.id()
-                    ),
-                })
+                            at.id()
+                        ),
+                    },
+                )
             }
-            Stopped::TimedOut => fail(format!(
-                "stopped after {} s, Dutchman's limit for one file, while at the {} stage",
-                limits.timeout.as_secs(),
-                at.id()
-            )),
-            Stopped::Cancelled => fail(format!("{CANCELLED} while at the {} stage", at.id())),
-            Stopped::Shutdown => fail(format!("{SHUTDOWN_STOPPED} while at the {} stage", at.id())),
-            Stopped::OverMemory(bytes) => fail(format!(
+            Stopped::TimedOut => fail_as(
+                "timed_out",
+                "file_timeout".into(),
+                format!(
+                    "stopped after {} s, Dutchman's limit for one file, while at the {} stage",
+                    limits.timeout.as_secs(),
+                    at.id()
+                ),
+            ),
+            Stopped::Cancelled => fail_as(
+                "cancelled",
+                "cancelled".into(),
+                format!("{CANCELLED} while at the {} stage", at.id()),
+            ),
+            Stopped::Shutdown => fail_as(
+                "cancelled",
+                "shutdown".into(),
+                format!("{SHUTDOWN_STOPPED} while at the {} stage", at.id()),
+            ),
+            Stopped::OverMemory(bytes) => fail_as(
+                "out_of_memory",
+                "memory_limit".into(),
+                format!(
             "stopped when it held {} MB, over Dutchman's limit of {} MB for one file, while at \
              the {} stage",
             bytes >> 20,
             limits.max_memory.unwrap_or(0) >> 20,
             at.id()
-        )),
-            Stopped::LowMemory(message) => {
-                fail(format!("{message}, while at the {} stage", at.id()))
-            }
-            Stopped::Lost(err) => fail(format!("lost track of the converter: {err}")),
+        ),
+            ),
+            Stopped::LowMemory(message) => fail_as(
+                "out_of_memory",
+                "low_memory".into(),
+                format!("{message}, while at the {} stage", at.id()),
+            ),
+            Stopped::Lost(err) => fail_as(
+                "worker_exit",
+                "lost".into(),
+                format!("lost track of the converter: {err}"),
+            ),
         };
         (report, stuck)
     })
+}
+
+/// Names how a child ended without a report: the reason code and the sentence for the user.
+/// `printed` is what it wrote to stderr as it stopped.
+fn describe_exit(
+    status: std::process::ExitStatus,
+    printed: &[String],
+    at: Stage,
+) -> (String, String) {
+    #[cfg(unix)]
+    let signal = {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    };
+    #[cfg(not(unix))]
+    let signal: Option<i32> = None;
+    let panic = printed
+        .iter()
+        .position(|line| line.contains("panicked at"))
+        .and_then(|at| printed.get(at + 1).or_else(|| printed.get(at)))
+        .map(|line| line.trim().to_owned());
+    let stage = at.id();
+    if let Some(signal) = signal {
+        let (name, why) = match signal {
+            9 => ("SIGKILL", ": likely out of memory"),
+            6 => ("SIGABRT", ": it aborted"),
+            11 => ("SIGSEGV", ": it crashed"),
+            15 => ("SIGTERM", ": it was told to stop"),
+            _ => ("", ""),
+        };
+        let named = if name.is_empty() {
+            String::new()
+        } else {
+            format!(" {name}")
+        };
+        return (
+            format!("signal_{signal}"),
+            format!(
+                "the converter stopped unexpectedly (signal {signal}{named}{why}) while at the                  {stage} stage"
+            ),
+        );
+    }
+    if let Some(message) = panic {
+        return (
+            "panic".to_owned(),
+            format!(
+                "the converter stopped unexpectedly (a bug in Dutchman: it panicked: {message})                  while at the {stage} stage"
+            ),
+        );
+    }
+    match status.code() {
+        Some(0) => (
+            "no_report".to_owned(),
+            format!("the converter exited without writing a report, while at the {stage} stage"),
+        ),
+        Some(code) => {
+            let said = printed
+                .last()
+                .map(|line| format!(": {}", line.trim()))
+                .unwrap_or_default();
+            (
+                format!("exit_{code}"),
+                format!(
+                    "the converter stopped unexpectedly (exit code {code}, no report{said}) while \
+                     at the {stage} stage"
+                ),
+            )
+        }
+        None => (
+            "no_report".to_owned(),
+            format!("the converter stopped unexpectedly ({status}) while at the {stage} stage"),
+        ),
+    }
 }
 
 /// What the child is reading, from its stage marks and design events: the clock behind the
@@ -934,6 +1054,8 @@ struct Reading {
     archive: bool,
     /// The memory the child held when the clock last restarted.
     held: Option<u64>,
+    /// The last design inside an archive the child reported as failed.
+    failed_design: Option<String>,
 }
 
 impl Reading {
@@ -945,6 +1067,7 @@ impl Reading {
             began: Instant::now(),
             archive,
             held: None,
+            failed_design: None,
         }
     }
 
@@ -1006,6 +1129,7 @@ fn follow_stages(
     reading: &Mutex<Reading>,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
     log: Option<&crate::diagnostics::Log>,
+    tail: &Mutex<Vec<String>>,
 ) {
     use std::io::BufRead;
     for line in std::io::BufReader::new(stream).lines() {
@@ -1015,7 +1139,11 @@ fn follow_stages(
                 if let Some(design) = record.get("dutchman_member").and_then(Value::as_str) {
                     match record.get("event").and_then(Value::as_str) {
                         Some("start") => reading.design(Some(design.to_owned())),
-                        Some("finish" | "fail") => reading.design(None),
+                        Some("finish") => reading.design(None),
+                        Some("fail") => {
+                            reading.failed_design = Some(design.to_owned());
+                            reading.design(None);
+                        }
                         _ => {}
                     }
                 } else if record.get("dutchman_phase").is_some()
@@ -1100,6 +1228,13 @@ fn follow_stages(
             continue;
         }
         let Some(id) = line.strip_prefix(STAGE_MARK) else {
+            // Not a protocol line: what the child printed as it stopped, such as a panic.
+            if let Ok(mut tail) = tail.lock() {
+                tail.push(line.chars().take(300).collect());
+                if tail.len() > 6 {
+                    tail.remove(0);
+                }
+            }
             continue;
         };
         if let (Some(found), Ok(mut stage)) = (
@@ -1451,6 +1586,7 @@ mod classification_tests {
             &Mutex::new(Reading::new(false)),
             &|_| {},
             Some(&log),
+            &Mutex::new(Vec::new()),
         );
         drop(log);
         let text = std::fs::read_to_string(path).unwrap();
