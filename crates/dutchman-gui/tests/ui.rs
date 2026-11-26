@@ -5874,8 +5874,8 @@ fn as_is_footer_is_one_quiet_line_below_the_controls() {
     }
 }
 
-/// The main window with the footer at 1280x800, English and a simulated German translation (the
-/// app has no translations yet), Day and Night.
+/// The main window with the footer at 1280x800, Day and Night: an English design name, and a
+/// long German one (the app has no translations, so the footer stays English in both).
 #[cfg(feature = "test-support")]
 #[test]
 #[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
@@ -5883,25 +5883,36 @@ fn as_is_footer_screenshots() {
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
     let mut index = String::new();
-    for (language, text) in [
-        ("en", None),
+    for (language, file) in [
+        ("en", "Cube.ipt"),
         (
             "de-DE",
-            Some((
-                "Dutchman befindet sich in aktiver Entwicklung und wird so bereitgestellt, wie es ist. Bewahren Sie eine Kopie Ihrer Konstruktionen an einem anderen Ort auf, nur für den Fall.".to_owned(),
-                "Mehr".to_owned(),
-            )),
+            "Getriebegehäuse_Hauptwelle_Lagerdeckel_Konstruktionsstand_Revision_C.ipt",
         ),
     ] {
-        *dutchman_gui::FOOTER_FOR_TEST.lock().unwrap() = text;
         for (theme, name) in [
             (ThemePreference::Light, "day"),
             (ThemePreference::Dark, "night"),
         ] {
-            let mut harness = Harness::builder()
-                .with_size(egui::vec2(1280.0, 800.0))
-                .build_eframe(|cc| test_app(cc));
-            harness.ctx.set_theme(theme);
+            let docs = PathBuf::from("/Users/demo/Documents");
+            let mut harness = screenshot_harness(theme);
+            harness.set_size(egui::vec2(1280.0, 800.0));
+            harness.state_mut().preview_solidcraft(Some("0.46.2"));
+            harness.state_mut().set_out_dir(docs.join("Converted"));
+            let mut report = developer_notes_report();
+            report["mode"] = serde_json::json!("history");
+            let stem = file.trim_end_matches(".ipt");
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: docs.join(file),
+                    output: Some(docs.join("Converted").join(format!("{stem}.sc"))),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(report),
+                });
             harness.run_steps(8);
             shot(
                 &mut harness,
@@ -5913,7 +5924,6 @@ fn as_is_footer_screenshots() {
             );
         }
     }
-    *dutchman_gui::FOOTER_FOR_TEST.lock().unwrap() = None;
     std::fs::write(dir.join("as-is-footer.md"), index).unwrap();
 }
 

@@ -39,11 +39,6 @@ pub const FOOTER: &str = "Dutchman is in active development and provided as is. 
 /// The link after the footer line.
 pub const FOOTER_MORE: &str = "More";
 
-/// Text that replaces the footer line, so a screenshot test can show a German translation.
-#[cfg(feature = "test-support")]
-pub static FOOTER_FOR_TEST: std::sync::Mutex<Option<(String, String)>> =
-    std::sync::Mutex::new(None);
-
 /// The version beside the app's name in its top row.
 pub fn version_label() -> String {
     format!("v{}", dutchman::BUILD_VERSION)

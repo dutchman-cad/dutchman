@@ -2125,10 +2125,12 @@ impl App {
             .frame(
                 Frame::new()
                     .fill(ctx.style().visuals.panel_fill)
-                    .inner_margin(Margin::symmetric(
-                        theme::SPACE_8 as i8,
-                        theme::SPACE_2 as i8,
-                    )),
+                    .inner_margin(Margin {
+                        left: theme::SPACE_8 as i8,
+                        right: theme::SPACE_8 as i8,
+                        top: 0,
+                        bottom: theme::SPACE_1 as i8,
+                    }),
             )
             .show_separator_line(false)
             .show(ctx, |ui| self.as_is_footer(ui, ctx));
@@ -2365,12 +2367,7 @@ impl App {
     /// One quiet line at the bottom of the window: the as-is notice and a link to its details.
     fn as_is_footer(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let p = *theme::palette(ui);
-        #[allow(unused_mut)]
-        let mut text = (crate::FOOTER.to_owned(), crate::FOOTER_MORE.to_owned());
-        #[cfg(feature = "test-support")]
-        if let Some(over) = crate::FOOTER_FOR_TEST.lock().ok().and_then(|t| t.clone()) {
-            text = over;
-        }
+        let text = (crate::FOOTER, crate::FOOTER_MORE);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = theme::SPACE_2;
             ui.label(RichText::new(text.0).small().color(p.tide));
