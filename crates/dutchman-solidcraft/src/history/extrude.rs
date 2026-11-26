@@ -397,16 +397,35 @@ fn extent(
             } else {
                 (second, first)
             };
-            let Side::Blind(negative) = negative else {
-                return Err(
-                    "a non-blind extrude end against the sketch normal on a two-sided extent \
-                     is not supported yet"
-                        .to_owned(),
-                );
-            };
-            out.insert("direction".to_owned(), json!("positive"));
-            put(&mut out, positive, "distance");
-            out.insert("distance2".to_owned(), json!(mm(negative)));
+            // SolidCraft has one non-blind end. A To Object end sets the side of the first
+            // travel, and `distance2` runs the other way, so an object end against the normal
+            // becomes the first side, run negative.
+            match (positive, negative) {
+                (positive, Side::Blind(negative)) => {
+                    out.insert("direction".to_owned(), json!("positive"));
+                    put(&mut out, positive, "distance");
+                    out.insert("distance2".to_owned(), json!(mm(negative)));
+                }
+                (Side::Blind(_), Side::ThroughAll) => {
+                    return Err(
+                        "a two-sided extrude running through all against the sketch normal is \
+                         not supported yet"
+                            .to_owned(),
+                    )
+                }
+                (Side::Blind(positive), negative) => {
+                    out.insert("direction".to_owned(), json!("negative"));
+                    put(&mut out, negative, "distance");
+                    out.insert("distance2".to_owned(), json!(mm(positive)));
+                }
+                _ => {
+                    return Err(
+                        "a two-sided extrude whose ends both reach an object or run through all \
+                         is not supported yet: SolidCraft gives only one side a non-blind end"
+                            .to_owned(),
+                    )
+                }
+            }
         }
         Some(other) => return Err(format!("its extent is {other}")),
         None => return Err("its extent is malformed".to_owned()),

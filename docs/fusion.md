@@ -320,7 +320,10 @@ ends are not supported yet: SolidCraft can reinterpret a point on an existing fa
 different end, and CADIR supplies no input face geometry to prove which face exists then.
 Final-body faces cannot establish that timeline state. Tilted plane ends and native,
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
-and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
+remain unsupported. A two-sided extrude whose end against the sketch normal reaches a face or
+plane, with a blind other side, runs against the normal to that end with the blind side as its
+second distance. SolidCraft gives only one side a non-blind end, so a two-sided extrude with
+two such ends, or one running through all against the normal, remains unsupported.
 
 Planar historical face selections also search intervals between trim-loop crossings when
 corner-triangle picks all land in holes. Each new point must lie in the material region,
