@@ -559,7 +559,7 @@ fn a_fusion_file_cut_before_its_geometry_says_what_is_missing() {
         .enumerate()
         .filter(|(_, w)| *w == b"PK\x03\x04")
         .map(|(at, _)| at)
-        .last()
+        .next_back()
         .unwrap();
     let path = scratch("cut_in_geometry.f3d", &cube[..geometry + 100]);
     let err = read(Format::FusionArchive, &path, &mut Report::default()).unwrap_err();
