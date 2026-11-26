@@ -5898,11 +5898,11 @@ fn connected_onshape_keeps_results_in_their_own_column() {
 fn as_is_footer_is_one_quiet_line_below_the_controls() {
     for theme in [ThemePreference::Light, ThemePreference::Dark] {
         let out = tempfile::tempdir().unwrap();
-        let mut h = many_results_onshape_harness(out.path(), theme, true);
+        let h = many_results_onshape_harness(out.path(), theme, true);
         let footer = h.get_by_label_contains("provided as is").rect();
         let convert = h.get_by_label("Convert").rect();
         assert!(convert.bottom() <= footer.top());
-        assert!(footer.bottom() <= h.ctx.screen_rect().bottom());
+        assert!(footer.bottom() <= h.ctx.content_rect().bottom());
         assert!(footer.height() < 24.0, "one line, not a banner");
         h.get_by_label("More about Dutchman and your files");
         assert!(!h.state().page_scrolls());
