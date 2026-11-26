@@ -476,10 +476,7 @@ pub fn plan(model: &Model, report: &mut Report) -> Plan {
                         }
                         text
                     });
-                    if drawing
-                        .rotation_degrees
-                        .is_some_and(|r| r.get().abs() > 1e-9)
-                    {
+                    if drawing.rotation.is_some_and(|r| r.get().abs() > 1e-9) {
                         report.push_coded(
                             Severity::Dropped,
                             name(drawing),
