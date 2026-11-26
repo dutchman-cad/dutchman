@@ -2,7 +2,7 @@
   "id": "dutchman",
   "name": "Dutchman",
   "version": "0.2.10",
-  "description": "Open Fusion, Inventor, SolidWorks or FreeCAD files with File > Open.",
+  "description": "Open Fusion, Inventor, SolidWorks or FreeCAD files with File > Open. Dutchman is in active development and provided as is. Keep a copy of your designs somewhere else, just in case.",
   "capabilities": [
     "evaluate@0.1",
     "formats@0.1"

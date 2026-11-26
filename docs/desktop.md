@@ -406,6 +406,20 @@ Once a day at most, where update checks run, the app reads a newer copy from
 about your files. `DUTCHMAN_UPDATE_CHECK=0`, turning off automatic update checks, and source
 builds all stop it, and the built-in copy is used.
 
+## Provided as is, and your files
+
+The bottom of the main window says: "Dutchman is in active development and provided as is. Keep a
+copy of your designs somewhere else, just in case." **More** opens this section.
+
+- Dutchman is provided as is, without warranty, under the Apache-2.0 licence (see `LICENSE`).
+  Dutchman is in active development, and there is a small chance that something goes wrong.
+- Dutchman only reads your original files. It never changes them.
+- Converted files are written to the output folder you choose, as new `.sc` designs and reports.
+  Dutchman never replaces your original files with them. **Replace designs already in the output
+  folder** (on by default) lets a new conversion replace an earlier converted copy of the same
+  design there, so choose an output folder that holds no files of your own, or untick it.
+- Keep a backup of your designs somewhere else, just in case.
+
 ## Updates
 
 Release builds check for updates at startup and every hour while open, reading GitHub's
