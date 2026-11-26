@@ -27,6 +27,9 @@ An unreadable sketch point no longer discards otherwise readable design history.
 component occurrence frames and inserted-component placements resolve, and construction-plane
 mirrors read their selected work plane. Known simple and clearance hole forms no longer
 report an assumed diameter; tapped holes still report how their stored bore is interpreted.
+A Fusion coordinate system that cadmpeg keeps only as construction references builds no geometry,
+so the history continues past it; a later feature that needs its placement is refused with a reason
+that names it.
 
 Bodies now follow the component that stored them, and component placements read from saved
 local occurrence paths, so more designs open as placed parts with their own history. A local
@@ -45,16 +48,18 @@ The reader also retains more box, Pipe, unequal-wall Shell, and UnStitch definit
 neutral history. These still need the operands and feature forms Dutchman supports;
 UnStitch remains a blocker, with the final shape preserved. A box maps when its frame lies along the model axes (cadmpeg places a box by its minimum corner); one turned off them stays a blocker, since SolidCraft's box is axis-aligned.
 
-Historical body centres use bounded samples along curved edges as well as vertices and
+Historical body centers use bounded samples along curved edges as well as vertices and
 proven circular extrema. cadmpeg identifies incomplete edge or topology evidence separately;
-only bodies certified as exact have exact bounding-box centres.
+only bodies certified as exact have exact bounding-box centers.
 
 For SolidCraft 0.44 and newer, an extrude join, cut or intersection can select the
 bodies it modifies. Dutchman tries the reader's modified-body outputs as targets
 when earlier features have named every one, and keeps that scope only at the final
 body-building feature when replay matches the final source geometry. Intermediate
-body centres do not establish all participants, even when exact; intermediate
-features keep the previous mapping. Unknown or conflicting evidence also retains
+body centers do not establish all participants, even when exact; an intermediate
+join with one output body is the exception when the source stores as many bodies
+right after it as right before it: it consumed none, so it targets its output body.
+Other intermediate features keep the previous mapping. Unknown or conflicting evidence also retains
 the previous mapping. Native participant expressions are not interpreted. A join
 with several output bodies still uses the previous mapping because its surviving
 body identities are not established by those outputs.
@@ -63,7 +68,7 @@ On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
 keeps a name only when its identity is proved: the source retains exactly one
 history body with `produced_by` matching its single-output producer, or the
 complete replay matches the final source geometry. Replay candidates keep
-their names only after that check passes; intermediate body centres cannot
+their names only after that check passes; intermediate body centers cannot
 confirm them. An output ID alone is not proof. Without proof, selecting the
 tool stops editable history with "it selects a body that an earlier feature
 has not named". Older targets keep the previous mapping.
@@ -72,6 +77,33 @@ A generated selection can resolve through its earlier producer when that
 producer has one declared result body and one named output. Ambiguous generated
 results, historical selections and native body references remain blockers.
 Targets before 0.44 keep the previous output.
+
+## Install the Fusion exporter
+
+Export from Fusion in the desktop app asks an add-in, the Fusion exporter, to export designs
+from inside your Fusion. The add-in is [Lifeboat's Fusion exporter](https://github.com/cad-lifeboat/fusion-bulk-export).
+It runs only in Fusion, so the entry appears on Windows and macOS.
+
+1. Open **Export from Fusion**. Dutchman looks for the running add-in every few seconds. It
+   reads the small file the add-in keeps in `.cad-export/agents` in your home folder, and
+   counts the add-in as running while that file was updated in the last minute. A stale file with
+   Fusion's process still alive shows "Fusion is busy" and keeps waiting (Fusion can take
+   minutes over one large design); a stale file with the process gone means Fusion closed.
+2. If it is not found, choose **Install the Fusion exporter**. Dutchman downloads one pinned
+   release (Fusion Bulk Export 0.4.1, which records each design's up axis in the export
+   manifest), checks its SHA-256 before writing anything, and puts it in Fusion's Add-Ins folder
+   (macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns`; Windows:
+   `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns`), replacing an older
+   `FusionBulkExport` folder. It never installs while the exporter is exporting, and never puts an
+   older version over a newer one.
+3. Switch it on once in Fusion. No program can do this for you: press Shift+S (Utilities,
+   Add-Ins, Scripts and Add-Ins), find FusionBulkExport, tick **Run on Startup**, then switch
+   **Run** on. Dutchman keeps waiting and updates when the add-in starts. Fusion keeps the
+   setting when the folder is replaced by a newer version, which takes effect when Fusion next
+   starts.
+
+When the exporter's project has published a newer release than the one Dutchman installs, the
+window says so and links to it; Dutchman never installs that one by itself.
 
 ## Public Fusion shares
 
@@ -90,6 +122,62 @@ Dutchman asks you to download the design in Fusion and drop the file into the ap
 Downloads stay on allowlisted Autodesk HTTPS hosts, with a 200 MB cap and two-minute
 timeout. See [Public share links](guide.md#public-share-links) for limits and cleanup.
 
+## Export from Fusion
+
+On Windows and macOS, Dutchman Convert can ask the Fusion exporter, an add-in running inside
+your Fusion, to export designs from your Fusion account, and convert them. It needs the exporter
+running (open Fusion with the exporter switched on). Choose **Export from Fusion…** (in the bar with Convert) and:
+
+1. Dutchman asks Fusion for the list of your hubs, projects and designs. Nothing is opened
+   or changed in your account.
+2. Pick designs in the list (hub, project, folder, design). The search box matches any of
+   those names. Everything a picked design inserts is exported with it.
+3. **Export** starts the export. The window shows which design Fusion is on and how many are
+   done. **Stop** keeps everything finished so far.
+4. When it ends, the export folder is converted like a folder you dropped on the window, and
+   the results appear as usual.
+
+If the window cannot find the exporter, it says so and offers **Install the Fusion exporter**,
+which downloads the release Dutchman was tested with, checks it and puts it in Fusion's
+Add-Ins folder; then it shows the one step you do yourself in Fusion (switch the add-in on).
+If the download is not available, the window says so in plain words and points to the
+exporter's project page; you can try again later. The window keeps waiting, and carries on
+with the list of your designs by itself as soon as the exporter is running. While Fusion is busy with a large
+design it says so and waits.
+
+Dutchman writes the export into its own folder, `Dutchman Fusion exports` in your home folder.
+The same set of designs always goes to the same folder, so asking again carries on where an
+earlier export stopped, and designs that already exported are checked and skipped.
+
+If some designs fail, the window says how many and offers **Try again**; the same export
+resumes and only retries the failed ones. A failed or stopped export says in plain words what
+happened and what to do: another export using the folder, Fusion signed out or out of
+memory, a full disk, Fusion closed during the export, and so on. **Convert what exported**
+converts what was finished.
+
+Dutchman waits for Fusion while a list or an export runs. If Fusion closes, or the exporter stops
+answering, for a whole minute, or Fusion does not take a request within two minutes, Dutchman gives
+up with a plain message and **Try again** (the export carries on where it stopped). **Stop**
+asks Fusion to stop; **Stop waiting** leaves the step without waiting for an answer. If the list
+cannot be made, the window says why and waits for **Try again**; it never asks again by itself.
+Dutchman only uses the exporter whose jobs folder is the `jobs` folder inside `.cad-export`, and it
+shows at most 100,000 designs and 32 levels of folders.
+
+This uses the exporter's job files in `~/.cad-export` (`%USERPROFILE%\.cad-export` on Windows):
+an `inventory` job into Dutchman's folder, then an `export` job with the picked designs by id,
+`include_references: true`, `formats: ["f3d", "step"]`, `rebuilt_f3z: true` and
+`older_versions: "move"`. Progress comes from the job's status file, **Stop** creates its
+`.cancel` file, and after the job ends Dutchman deletes its three job files. Everything the
+exporter writes stays on your computer.
+
+## Linked components
+
+A single .f3d whose components are linked from other files, and are not inside it, has no
+bodies of its own. Dutchman says "this Fusion design links its components from other files,
+and they aren't inside this .f3d" and asks you to export it from Fusion as .f3z (File >
+Export > Fusion Archive), which carries the linked components. The JSON error has `kind`
+`assembly` and stage `input`.
+
 ## Mesh bodies
 
 When cadmpeg reports mesh bodies for a Fusion design with no decoded B-rep bodies or
@@ -102,7 +190,7 @@ supply a count, so the existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
 
-Cadmpeg projects decoded mesh containers as CADIR tessellations in model millimetres,
+Cadmpeg projects decoded mesh containers as CADIR tessellations in model millimeters,
 with placement applied, and links them from mesh-import features. When a container cannot
 be decoded, a mesh-import feature may instead retain native body members with the loss
 `f3d/feature.mesh-import-tessellations-unresolved`. Those references carry no triangles.
@@ -120,7 +208,8 @@ Body moves require SolidCraft 0.45 or newer. This requirement applies only to de
 with a body move; it does not trigger a general history-loss notice for older targets.
 Dutchman keeps resolved translations
 and axis-angle rotations, including explicit pivots, when every selected body has
-a proven earlier name. CADIR supplies millimetres and radians; the writer never
+a proven earlier name; in a design state that holds several bodies, a moved body is the
+one earlier named body whose creating feature affected exactly its history slot. CADIR supplies millimeters and radians; the writer never
 infers a transform from final geometry. Unresolved body selections, unresolved
 point-to-point motion, and copied body result identities remain blockers. Bodies
 available only as final geometry also require a captured pre-move body. Older
@@ -133,6 +222,12 @@ single-body result at the final body-building feature, including surface distanc
 a missing or differing result refuses the extrusion and retains the imported final
 shape. Intermediate face extrusions on imported bases are not supported yet when
 that result cannot be proved.
+
+A component that cadmpeg names no bodies for does not stop the design from being written as
+components, as long as cadmpeg attributes bodies to at least one component. It stays as a
+named, empty component, any bodies of it sit with the design's own bodies at their stored
+position, and a Degraded `components` note names it. When no component has attributed
+bodies, the design still converts as stored.
 
 As-built joints build no geometry and do not stop the part's feature history. Typed
 assembly-joint timeline rows also need no part feature, and neither do rows that copy a
@@ -155,7 +250,7 @@ Fusion's own STEP export leaves hidden bodies out, so a STEP you export from Fus
 | A mesh body whose container cadmpeg cannot decode. | Leaves it out and reports it as an undecoded mesh body. |
 | Parameters, planar sketches with typed and native constraints. | Mapped, including point-on-curve coincidences, point-to-line distances, resolved finite-endpoint distances, and parallel-line spacing. Dimensions keep their parameter expressions, so user parameters drive the editable geometry. Native constraints without neutral operands are reported as not carried. |
 | Spatial (3D) sketches. | Mapped as SolidCraft 3D sketches at their solved positions (lines, arcs, circles, splines, points). On targets 0.44 and newer, neutral point joins, point distances, line lengths (including repeated lengths), principal-axis directions and line-to-line and line-to-arc endpoint tangencies carry across; dimensions keep their parameters. Meeting endpoints alone do not create relations. Sweep paths and rails follow their selected curves. Other constraints and links to model edges are reported as not carried. |
-| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. The designation supplies the nominal size; secondary diameter and pitch may agree at their stated decimal precision. An absent designation is derived exactly from diameter and pitch. Contradictions name both sizes; UNC/UNF cosmetic Thread output, modeled threads, and unresolved faces remain reported losses. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
+| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. The designation supplies the nominal size (a Unified numbered size such as 2-56 UNC or #10-32 UNF is read by its gauge diameter, 0.060 + 0.013 x N inches); secondary diameter and pitch may agree at their stated decimal precision. An absent designation is derived exactly from diameter and pitch. Contradictions name both sizes; UNC/UNF cosmetic Thread output (written only on a SolidCraft release with Unified thread support, none yet), modeled threads, and unresolved faces remain reported losses. A thread whose stored face is slightly smaller than the nominal-size sketch circle that made it (the thread class's diameter, such as Ø9.85 for M10) is rebuilt as an offset-face feature that sets the cylinder to the stored size, then the cosmetic thread: a SolidCraft cosmetic thread cannot change the size itself. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
 | Body Mirror and Remove steps. | A Mirror of bodies maps when its bodies are named by earlier features, are a body the final model leaves out that cadmpeg names by the extrude that made it, or are the only body in the Mirror's own input; it joins its copy to the body when Fusion did. A Remove of such bodies maps as a SolidCraft Remove on SolidCraft 0.40 and newer. |
 | Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map, on a face of the extrusion or box made just before them; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, including on full circles such as a boss's top edge or a hole's rim, and unequal chamfers on straight edges and full circles with the face their distance runs along proven on the source's final body, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
 
@@ -180,6 +275,8 @@ including countersunk entries. Fusion measures Extents To to the cylindrical sho
 the conical point extends beyond the selected face. Dutchman resolves that distance
 along the drilling direction and keeps the countersink at the entry. Unresolved,
 offset, tilted, or unproven terminating faces retain a specific history blocker.
+A terminating face with arcs, circles or inner loops in its outline is mapped when SolidCraft's
+replay before the hole contains exactly that face.
 Later features rebuild when the hole maps. A refused hole still stops body-building
 history; independently resolved reference sketches remain available.
 
@@ -192,7 +289,7 @@ curve. The original final geometry and the editable prefix are retained.
 Holes on planar historical entry faces can keep their editable history when the boundary
 includes circular arcs or whole circles, including a rounded corner or an earlier through
 hole. The source's own input-edge ends, midpoints, and tangents establish the circular
-centres, radii, and common plane. SolidCraft must then rebuild exactly that bounded face
+centers, radii, and common plane. SolidCraft must then rebuild exactly that bounded face
 before the hole; matching the plane alone is insufficient. Placements must lie inside the
 filled face, clear of its curved boundary and existing holes, and drill inward. An unsigned
 axis takes its drilling side from the proven face. Non-planar faces other than the existing
@@ -204,7 +301,7 @@ original geometry with a named reason.
 
 When every active feature using a sketch selects explicit whole-loop regions, unused lines
 crossing selected whole circles are kept as construction geometry. This preserves
-layout lines through hole centres without splitting the circular holes during replay. If
+layout lines through hole centers without splitting the circular holes during replay. If
 another active consumer needs the whole sketch or a different selection form, those lines
 stay solid.
 
@@ -241,7 +338,7 @@ profile. The extrude runs along the face's outward normal, which only the body k
 SolidCraft has replayed the history before the extrude, Dutchman finds the face among the
 rebuilt faces (same plane, same area, every boundary edge on it and named for it; SolidCraft reports
 a curved edge from its mesh, so an arc counts as found when the pieces it reports, a single chord
-for a small rounded corner, span the arc's whole turn about its centre) and mirrors the
+for a small rounded corner, span the arc's whole turn about its center) and mirrors the
 sketch if it was written on the inner side; fillets and chamfers after a mirrored sketch are then
 proven on a fresh replay that has the extrude on its outward side. A face it cannot find exactly once, an edge that is
 not a line or circular arc, a boundary that does not close or is not flat, an input topology
@@ -279,12 +376,12 @@ geometry's looks. Complete xref and instance identities are kept distinct throug
 component index. Saved wire edges beside a solid do not consume its imported body name or
 discard its appearance. When STEP omits an unwritable sibling body, Dutchman checks each
 body separately, for groups of up to 32 bodies, before keeping the remaining body names
-and colours. These solids keep their existing STEP import names, including numbered
-siblings; matching their colours does not rename them or change other components' names.
+and colors. These solids keep their existing STEP import names, including numbered
+siblings; matching their colors does not rename them or change other components' names.
 A body binding supplies
-the body colour, and face bindings override it per face.
+the body color, and face bindings override it per face.
 When a body has no body binding and all its faces have the same resolved appearance,
-Dutchman writes one body colour, which SolidCraft shows in its body appearance controls.
+Dutchman writes one body color, which SolidCraft shows in its body appearance controls.
 Mixed appearances remain face looks, selected by interior points in the component's
 coordinates. Resolved analytic and NURBS faces use bounded trim-curve sampling in surface
 coordinates, with spatial edge evaluation when parameter-space curves are unavailable.
@@ -301,11 +398,18 @@ its own long arc and a planar appearance cannot pick through a hole in its outer
 Imported body names are made unique across the design so an unpainted namesake in another
 component cannot receive a painted body's appearance.
 When a partial or unverified editable history is hidden beside the final shape, the
-visible final-shape Import receives its own names and colours. Names remain distinct
+visible final-shape Import receives its own names and colors. Names remain distinct
 from those of the editable copy.
 When a partial history is kept hidden, appearance losses refer to the visible final
 shape rather than to final bodies absent from that partial copy.
-The look keeps the resolved colour, opacity, and appearance name; it does not infer a
+A hidden editable-history copy builds no body of its own: its body-building features are
+written suppressed and only its sketches stay live. The visible final-shape Import is the
+part, so a STEP export, a render, a body count or a mass measure of the design sees each
+part once. To edit the history, unsuppress its features in the timeline and suppress or
+hide the final-shape Import while you work. The conversion check in
+`scripts/written-design-compare.py` fails when any hidden editable-history copy holds a
+body, and names the part it would duplicate.
+The look keeps the resolved color, opacity, and appearance name; it does not infer a
 physical material from a visual preset.
 
 A binding whose target or appearance cannot be resolved is reported as Dropped under
@@ -316,15 +420,15 @@ matching an id suffix. Bindings to consumed or removed Fusion geometry are repor
 separately when that geometry is filtered out. Faces without a resolved interior point
 cannot receive SolidCraft's point-selected face looks yet; their bindings are also reported
 as Dropped. A decoded body without geometry that STEP can write retains a separate note;
-its writable siblings can still receive their colours.
-Uniformly painted curved bodies can still use a body colour. Conflicting assignments to
+its writable siblings can still receive their colors.
+Uniformly painted curved bodies can still use a body color. Conflicting assignments to
 one target are left out and reported. Textures and shader properties are not mapped by this
 look mapping.
 
 The pinned cadmpeg CADIR supports body and face appearance targets, but has no component or
 occurrence appearance target kind. cadmpeg must project those assignments onto body/face
 targets, or represent them through an IR extension, before Dutchman can map them. Source
-assignments absent from CADIR cannot be reconstructed; remaining grey bodies may therefore
+assignments absent from CADIR cannot be reconstructed; remaining gray bodies may therefore
 still need additional decoding in cadmpeg.
 
 ## Assembly memory
@@ -332,11 +436,27 @@ still need additional decoding in cadmpeg.
 Reference sketches are mapped from the sketch, feature and parameter data alone, built once per
 conversion: on the Voron V1.8 that takes the peak from 11.0 GB to 8.7 GB, with the same output.
 
+## Sketch text
+
+Fusion sketch text maps to SolidCraft sketch text, and SolidCraft sets the letters. The words,
+font, bold, baseline start, angle, height and the horizontal (left, center, right) and vertical
+(top, middle, bottom) alignment are kept. Width scaling, a medium weight, and top or bottom
+anchoring (which can sit differently in SolidCraft's font box) are reported as degraded notes.
+A text with no stored placement, such as one laid out along a curve, is left out of its sketch
+with a degraded note, and the rest of the sketch maps.
+
 ## Sketches without a timeline row
 
 Fusion keeps some sketches with no Sketch step in the timeline; cadmpeg then lists the sketch
 alone. A feature whose profile uses such a sketch gets it written just before itself, so the
 feature finds it; any other such sketch is kept for reference after the timeline, as before.
+
+## A design whose timeline did not decode
+
+A design that carries no feature history converts as an import, and the report says "the design
+carries no feature history". When the file does hold a timeline but cadmpeg could not decode it (for
+example a sheet-metal settings record it found invalid), the report says so instead: the feature
+timeline is in the file, but cadmpeg could not decode it, followed by what it could not read.
 
 ## Trimmed and unresolved profile regions
 
@@ -389,7 +509,7 @@ SolidCraft against the original final shape: body count, box, volume and area wi
 tolerances, both face counts, and the largest distance between the two surfaces from
 `inspect.compare` with the source loaded beside the replay, within the box allowance of 0.01 mm
 or 2e-4 of the body's diagonal. New measured regions are tried only at the last body-building
-feature; stored body centres alone cannot prove an earlier region's shape. Exactly one match is kept, with
+feature; stored body centers alone cannot prove an earlier region's shape. Exactly one match is kept, with
 `history/profile-region-measured`. Of several, the one alone with the source solid's face count is
 kept; otherwise it is a tie and the feature stays blocked, as it does when none matches or any
 candidate cannot be measured. New final-shape inferences require a one-body part and a successful
@@ -411,17 +531,30 @@ candidate edges apart.
 Fusion 360 models in a right-handed coordinate system that defaults to Y-up in older versions
 (Autodesk made Z-up default for new installations around 2019). SolidCraft uses Z-up.
 
-By default, Dutchman preserves the source coordinates unchanged (`--no-stand-up`).
-For models created with Y-up orientation, `--stand-up` rotates the model +90° about +X
-(mapping source +Y to SolidCraft +Z and +Z to -Y). The rotation applies to imported geometry,
-assemblies, and rebuilt history.
+By default (automatic), Dutchman stands a design up when its source states that it is Y-up,
+and keeps the source coordinates when it is Z-up or when nothing states the up axis. It never
+guesses. The Fusion exporter writes each design's `up_axis` (`"y"` or `"z"`, or `null` with
+an `up_axis_error`) in the export folder's `manifest.json`; an export without the field, or a
+design outside an export folder, has an unknown up axis. Standing up rotates the model +90°
+about +X (mapping source +Y to SolidCraft +Z and +Z to -Y), for imported geometry, assemblies
+and rebuilt history.
+
+`--stand-up` always rotates, and `--keep-axes` (or `--no-stand-up`) never does, whatever the
+source says. In an assembly every design shares one frame: the root design's up axis applies,
+and the report names any inserted design that states another.
+
+The report's `up_axis` object gives `found` (`y`, `z` or `unknown`), `origin`
+(`export_manifest`, `file` or `none`), `reason` when unknown, `mode`, `applied` (`stood_up` or
+`kept_axes`) and a `summary` such as "Stood up: the export says this design is Y-up" or
+"Kept the file's axes: up axis unknown (...)". The same sentence is an information line under
+the subject `orientation`.
 
 ## Assembly placements
 
 **Part positions** defaults to **Smart**. For each occurrence, Smart prefers a displayed
 pose bound to it by the decoder's `native.f3d.display_poses` arena. Only rows with
 `binding.state: "bound"` select a pose; ambiguous and unbound rows are skipped. These
-root-design world matrices are already in millimetres and bypass the current-pose guards.
+root-design world matrices are already in millimeters and bypass the current-pose guards.
 Missing holder worlds are derived bottom-up as child displayed world × inverse of child
 local placement, only when all available children agree within 0.001 mm and 1e-6 rotation
 entries and reproduce each of them. A holder whose children conflict keeps its first
@@ -453,8 +586,8 @@ those positions are usually right: when one looks misplaced, it's the place to l
 **As Fusion last showed them** prefers the displayed-pose source, then uses current poses
 where available without Smart's checks, and first placements otherwise. Until displayed
 poses are bound by the decoder, this option relies on current poses, which can be stale.
-**As first placed** ignores later poses throughout. Native current-pose matrices use centimetres and are
-converted to millimetres. A pose in an inserted design is composed with that document's
+**As first placed** ignores later poses throughout. Native current-pose matrices use centimeters and are
+converted to millimeters. A pose in an inserted design is composed with that document's
 insertion. Definition-local operation poses are not used as world poses. First placements retain
 the decoder's existing path and component-operation placements; native current-pose records
 remain a separate selectable source.
@@ -548,6 +681,11 @@ transform, and each component as a product definition.
   holds it. Its geometry is still converted and can be shown again in SolidCraft. In a part with
   shown and hidden bodies, the hidden ones are written marked hidden: SolidCraft 0.42 and newer
   open them hidden, older releases show the part whole.
+- **Suppressed components** (an occurrence the source itself marks suppressed, as in Inventor
+  and Solid Edge assemblies) are placed hidden at their position, the same way; they stay in
+  the design and its part list, and an Info `suppressed components` note names them. A
+  component a Fusion insertion does not hold (the suppression Fusion uses to select a stored
+  layout) is left out as before.
 - **Joints** between components become SolidCraft joints: fixed ones rigid (their offset kept),
   revolute ones turning about the connector's z axis with their limits, slider ones along it.
   Each connector frame is in its own part. Offsets apply to the second connector:
@@ -570,7 +708,7 @@ transform, and each component as a product definition.
   moves a part. That component can still travel with an outer joint.
   A joint to a part inside an identity-placed component carries the component when child
   poses describe its relative layout, or all its children belong to the joined group, and
-  the joints reaching into it agree on its place. An unrelated internal joint is insufficient. If that outer component is only an organiser,
+  the joints reaching into it agree on its place. An unrelated internal joint is insufficient. If that outer component is only an organizer,
   Dutchman tries the deepest smaller holder whose children are connected, then the named part.
   A body's identity placement at a holder's origin can also identify the holder as the moving
   assembly, including a holder with a non-identity placement, provided every outside joint
@@ -665,6 +803,88 @@ additional relations are reported and their solved geometry is retained. An unre
 by guessed geometry. A nonplanar historical face boundary remains a separate face
 selection blocker. Targets before 0.44 keep their existing output and refusals.
 
+## A .f3d whose inserted designs are missing
+
+A Fusion assembly saved as one `.f3d` can hold components inserted from other Fusion designs. The
+`.f3d` keeps the placements but not those designs, so only its own parts convert. cadmpeg states
+each such insertion's prototype as unresolved (`f3d/assembly.component-insert-container-assumed`,
+`f3d/feature.component-insert-membership-assumed`). Dutchman reports one Dropped loss per missing
+design (subject `inserted design <name>`) and one summary (subject `linked components`):
+
+> N inserted components come from other Fusion designs that this .f3d doesn't contain; convert the
+> whole export folder (or its zip) so the inserted designs come along, or export the assembly as a
+> Fusion Archive (.f3z) from Fusion's File > Export.
+
+The summary is also the `completeness.left_out` reason, the status line of the command line and the
+app, and the plugin's `missing_parts` reason. The design is never marked verified. Convert the
+export folder (or its zip) as below, or in Fusion use File > Export > Fusion Archive (`.f3z`), which
+carries the inserted designs inside it.
+
+## Converting an export folder with inserted designs
+
+A bulk export writes every design an assembly inserts as its own `.f3d` next to the assembly, and a
+`manifest.json` that lists, per design, the designs it references (`references[]`: the design's `id`
+and, in newer manifests, its `version` and the path of the design's newest exported file). Give Dutchman the export
+folder (or its zip) and each top-level assembly converts whole:
+
+```
+dutchman convert "My export" --out converted
+dutchman convert "My export.zip" --out converted
+```
+
+A single `.f3d` converts the same way when its folder (or a folder above it, up to eight levels)
+holds the `manifest.json`: `dutchman "My export/Gauge Assembly v14.f3d"`.
+
+- Dutchman reads only the manifest's JSON listing. It never reads a design file itself: every
+  inserted design is read through the same decoder as any other `.f3d`, and placed where the
+  assembly's insertion puts it, like the components the assembly holds itself. Designs inserted
+  into inserted designs are placed in turn.
+- Each insertion is matched to a listed design by what cadmpeg states about it. When the reader
+  states the identity of the design an insertion places (its document id, and version when
+  stated), that identity is matched to the reference's `id` (and `version`). Otherwise the
+  insertion's name (`<design> v<version>:<instance>`) is matched to the listed design's name and
+  version. A stated identity that fits no listed design, a name that fits none, or one that fits
+  more than one, matches none, and that insertion is reported as missing (below), never guessed.
+  Some files state an insertion only by a kind label or a role identifier and no design identity;
+  those cannot be matched until the reader states which design each insertion places, and they
+  stay missing, with a note saying how many designs the manifest lists for the assembly. A stated
+  version that is not a number matches nothing.
+- When a reference states a `version`, that exact version is placed, whatever its `path` (the
+  newest export of the design) says: it is found by `id` and `version` among the entries that are
+  `done` (their `.f3d`) or `moved` (the file under `Older versions/`). A version the export
+  deleted (`removed`), or never held, is reported as missing; a newer version is never placed
+  under the older one's name. A `path` must name a `.f3d`.
+- A listed design is read once however often it is inserted, by any assembly at any level of the
+  nesting. A reference whose file is not in the
+  export, or a path that leaves the export folder, is left out and reported; so is a listed design
+  that cannot be read, with its reason.
+- In a folder or zip, a design that an assembly actually places (an insertion of the assembly is
+  matched to it and it can be read) is placed inside that assembly and not converted again as a
+  result of its own. A design the manifest lists for an assembly that no insertion matches, or
+  that cannot be read, still converts as a result of its own, as do designs nothing references.
+  When assemblies insert each other in a cycle, the first of them by path stays a result of its
+  own and the plan says so. When the
+  export also holds a rebuilt `.f3z` beside an assembly's `.f3d`, the `.f3z` is converted (it
+  carries the inserted designs) and the `.f3d` is not converted a second time.
+- Limits: a manifest over 128 MB or listing over 200,000 designs is refused (the manifest is read
+  as a stream and keeps only the fields it needs); an assembly inserts at most 1,000 designs and
+  reads at most 4,000 design files in all, at every level of nesting; designs nest at most 32
+  deep, and the report says when a level below that is not read.
+
+## Hidden parts with `--import-only`
+
+`--import-only` (stored geometry only) keeps every part the design hides, hidden as in the
+source, so it holds the same parts as the default preset. A hidden occurrence is still placed, its
+component still holds its stored body as an Import, and the design's `visibility.hidden_occurrences`
+lists it. The default preset adds, beside many parts, an "Editable history" component with the
+rebuilt body, named `Body (<part>)` or `Body 1 (<part>)`; those rebuilt copies exist only there, so
+a body-name count is higher in the default result without any stored part being missing. On the
+public RailCore II 300ZL (CC BY-SA 4.0), `--import-only --no-sketches` holds 287 occurrences in 188
+components with 20 hidden occurrences, 270 bodies; the default preset holds the same 287
+occurrences plus 29 "Editable history" occurrences, and 333 bodies. TopPanel, ElectroGuard,
+Right_Panel, Back Panel, X_Endstop_Mount, Front_Motor_Mount, Titan_Mount, 5015BlowerFan,
+Back_X_Carriage, Front_X_Carriage, 300ZL Bed and Belt_Retainer_Clip are bodies in both.
+
 ## Stored body fallback
 
 When a new-body extrude, revolve, sweep or loft requires a profile or path absent
@@ -680,6 +900,11 @@ this fallback: replacing them would discard earlier body history. No geometry is
 reconstructed from an unavailable sketch. The feature is `mapped`, written as an Import, and
 `history/body-fallback-imported` reports the lost recipe as Degraded. Later features
 and verification use the imported body as usual.
+When a later feature changes that final-model body (a fillet, a moved face) and the source keeps no
+history body for the feature, the feature is refused: the source stores the body only as the design
+ends, so neither a stored result nor a profile read from the faces of that body can be proven. The
+reason keeps the original refusal first, says the source states no sketch for the profile, and names
+the later feature that changes the body.
 
 Fusion thread construction records carry a designation, nominal-size text, profile/type,
 physical pitch, and, in extended records, class and hand controls. The pinned codec projects
@@ -701,6 +926,12 @@ Modeled thread history remains blocked even on SolidCraft 0.45: the available no
 thread data cannot prove an exact helical reconstruction. The final modeled geometry is
 retained, with the source designation in a Degraded `history/modeled-thread-retained`
 loss. See [modeled threads](history.md) for the profile and face-selection limits.
+
+A Fusion Thread whose record the decoder does not decode (no designation, nominal size or
+faces) arrives as an unresolved Thread. The history stops there with "threads whose
+construction is unresolved are not supported yet", now followed by what is missing: the
+source does not say whether the thread is cosmetic or modeled, so Dutchman cannot map it.
+The fix is in the decoder, which has to recognize that thread's record layout.
 
 Unreadable local and xref positions, including local stored-frame fallbacks and
 positions assumed to be the identity, count

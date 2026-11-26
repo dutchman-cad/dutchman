@@ -84,7 +84,8 @@ Onshape thin walls pair a typed `design.features` extrusion with the existing
 `model.features` projection by feature identity. The typed `output.body` carries
 the thin thickness and side; profile, direction, extent and Boolean semantics
 must agree with the projection before the writer uses it. This narrow bridge does
-not admit design-only histories or infer absent projection operands.
+not admit design-only histories or infer absent projection operands; design-only
+histories go through the `design_history` projection instead.
 Other typed design operations leave the retained model-history mapping in control;
 the thin-output bridge applies only to an explicit typed thin extrusion.
 
@@ -99,12 +100,12 @@ mapping reads `target.entity.kind` and `target.entity.value`. Hidden-geometry
 filtering and saved-display-mesh removal inspect the typed `target.entity`.
 
 A path selects one placed instance; a state selects an evaluation's geometry.
-Dutchman currently stores colours on shared component geometry and has no
+Dutchman currently stores colors on shared component geometry and has no
 per-occurrence appearance or attribute override. It therefore leaves scoped
 bindings out and reports whether the unsupported scope is a placed instance or
 an evaluation state. Scoped appearances never enter the reverse binding index
 used to build shared component slices. Unscoped bindings retain their previous
-colour mapping and loss classification. Source attributes have no SolidCraft
+color mapping and loss classification. Source attributes have no SolidCraft
 mapping; scoped attributes now receive a specific dropped loss during planning
 and writing, without changing unscoped attribute handling.
 
@@ -120,8 +121,10 @@ mapper. They are not interpreted through the model's old operation wrappers.
 At `f1338aa`, Fusion's `decode/design_intent.rs`, Inventor's history projection,
 SolidWorks' history projection, and FreeCAD's `design.rs` still populate
 `model.features` and model sketch arenas. No native reader in this comparison
-switched to design-only history. No design-arena history reader is added here;
-the existing design-only history refusal remains in force.
+switched to design-only history. A design-only history is read by
+`dutchman-core`'s `design_history` projection, which fills the model-history arenas
+from the design layer once after decoding (sketches, extrudes and revolves of whole
+sketches; other features stay unmapped and stop the history).
 
 The JSON-read audit of core and SolidCraft found changed appearance-target reads
 in `assembly/slicing.rs` and `history/faces.rs`, both ported above. Neither crate
@@ -153,12 +156,12 @@ mapping reads `target.entity.kind` and `target.entity.value`. Hidden-geometry
 filtering and saved-display-mesh removal inspect the typed `target.entity`.
 
 A path selects one placed instance; a state selects an evaluation's geometry.
-Dutchman currently stores colours on shared component geometry and has no
+Dutchman currently stores colors on shared component geometry and has no
 per-occurrence appearance or attribute override. It therefore leaves scoped
 bindings out and reports whether the unsupported scope is a placed instance or
 an evaluation state. Scoped appearances never enter the reverse binding index
 used to build shared component slices. Unscoped bindings retain their previous
-colour mapping and loss classification. Source attributes have no SolidCraft
+color mapping and loss classification. Source attributes have no SolidCraft
 mapping; scoped attributes now receive a specific dropped loss during planning
 and writing, without changing unscoped attribute handling.
 
@@ -174,8 +177,10 @@ mapper. They are not interpreted through the model's old operation wrappers.
 At `f1338aa`, Fusion's `decode/design_intent.rs`, Inventor's history projection,
 SolidWorks' history projection, and FreeCAD's `design.rs` still populate
 `model.features` and model sketch arenas. No native reader in this comparison
-switched to design-only history. No design-arena history reader is added here;
-the existing design-only history refusal remains in force.
+switched to design-only history. A design-only history is read by
+`dutchman-core`'s `design_history` projection, which fills the model-history arenas
+from the design layer once after decoding (sketches, extrudes and revolves of whole
+sketches; other features stay unmapped and stop the history).
 
 The JSON-read audit of core and SolidCraft found changed appearance-target reads
 in `assembly/slicing.rs` and `history/faces.rs`, both ported above. Neither crate

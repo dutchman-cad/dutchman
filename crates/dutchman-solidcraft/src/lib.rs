@@ -16,6 +16,7 @@ mod assembly;
 pub mod compare;
 mod container;
 mod document;
+pub mod drawing;
 mod evaluator;
 mod linked;
 mod opening;
@@ -81,7 +82,7 @@ fn slow_part(name: &str) {
 /// non-STEP source file whose geometry it keeps as restated STEP text. Every newer
 /// SolidCraft upgrades it on open. Keep this fixed for every target, including 0.28:
 /// its format 45 adds nested Browser groups, point cloud properties/filters and print
-/// faces, which this writer does not use. Likewise, 0.45 saves format 63 for drawings,
+/// faces, which this writer does not use. Likewise, 0.49 saves format 67 (drawing format 6),
 /// which this writer does not emit. Format 23 also keeps older targets readable.
 pub const FORMAT: &str = "solidcraft/23";
 
@@ -120,9 +121,13 @@ pub struct SolidCraftWriter {
     timeout: Duration,
     opening_timeout: Option<Duration>,
     hide_unverified: bool,
-    stand_up: Option<bool>,
+    orientation: dutchman_core::Orientation,
+    /// Whether the caller rotates the written design itself and says so in the report.
+    caller_orients: bool,
+    /// The orientation fixed for the design being written, once its report has been read.
+    stands_up: Option<bool>,
     memory_budget: Option<u64>,
-    memory_skip: OnceLock<(u64, u64)>,
+    memory_skip: std::sync::Arc<OnceLock<(u64, u64)>>,
 }
 
 impl Default for SolidCraftWriter {
@@ -148,9 +153,11 @@ impl Default for SolidCraftWriter {
             timeout: DEFAULT_TIMEOUT,
             opening_timeout: None,
             hide_unverified: false,
-            stand_up: None,
+            orientation: dutchman_core::Orientation::Auto,
+            caller_orients: false,
+            stands_up: None,
             memory_budget: None,
-            memory_skip: OnceLock::new(),
+            memory_skip: std::sync::Arc::new(OnceLock::new()),
         }
     }
 }
@@ -328,21 +335,72 @@ impl SolidCraftWriter {
     }
 
     /// Whether to orient Y-up models (such as Fusion 360 designs) to SolidCraft's Z-up
-    /// coordinate system. By default (`None` or `false`), source axes are preserved.
-    pub fn stand_up(mut self, stand_up: Option<bool>) -> Self {
-        self.stand_up = stand_up;
+    /// coordinate system: `Some(true)` always, `Some(false)` never, `None` (the default) when
+    /// the source states that the design is Y-up.
+    pub fn stand_up(self, stand_up: Option<bool>) -> Self {
+        self.orientation(match stand_up {
+            Some(true) => dutchman_core::Orientation::StandUp,
+            Some(false) => dutchman_core::Orientation::KeepAxes,
+            None => dutchman_core::Orientation::Auto,
+        })
+    }
+
+    /// The orientation to give the design, as a person chose it.
+    pub fn orientation(mut self, orientation: dutchman_core::Orientation) -> Self {
+        self.orientation = orientation;
+        self.stands_up = None;
         self
     }
 
+    /// Leaves the rotation to the caller, who turns the written design and records it in the
+    /// report: the writer then neither rotates nor reports an orientation.
+    pub fn caller_orients(mut self) -> Self {
+        self.caller_orients = true;
+        self
+    }
+
+    /// Whether the design being written is stood up. Before a report has said what the
+    /// source states, only an explicit choice counts.
     pub(crate) fn should_stand_up(&self) -> bool {
-        self.stand_up.unwrap_or(false)
+        self.stands_up
+            .unwrap_or(self.orientation == dutchman_core::Orientation::StandUp)
+    }
+
+    /// This writer with the orientation fixed from what `report` says the source states, and
+    /// the report's note of what was done.
+    fn oriented(&self, report: &mut Report) -> Self {
+        if self.caller_orients {
+            let mut writer = self.clone();
+            writer.stands_up = Some(false);
+            return writer;
+        }
+        let found = report
+            .up_axis()
+            .map(|up| up.found.clone())
+            .unwrap_or_default();
+        let stands_up = self.orientation.stands_up(&found);
+        report.record_orientation(self.orientation, stands_up);
+        if report
+            .up_axis()
+            .is_some_and(dutchman_core::UpAxisReport::worth_stating)
+        {
+            report.push_at(
+                Stage::Write,
+                Severity::Info,
+                "orientation",
+                self.orientation.sentence(&found),
+            );
+        }
+        let mut writer = self.clone();
+        writer.stands_up = Some(stands_up);
+        writer
     }
 
     /// Additional memory estimated after reading the design. Recheck current free memory
     /// immediately before every geometry replay; a skipped check stays skipped for this design.
     pub fn history_check_memory(mut self, needed: u64, available: Option<u64>) -> Self {
         self.memory_budget = Some(needed);
-        self.memory_skip = OnceLock::new();
+        self.memory_skip = std::sync::Arc::new(OnceLock::new());
         if let Some(available) = available.filter(|free| needed > *free) {
             let _ = self.memory_skip.set((needed, available));
         }
@@ -374,6 +432,14 @@ impl SolidCraftWriter {
 
     fn keep_unverified_hidden(&self) -> bool {
         self.hide_unverified || self.memory_skip.get().is_some()
+    }
+
+    /// Whether a partial history is written as its features, a Remove of the bodies they
+    /// make, and the Import of the rest: when SolidCraft has the Remove feature and a replay
+    /// of the features gave the bodies' names.
+    fn writes_rest_visibly(&self, history: &history::History) -> bool {
+        history.replayed_bodies.is_some()
+            && VersionGate::RemoveBody.supported(self.resolved_version())
     }
 
     fn keep_unverified_history_hidden(&self, history: &history::History) -> bool {
@@ -628,17 +694,25 @@ impl SolidCraftWriter {
             self.resolved_version(),
             stand_up,
         );
-        if matches!(live, Live::Partial | Live::Unverified) {
+        if matches!(live, Live::Partial | Live::PartialHidden | Live::Unverified) {
             let mut looks = history::imported(model, step, report, false)?;
-            let mut taken: history::BodyNames = history
-                .features
-                .iter()
-                .filter_map(|feature| feature.get("body_names").and_then(Value::as_array))
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect();
-            taken.add_defaults(history.default_bodies.keys().cloned());
+            // The bodies of a partial history are removed before the import, so the import
+            // may keep every name; beside hidden history, its names must stay apart.
+            let mut taken: history::BodyNames = if live == Live::Partial {
+                history::BodyNames::default()
+            } else {
+                history
+                    .features
+                    .iter()
+                    .filter_map(|feature| feature.get("body_names").and_then(Value::as_array))
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            };
+            if live != Live::Partial {
+                taken.add_defaults(history.default_bodies.keys().cloned());
+            }
             looks.rename_bodies("Original geometry", &mut taken);
             document::original_looks(&mut doc, &looks);
         }
@@ -915,7 +989,7 @@ impl SolidCraftWriter {
             if let Some(why) = self.memory_refusal() {
                 return Ok(Check::Partial(format!("{summary}; {why}")));
             }
-            let (outcome, bodies) = verify::replay(cli.as_ref(), remaining, &design);
+            let (outcome, bodies, names) = verify::replay_named(cli.as_ref(), remaining, &design);
             match outcome {
                 verify::Outcome::Matches => {
                     let stored = history.stored_bodies_at_end();
@@ -954,6 +1028,15 @@ impl SolidCraftWriter {
                         );
                         Self::stop_geometry_difference(mapping, format!("replay differs ({why})"));
                         continue;
+                    }
+                    let rest = mapping
+                        .features
+                        .iter()
+                        .find(|feature| feature.status == dutchman_core::FeatureStatus::Blocked)
+                        .and_then(|feature| feature.name.clone());
+                    if let Ok(history) = &mut mapping.result {
+                        history.replayed_bodies = names;
+                        history.rest_from = rest;
                     }
                     return Ok(Check::Partial(format!("{summary}; retained features replay in SolidCraft; the full history is not verified")));
                 }
@@ -1709,6 +1792,10 @@ impl Writer for SolidCraftWriter {
         report: &mut Report,
         progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<(), Error> {
+        if self.stands_up.is_none() {
+            let writer = self.oriented(report);
+            return writer.write_with_progress(model, out, report, progress);
+        }
         document::report_scoped_attributes(model, report);
         let _preparing = progress
             .filter(|_| model.assembly.is_none())
@@ -1920,11 +2007,16 @@ impl Writer for SolidCraftWriter {
                     if let Check::Partial(message) = &check {
                         report.push(Severity::Degraded, HISTORY, message);
                     }
+                    let live = if self.writes_rest_visibly(history) {
+                        Live::Partial
+                    } else {
+                        Live::PartialHidden
+                    };
                     let written = self.history_design_report(
                         model,
                         history,
                         &step,
-                        Live::Partial,
+                        live,
                         self.should_stand_up(),
                         report,
                     )?;
@@ -2278,6 +2370,7 @@ mod mesh_only_tests {
             source_file: Some("mesh.f3d".to_owned()),
             assembly: None,
             source_step: None,
+            merge_bodies: false,
         };
         let mut out = Vec::new();
         let result = SolidCraftWriter::default().write(&model, &mut out, &mut Report::default());

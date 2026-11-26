@@ -33,6 +33,7 @@ fn placed_twice() -> Model {
         name: "pair".to_owned(),
         source_file: Some("pair.iam".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: Some(Assembly {
             own_part: None,
             joints: Vec::new(),
@@ -280,7 +281,8 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
     assembly.parts.push(part);
     assembly.placements[1].part = 1;
     for target in [
-        "0.29.0", "0.30.0", "0.40.0", "0.41.0", "0.42.0", "0.43.0", "0.44.0", "0.45.0",
+        "0.29.0", "0.30.0", "0.40.0", "0.41.0", "0.42.0", "0.43.0", "0.44.0", "0.45.0", "0.46.0",
+        "0.47.0", "0.48.0", "0.49.0",
     ] {
         let mut report = Report::default();
         let mut bytes = Vec::new();
@@ -330,8 +332,10 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
         assert!(report.losses().iter().any(|note| note
             .detail
             .contains("unverified: verification turned off; kept hidden")));
+        // The hidden history's body-building features are written suppressed, so only the two
+        // visible parts evaluate to bodies (an export holds one body per part).
         if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
-            assert_eq!(evaluate(&cli, &bytes).len(), 3);
+            assert_eq!(evaluate(&cli, &bytes).len(), 2);
         }
     }
 }
@@ -655,6 +659,7 @@ fn nested() -> Model {
         name: "top".to_owned(),
         source_file: Some("top.iam".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: Some(Assembly {
             own_part: None,
             joints: Vec::new(),
@@ -1830,6 +1835,39 @@ fn a_placement_the_source_hides_is_written_hidden() {
     assert!(placed_twice_shows_nothing_hidden());
 }
 
+#[test]
+fn an_import_only_write_keeps_a_hidden_placement_with_its_stored_body_hidden() {
+    // Import-only writes no history; the hidden occurrence still holds its stored body.
+    let mut model = placed_twice();
+    if let Some(assembly) = &mut model.assembly {
+        assembly.placements[1].hidden = true;
+    }
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .import_only(true)
+        .sketches(false)
+        .verification(Verification::Off)
+        .write(&model, &mut bytes, &mut Report::default())
+        .unwrap();
+    let document = document(&bytes);
+    let occurrences = document["occurrences"].as_array().unwrap();
+    assert_eq!(occurrences.len(), 2, "{occurrences:?}");
+    let moved = occurrences.iter().find(|o| o["name"] == "Moved").unwrap();
+    assert_eq!(
+        document["visibility"]["hidden_occurrences"],
+        serde_json::json!([[moved["id"]]])
+    );
+    for occurrence in occurrences {
+        let imports = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|feature| feature["component"] == occurrence["component"])
+            .count();
+        assert_eq!(imports, 1, "{occurrence:?}");
+    }
+}
+
 fn placed_twice_shows_nothing_hidden() -> bool {
     document_of(&placed_twice())
         .get("visibility")
@@ -2958,6 +2996,7 @@ fn holder(
         name: name.to_owned(),
         source_file: Some("repeats.f3d".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: Some(Assembly {
             own_part: None,
             joints: Vec::new(),

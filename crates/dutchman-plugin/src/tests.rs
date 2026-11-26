@@ -26,7 +26,20 @@ fn native_options_and_structured_report() {
     let details = &report["details"];
     assert_eq!(details["schema"], "dutchman.plugin.report/2");
     assert!(details["shape_check"]["result"] != "Checked against the original shape");
-    let (stood, _) = run(r#"{"up_axis":"stand_up"}"#);
+    // The default is automatic, and a design whose source states no up axis keeps its axes.
+    assert!(matches!(Options::default().up_axis, crate::UpAxis::Auto));
+    assert!(matches!(
+        serde_json::from_str::<Options>("{}").unwrap().up_axis,
+        crate::UpAxis::Auto
+    ));
+    let (kept, kept_report) = run(r#"{"up_axis":"as_is"}"#);
+    assert_eq!(document(&kept), document(&design));
+    let kept_report: Value = serde_json::from_str(&kept_report).unwrap();
+    assert!(kept_report
+        .to_string()
+        .contains("Kept the file's axes as asked"));
+    let (stood, stood_report) = run(r#"{"up_axis":"stand_up"}"#);
+    assert!(stood_report.contains("Stood up as asked"));
     let original = document(&design);
     let stood = document(&stood);
     assert_eq!(
@@ -198,9 +211,7 @@ fn large_synthetic_design_is_refused_before_native_decoding() {
     );
     let message = crate::notice::failure(&error);
     assert!(
-        message.starts_with(
-            "This design is too large to open inside SolidCraft (about 1 part). Open it in the Dutchman app"
-        ),
+        message.starts_with("This design is too large to open inside SolidCraft: it needs about "),
         "{message}"
     );
     assert!(message
@@ -235,7 +246,7 @@ fn report_and_failure_offer_discord_before_github_without_archive_paths() {
         report["details"]["help"].as_str().unwrap().to_owned(),
     ] {
         assert!(text.contains(crate::notice::QUESTION));
-        assert!(text.find("Join our Discord server").unwrap() < text.find("DM Dutchy").unwrap());
+        assert!(text.find("Join our Discord").unwrap() < text.find("DM Dutchy").unwrap());
         assert!(text.find("DM Dutchy").unwrap() < text.find("GitHub issue").unwrap());
         assert!(text.contains("https://discord.gg/yTcseBEdeu"));
         assert!(text.contains("https://discord.com/users/1563591265810129088"));
@@ -330,4 +341,91 @@ fn failures_keep_a_readable_part_name_without_its_folders() {
     assert!(text.contains("bracket.ipt"));
     assert!(text.contains("Fillet1"));
     assert!(!text.contains("Parts/"));
+}
+
+#[test]
+fn folder_refusal_names_the_grant_and_its_purpose() {
+    assert!(crate::notice::needs_part_folder("Frame.IAM"));
+    assert!(crate::notice::needs_part_folder("rig.sldasm"));
+    assert!(!crate::notice::needs_part_folder("bracket.ipt"));
+    assert!(!crate::notice::needs_part_folder("arm.f3z"));
+    let text = crate::notice::folder_access("rig.sldasm", "Input folder only");
+    for needle in [
+        "rig.sldasm",
+        "part files",
+        "read access to the input folder",
+        "never writes",
+        "Preferences > Plugins",
+        "Input folder only",
+    ] {
+        assert!(text.contains(needle), "{needle}: {text}");
+    }
+}
+
+#[test]
+fn assembly_parts_are_read_once_each_and_only_after_the_assembly() {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/freecad-1.1.4-A01");
+    let asked: RefCell<Vec<PathBuf>> = RefCell::new(Vec::new());
+    // The reader hands out one file's bytes per call and keeps none: the plugin holds a part's
+    // bytes only while the core decodes that part, so no two parts' bytes are held together.
+    let reader = |path: &Path, limit: u64| {
+        asked.borrow_mut().push(path.into());
+        let bytes = std::fs::read(dir.join(path))
+            .map_err(|e| dutchman_core::Error::Decode(e.to_string()))?;
+        assert!(bytes.len() as u64 <= limit);
+        Ok(bytes)
+    };
+    let resolve = |stored: &str, folder: &Path| resolve(stored, folder, &|c| dir.join(c).is_file());
+    let (design, _) = convert("A01a.FCStd", Options::default(), &reader, &resolve, None).unwrap();
+    assert!(!design.is_empty());
+    let asked = asked.into_inner();
+    assert_eq!(
+        asked[0],
+        Path::new("A01a.FCStd"),
+        "the assembly comes first"
+    );
+    assert!(asked.len() >= 2, "{asked:?}");
+    let mut unique = asked.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), asked.len(), "a file is read once: {asked:?}");
+}
+
+#[test]
+fn a_failure_carries_the_full_convert_report_with_its_reason_codes() {
+    use dutchman_core::Error;
+    let error = Error::Decode("Parts/bracket.ipt: feature Fillet1 is not supported yet".into());
+    let report = crate::notice::failure_report("bracket.ipt", &error);
+    assert_eq!(report["schema"], "dutchman.convert/1");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["input"]["path"], "bracket.ipt");
+    assert_eq!(report["input"]["extension"], "ipt");
+    assert!(report["input"]["format_name"].is_string());
+    assert_eq!(report["error"]["kind"], "decode");
+    assert!(report["error"]["stage"].is_string());
+    assert!(report["error"].get("upstream").is_some());
+    assert!(!report.to_string().contains("Parts/"), "{report}");
+    // The message holds the same report, after the plain reason and the help links.
+    let text = crate::notice::failure_in("bracket.ipt", &error);
+    assert!(text.starts_with("feature Fillet1 is not supported yet") || text.contains("Fillet1"));
+    assert!(text.contains("bracket.failed.json"), "{text}");
+    assert!(
+        text.contains("dutchman.convert/1") && text.contains("Dutchman app"),
+        "{text}"
+    );
+    assert!(text.contains(crate::preflight::DOWNLOAD), "{text}");
+    let last = text.lines().last().unwrap();
+    assert_eq!(serde_json::from_str::<Value>(last).unwrap(), report);
+    // A size refusal stays one plain line that points to the app.
+    let big = Error::MemoryBudget("This design is too large".into());
+    assert_eq!(
+        crate::notice::failure_in("big.iam", &big),
+        crate::notice::failure(&big)
+    );
+    // A very long reason never makes the report unbounded.
+    let long = Error::Decode("x ".repeat(50_000));
+    assert!(crate::notice::failure_in("a.ipt", &long).len() < 6_000);
 }

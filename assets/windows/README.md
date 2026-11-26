@@ -6,7 +6,7 @@ is shipped. The fixed UpgradeCode identifies this product across major upgrades.
 and the component identities stable. Windows Installer versions have three fields capped
 at 255.255.65535; the build refuses versions it cannot represent.
 
-The package owns its three executables, licence notices, bundled skills and docs, installed
+The package owns its three executables, license notices, bundled skills and docs, installed
 AGENTS.md, HKCU registration, Start menu shortcut and user PATH entry. The guide fragment is
 generated at build time by `scripts/package-docs.py`, including removal rows for its folders. It never owns settings or logs. Its `InstallDir` registry value, together
 with the current executable's expected per-user location, identifies MSI copies to the

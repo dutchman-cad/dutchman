@@ -69,6 +69,7 @@ pub(crate) fn map(
                 .and_then(|profile| profile.get("value"))
                 .unwrap_or(&Value::Null),
             ctx,
+            None,
         )?
     } else {
         profile(reference, ctx)?
@@ -118,11 +119,13 @@ pub(crate) fn map(
             .and_then(Value::as_str)
             == Some("total");
         if let Some(expression) = first.and_then(|length| {
-            ctx.owned_parameter(feature, kind, length).or_else(|| {
-                (symmetric && total_parameter)
-                    .then(|| ctx.owned_parameter(feature, "AlongDistance", length))
-                    .flatten()
-            })
+            ctx.bound_parameter(feature, "extent_distance_parameter", length)
+                .or_else(|| ctx.owned_parameter(feature, kind, length))
+                .or_else(|| {
+                    (symmetric && total_parameter)
+                        .then(|| ctx.owned_parameter(feature, "AlongDistance", length))
+                        .flatten()
+                })
         }) {
             extent.insert("distance".to_owned(), json!(expression));
         }
@@ -728,7 +731,7 @@ pub(super) fn look(color: &Value) -> Option<Value> {
 
 /// A length as a SolidCraft expression.
 fn mm(length: f64) -> String {
-    format!("{length} mm")
+    format!("{} mm", super::helpers::clean(length))
 }
 
 #[cfg(test)]

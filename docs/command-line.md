@@ -10,7 +10,7 @@ no server to connect. Optional follow-up commands
 use `--json` and a fresh scratch folder next to the converted design. `inspect INPUT --json`
 reads without converting; `diagnose INPUT --out SCRATCH --time-limit 30s --json` tries
 parts separately. For a specific trial use
-`convert INPUT -o SCRATCH/trial.sc --part P --stop-at-feature N --no-clobber --json`.
+`convert INPUT -o SCRATCH/trial.sc --part P --stop-at-feature N --json`.
 `--stop-at-feature` requires `--part`; feature numbers count active timeline features,
 and 0 tries stored shape only. Once diagnosis has identified a failing part,
 `repro INPUT --out FRESH_SCRATCH --from-diagnose DIAGNOSIS --json` reuses that diagnosis.
@@ -87,11 +87,12 @@ Omit the output to write beside the input, using its stem and the extension chos
 Targets before SolidCraft 0.25.1 get `.solidcraft` by default.
 `--to dxf` writes one `part-PageName.dxf` per TechDraw page; see
 [TechDraw drawing output](freecad.md#techdraw-to-dxf). If a model default exists, Dutchman
-exits 2 without changing it: choose `-o PATH` or pass `--force` to replace it. A default
-that is the input itself is always refused. `--force` conflicts with `--no-clobber`.
-Explicit output paths are replaced unless `--no-clobber` is given. Built-in commands win
+writes the next free name (`part (2).sc`) and leaves it as it is. A default
+that is the input itself is always refused. An existing file is never replaced unless you pass
+`--replace` (`--force` means the same). A name that differs from an existing one only in capitals or in how an accented letter is stored counts as that file, because macOS and Windows keep one file for both; the old `--no-clobber` is accepted and does nothing,
+and `--force` conflicts with it. The report names the file actually written. Built-in commands win
 over files with the same name; use `dutchman convert pilot` for a file named `pilot`.
-Installed tools take precedence over bare files; otherwise an existing file or a recognised
+Installed tools take precedence over bare files; otherwise an existing file or a recognized
 CAD extension selects conversion.
 
 ## Options
@@ -104,24 +105,25 @@ CAD extension selects conversion.
 | `--no-joints` | Leave assembly joints out and retain the selected placements before joint solving. |
 | `--part-positions MODE` | Part positions: `smart` (default), `last-shown`, or `first-placed`. |
 | `--stored-placements` | Alias of `--part-positions first-placed`: place parts where they were first placed, ignoring later moves. |
-| `--stand-up`, `--no-stand-up` | Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis (+90° about +X). By default, source axes are preserved; pass `--stand-up` to rotate or `--no-stand-up` to keep identity. |
+| `--stand-up`, `--keep-axes` | The up axis. By default (automatic) a design is stood up (+90° about +X, so +Y becomes SolidCraft's +Z) when its source states that it is Y-up, as a Fusion export's manifest does; a design that is Z-up, or whose up axis is unknown, keeps its axes. `--stand-up` always rotates; `--keep-axes` never rotates (`--no-stand-up` is the same option). The report's `up_axis` states what was found, where, and what was done. |
 | `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH` or beside `dutchman`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). The same search runs in the desktop app; see [How Dutchman finds SolidCraft](desktop.md#how-dutchman-finds-solidcraft). When none is found, the report's `solidcraft.search` lists the places tried. |
-| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.45). |
+| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.49). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--write-replay` | For a `.sc` design, also write `<design>.replay.json` beside it (the design's name with `.replay.json` in place of `.sc`): the command script that rebuilds the history step by step. See [Replay a history by hand](troubleshooting.md#replay-a-history-by-hand). Works with `convert` and `convert-all`; the JSON report names it as `replay_script`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
-| `--no-clobber` | Do not replace an existing `.sc` file: that file's conversion fails instead. By default it is replaced. |
+| `--replace` | Replace an existing design at the output. Without it nothing already there is replaced: a taken name gets the next free one (`part (2).sc`, `part (3).sc`), and the `.report.json`, `.failed.json` and `.replay.json` beside it, the logs and the anonymous report follow the same rule. The report states the path written. |
+| `--no-clobber` | Does nothing: not replacing is the default. Kept so existing scripts work. |
 | `--project DIR` | The project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an `.ipj`, else two folders up. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `--search DIR` | Another folder to search for part files the project folder does not hold, such as a shared library. May be given more than once. |
-| `-o PATH`, `--force` | Write to `PATH`; `--force` replaces an existing default output (see [Output files](#output-files)). |
+| `-o PATH`, `--force` | Write to `PATH`; `--force` is the same as `--replace` (see [Output files](#output-files)). |
 | `--to freecad`, `--to fcstd`, `--to dxf` | Write a FreeCAD macro or document, or TechDraw pages as DXF (see [FreeCAD](freecad.md)). |
 | `--threads N` | Bound the assembly part workers; `1` is serial (see [Assembly workers](#assembly-workers)). |
 | `--diagnostics`, `--diagnostics-default` | Write an anonymous diagnostic log while converting (see [Diagnostic logs](troubleshooting.md#diagnostic-logs-for-unfinished-runs)). |
 | `--json` | One final JSON report on stdout, with progress JSON lines on stderr. |
 | `--quiet` | Hide conversion progress and the volunteer invitation. |
-| `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarised by component (below), repeated notes of the same kind are grouped with a count, and long notes are cut to their first sentence. The JSON report always has them all in full. |
+| `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarized by component (below), repeated notes of the same kind are grouped with a count, and long notes are cut to their first sentence. The JSON report always has them all in full. |
 | `--part N`, `--with-children` | Convert only part N, as `dutchman diagnose` numbers it (with the parts inside it, for a sub-assembly). See [Find what breaks in a large private file](diagnose.md). |
 | `--log FILE` | Also write the whole text report, every loss in full, grouped by component, to `FILE`. |
 
@@ -155,7 +157,7 @@ dutchman diagnose --make-report small.f3d --out findings
 ```
 
 `--narrow` runs the rest by itself: it ranks the parts, isolates a failing part, alone and then
-with its neighbours, bisects its history to the first failing feature, and records the failure's
+with its neighbors, bisects its history to the first failing feature, and records the failure's
 signature, printing `step 3 of 5: narrowing part 17 (feature 41 of 80)` as it goes. Each step has
 its own limits. Run it again with the same `--out` to resume after a stop.
 `--same-failure` converts a small rebuilt file and compares its signature; it exits 0 only for
@@ -375,14 +377,20 @@ converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.sc (ge
 Want to help Dutchman read Fusion, Inventor better? If you have Fusion, Inventor, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
-Each converted file's loss report is listed beneath it, summarised by component when it has
+Each converted file's loss report is listed beneath it, summarized by component when it has
 more than 12 losses. The whole report, every loss in full, is written to `dutchman.log` in the
 output folder (`--log FILE` puts it elsewhere). This log, ordinary JSON, and the journal hold
 file names and paths; keep them private. For an issue, request `--report-anon FILE`, review
 it, and share that report as [Troubleshooting](troubleshooting.md) shows. Files in the folders that are not in
 a format Dutchman knows (`notes.txt`, say) are skipped and counted at the end. The exit code is 0
 only when every file converted, else 1. `--jobs N` sets how many files
-convert at once (default: the machine's cores, at most 8). It takes the same options as
+convert at once (default: the machine's cores, at most 8). With more than one file at a
+time the batch schedules middle-out: the largest files (assemblies and multi-document
+archives first) start first, and a file starts only when its predicted peak memory fits the
+memory free now, less a margin of a quarter of it (at least 1 GiB), so small files fill the
+gaps around big ones. A file larger than all free memory still runs, alone. The report, the
+journal and the printed lines stay in input order, and `--jobs 1` converts in input order.
+It takes the same options as
 `convert`, and `--json` prints one `dutchman.convert-all/1` report holding a
 `dutchman.convert/1` report per file. One run converts at most 10,000 files and searches
 folders at most 32 levels deep.
@@ -391,8 +399,9 @@ Folder paths are relative to each input folder: `in/ProjectA/part.f3d` writes
 `out/ProjectA/part.sc`. Linked design companions are written beside that design.
 Same-named files in different subfolders keep their own paths. Output names that
 would collide, including names differing only in case, receive a numeric suffix.
-An explicit output folder is reused on a rerun: designs at the same paths are
-replaced unless `--no-clobber` is set. Identical linked companions are reused;
+A rerun into the same output folder never replaces a design that is there: each new design gets
+the next free name (`part (2).sc`), unless `--replace` is set. A run stopped and carried on with
+`--journal` still skips the files it already converted. Identical linked companions are reused;
 edited companions are kept and the conversion reports the conflict.
 
 Large batches:
@@ -400,7 +409,7 @@ Large batches:
 - **Each file in its own process.** A file that takes longer than `--timeout SECONDS` (default
   900) or holds more than `--max-memory MB` (default `0`, no limit) is stopped and
   reported as failed. Any file also stops if the computer really runs low on memory, and the rest carry on. A file that crashes the converter fails alone.
-- **Carry on where you stopped.** `--journal FILE` records each file's result as it finishes.
+- **Carry on where you stopped.** `--journal FILE` records each file's result as it finishes. Its folder is made if it does not exist yet, as are those of `--report-anon` and `--report-key` (for `convert` too).
   Run the same command again and the files already recorded, unchanged since, are not
   converted again; their results come from the journal. Files another version of Dutchman
   recorded, or an older journal format (before 0.1.4), are converted again.
@@ -463,7 +472,7 @@ For `parts/cube.f3d`, the default results are `parts/cube.sc` and
 there, with the ordinary `dutchman.convert/1` error report. A failed update keeps the
 previous design. Successful updates replace the design and report; obsolete report sidecars
 are removed only when they still contain the watcher's bytes. Unrelated or externally
-edited outputs and sidecars are skipped, as are destinations assigned to another input. `--no-clobber` also keeps existing watcher outputs.
+edited outputs and sidecars are skipped, as are destinations assigned to another input. A changed upload refreshes the watcher's own earlier output; an output it did not write is skipped and reported, never replaced and never numbered.
 
 The output folder's `.dutchman-watch.json` records SHA-256 input hashes and outcomes,
 plus hashes proving which outputs the watcher owns. It is saved by temporary file and
@@ -513,7 +522,7 @@ Dutchman is made for the current SolidCraft (any release from the last two weeks
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
 `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The target defaults to the found CLI's version, even with `--no-verify`, else the
-newest minor known at build time (currently 0.45). The current window is 0.40–0.45.
+newest minor known at build time (currently 0.49). The current window is 0.40–0.49.
 Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
 0.25 patch 1 or newer; older targets preserve the original geometry and report the version needed.
 Onshape fillets and chamfers blend exactly the edges Onshape blended (its tangent chain resolved
@@ -538,10 +547,10 @@ than falling back to the writer's older pinned `WINDOW_OLDEST` value.
 
 
 SolidCraft conversion reports include the selected target and the discovered CLI version,
-even with verification off. Text output includes `Target SolidCraft 0.45 (found 0.45.0)`,
+even with verification off. Text output includes `Target SolidCraft 0.49 (found 0.49.0)`,
 or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;
 otherwise the found supported version is used, capped at the newest known release, falling
-back to 0.45. Successful conversions print the same installed-version notice beside the
+back to 0.49. Successful conversions print the same installed-version notice beside the
 target line, with the SolidCraft download URL for too-old releases. The CLI never checks
 for Dutchman updates over the network. Failed or refused files print neither line.
 No installed release means no notice. Other output
@@ -592,7 +601,7 @@ poses, which may be stale. Smart keeps first
 placements when a check cannot be established. Joints work from the selected placements.
 `--stored-placements` is an alias of `--part-positions first-placed` and restores the old
 placement choice. JSON reports record `choices.part_positions` and per-rule `part_positions`
-counts; an Info note summarises them.
+counts; an Info note summarizes them.
 
 ## Batch report
 

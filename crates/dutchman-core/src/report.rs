@@ -125,6 +125,18 @@ impl AppearanceLoss {
     }
 }
 
+/// A feature the source program already flagged as failed in the file itself, before
+/// Dutchman read it. These are kept apart from [`Loss`]es, which are Dutchman's own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceError {
+    /// The object's internal name in the source document.
+    pub name: String,
+    /// The name its program shows for it (the label); the internal name when it has none.
+    pub label: String,
+    /// The program's own message, when it saved one.
+    pub message: Option<String>,
+}
+
 /// One thing that did not survive the conversion intact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Loss {
@@ -223,6 +235,7 @@ fn area_noun(area: &str, stage: Stage) -> &'static str {
         "source" | "container" | "structure" | "parse" | "decode" | "directory" | "framing"
         | "native" | "legacy" | "card" | "validation" => "parts of the file",
         "design" => "design details",
+        "tool" | "tools" => "tools",
         "writer" | "export" | "target" => "details of the converted design",
         _ => match stage {
             Stage::Input | Stage::Decode => "parts of the file",
@@ -250,6 +263,8 @@ const MAX_NAMES: usize = 100_000;
 /// succeeded; the report says how faithfully.
 #[derive(Clone, Debug, Default)]
 pub struct Report {
+    /// The version of the program that saved the input file, as `major.minor.revision`.
+    source_version: Option<String>,
     threads: Option<(usize, usize)>,
     part_positions: Option<(crate::PartPositions, crate::PartPositionCounts)>,
     placement_assumptions: Vec<(String, crate::PlacementAssumption)>,
@@ -257,6 +272,8 @@ pub struct Report {
     verification_tolerances: Option<serde_json::Value>,
     verification_checks: Vec<serde_json::Value>,
     losses: Vec<Loss>,
+    source_errors: Vec<SourceError>,
+    source_error_total: u64,
     outcome: Option<Outcome>,
     parts: Vec<PartHistory>,
     completeness: Option<Completeness>,
@@ -265,6 +282,7 @@ pub struct Report {
     /// Linked components the source file places but doesn't contain: how many, and why the
     /// design can't be verified complete.
     missing_links: Option<(u64, String)>,
+    up_axis: Option<crate::UpAxisReport>,
 }
 
 /// How much of an assembly was placed: every placement its file and its placed sub-assemblies'
@@ -448,6 +466,96 @@ pub struct FeatureOutcome {
     pub inferred: Option<Inferred>,
 }
 
+/// Where a partial history hands over to the imported rest of the design: the converted
+/// features come first, then one imported body holds the source's final shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestImported {
+    /// The part the history belongs to, when the rows of several parts are given together.
+    pub part: Option<String>,
+    /// How many features, from the first, are editable.
+    pub converted: usize,
+    /// The first feature that is not converted.
+    pub from: String,
+    /// Why it is not converted.
+    pub reason: Option<String>,
+}
+
+impl RestImported {
+    /// The first feature not converted in a design's rows, given as each row's status, name
+    /// and reason in timeline order; `None` when every feature converted. Rows of an
+    /// assembly are named "part: feature"; the first part to stop is the one reported.
+    pub fn find<'a>(
+        rows: impl IntoIterator<Item = (FeatureStatus, Option<&'a str>, Option<&'a str>)>,
+    ) -> Option<Self> {
+        let rows: Vec<_> = rows.into_iter().collect();
+        let split = |name: &'a str| name.split_once(": ");
+        let of_parts = !rows.is_empty()
+            && rows
+                .iter()
+                .all(|(_, name, _)| name.is_some_and(|name| split(name).is_some()));
+        let blocked = rows
+            .iter()
+            .position(|(status, _, _)| *status == FeatureStatus::Blocked)?;
+        let (_, name, reason) = rows.get(blocked)?;
+        let name = name.unwrap_or("the next feature");
+        let (part, from) = match split(name) {
+            Some((part, from)) if of_parts => (Some(part), from),
+            _ => (None, name),
+        };
+        let converted = rows
+            .iter()
+            .take(blocked)
+            .filter(|(status, row, _)| {
+                *status == FeatureStatus::Mapped
+                    && (!of_parts || row.and_then(split).map(|(of, _)| of) == part)
+            })
+            .count();
+        Some(Self {
+            part: part.map(str::to_owned),
+            converted,
+            from: from.to_owned(),
+            reason: reason
+                .map(|reason| reason.trim().trim_end_matches('.').to_owned())
+                .filter(|reason| !reason.is_empty()),
+        })
+    }
+
+    /// The same, from a report's feature rows.
+    pub fn of(features: &[FeatureOutcome]) -> Option<Self> {
+        Self::find(
+            features
+                .iter()
+                .map(|f| (f.status, f.name.as_deref(), f.reason.as_deref())),
+        )
+    }
+
+    /// The sentence every report gives: "Features 1-7 are editable; from Hole 1 on, the
+    /// part is one imported body.", then why the first feature did not convert.
+    pub fn sentence(&self) -> String {
+        let editable = match self.converted {
+            0 => "no feature is editable".to_owned(),
+            1 => "feature 1 is editable".to_owned(),
+            n => format!("features 1\u{2013}{n} are editable"),
+        };
+        let mut text = format!(
+            "{editable}; from {} on, the part is one imported body.",
+            self.from
+        );
+        match &self.part {
+            Some(part) => text.insert_str(0, &format!("{part}: ")),
+            None => {
+                if let Some(first) = text.get_mut(..1) {
+                    first.make_ascii_uppercase();
+                }
+            }
+        }
+        if let Some(reason) = &self.reason {
+            text.push_str(&format!(" {}: {reason}.", self.from));
+        }
+        text
+    }
+}
+
 /// How a selection the source does not record was inferred: candidates rebuilt in the target
 /// and measured against the source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -498,6 +606,51 @@ pub enum FeatureStatus {
 }
 
 impl Report {
+    /// Features the source file already had flagged as failed in FreeCAD, before converting.
+    pub fn source_errors(&self) -> &[SourceError] {
+        &self.source_errors
+    }
+
+    /// How many features the source file had flagged as failed, which can exceed the rows kept.
+    pub fn source_error_total(&self) -> u64 {
+        self.source_error_total.max(self.source_errors.len() as u64)
+    }
+
+    /// Records features the source file already had flagged as failed in FreeCAD. `total`
+    /// counts them all; `errors` holds the ones kept.
+    pub fn record_source_errors(&mut self, errors: Vec<SourceError>, total: u64) {
+        self.source_error_total += total.max(errors.len() as u64);
+        self.source_errors.extend(errors);
+    }
+
+    /// The plain sentence for a file that already had errors in FreeCAD, or `None`.
+    pub fn source_errors_message(&self) -> Option<String> {
+        const SHOWN: usize = 10;
+        if self.source_errors.is_empty() {
+            return None;
+        }
+        let mut names: Vec<&str> = Vec::new();
+        for error in &self.source_errors {
+            if !names.contains(&error.label.as_str()) {
+                names.push(&error.label);
+            }
+        }
+        let total = names.len().max(self.source_error_total() as usize);
+        let mut list = names
+            .iter()
+            .take(SHOWN)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if total > SHOWN {
+            list.push_str(&format!(" and {} more", total - SHOWN));
+        }
+        Some(format!(
+            "This file already had errors in FreeCAD before converting: {list} (fix them in \
+             FreeCAD for a full conversion)."
+        ))
+    }
+
     /// Memory needed and available, in bytes, when a writer skipped the history check.
     pub fn history_check_skipped(&self) -> Option<(u64, u64)> {
         self.history_check_skipped
@@ -516,6 +669,45 @@ impl Report {
     /// Records the tolerances the writer's history check used.
     pub fn set_verification_tolerances(&mut self, tolerances: serde_json::Value) {
         self.verification_tolerances = Some(tolerances);
+    }
+
+    /// The version of the program that saved the input file, as `major.minor.revision`, when
+    /// the file states it as numbers (an Inventor file does). Never read from a name or message.
+    pub fn source_version(&self) -> Option<&str> {
+        self.source_version.as_deref()
+    }
+
+    /// Records the saving program's version once; the first one recorded is kept.
+    pub fn record_source_version(&mut self, version: String) {
+        self.source_version.get_or_insert(version);
+    }
+
+    /// What the source states about its up axis and what the writer did about it.
+    pub fn up_axis(&self) -> Option<&crate::UpAxisReport> {
+        self.up_axis.as_ref()
+    }
+
+    /// Records what the source states about its up axis, with a note when the designs of an
+    /// assembly disagree. The first one recorded is kept.
+    pub fn record_up_axis(&mut self, found: crate::UpAxisFinding, disagreement: Option<String>) {
+        if self.up_axis.is_none() {
+            self.up_axis = Some(crate::UpAxisReport {
+                found,
+                applied: None,
+                disagreement,
+            });
+        }
+    }
+
+    /// Records the orientation a writer applied. A source no reader recorded anything for is
+    /// recorded as unknown.
+    pub fn record_orientation(&mut self, mode: crate::Orientation, stands_up: bool) {
+        let entry = self.up_axis.get_or_insert_with(|| crate::UpAxisReport {
+            found: crate::UpAxisFinding::default(),
+            applied: None,
+            disagreement: None,
+        });
+        entry.applied = Some((mode, stands_up));
     }
 
     /// Requested and bounded maximum Dutchman part workers, excluding child-process threads.
@@ -655,6 +847,13 @@ impl Report {
             None => self.part_positions = Some((mode, counts)),
         }
     }
+    /// Forgets how a part was placed and the notes about it, for a part read on its own whose
+    /// place something else states: a parts package says where each of its parts goes.
+    pub(crate) fn forget_part_positions(&mut self) {
+        self.part_positions = None;
+        self.placement_assumptions.clear();
+        self.losses.retain(|loss| loss.subject != "part positions");
+    }
     /// Records a part placed by an assumption, by the names the design gives it.
     pub(crate) fn assume_placement(&mut self, part: String, why: crate::PlacementAssumption) {
         self.placement_assumptions.push((part, why));
@@ -737,8 +936,14 @@ impl Report {
 
     /// Records every loss of `other`, after this report's own.
     pub fn append(&mut self, other: Report) {
+        if let Some(up) = other.up_axis.clone() {
+            self.record_up_axis(up.found, up.disagreement);
+        }
         for checks in other.verification_checks {
             self.record_verification_checks(checks);
+        }
+        if let Some(version) = other.source_version {
+            self.record_source_version(version);
         }
         self.merge_threads(other.threads);
         if let Some((mode, counts)) = other.part_positions {
@@ -750,14 +955,22 @@ impl Report {
         if self.verification_tolerances.is_none() {
             self.verification_tolerances = other.verification_tolerances;
         }
+        self.source_error_total += other.source_error_total;
+        self.source_errors.extend(other.source_errors);
         self.losses.extend(other.losses);
         self.names.extend(other.names);
     }
 
     /// Records every loss of `other` under `prefix` (`part.ipt: …`), after this report's own.
     pub fn append_prefixed(&mut self, other: Report, prefix: &str) {
+        if let Some(up) = other.up_axis.clone() {
+            self.record_up_axis(up.found, up.disagreement);
+        }
         for checks in other.verification_checks {
             self.record_verification_checks(checks);
+        }
+        if let Some(version) = other.source_version {
+            self.record_source_version(version);
         }
         self.merge_threads(other.threads);
         if let Some((mode, counts)) = other.part_positions {
@@ -769,6 +982,12 @@ impl Report {
         if self.verification_tolerances.is_none() {
             self.verification_tolerances = other.verification_tolerances;
         }
+        self.source_error_total += other.source_error_total;
+        self.source_errors
+            .extend(other.source_errors.into_iter().map(|error| SourceError {
+                label: format!("{prefix}: {}", error.label),
+                ..error
+            }));
         self.losses
             .extend(other.losses.into_iter().map(|loss| Loss {
                 subject: format!("{prefix}: {}", loss.subject),
@@ -803,7 +1022,11 @@ impl Report {
             .as_ref()
             .and_then(Completeness::unplaced_message)
         {
-            outcome.check = Check::Partial(message);
+            // The missing designs are the larger cause: say so first.
+            outcome.check = Check::Partial(match &self.missing_links {
+                Some((_, why)) => format!("{why} {message}"),
+                None => message,
+            });
         }
         self.outcome = Some(outcome);
     }
@@ -811,21 +1034,56 @@ impl Report {
     /// The source places linked components whose designs aren't in the file. The written
     /// design leaves them out, says so, and is not marked verified.
     pub fn record_missing_links(&mut self, names: &[String]) {
+        self.record_missing(names, false);
+    }
+
+    /// A Fusion `.f3d` places components inserted from other Fusion designs that the file
+    /// doesn't contain (cadmpeg states their prototype as unresolved). One Dropped loss names
+    /// each missing design and one summary says what to do; the design is left out and never
+    /// marked verified.
+    pub fn record_missing_inserted_designs(&mut self, names: &[String]) {
+        self.record_missing(names, true);
+    }
+
+    fn record_missing(&mut self, names: &[String], inserted: bool) {
         let count = names.len() as u64;
         if count == 0 {
             return;
         }
-        let named = if names.iter().all(|name| name.is_empty()) {
-            String::new()
+        let plural = count != 1;
+        let why = if inserted {
+            for name in names {
+                let what = if name.is_empty() { "(unnamed)" } else { name };
+                self.push(
+                    Severity::Dropped,
+                    format!("inserted design {what}"),
+                    format!(
+                        "the component {what} is inserted from another Fusion design that this \
+                         .f3d doesn't contain, so it is left out"
+                    ),
+                );
+            }
+            format!(
+                "{count} inserted component{} {} from other Fusion designs that this .f3d \
+                 doesn't contain; convert the whole export folder (or its zip) so the \
+                 inserted designs come along, or export the assembly as a Fusion Archive \
+                 (.f3z) from Fusion's File > Export.",
+                if plural { "s" } else { "" },
+                if plural { "come" } else { "comes" },
+            )
         } else {
-            format!(" ({})", names.join(", "))
+            let named = if names.iter().all(|name| name.is_empty()) {
+                String::new()
+            } else {
+                format!(" ({})", names.join(", "))
+            };
+            format!(
+                "{count} linked component{} {} in this file{named}. In Fusion, export the \
+                 assembly as .f3z, or put the linked designs' .f3d files next to it",
+                if plural { "s" } else { "" },
+                if plural { "aren't" } else { "isn't" },
+            )
         };
-        let why = format!(
-            "{count} linked component{} {} in this file{named}. In Fusion, export the assembly \
-             as .f3z, or put the linked designs' .f3d files next to it",
-            if count == 1 { "" } else { "s" },
-            if count == 1 { "isn't" } else { "aren't" },
-        );
         self.push(Severity::Dropped, "linked components", why.clone());
         self.missing_links = Some((count, why));
         if let Some(completeness) = self.completeness.take() {
@@ -834,6 +1092,11 @@ impl Report {
         if let Some(outcome) = self.outcome.take() {
             self.set_outcome(outcome);
         }
+    }
+
+    /// The sentence saying linked or inserted components are missing from the file, when some are.
+    pub fn missing_links_message(&self) -> Option<&str> {
+        self.missing_links.as_ref().map(|(_, why)| why.as_str())
     }
 
     /// What the writer made of the design, when it said.
@@ -906,6 +1169,57 @@ impl Report {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn missing_inserted_designs_are_named_one_each_with_one_summary() {
+        let mut report = Report::default();
+        report.set_completeness(Completeness {
+            placed: 1,
+            placed_empty: 0,
+            unplaced: [("Local".to_owned(), 1)].into(),
+            left_out: Vec::new(),
+        });
+        report.record_missing_inserted_designs(&["Washer".to_owned(), String::new()]);
+        report.set_outcome(Outcome {
+            mode: Mode::History,
+            check: Check::Verified,
+            features: Vec::new(),
+        });
+        let dropped: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.severity == Severity::Dropped)
+            .map(|loss| loss.subject.as_str())
+            .collect();
+        assert_eq!(
+            dropped,
+            [
+                "inserted design Washer",
+                "inserted design (unnamed)",
+                "linked components"
+            ]
+        );
+        let summary = "2 inserted components come from other Fusion designs that this .f3d \
+                       doesn't contain; convert the whole export folder (or its zip) so the \
+                       inserted designs come along, or export the assembly as a Fusion Archive \
+                       (.f3z) from Fusion's File > Export.";
+        let left_out = &report.completeness().unwrap().left_out;
+        assert_eq!(
+            (left_out[0].reason.as_str(), left_out[0].count),
+            (summary, 2)
+        );
+        let Some(Check::Partial(why)) = report.outcome().map(|o| &o.check) else {
+            panic!("expected partial");
+        };
+        assert!(why.starts_with(summary), "{why}");
+        let mut one = Report::default();
+        one.record_missing_inserted_designs(&["Washer".to_owned()]);
+        assert!(one.losses().last().unwrap().detail.starts_with(
+            "1 inserted component comes from other Fusion designs that this .f3d doesn't contain; \
+             convert the whole export folder (or its zip) so the inserted designs come along, \
+             or export the assembly as a Fusion Archive (.f3z) from Fusion's File > Export."
+        ));
+    }
 
     #[test]
     fn missing_linked_components_are_left_out_and_never_verified() {
@@ -1082,5 +1396,61 @@ mod worker_report_tests {
         let mut outer = Report::default();
         outer.append_prefixed(report, "assembly.f3z");
         assert_eq!(outer.threads(), Some((0, 6)));
+    }
+}
+
+#[cfg(test)]
+mod rest_imported_tests {
+    use super::*;
+
+    fn rows<'a>(
+        rows: &'a [(FeatureStatus, &'a str, Option<&'a str>)],
+    ) -> impl Iterator<Item = (FeatureStatus, Option<&'a str>, Option<&'a str>)> + 'a {
+        rows.iter()
+            .map(|(status, name, reason)| (*status, Some(*name), *reason))
+    }
+
+    #[test]
+    fn a_part_says_where_its_editable_features_end() {
+        use FeatureStatus::{Blocked, Mapped, NotNeeded};
+        let table = [
+            (Mapped, "Sketch 1", None),
+            (NotNeeded, "Plane 1", None),
+            (Mapped, "Extrude 1", None),
+            (Blocked, "Hole 1", Some("hole is not mapped yet.")),
+            (Blocked, "Hole 2", Some("after the first blocking feature")),
+        ];
+        let rest = RestImported::find(rows(&table)).unwrap();
+        assert_eq!((rest.converted, rest.from.as_str()), (2, "Hole 1"));
+        assert_eq!(
+            rest.sentence(),
+            "Features 1\u{2013}2 are editable; from Hole 1 on, the part is one imported body. \
+             Hole 1: hole is not mapped yet."
+        );
+        let one = [(Mapped, "Sketch 1", None), (Blocked, "Loft 1", None)];
+        assert_eq!(
+            RestImported::find(rows(&one)).unwrap().sentence(),
+            "Feature 1 is editable; from Loft 1 on, the part is one imported body."
+        );
+        let all = [(Mapped, "Sketch 1", None)];
+        assert_eq!(RestImported::find(rows(&all)), None);
+    }
+
+    #[test]
+    fn an_assembly_names_the_first_part_to_stop() {
+        use FeatureStatus::{Blocked, Mapped};
+        let table = [
+            (Mapped, "a.ipt: Sketch 1", None),
+            (Mapped, "a.ipt: Extrude 1", None),
+            (Mapped, "b.ipt: Sketch 1", None),
+            (Blocked, "b.ipt: Loft 1", Some("lofts are not mapped")),
+        ];
+        let rest = RestImported::find(rows(&table)).unwrap();
+        assert_eq!(rest.part.as_deref(), Some("b.ipt"));
+        assert_eq!(
+            rest.sentence(),
+            "b.ipt: feature 1 is editable; from Loft 1 on, the part is one imported body. \
+             Loft 1: lofts are not mapped."
+        );
     }
 }

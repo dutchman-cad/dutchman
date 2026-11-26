@@ -371,9 +371,21 @@ pub(super) fn install_scope(
         {
             continue;
         }
-        report.push_coded(crate::Severity::Degraded, source.id.as_str(), "onshape/design.operation-native",
-            "design timeline retains the native source operation; model history carries its decoded construction");
-        let mut row = json!({"id":source.id,"definition":{"operation":{"kind":"native","value":{"kind":"onshape:timeline-member","native_options":{},"source_settings":{}}}}});
+        // A feature that owns a design sketch holds it as its operation, which is how the
+        // design layer states ownership of a sketch.
+        let operation = if let Some(sketch) = ir
+            .design
+            .sketches
+            .iter()
+            .find(|sketch| sketch.owner == source.id)
+        {
+            json!({"kind":"sketch","value":sketch.id})
+        } else {
+            report.push_coded(crate::Severity::Degraded, source.id.as_str(), "onshape/design.operation-native",
+                "design timeline retains the native source operation; model history carries its decoded construction");
+            json!({"kind":"native","value":{"kind":"onshape:timeline-member","native_options":{},"source_settings":{}}})
+        };
+        let mut row = json!({"id":source.id,"definition":{"operation":operation}});
         let fields = row
             .as_object_mut()
             .ok_or("the design timeline row is missing")?;
@@ -410,9 +422,12 @@ pub(super) fn install_scope(
         &mut ir.design.containers,
         json!({"kind":"ordered","value":{"id":container,"kind":"timeline","members":members,"folders":[],"rollback":{"kind":"end"}}}),
     )?;
+    // Every body of a Part Studio comes from one of its features, so no body
+    // of the scope goes unproduced.
     push(
         &mut ir.design.scopes,
         json!({"definition":definition,"roots":[container],"active_arrangements":[],"occurrences":{},
+        "unproduced":[],
         "current":[{"at":{"kind":"after","value":{"kind":"feature","value":last}},"bodies":bodies,"poses":[],"status":"current"}]}),
     )?;
     Ok(())

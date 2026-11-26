@@ -22,7 +22,7 @@ pub(crate) fn sphere(
     definition: &Value,
     ctx: &mut Context,
 ) -> Result<Value, String> {
-    let center = v3(definition.get("center")).ok_or("its centre is malformed")?;
+    let center = v3(definition.get("center")).ok_or("its center is malformed")?;
     let radius = length(definition.get("radius"), "radius")?;
     let operation = operation(definition.get("op"))?;
     Ok(primitive(
@@ -41,7 +41,7 @@ pub(crate) fn torus(
     definition: &Value,
     ctx: &mut Context,
 ) -> Result<Value, String> {
-    let center = v3(definition.get("center")).ok_or("its centre is malformed")?;
+    let center = v3(definition.get("center")).ok_or("its center is malformed")?;
     let axis = v3(definition.get("axis"))
         .and_then(unit)
         .ok_or("its axis is malformed")?;
@@ -420,9 +420,9 @@ fn length(value: Option<&Value>, what: &str) -> Result<f64, String> {
 }
 
 fn number_text(value: f64) -> String {
-    format!("{value}")
+    super::helpers::clean(value)
 }
 
 fn mm(length: f64) -> String {
-    format!("{length} mm")
+    format!("{} mm", super::helpers::clean(length))
 }

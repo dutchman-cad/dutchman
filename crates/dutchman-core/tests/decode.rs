@@ -251,11 +251,7 @@ fn a_numbered_save_strips_one_suffix_and_uses_contents_for_its_program() {
     assert_eq!(revision, "7");
     assert_eq!(Format::source_extension(&path).as_deref(), Some("prt.7"));
     for (bytes, format, words) in [
-        (
-            b"#UGC:2".as_slice(),
-            Format::CreoPart,
-            "opens, no geometry yet",
-        ),
+        (b"#UGC:2".as_slice(), Format::CreoPart, "reads geometry"),
         (b"SPLMSSTR".as_slice(), Format::NxPart, "reads geometry"),
         (
             b"unknown".as_slice(),
@@ -277,14 +273,12 @@ fn a_numbered_save_strips_one_suffix_and_uses_contents_for_its_program() {
 #[test]
 fn conversion_requires_geometry_and_an_available_codec() {
     for format in Format::ALL {
-        let geometry = !matches!(
-            format,
-            Format::CreoPart | Format::UnclassifiedPart | Format::Iges
-        );
+        let geometry =
+            !matches!(format, Format::UnclassifiedPart | Format::Iges) && !format.is_drawing();
         assert_eq!(format.reads_geometry(), geometry, "{}", format.name());
         assert_eq!(
             format.can_convert(),
-            geometry && format.codec_id().is_some()
+            format.is_drawing() || (geometry && format.codec_id().is_some())
         );
     }
 }
@@ -309,10 +303,22 @@ fn published_headlines_are_independent_of_codec_availability() {
 
 #[test]
 fn inputs_without_geometry_are_refused_before_decoding() {
-    let path = scratch("low-creo.prt", b"#UGC:2");
-    let err = read(Format::CreoPart, &path, &mut Report::default()).unwrap_err();
+    let path = scratch("low-unclassified.prt", b"unknown");
+    let err = read(Format::UnclassifiedPart, &path, &mut Report::default()).unwrap_err();
     assert!(matches!(err, Error::NotSupportedYet { .. }));
-    assert!(err.to_string().contains("opens, no geometry yet"));
+    assert!(err.to_string().contains("not supported yet"));
+}
+
+#[test]
+fn creo_parts_reach_the_decoder_and_a_truncated_one_is_an_error() {
+    // A signature with no body: Creo is read now, so this gets to cadmpeg's Creo decoder and
+    // comes back as an error rather than the old "no geometry yet" refusal or a crash.
+    let path = scratch("truncated-creo.prt", b"#UGC:2");
+    assert_eq!(Format::from_path(&path), Some(Format::CreoPart));
+    assert!(Format::CreoPart.can_convert());
+    let err = read(Format::CreoPart, &path, &mut Report::default()).unwrap_err();
+    assert!(!matches!(err, Error::NotSupportedYet { .. }), "{err}");
+    assert!(!err.to_string().contains("no geometry yet"), "{err}");
 }
 
 #[test]
@@ -444,5 +450,88 @@ fn solidworks_assembly_resolves_parts_and_keeps_reader_losses() {
                 .any(|loss| loss.detail.to_lowercase().contains(word)),
             "{report:?}"
         );
+    }
+}
+
+/// FreeCAD saves a feature that failed its last recompute as `Invalid="1"` with its message
+/// on the object. The fixture's Fillet (labelled "Edge rounding") has that; its Body is only
+/// touched, which is not an error.
+#[cfg(feature = "freecad")]
+#[test]
+fn errors_a_freecad_file_already_had_are_reported_apart_from_losses() {
+    let mut report = Report::default();
+    read(
+        Format::FreeCadDocument,
+        &fixture("freecad_preexisting_error.FCStd"),
+        &mut report,
+    )
+    .unwrap();
+    let errors = report.source_errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].name, "Fillet");
+    assert_eq!(errors[0].label, "Edge rounding");
+    assert_eq!(
+        errors[0].message.as_deref(),
+        Some("BRep_API: command not done")
+    );
+    assert_eq!(
+        report.source_errors_message().unwrap(),
+        "This file already had errors in FreeCAD before converting: Edge rounding (fix them in \
+         FreeCAD for a full conversion)."
+    );
+    assert!(
+        report
+            .losses()
+            .iter()
+            .all(|loss| !loss.detail.contains("already had errors")),
+        "{report:?}"
+    );
+
+    // A file with no failed feature says nothing.
+    let mut clean = Report::default();
+    read(
+        Format::FreeCadDocument,
+        &fixture("design_history.FCStd"),
+        &mut clean,
+    )
+    .unwrap();
+    assert!(clean.source_errors().is_empty());
+    assert_eq!(clean.source_errors_message(), None);
+}
+
+#[test]
+fn a_step_file_with_a_product_and_no_shapes_says_it_is_an_empty_export() {
+    let err = read(
+        Format::Step,
+        &fixture("empty_export.step"),
+        &mut Report::default(),
+    )
+    .unwrap_err();
+    assert!(matches!(err, Error::EmptyExport(_)), "{err}");
+    assert_eq!(err.kind(), "decode");
+    assert_eq!(err.cause(), Some("empty_export"));
+    // Counted as the file's own problem (stage input), not as a reader failure.
+    assert_eq!(err.stage(), dutchman_core::Stage::Input);
+    assert_eq!(
+        err.to_string(),
+        "This STEP file contains no shapes: it has a product but no solids, surfaces or curves, so the program that wrote it exported an empty design. Check the design has bodies, then export it again; mesh bodies are not written to STEP, so turn a design's meshes into solid bodies before exporting (in Fusion: Mesh > Modify > Convert Mesh), or export the mesh as STL and open that in SolidCraft directly."
+    );
+    assert!(err
+        .to_string()
+        .starts_with("This STEP file contains no shapes"));
+}
+
+#[test]
+fn a_step_file_with_only_a_curve_reads_and_is_not_an_empty_export() {
+    let text = std::fs::read_to_string(fixture("empty_export.step"))
+        .unwrap()
+        .replace(
+            "#25 = COLOUR_RGB",
+            "#26 = CARTESIAN_POINT('',(0.,0.,0.));\n#27 = DIRECTION('',(1.,0.,0.));\n#28 = VECTOR('',#27,1.);\n#29 = LINE('',#26,#28);\n#25 = COLOUR_RGB",
+        );
+    let path = scratch("with_curve.step", text.as_bytes());
+    // A curve is geometry, so the file is read; it is never reported as an empty export.
+    if let Err(err) = read(Format::Step, &path, &mut Report::default()) {
+        panic!("a STEP file holding a curve must read, got: {err}");
     }
 }

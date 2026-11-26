@@ -48,8 +48,18 @@ jobs:
       rust: ${{ steps.diff.outputs.rust }}
       code: ${{ steps.diff.outputs.code }}
       docker: ${{ steps.diff.outputs.docker }}
+      # A pull request that moves the cadmpeg pin or changes assembly code also runs the two
+      # small placement sets, so a part that moves shows on the pull request, not first in the queue.
+      placements: ${{ steps.diff.outputs.placements }}
+      # A change to Cargo.toml or Cargo.lock (Dependabot's included) runs the Rust 1.88 build too,
+      # so a dependency that moves past the minimum Rust version is caught before it merges.
+      lockfile: ${{ steps.diff.outputs.lockfile }}
       platform: ${{ steps.platform.outputs.platform }}
       floor: ${{ steps.platform.outputs.floor }}
+      # Self-hosted 'flyer' runners: the merge queue and pushes to main only. Every pull request
+      # runs on GitHub-hosted runners (free for a public repository, and parallel), so PRs never
+      # hold flyer slots the queue and main need. FLYER=off sends everything to GitHub.
+      flyer: ${{ vars.FLYER != 'off' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -62,13 +72,28 @@ jobs:
             echo "rust=true" >> "$GITHUB_OUTPUT"
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "docker=true" >> "$GITHUB_OUTPUT"
+            echo "placements=true" >> "$GITHUB_OUTPUT"
+            echo "lockfile=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "docker=true" >> "$GITHUB_OUTPUT"
+            echo "placements=true" >> "$GITHUB_OUTPUT"
+            echo "lockfile=true" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          if git diff --name-only "$BASE" HEAD | grep -qE '(^|/)Cargo\.(toml|lock)$'; then
+            echo "lockfile=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "lockfile=false" >> "$GITHUB_OUTPUT"
+          fi
+          if git diff --name-only "$BASE" HEAD | grep -qE '^crates/dutchman-(core|solidcraft)/src/assembly' \
+            || git diff "$BASE" HEAD -- Cargo.toml Cargo.lock | grep -qE '^[-+][^-+].*cadmpeg'; then
+            echo "placements=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "placements=false" >> "$GITHUB_OUTPUT"
           fi
           # Anything besides Markdown, docs/, assets/, images, changelog fragments and the GitHub issue and PR forms
           # (text people fill in) is code.
@@ -140,6 +165,8 @@ jobs:
           python3 scripts/check-version-gates.py --base "$BASE"
       - run: python3 scripts/check-test-accept.py
       - run: python3 scripts/changelog.py check
+      - run: python3 scripts/check-safe-output.py
+      - run: python3 scripts/check-american-english.py
       # The installed guidance (docs/, skills/) the archives and installer carry: a change to docs/
       # no longer starts the release builds, so check here that it still stages.
       - run: python3 scripts/package-docs.py "$RUNNER_TEMP/guide" --wix "$RUNNER_TEMP/guide.wxs"
@@ -147,14 +174,40 @@ jobs:
   clippy:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
+      # flyer is shared with other work: cap cargo's parallelism there so a burst of
+      # these jobs does not push the box to load 100. GitHub-hosted runners are untouched.
+      - name: Cap cargo parallelism on the shared flyer runner
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: echo "CARGO_BUILD_JOBS=4" >> "$GITHUB_ENV"
+      # A flyer runner's reused workspace can hold a clone missing objects it claims
+      # ("remote did not send all necessary objects"); start that workspace clean.
+      - name: Clear a corrupt reused workspace
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/.git" ] && ! git -C "$GITHUB_WORKSPACE" fsck --connectivity-only --no-progress >/dev/null 2>&1; then
+            echo "::warning::corrupt git workspace on $RUNNER_NAME; clearing it before checkout"
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi
       - uses: actions/checkout@v7
+      # Self-hosted runners use the toolchain their owner keeps current (checked, never installed).
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment == 'github-hosted'
         with:
           components: clippy
+      # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
+      - name: Keep the build on the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME-clippy" >> "$GITHUB_ENV"
+          if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
+          bash scripts/ci-runner-toolchain.sh clippy
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           shared-key: clippy-linux-debug
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -166,8 +219,12 @@ jobs:
   wasm:
     needs: changes
     if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
+    # Stays on GitHub-hosted runners: it needs the wasm32-wasip2 target, which the shared runners do not carry,
+    # and a job must not install targets on a shared box.
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # A cold wasm32 build of the plugin takes longer than 5 minutes; the tight limit cancelled it
+    # on release-candidate runs.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -193,17 +250,34 @@ jobs:
       matrix:
         # ARM64 is test-arm below, which gets a second try when its runner is shut down.
         os: ${{ fromJSON((github.event_name == 'merge_group' || (github.event_name == 'pull_request' && needs.changes.outputs.platform != 'true')) && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
-    # The merge queue's and main's Linux run uses the self-hosted 'flyer' runners (warm build:
-    # about 6 min against 12 on GitHub). Pull requests never do, so code from forks never runs
-    # there. Set the repository variable FLYER to 'off' to send these runs back to GitHub.
-    runs-on: ${{ (matrix.os == 'ubuntu-latest' && vars.FLYER != 'off' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))) && fromJSON('["self-hosted", "flyer"]') || matrix.os }}
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 30 || 25 }}
+    # Linux runs on the self-hosted 'flyer' runners when needs.changes.outputs.flyer is 'true':
+    # the merge queue, main, and pull requests from this repository by people (never forks or
+    # bots). Warm build: about 6 min against 12 on GitHub. Set the repository variable FLYER to
+    # 'off' to send these runs back to GitHub.
+    runs-on: ${{ (matrix.os == 'ubuntu-latest' && needs.changes.outputs.flyer == 'true') && fromJSON('["self-hosted", "flyer"]') || matrix.os }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || (needs.changes.outputs.flyer == 'true' && 25 || 45) }}
     env:
       # Debug info is most of a cold Windows build's time and is not needed to run the tests.
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       # Keep the low-space fallback for older images without deleting 19 GiB on every run.
+      # flyer is shared with other work: cap cargo's parallelism there so a burst of
+      # these jobs does not push the box to load 100. GitHub-hosted runners are untouched.
+      - name: Cap cargo parallelism on the shared flyer runner
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: echo "CARGO_BUILD_JOBS=4" >> "$GITHUB_ENV"
+      # A flyer runner's reused workspace can hold a clone missing objects it claims
+      # ("remote did not send all necessary objects"); start that workspace clean.
+      - name: Clear a corrupt reused workspace
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/.git" ] && ! git -C "$GITHUB_WORKSPACE" fsck --connectivity-only --no-progress >/dev/null 2>&1; then
+            echo "::warning::corrupt git workspace on $RUNNER_NAME; clearing it before checkout"
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi
       - uses: actions/checkout@v7
       - name: Check free disk space
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
@@ -219,17 +293,7 @@ jobs:
           echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME" >> "$GITHUB_ENV"
           if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
           # Check, never install: the doc-tests need rustdoc and the default link needs rust-lld.
-          missing=""
-          for tool in rustc cargo rustdoc; do
-            rustup which "$tool" >/dev/null 2>&1 || missing="$missing $tool"
-          done
-          lld="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/rust-lld"
-          [ -x "$lld" ] || missing="$missing rust-lld"
-          if [ -n "$missing" ]; then
-            echo "::error title=Runner toolchain::$RUNNER_NAME lacks$missing; install the default profile of stable on the runner (rustup toolchain install stable --profile default)."
-            exit 1
-          fi
-          rustc -V
+          bash scripts/ci-runner-toolchain.sh
       - uses: Swatinem/rust-cache@v2
         if: runner.environment == 'github-hosted'
         with:
@@ -361,15 +425,40 @@ jobs:
   docs:
     needs: changes
     if: needs.changes.outputs.code == 'false'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
+    timeout-minutes: ${{ needs.changes.outputs.flyer == 'true' && 25 || 45 }}
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
+      # flyer is shared with other work: cap cargo's parallelism there so a burst of
+      # these jobs does not push the box to load 100. GitHub-hosted runners are untouched.
+      - name: Cap cargo parallelism on the shared flyer runner
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: echo "CARGO_BUILD_JOBS=4" >> "$GITHUB_ENV"
+      # A flyer runner's reused workspace can hold a clone missing objects it claims
+      # ("remote did not send all necessary objects"); start that workspace clean.
+      - name: Clear a corrupt reused workspace
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/.git" ] && ! git -C "$GITHUB_WORKSPACE" fsck --connectivity-only --no-progress >/dev/null 2>&1; then
+            echo "::warning::corrupt git workspace on $RUNNER_NAME; clearing it before checkout"
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment == 'github-hosted'
+      # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
+      - name: Keep the build on the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME" >> "$GITHUB_ENV"
+          if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
+          bash scripts/ci-runner-toolchain.sh
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           shared-key: test-ubuntu-latest-debug
           save-if: false
@@ -491,7 +580,9 @@ jobs:
 
   msrv:
     needs: changes
-    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
+    if: (needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true') || needs.changes.outputs.lockfile == 'true'
+    # Stays on GitHub-hosted runners: it needs the pinned older toolchain (1.88), and a job must not
+    # install a toolchain on a shared box.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -509,13 +600,15 @@ jobs:
   solidcraft-roundtrip:
     name: solidcraft-roundtrip (${{ matrix.solidcraft.version }})
     needs: changes
-    if: (needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true') || (github.event_name == 'pull_request' && needs.changes.outputs.floor == 'true')
-    runs-on: ubuntu-latest
+    # The merge queue replays every code change in the newest SolidCraft too: these history
+    # tests run only with a SolidCraft, so a pull request's own checks never see them.
+    if: (needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true') || (github.event_name == 'merge_group' && needs.changes.outputs.code == 'true') || (github.event_name == 'pull_request' && needs.changes.outputs.floor == 'true')
+    runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        solidcraft: ${{ fromJSON(needs.changes.outputs.full == 'true' && '[{"version":"0.18.2","sha256":"9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff"},{"version":"newest"}]' || '[{"version":"0.18.2","sha256":"9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff"}]') }}
+        solidcraft: ${{ fromJSON((needs.changes.outputs.full == 'true' || github.event_name == 'merge_group') && '[{"version":"0.18.2","sha256":"9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff"},{"version":"newest"}]' || '[{"version":"0.18.2","sha256":"9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff"}]') }}
     env:
       SOLIDCRAFT_VERSION: ${{ matrix.solidcraft.version }}
       SOLIDCRAFT_SHA256: ${{ matrix.solidcraft.sha256 }}
@@ -525,17 +618,45 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       # Debug=0 jobs on current images have ample disk; clean only smaller images.
+      # flyer is shared with other work: cap cargo's parallelism there so a burst of
+      # these jobs does not push the box to load 100. GitHub-hosted runners are untouched.
+      - name: Cap cargo parallelism on the shared flyer runner
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: echo "CARGO_BUILD_JOBS=4" >> "$GITHUB_ENV"
+      # A flyer runner's reused workspace can hold a clone missing objects it claims
+      # ("remote did not send all necessary objects"); start that workspace clean.
+      - name: Clear a corrupt reused workspace
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/.git" ] && ! git -C "$GITHUB_WORKSPACE" fsck --connectivity-only --no-progress >/dev/null 2>&1; then
+            echo "::warning::corrupt git workspace on $RUNNER_NAME; clearing it before checkout"
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi
       - uses: actions/checkout@v7
       - name: Check free disk space
+        if: runner.environment == 'github-hosted'
         run: bash scripts/ci-disk-space.sh
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment == 'github-hosted'
+      # Self-hosted runners keep their build between runs (target outside the cleaned checkout).
+      - name: Keep the build on the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_WORKSPACE/../target-$RUNNER_NAME-roundtrip" >> "$GITHUB_ENV"
+          if command -v sccache >/dev/null; then echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"; fi
+          bash scripts/ci-runner-toolchain.sh
       # The Linux test job's build covers this one: restoring its cache keeps a second copy of the
       # same dependencies out of the repository's cache storage.
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           shared-key: test-ubuntu-latest-debug
           save-if: false
       - run: cargo build --locked -p dutchman --bin dutchman
+      - name: Name the built program
+        run: echo "DUTCHMAN_BIN=${CARGO_TARGET_DIR:-target}/debug/dutchman" >> "$GITHUB_ENV"
       - run: df -h / .
       # Fetched archives are kept between runs, so a release server outage doesn't fail the
       # check: the script still verifies a cached archive against the release checksum.
@@ -561,7 +682,7 @@ jobs:
         run: |
           cube=1000:6:0,0,0:10,10,10
           fixtures=crates/dutchman-core/tests/fixtures
-          scripts/solidcraft-roundtrip.sh "solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli" target/debug/dutchman \
+          scripts/solidcraft-roundtrip.sh "solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli" "$DUTCHMAN_BIN" \
             "$fixtures/generated_unit_cube.f3d=$cube" \
             "$fixtures/synthetic_cube.ipt=$cube" \
             "$fixtures/solidworks_cube.sldprt=$cube" \
@@ -581,10 +702,10 @@ jobs:
   # Share the Linux tools; queue groups run only the small placement smoke checks.
   placements:
     needs: changes
-    if: needs.changes.outputs.full == 'true' || (github.event_name == 'merge_group' && needs.changes.outputs.code == 'true')
+    if: needs.changes.outputs.full == 'true' || (github.event_name == 'merge_group' && needs.changes.outputs.code == 'true') || (github.event_name == 'pull_request' && needs.changes.outputs.placements == 'true')
     uses: ./.github/workflows/placements.yml
     with:
-      smoke-only: ${{ github.event_name == 'merge_group' }}
+      smoke-only: ${{ github.event_name == 'merge_group' || github.event_name == 'pull_request' }}
 
   release-build:
     # Tags build directly in release-build.yml; main has the nightly builds. Queue groups
@@ -622,10 +743,10 @@ jobs:
               "changes": True, "release-notes": True,
               "fmt": code, "clippy": code,
               "test": code or (event == "pull_request" and outputs.get("platform") == "true"), "docs": not code,
-              "wasm": native, "msrv": native,
-              "solidcraft-roundtrip": native or (event == "pull_request" and outputs.get("floor") == "true"),
+              "wasm": native, "msrv": native or outputs.get("lockfile") == "true",
+              "solidcraft-roundtrip": native or (event == "merge_group" and code) or (event == "pull_request" and outputs.get("floor") == "true"),
               "test-macos": (full and outputs.get("rust") == "true") or (event == "pull_request" and outputs.get("platform") == "true"),
-              "placements": full or (event == "merge_group" and code),
+              "placements": full or (event == "merge_group" and code) or (event == "pull_request" and outputs.get("placements") == "true"),
               "release-build": event == "workflow_dispatch" and os.environ["RELEASE_BUILDS"] == "true",
           }
           bad = {}

@@ -227,13 +227,13 @@ enum Command {
         input: PathBuf,
         /// The output file to write, matching --to; DXF also accepts an existing directory.
         /// Omit to write beside the input (URLs use the current folder); folders and ZIPs get a new (SolidCraft) folder.
-        /// An explicit output is replaced, unless --no-clobber; an existing default needs --force.
+        /// An existing file is never replaced unless --replace: the design gets the next free name, `name (2).sc`.
         #[arg(conflicts_with = "output_flag")]
         output: Option<PathBuf>,
         /// Output path (an alternative to the positional output).
         #[arg(short = 'o', long = "output", value_name = "FILE")]
         output_flag: Option<PathBuf>,
-        /// Replace an existing default output beside the input.
+        /// The same as --replace (the old name for it when the output is the default).
         #[arg(long, conflicts_with = "no_clobber")]
         force: bool,
         #[command(flatten)]
@@ -282,7 +282,7 @@ enum Command {
         #[arg(required = true)]
         inputs: Vec<PathBuf>,
         /// Output folder, keeping each project's layout (default: a new (SolidCraft) folder
-        /// beside the first input). Existing designs are replaced unless --no-clobber.
+        /// beside the first input). Existing designs are never replaced unless --replace; a new design gets the next free name.
         #[arg(long, value_name = "DIR")]
         out_dir: Option<PathBuf>,
         /// How many files to convert at once (default: the machine's cores, at most 8).
@@ -586,7 +586,7 @@ fn run_cli() -> ExitCode {
         Command::Onshape {
             command: OnshapeCommand::Fetch(options),
         } => {
-            let report = dutchman::onshape::run(&options);
+            let report = onshape_fetch_report(&options);
             if options.json {
                 println!("{report}");
             } else {
@@ -949,6 +949,7 @@ fn run_cli() -> ExitCode {
             } else {
                 input.clone()
             };
+            options.replace |= force;
             options.part = part.map(|number| dutchman_core::PartSelection {
                 number,
                 children: with_children,
@@ -1005,7 +1006,9 @@ fn run_cli() -> ExitCode {
                     print!("{}", batch::text(&report, verbose));
                 }
                 let log = log.unwrap_or_else(|| out_dir.join(batch::LOG_NAME));
-                if let Err(err) = std::fs::write(&log, batch::full_log(&report)) {
+                if let Err(err) =
+                    dutchman::write_file(&log, batch::full_log(&report).as_bytes(), options.replace)
+                {
                     eprintln!("dutchman: cannot write {}: {err}", log.display());
                 }
                 if let Some(request) = anon.take() {
@@ -1036,13 +1039,15 @@ fn run_cli() -> ExitCode {
                     &input,
                     &output,
                     page.as_deref(),
-                    !options.no_clobber && (!derived || force),
+                    options.replace,
                     &options,
                 );
                 if let Some(log) = log {
-                    if let Err(err) =
-                        std::fs::write(&log, json::full_log(&report, &batch::line(&report)))
-                    {
+                    if let Err(err) = dutchman::write_file(
+                        &log,
+                        json::full_log(&report, &batch::line(&report)).as_bytes(),
+                        options.replace,
+                    ) {
                         eprintln!("dutchman: cannot write {}: {err}", log.display());
                     }
                 }
@@ -1074,27 +1079,27 @@ fn run_cli() -> ExitCode {
                 }
                 return exit(&report);
             }
+            let library = dutchman::tool_library::is_library(&input);
             let output = explicit.unwrap_or_else(|| {
                 dutchman_core::Format::part_revision(&default_input)
                     .map_or_else(|| default_input.clone(), |(part, _)| part)
-                    .with_extension(options.output_extension())
+                    .with_extension(if library {
+                        dutchman_core::camtools::EXTENSION
+                    } else {
+                        options.output_extension()
+                    })
             });
-            if derived {
-                if input == output
+            if derived
+                && (input == output
                     || std::fs::canonicalize(&input)
                         .ok()
                         .zip(std::fs::canonicalize(&output).ok())
-                        .is_some_and(|(input, output)| input == output)
-                {
-                    eprintln!("dutchman: default output {} is the input file; choose another output with -o PATH", output.display());
-                    return ExitCode::from(2);
-                }
-                if output.try_exists().unwrap_or(true) && !force {
-                    eprintln!("dutchman: {} already exists; choose another output with -o PATH, or replace it with --force", output.display());
-                    return ExitCode::from(2);
-                }
-                options.no_clobber |= !force;
+                        .is_some_and(|(input, output)| input == output))
+            {
+                eprintln!("dutchman: default output {} is the input file; choose another output with -o PATH", output.display());
+                return ExitCode::from(2);
             }
+            let output = dutchman::resolve_output(&output, options.replace);
             if !json {
                 if let Some(status) =
                     json::status_line(&serde_json::json!({"input": json::input(&input)}))
@@ -1226,14 +1231,11 @@ fn run_cli() -> ExitCode {
                 }
             }
             let log = log.unwrap_or_else(|| out_dir.join(batch::LOG_NAME));
-            let written = log
-                .parent()
-                .filter(|folder| !folder.as_os_str().is_empty())
-                .map_or(Ok(()), std::fs::create_dir_all)
-                .and_then(|()| std::fs::write(&log, batch::full_log(&report)));
+            let written =
+                dutchman::write_file(&log, batch::full_log(&report).as_bytes(), options.replace);
             match written {
-                Ok(()) if !json => eprintln!("dutchman: every loss, in full: {}", log.display()),
-                Ok(()) => {}
+                Ok(log) if !json => eprintln!("dutchman: every loss, in full: {}", log.display()),
+                Ok(_) => {}
                 Err(err) => eprintln!("dutchman: cannot write {}: {err}", log.display()),
             }
             if let Some(request) = anon {
@@ -1583,10 +1585,11 @@ fn anon_request(
         }
     };
     options.diagnostics_salt = Some(salt.clone());
+    let replace = options.replace;
     Ok(Some(anon::Request {
-        path,
+        path: dutchman::resolve_file(path, replace),
         salt: Some(salt),
-        key: report_key,
+        key: report_key.map(|key| dutchman::resolve_file(key, replace)),
         counts,
     }))
 }
@@ -1703,14 +1706,14 @@ fn convert(
         input,
         output,
         options,
-        !options.no_clobber,
+        options.replace,
         &options.part_search(),
         &|event| progress.report(input, event),
     );
     progress.finish();
     if let Some(log) = log {
         let text = json::full_log(&report, &batch::line(&report));
-        if let Err(err) = std::fs::write(log, text) {
+        if let Err(err) = dutchman::write_file(log, text.as_bytes(), options.replace) {
             eprintln!("dutchman: cannot write {}: {err}", log.display());
         }
     }
@@ -1742,12 +1745,13 @@ fn convert(
         for line in json::completeness_lines(&report) {
             println!("{line}");
         }
-        let losses = report
-            .get("losses")
-            .and_then(Value::as_array)
-            .map_or(&[][..], Vec::as_slice);
+        if let Some(meaning) = json::unverified_history(&report, true) {
+            println!("{meaning}");
+        }
+        // Notes that change nothing the person sees wait for --verbose.
+        let losses = json::listed_losses(&report, verbose);
         if verbose || losses.len() <= json::LISTED {
-            print_losses(losses, verbose);
+            print_losses(&losses, verbose);
         } else {
             for line in json::grouped_lines(&report) {
                 eprintln!("dutchman: {line}");
@@ -1813,7 +1817,9 @@ fn inspect(
         match (&inspection.conversion, &outcome.mode, &outcome.check) {
             (Err(reason), _, _) => println!("would write: nothing; converting it fails: {reason}"),
             (Ok(()), Mode::PartialHistory, _) => {
-                println!("would write: partial editable history and the imported final shape")
+                println!(
+                    "would write: partial editable history, then the rest as one imported body"
+                )
             }
             (Ok(()), Mode::History, _) => println!("would write: editable history"),
             (Ok(()), Mode::Import, Check::Flattened(reason) | Check::NotApplicable(reason)) => {
@@ -1944,6 +1950,39 @@ fn print_losses(losses: &[Value], verbose: bool) {
 }
 
 /// The error's own words, with the system's reason when it has one. Never the keys.
+/// Estimates, shows the estimate, asks on a terminal when it is above 50 calls and `--yes` was
+/// not given, then fetches. An explicit `--max-calls` is both ceiling and consent.
+fn onshape_fetch_report(options: &dutchman::onshape::FetchOptions) -> Value {
+    use dutchman::onshape as onshape_api;
+    use std::io::IsTerminal;
+    if options.max_calls.is_some() {
+        return onshape_api::run(options);
+    }
+    let estimate = match onshape_api::estimate(options) {
+        Ok(estimate) => estimate,
+        Err(error) => return json::onshape_fetch(&Err(error)),
+    };
+    if !options.json {
+        eprintln!(
+            "Estimated Onshape API calls: about {} ({} already used to list the document; replies already cached cost none).",
+            onshape_api::calls_text(estimate.calls),
+            onshape_api::calls_text(estimate.listing_calls)
+        );
+    }
+    let interactive =
+        !options.json && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    let allowed = onshape_api::approval(&estimate, options.yes, interactive, |estimate| {
+        eprint!("{} [y/N] ", estimate.question());
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).is_ok()
+            && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+    });
+    match allowed {
+        Ok(()) => onshape_api::run_after(options, &estimate),
+        Err(error) => json::onshape_fetch(&Err(error)),
+    }
+}
+
 fn onshape_reason(error: &dutchman::onshape::Error) -> String {
     match &error.detail {
         Some(detail) => format!("{} ({detail})", error.message),
@@ -2135,7 +2174,7 @@ mod output_tests {
             if command != "convert" {
                 args.extend(["--out-dir", "out"]);
             }
-            for version in ["0.18.2", "0.25.1", "0.45.0"] {
+            for version in ["0.18.2", "0.25.1", "0.49.0"] {
                 let mut valid = args.clone();
                 valid.extend(["--solidcraft-version", version, "--no-verify"]);
                 let cli = Cli::try_parse_from(valid).unwrap();

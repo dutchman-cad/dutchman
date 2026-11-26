@@ -760,7 +760,7 @@ async fn a_failed_file_offers_the_private_steps_with_its_message() {
     let (_, _, page) = send(&app, get(&format!("/{location}"))).await;
     let page = text(&page);
     for wanted in [
-        "Join our Discord server",
+        "Join our Discord",
         "https://discord.gg/yTcseBEdeu",
         "https://discord.com/users/",
         "Drag the file in (the file you picked).",

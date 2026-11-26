@@ -397,36 +397,181 @@ pub(crate) fn link_ui(
             && ui.input(|i| i.key_pressed(egui::Key::Enter)))
 }
 
-pub(crate) fn fetch(link: String, folder: &std::path::Path) -> Result<std::path::PathBuf, String> {
-    fetch_with_token_file(link, folder, None)
+/// Calls a continued fetch may use, at most. The replies already fetched are reused and
+/// cost none, so this only covers what is left.
+pub(crate) const CONTINUE_CALLS: u32 = 2000;
+
+/// What the confirmation asks, in three parts so the call count can be drawn bold: the text
+/// before it, the number, and the text after it. `estimate` is the calls needed. `resume`
+/// is a continued fetch; with no estimate it says how many more calls it may use at most.
+pub(crate) fn approval_parts(estimate: Option<u32>, resume: bool) -> (String, String, String) {
+    use dutchman::onshape::{calls_text, FREE_PLAN_YEARLY_CALLS};
+    let yearly = calls_text(FREE_PLAN_YEARLY_CALLS);
+    match (estimate, resume) {
+        (Some(calls), false) => (
+            "This document needs about ".to_owned(),
+            calls_text(calls),
+            format!(" of your yearly Onshape API calls ({yearly} on Free plans). Continue?"),
+        ),
+        (Some(calls), true) => (
+            "Fetching the rest needs about ".to_owned(),
+            calls_text(calls),
+            format!(" more of your yearly Onshape API calls ({yearly} on Free plans); replies already fetched cost none. Continue?"),
+        ),
+        (None, _) => (
+            "Fetching the rest may use up to ".to_owned(),
+            calls_text(CONTINUE_CALLS),
+            format!(" more of your yearly Onshape API calls ({yearly} on Free plans); replies already fetched cost none. Continue?"),
+        ),
+    }
+}
+
+/// The whole confirmation as one string.
+#[cfg(test)]
+pub(crate) fn approval_question(estimate: Option<u32>, resume: bool) -> String {
+    let (before, number, after) = approval_parts(estimate, resume);
+    format!("{before}{number}{after}")
+}
+
+/// The calls a fetch is estimated to need, worked out from the document listing, which costs
+/// at most three calls. Nothing else is spent.
+pub(crate) fn estimate_calls(
+    link: String,
+    bearer_token_file: Option<std::path::PathBuf>,
+) -> Result<u32, String> {
+    dutchman::onshape::estimate(&dutchman::onshape::FetchOptions {
+        document_url: link,
+        out: None,
+        version: None,
+        bearer_token_file,
+        max_calls: None,
+        yes: false,
+        json: false,
+    })
+    .map(|estimate| estimate.calls)
+    .map_err(|why| why.message.to_owned())
+}
+
+const STOP_START: &str = "Stopped after ";
+const STOP_CALLS: &str = " Onshape API calls.";
+const STOP_MORE: &str = " About ";
+const STOP_MORE_END: &str =
+    " more are needed; Continue fetching uses them from your yearly allowance.";
+const STOP_UNKNOWN: &str = " Continue fetching uses more from your yearly allowance.";
+const STOP_KEPT: &str = " What's fetched so far is kept.";
+
+/// Shown when the fetch stops at Dutchman's limit on Onshape requests: the calls made and,
+/// when known, about how many more the rest needs. The Results card offers "Continue
+/// fetching" under it, so it names no command-line option.
+pub(crate) fn budget_stop_text(calls: u32, remaining: Option<u32>) -> String {
+    use dutchman::onshape::calls_text;
+    let mut text = format!("{STOP_START}{}{STOP_CALLS}", calls_text(calls));
+    match remaining {
+        Some(more) => text.push_str(&format!("{STOP_MORE}{}{STOP_MORE_END}", calls_text(more))),
+        None => text.push_str(STOP_UNKNOWN),
+    }
+    text.push_str(STOP_KEPT);
+    text
+}
+
+/// The calls made and the remaining estimate in a text from [`budget_stop_text`]; `None`
+/// when the text is not one.
+pub(crate) fn parse_budget_stop(text: &str) -> Option<(u32, Option<u32>)> {
+    let number = |digits: &str| digits.replace(',', "").parse::<u32>().ok();
+    let rest = text.strip_prefix(STOP_START)?;
+    let (made, rest) = rest.split_once(STOP_CALLS)?;
+    let made = number(made)?;
+    let remaining = rest
+        .strip_prefix(STOP_MORE)
+        .and_then(|rest| rest.split_once(STOP_MORE_END))
+        .and_then(|(more, _)| number(more));
+    Some((made, remaining))
+}
+
+pub(crate) fn fetch(
+    link: String,
+    folder: &std::path::Path,
+    progress: &mut dyn dutchman::onshape::FetchProgress,
+) -> Result<std::path::PathBuf, String> {
+    fetch_with_token_file(link, folder, None, progress)
+}
+
+/// Carries on after a stop at the request limit, with a larger limit and the cached replies.
+pub(crate) fn fetch_continuing(
+    link: String,
+    folder: &std::path::Path,
+    progress: &mut dyn dutchman::onshape::FetchProgress,
+) -> Result<std::path::PathBuf, String> {
+    fetch_with_budget(link, folder, None, Some(CONTINUE_CALLS), progress)
 }
 
 pub(crate) fn fetch_with_token_file(
     link: String,
     folder: &std::path::Path,
     bearer_token_file: Option<std::path::PathBuf>,
+    progress: &mut dyn dutchman::onshape::FetchProgress,
+) -> Result<std::path::PathBuf, String> {
+    fetch_with_budget(link, folder, bearer_token_file, None, progress)
+}
+
+pub(crate) fn fetch_with_budget(
+    link: String,
+    folder: &std::path::Path,
+    bearer_token_file: Option<std::path::PathBuf>,
+    max_calls: Option<u32>,
+    progress: &mut dyn dutchman::onshape::FetchProgress,
 ) -> Result<std::path::PathBuf, String> {
     let element = dutchman::onshape::DocumentUrl::parse(&link, None)
         .map_err(|why| why.message.to_owned())?
         .element;
     let out = folder.join(format!("{element}.onshape-bundle"));
-    let report = dutchman::onshape::run(&dutchman::onshape::FetchOptions {
-        document_url: link,
-        out: Some(out.clone()),
-        version: None,
-        bearer_token_file,
-        max_calls: 50,
-        json: false,
-    });
+    let report = dutchman::onshape::run_with_progress(
+        &dutchman::onshape::FetchOptions {
+            document_url: link,
+            out: Some(out.clone()),
+            version: None,
+            bearer_token_file,
+            max_calls,
+            // The app asks before this point whenever the estimate is above 50 calls.
+            yes: true,
+            json: false,
+        },
+        Some(progress),
+    );
     if report.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
-        Ok(out)
-    } else {
-        Err(report
-            .pointer("/error/message")
+        // The bundle was written under the link's id; it goes by the design's name once
+        // it is whole. The cache of fetched replies is elsewhere, so a resumed fetch
+        // does not depend on this name. A failed rename keeps the complete id-named file.
+        let titled = report
+            .get("title")
             .and_then(serde_json::Value::as_str)
-            .unwrap_or("Onshape could not be fetched; check the link and retry.")
-            .to_owned())
+            .and_then(|title| dutchman::onshape::retitle(&out, title).ok());
+        Ok(titled.unwrap_or(out))
+    } else {
+        Err(failure_message(&report))
     }
+}
+
+/// The text the Results card shows for a failed fetch.
+fn failure_message(report: &serde_json::Value) -> String {
+    // A fetch the user stopped is shown like a stop at the request limit: resumable.
+    if matches!(
+        report
+            .pointer("/error/code")
+            .and_then(serde_json::Value::as_str),
+        Some("onshape/budget" | "onshape/stopped")
+    ) {
+        let calls = report
+            .get("calls")
+            .and_then(serde_json::Value::as_u64)
+            .map_or(0, |calls| u32::try_from(calls).unwrap_or(u32::MAX));
+        return budget_stop_text(calls, None);
+    }
+    report
+        .pointer("/error/message")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Onshape could not be fetched; check the link and retry.")
+        .to_owned()
 }
 
 /// The source archive stays intact; report transport wraps it in its existing gzip envelope.
@@ -534,11 +679,51 @@ mod tests {
     }
 
     #[test]
+    fn the_approval_text_groups_thousands_and_keeps_the_number_apart() {
+        let (before, number, after) = approval_parts(Some(1234), false);
+        assert_eq!(number, "1,234");
+        assert_eq!(
+            format!("{before}{number}{after}"),
+            "This document needs about 1,234 of your yearly Onshape API calls (2,500 on Free plans). Continue?"
+        );
+        assert_eq!(approval_parts(Some(120), false).1, "120");
+        assert_eq!(approval_parts(None, true).1, "2,000");
+        assert!(approval_question(Some(900), true).contains("needs about 900 more"));
+    }
+
+    #[test]
+    fn a_call_limit_stop_names_no_command_line_option() {
+        let report = serde_json::json!({"ok": false, "calls": 50,
+            "error": {"code": "onshape/budget", "message": "Onshape call budget reached; raise it with --max-calls"}});
+        let text = failure_message(&report);
+        assert_eq!(
+            text,
+            "Stopped after 50 Onshape API calls. Continue fetching uses more from your yearly allowance. What's fetched so far is kept."
+        );
+        assert!(!text.contains("--"));
+        assert_eq!(parse_budget_stop(&text), Some((50, None)));
+        let known = budget_stop_text(50, Some(2500));
+        assert_eq!(
+            known,
+            "Stopped after 50 Onshape API calls. About 2,500 more are needed; Continue fetching uses them from your yearly allowance. What's fetched so far is kept."
+        );
+        assert_eq!(parse_budget_stop(&known), Some((50, Some(2500))));
+        assert_eq!(parse_budget_stop("Keys refused"), None);
+        let other = serde_json::json!({"ok": false, "error": {"code": "onshape/auth", "message": "Keys refused"}});
+        assert_eq!(failure_message(&other), "Keys refused");
+    }
+
+    #[test]
     fn desktop_fetch_uses_the_selected_token_file() {
         let folder = tempfile::tempdir().unwrap();
         let missing = folder.path().join("missing-token");
         let link = "https://cad.onshape.com/documents/111111111111111111111111/v/222222222222222222222222/e/333333333333333333333333";
-        let error = fetch_with_token_file(link.into(), folder.path(), Some(missing)).unwrap_err();
+        struct Silent;
+        impl dutchman::onshape::FetchProgress for Silent {
+            fn calls(&mut self, _sent: u32, _needed: Option<u32>) {}
+        }
+        let error = fetch_with_token_file(link.into(), folder.path(), Some(missing), &mut Silent)
+            .unwrap_err();
         assert!(error.contains("bearer token file"));
         assert!(!error.contains("missing-token"));
     }

@@ -6,25 +6,22 @@ synthetic test files and pull requests are all welcome.
 
 ## Where to start
 
-0. Comment `/claim` on the issue first: claim, then a draft pull request within 24 hours,
-   even rough. After that, claims lapse after 5 days without activity from you, except
-   while a ready pull request waits on a maintainer or an open dependency. Maintainer
-   claims never lapse. A maintainer can also assign an issue to you; that counts as claiming it.
-   Comment `/unclaim` to give it up; see [issue claims](docs/claiming.md).
+Open a pull request when you're ready. For a bigger change, a short comment on the issue first
+helps avoid two people building the same thing; it isn't a reservation.
 
-Pick a CAD program below, then an unchecked, unclaimed item on its parent issue, and open a pull
-request. Every issue labelled [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+Pick a CAD program below, then an unchecked item on its parent issue, and open a pull
+request. Every issue labeled [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 or [good first issue](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 is open to anyone. Each issue states what is known, what is unknown, and how to verify the change
 with public CC0 files and their STEP exports, so you can hand it straight to an AI agent: start it
 with [AGENTS.md](AGENTS.md). Reading a native file belongs in
-[cadmpeg](https://github.com/cadmpeg/cadmpeg); its issues use the same format. Issues labelled
+[cadmpeg](https://github.com/cadmpeg/cadmpeg); its issues use the same format. Issues labeled
 `blocked` wait on a cadmpeg piece first; the issue says which.
 
 ### Pick a CAD program
 
 Each program has one parent issue. Paste its block into your AI agent: it picks a sub-issue,
-claims it, and works it to a pull request.
+and works it to a pull request.
 
 **SolidWorks** (`.sldprt`, `.sldasm`): [dutchman#866](https://github.com/dutchman-cad/dutchman/issues/866).
 cadmpeg already reads the geometry and the parts of an assembly; this is about feature history,
@@ -32,8 +29,7 @@ holes, fillets, sweeps, lofts, sheet metal and mates.
 
 ```
 Read https://github.com/dutchman-cad/dutchman/issues/866
-Pick one unchecked sub-issue that is not labelled blocked or claimed
-Comment /claim on that sub-issue, then work on it
+Pick one unchecked sub-issue that is not labeled blocked
 Clone https://github.com/dutchman-cad/dutchman
 Follow AGENTS.md and docs/agents/solidworks.md
 Open a pull request when the sub-issue's "How to verify" passes
@@ -45,9 +41,8 @@ on cadmpeg, so the cadmpeg side is the place to start.
 
 ```
 Read https://github.com/dutchman-cad/dutchman/issues/840
-Pick one unchecked sub-issue that is not labelled blocked or claimed; if all are blocked, take the
+Pick one unchecked sub-issue that is not labeled blocked; if all are blocked, take the
   open cadmpeg issue one of them depends on instead (its own block is at its top)
-Comment /claim on that issue, then work on it
 Clone https://github.com/dutchman-cad/dutchman
 Follow AGENTS.md and docs/agents/solid-edge.md
 Open a pull request when the issue's "How to verify" passes
@@ -60,9 +55,8 @@ open now.
 
 ```
 Read https://github.com/dutchman-cad/dutchman/issues/891
-Pick one unchecked sub-issue that is not labelled blocked or claimed; if all are blocked, take the
+Pick one unchecked sub-issue that is not labeled blocked; if all are blocked, take the
   open cadmpeg pull request or issue one of them depends on instead
-Comment /claim on that issue, then work on it
 Clone https://github.com/dutchman-cad/dutchman
 Follow AGENTS.md and docs/agents/onshape.md
 Open a pull request when the issue's "How to verify" passes
@@ -199,7 +193,7 @@ updates `Cargo.lock`; do not commit what it changes either.
 ### Check one file quickly
 
 A `--release` build takes a long time, and a plain debug build converts a large design too
-slowly to wait for. A debug build optimised enough (`opt-level = 2`, no debug information)
+slowly to wait for. A debug build optimized enough (`opt-level = 2`, no debug information)
 converts one design in reasonable time, and it builds much faster than `--release`:
 
 ```sh
@@ -212,7 +206,7 @@ Use `--release` for timings and for anything you report as a speed.
 ### Use CI-built binaries instead of building locally
 
 Pull requests and pushes to main build the debug profile and run the tests, which is what
-checks them. The optimised programs (thin LTO, the same `dutchman`, `dutchman-mcp` and
+checks them. The optimized programs (thin LTO, the same `dutchman`, `dutchman-mcp` and
 `dutchman-gui` a release ships) come from three places:
 
 - `main`: the nightly build, made every day from main and kept for 7 days. The script says which
@@ -264,11 +258,18 @@ artifact has lost its executable bit, so `chmod +x` the programs.
 
 A few things reviewers ask about most:
 
+- **Which version a change belongs to.** Better results on formats Dutchman already accepts, a newer
+  cadmpeg pin with no visible change of shape, bug fixes, wording, docs and performance go in a patch
+  release (`0.x.Y`). A new way in (a new format, source or module), a new command, option, setting or
+  app flow, any breaking change (CLI flags or exit codes, output file layout, the plugin manifest,
+  dropping a supported SolidCraft version) or a new newest SolidCraft minor goes in a minor release
+  (`0.X.0`), whose notes carry a "Breaking changes" section when there is one. The full rule is in
+  [docs/releasing.md](docs/releasing.md#choosing-the-version).
 - **SolidCraft versions.** Keep the 0.18.2 opens-in floor, its CI job and all existing writer checks.
   Before starting, run `scripts/solidcraft-window.sh --print`: new work targets only newest plus releases
   published in the last 14 days. Never back-port features or add gates older than that window;
   flatten new features for older targets with a named reason, keeping the file opening.
-- **Keep the default output.** A new behaviour that changes what an existing file converts to
+- **Keep the default output.** A new behavior that changes what an existing file converts to
   (orientation, units, placement, names) is opt-in behind a flag, and the default output stays
   the same. Change a golden file or a placement expectation only when the change means to, and
   say why in the pull request.
@@ -286,10 +287,10 @@ A few things reviewers ask about most:
 Write commit messages and pull request titles in the imperative, in sentence case, saying
 what changes for the user: "Map patterns of features", "Convert SolidWorks parts".
 
-## Licence
+## License
 
 Dutchman is licensed under the [Apache License, Version 2.0](LICENSE). By contributing, you
-agree that your contributions are licensed under the same terms (section 5 of the licence).
+agree that your contributions are licensed under the same terms (section 5 of the license).
 There is no separate contributor agreement or sign-off.
 
 ## Clean-room rule

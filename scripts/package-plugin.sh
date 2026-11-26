@@ -45,6 +45,14 @@ if echo "$imports" | grep -qv '^craft:plugin/'; then
     echo "The component imports something besides craft:plugin interfaces" >&2
     exit 1
 fi
+# SolidCraft compiles this module on a file's first open, so its size is a budget: 0.3.0 was
+# 55.7 MB, and this limit is 1.2x that. Raise PLUGIN_WASM_MAX_BYTES only on purpose.
+max_bytes=${PLUGIN_WASM_MAX_BYTES:-67000000}
+size=$(wc -c <"$out/dutchman.wasm")
+if [ "$size" -gt "$max_bytes" ]; then
+    echo "dutchman.wasm is $size bytes, over the $max_bytes byte budget (PLUGIN_WASM_MAX_BYTES); SolidCraft compiles it on a file's first open" >&2
+    exit 1
+fi
 zip_name=dutchman-plugin.zip
 if [ -n "$version" ]; then
     case "$version" in

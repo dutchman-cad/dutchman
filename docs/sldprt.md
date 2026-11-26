@@ -25,7 +25,7 @@ described below.
 | No geometry (no Parasolid stream yields a body). | Stops: "no geometry could be read". |
 | Bodies with no face whose bounds can be written (for example a lone face whose edges have no curve). | Stops: "the model has no solids or surfaces SolidCraft can import". Faces that can be bounded convert as surfaces, with the rest reported. |
 | Losses: an unverified SolidWorks version, configurations inferred from geometry, opaque carriers, derived body hierarchy. | Printed as Degraded, with cadmpeg's loss code. |
-| Parameters, with their expressions (`Depth = 12.5mm`). | Mapped to SolidCraft parameters when the history maps. |
+| Parameters, with their expressions (`Depth = 12.5mm`). | Mapped to SolidCraft parameters when the history maps. A length the file keeps next to rounded display text (6.35 mm shown as `0.25` in an inch document) is written as its stored value, not the bare display number. |
 | Feature history from the Keywords XML: extrusions with their operation, extent and depth; sketches; suppression state; many features only as `native` records. | Keeps editable features before the first blocker and resolved sketches, hidden beside the imported final shape; the report names the blocker (below). Without a body-building prefix, keeps reference sketches beside the import. |
 | Sketch geometry from the ResolvedFeatures records: lines, arcs, circles, ellipses, splines, coincidences, with a resolved plane. | Read only through a sketch feature that binds it (below). |
 
@@ -47,7 +47,7 @@ seam.
 Stored base features name only regions that STEP can emit: a region with no shells
 contributes no shape and consumes no appearance target. Empty exterior or void regions
 therefore do not discard the editable history. Other shape-count mismatches leave the explicit appearance targets unbound while
-keeping the base geometry and history; colours must never shift onto different bodies.
+keeping the base geometry and history; colors must never shift onto different bodies.
 
 Offset datum planes retain their resolved reference frame and signed distance for later
 plane consumers. A missing support does not block history when every consumer is a sketch
@@ -110,8 +110,9 @@ occurrences and placements; Dutchman resolves external `.sldprt` and `.sldasm` r
 through the shared assembly file finder. Absolute Windows paths are matched by file name,
 case-insensitively, beside the assembly first, then through the project and `--search` folders.
 When none of the assembly's part files can be found or read, and the assembly holds no bodies
-of its own, conversion stops with "none of the assembly's parts could be found or read", and the
-report lists each part file it looked for.
+of its own, conversion stops with "none of the assembly's parts could be found or read", naming
+the first part files it looked for. "Beside the assembly" also holds for a bare file name such as
+`dutchman convert A01a.SLDASM` run in the assembly's own folder.
 See [finding part files](inventor.md#finding-the-part-files) for the shared search rules.
 
 The file's root component stays around its placed parts, including when CADIR stores
@@ -122,8 +123,8 @@ configuration share one read across the whole assembly tree, including sibling s
 Saved display tessellations are released before building that tree; exact geometry and feature
 history are kept.
 
-Assemblies with many coloured faces retain their body and face colours without long pauses
-while mapping those colours, including with the fast preset.
+Assemblies with many colored faces retain their body and face colors without long pauses
+while mapping those colors, including with the fast preset.
 
 Parts that cannot be found or read are left out and reported for every affected occurrence;
 the remaining parts still convert. Virtual components without readable geometry are reported.
