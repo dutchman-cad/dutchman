@@ -525,3 +525,83 @@ fn a_step_file_with_only_a_curve_reads_and_is_not_an_empty_export() {
         panic!("a STEP file holding a curve must read, got: {err}");
     }
 }
+
+fn first(bytes: &[u8], signature: &[u8; 4]) -> usize {
+    bytes.windows(4).position(|w| w == signature).unwrap()
+}
+
+#[test]
+fn a_fusion_file_missing_its_end_record_still_converts_what_it_holds() {
+    let cube = std::fs::read(fixture("generated_unit_cube.f3d")).unwrap();
+    let cut = &cube[..first(&cube, b"PK\x01\x02")];
+    let path = scratch("no_end_record.f3d", cut);
+    let mut report = Report::default();
+    let model = read(Format::FusionArchive, &path, &mut report).unwrap();
+    assert!(!model.ir.model.bodies.is_empty());
+    let loss = report
+        .losses()
+        .iter()
+        .find(|loss| loss.subject == "incomplete-export")
+        .unwrap_or_else(|| panic!("the loss is reported: {:?}", report.losses()));
+    assert!(loss.detail.contains("ends early"), "{}", loss.detail);
+    assert!(
+        loss.detail.contains("Re-export it from Fusion"),
+        "{}",
+        loss.detail
+    );
+}
+
+#[test]
+fn a_fusion_file_cut_before_its_geometry_says_what_is_missing() {
+    let cube = std::fs::read(fixture("generated_unit_cube.f3d")).unwrap();
+    // The geometry member is the last one written: cut inside it.
+    let geometry = cube
+        .windows(4)
+        .enumerate()
+        .filter(|(_, w)| *w == b"PK\x03\x04")
+        .map(|(at, _)| at)
+        .last()
+        .unwrap();
+    let path = scratch("cut_in_geometry.f3d", &cube[..geometry + 100]);
+    let err = read(Format::FusionArchive, &path, &mut Report::default()).unwrap_err();
+    assert!(matches!(err, Error::EmptyExport(_)), "{err:?}");
+    let message = err.to_string();
+    assert!(message.contains("This export is incomplete"), "{message}");
+    assert!(message.contains("Breps part is missing"), "{message}");
+    assert!(message.contains("ends early"), "{message}");
+    assert!(message.contains("File > Export > .f3d"), "{message}");
+}
+
+#[test]
+fn a_fusion_file_without_its_geometry_member_says_so() {
+    let cube = std::fs::read(fixture("design_copy_paste.f3d")).unwrap();
+    let mut source = zip::ZipArchive::new(std::io::Cursor::new(cube)).unwrap();
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for index in 0..source.len() {
+        let mut member = source.by_index(index).unwrap();
+        if member.name().contains("Breps.BlobParts/") {
+            continue;
+        }
+        out.start_file(
+            member.name().to_owned(),
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        std::io::copy(&mut member, &mut out).unwrap();
+    }
+    let bytes = out.finish().unwrap().into_inner();
+    let path = scratch("no_breps.f3d", &bytes);
+    let err = read(Format::FusionArchive, &path, &mut Report::default()).unwrap_err();
+    assert!(matches!(err, Error::EmptyExport(_)), "{err:?}");
+    let message = err.to_string();
+    assert!(
+        message.starts_with("cannot read this design: no geometry could be read"),
+        "{message}"
+    );
+    assert!(
+        message.contains("This export is incomplete: it holds the design's structure"),
+        "{message}"
+    );
+    assert!(message.contains("or send the .f3z"), "{message}");
+    assert!(!message.contains("download or copy it again"), "{message}");
+}
