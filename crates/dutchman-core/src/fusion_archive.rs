@@ -196,8 +196,8 @@ fn linked_designs(bytes: &[u8]) -> usize {
     // either parity.
     for parity in 0..2 {
         let mut run = String::new();
-        let pairs = manifest.get(parity..).unwrap_or_default().chunks_exact(2);
-        for pair in pairs.chain(std::iter::once(&[0, 0][..])) {
+        let (pairs, _) = manifest.get(parity..).unwrap_or_default().as_chunks::<2>();
+        for pair in pairs.iter().chain(std::iter::once(&[0u8, 0u8])) {
             match pair {
                 [byte @ 0x20..=0x7e, 0] => run.push(char::from(*byte)),
                 _ => {
