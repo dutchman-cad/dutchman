@@ -22051,6 +22051,41 @@ fn body_moves_keep_resolved_transforms_and_selected_bodies() {
     }
 }
 
+/// A copying move keeps its source and names the copy, its one output, for later features.
+#[test]
+fn copying_body_moves_keep_the_source_and_name_the_copy() {
+    let mut definition = body_move([20.0, 0.0, 0.0], None);
+    definition["value"]["copies"] = json!(1);
+    let mut model = modifying(definition);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][2]["outputs"] = json!(["synthetic:copy:body#0"]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0)),
+    );
+    let moved = &document["features"][2];
+    assert_eq!(moved["type"], "move", "{}", history_line(&report));
+    assert_eq!(moved["copy"], true);
+    assert_eq!(moved["bodies"], json!(["unit cube"]));
+    assert_eq!(moved["body_names"], json!(["unit cube (2)"]));
+    // The replay writes for the CLI's own version; older ones keep the final geometry.
+    if let Some(cli) = solidcraft().filter(|cli| {
+        dutchman_solidcraft::VersionGate::MoveBody.supported(
+            dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone())),
+        )
+    }) {
+        let mut starts: Vec<f64> = bounds(&cli, &written(&model).0)
+            .iter()
+            .map(|(min, _)| min[0])
+            .collect();
+        starts.sort_by(f64::total_cmp);
+        assert_eq!(starts, [0.0, 20.0]);
+    }
+}
+
 #[test]
 fn body_moves_rebuild_from_a_captured_base_with_two_identity_aliases() {
     let base = based_cube_changed_later(true);
@@ -22119,7 +22154,12 @@ fn body_moves_rebuild_from_a_captured_base_with_two_identity_aliases() {
 #[test]
 fn body_moves_refuse_copies_unresolved_bodies_and_older_targets() {
     for (change, reason) in [
-        (json!({"copies": 1}), "copied body result identities"),
+        // The fixture's move has no outputs, so nothing names its copy.
+        (
+            json!({"copies": 1}),
+            "its copied body is not its one output",
+        ),
+        (json!({"copies": 2}), "several copies of a body"),
         (
             json!({"bodies": {"kind": "native", "value": "synthetic unresolved selection"}}),
             "native body reference",

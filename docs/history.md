@@ -36,8 +36,10 @@ history, with no flattened-history warning.
     cylindrical faces, each written as a point inside the face, with the heal setting kept. A
     delete-face selection cadmpeg leaves native is reported as such and stops the history there;
   - body translations and axis-angle rotations on SolidCraft 0.45 or newer, including
-    explicit pivots, when selected bodies have proven earlier names. Copies and
-    unresolved body selections or motion retain the original final geometry;
+    explicit pivots, when selected bodies have proven earlier names. A move that makes one
+    copy of one body keeps the original and names the copy, so later features can use it.
+    Several copies and unresolved body selections or motion retain the original final
+    geometry;
   - move face, as SolidCraft's offset face: planar faces cadmpeg resolves in the feature's own
     input topology and moves along their normal, each written as a point inside the face with
     the signed distance. For SolidCraft 0.45 or newer, the selection also names the unique
