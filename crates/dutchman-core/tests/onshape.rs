@@ -84,9 +84,16 @@ fn synthetic_bundles_retain_the_expected_cadir_rows_and_final_step() {
         assert_eq!(kinds(&model), expected, "{name}: {:?}", report.losses());
         assert_eq!(model.ir.geometry.bodies.len(), 1);
         let wire = timeline(&model);
-        let roundtrip: cadmpeg_ir::CadIr =
-            serde_json::from_value(dutchman_core::ir_wire::to_value(&model.ir).unwrap()).unwrap();
+        // The CADIR wire reader refuses the design arenas the wire omits, so the full document
+        // is read back through `ir_wire`, and the bare wire is read as the reader states it.
+        let roundtrip = dutchman_core::ir_wire::from_value(
+            dutchman_core::ir_wire::to_value(&model.ir).unwrap(),
+        )
+        .unwrap();
         assert_eq!(roundtrip, model.ir);
+        let bare: cadmpeg_ir::CadIr =
+            serde_json::from_value(serde_json::to_value(&model.ir).unwrap()).unwrap();
+        assert_eq!(bare.geometry, model.ir.geometry);
         assert!(wire["model"].get("bodies").is_none());
         assert!(!wire["geometry"]["edges"].as_array().unwrap().is_empty());
         for edge in wire["geometry"]["edges"].as_array().unwrap() {
