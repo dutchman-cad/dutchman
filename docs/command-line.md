@@ -89,7 +89,7 @@ Targets before SolidCraft 0.25.1 get `.solidcraft` by default.
 [TechDraw drawing output](freecad.md#techdraw-to-dxf). If a model default exists, Dutchman
 writes the next free name (`part (2).sc`) and leaves it as it is. A default
 that is the input itself is always refused. An existing file is never replaced unless you pass
-`--replace` (`--force` means the same); the old `--no-clobber` is accepted and does nothing,
+`--replace` (`--force` means the same). A name that differs from an existing one only in capitals or in how an accented letter is stored counts as that file, because macOS and Windows keep one file for both; the old `--no-clobber` is accepted and does nothing,
 and `--force` conflicts with it. The report names the file actually written. Built-in commands win
 over files with the same name; use `dutchman convert pilot` for a file named `pilot`.
 Installed tools take precedence over bare files; otherwise an existing file or a recognised
