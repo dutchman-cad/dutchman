@@ -117,12 +117,12 @@ pub const PLAIN_NOTES: &[PlainNote] = &[
     ),
     coded(
         "dutchman/appearance.redundant-face",
-        "A face colour that repeated its body's colour was not written; nothing looks different.",
+        "A face color that repeated its body's color was not written; nothing looks different.",
         Shown::No,
     ),
     coded(
         "dutchman/appearance.",
-        "Some colours or appearances weren't carried over to the converted design.",
+        "Some colors or appearances weren't carried over to the converted design.",
         Shown::Yes,
     ),
     coded(

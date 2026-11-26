@@ -113,9 +113,11 @@ receive a numbered alternative.
 Folder runs keep the input tree under the selected output folder. For example,
 `in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`, with linked design companions
 and its `.report.json` beside it. Same-named designs in different subfolders stay
-separate. Repeating a run into the same selected folder reuses the output paths;
-existing designs and reports are replaced, identical linked companions are reused,
-and edited companions are kept with a conflict report.
+separate. Repeating a run into the same selected folder never replaces a design that is
+there: each new design gets the next free name (`part (2).sc`), with its `.report.json`
+beside it, unless **Replace designs already in the output folder** is ticked (it is off by
+default). Identical linked companions are reused, and edited companions are kept with a
+conflict report.
 
 ZIP projects unpack into a private temporary folder, limited to 10,000 entries and 4 GiB
 of extracted data. Paths outside the project are refused and symbolic links are skipped.
@@ -125,7 +127,7 @@ with their parts resolved inside the project; unused parts convert afterwards. A
 a native file is kept as a fallback if the native conversion fails.
 
 The Inventor project folder setting appears only for inputs containing Inventor files.
-Available memory is labelled as memory and hidden when unknown. Automatic SolidCraft
+Available memory is labeled as memory and hidden when unknown. Automatic SolidCraft
 selection compares the versions found on PATH, beside Dutchman and in installed applications, choosing
 the newest; `SOLIDCRAFT_CLI` remains an explicit override.
 
@@ -183,7 +185,7 @@ and times below 60 seconds show **under a minute**, just as in the CLI. **M GB o
 once when the machine's free memory can be read. On a Mac this counts memory the system can give back
 (not in use by apps, system or compression), not only the few pages it keeps empty. These are estimates, not limits or promises; an unavailable estimate
 leaves no label. An estimate of five minutes or more, or of more than half the free memory
-(8 GB when that is unknown), is shown in the warning colour. Planning and estimation run in the
+(8 GB when that is unknown), is shown in the warning color. Planning and estimation run in the
 background.
 
 Pressing Convert starts the conversion at once; there is no memory dialog. The estimate in the
@@ -282,7 +284,7 @@ Small imports avoid extra preparation workers.
 The window opens where and at the size it was last closed. A saved size smaller than the
 app's minimum, 520 by 420 points, is ignored, and the window opens at its default size instead.
 
-With no saved size, the window opens centred at 1180 by 800 points, or 90% of the screen where
+With no saved size, the window opens centerd at 1180 by 800 points, or 90% of the screen where
 that is smaller, which fits the whole main screen with the **Advanced** choices open and nothing
 scrolled. From 1100 points wide, **Designs** and **Output folder** stand in a left column, with
 **Is there a problem? Is something missing?** in the room under them, and **Results** in a right
@@ -484,12 +486,20 @@ Dutchman can be closed while a download is still running.
 - **Portable ZIP: Update now.** When neither MSI nor Scoop identifies the copy, all three
   release programs beside the Windows executable identify a portable folder. Dutchman
   downloads and verifies the ZIP, stages all three programs and bundled guidance on the
-  install volume, renames the originals to `.old`, and puts the new files beside them.
+  install volume, renames each file the package lists (the three programs and the files under
+  `docs`, `skills` and `AGENTS.md`) to `<name>.dutchman-old`, and puts the new files beside
+  them. Your own files, including other files inside `docs` or `skills`, are never moved.
   If replacement fails, it attempts to restore the originals and explains any recovery
   needed. The running app keeps working; **Restart now** becomes available once conversions
   finish. A detached helper waits for this copy to exit before opening the updated app.
-  The next start deletes the `.old` backups. A folder without write access offers the manual
+  The backups are recorded in `.dutchman-update-state`; the next start deletes exactly those
+  and nothing else, so your own `.old` files stay. A folder without write access offers the manual
   download fallback. Other Windows copies keep **Download**.
+
+On Linux, **Update now** replaces an AppImage only when this Dutchman is running from it
+(`APPIMAGE` names the Dutchman file and the running program lives inside its `APPDIR`
+mount). An `APPIMAGE` inherited from another app's terminal is ignored and Dutchman offers
+the download.
 
 Scoop and Homebrew retain their package-manager paths. macOS and Linux downloads are unchanged.
 

@@ -39,6 +39,10 @@
               "title": "Up axis",
               "oneOf": [
                 {
+                  "const": "auto",
+                  "title": "Automatic (stand up when the source says Y-up)"
+                },
+                {
                   "const": "as_is",
                   "title": "As in the file"
                 },
@@ -47,8 +51,8 @@
                   "title": "Stand up (Y-up to Z-up)"
                 }
               ],
-              "default": "as_is",
-              "description": "As is keeps source coordinates. Stand up changes source Y-up to Z-up."
+              "default": "auto",
+              "description": "Automatic stands a design up only when its source states that it is Y-up, and keeps the file's axes when it is Z-up or says nothing. As in the file never rotates. Stand up always changes Y-up to Z-up."
             },
             "include_hidden_bodies": {
               "type": "boolean",

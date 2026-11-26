@@ -43,21 +43,6 @@ const MAX_ZIP_BYTES: u64 = 64 << 20;
 const MAX_ENTRIES: usize = 5000;
 const MAX_UNPACKED_BYTES: u64 = 256 << 20;
 
-/// Whether this computer can run Fusion, so the install is offered: Windows and macOS.
-pub fn supported() -> bool {
-    cfg!(any(windows, target_os = "macos", test))
-        || FORCED.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-static FORCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Offers the entry on any computer, so UI tests lay out the same window on Linux as on
-/// Windows and macOS. Test use only.
-#[doc(hidden)]
-pub fn offer_everywhere_for_tests() {
-    FORCED.store(true, std::sync::atomic::Ordering::Relaxed);
-}
-
 /// Fusion's AddIns folder for this person.
 pub fn addins_dir() -> Option<PathBuf> {
     let var = |name: &str| {
@@ -315,7 +300,10 @@ fn download(options: &Options) -> Result<Vec<u8>, Failure> {
                 ),
             )
             .call()
-            .map_err(|e| fail(&e))?;
+            .map_err(|e| match e {
+                ureq::Error::Status(code, _) => Failure::Download(refused(code)),
+                e => fail(&e),
+            })?;
         if matches!(response.status(), 301 | 302 | 303 | 307 | 308) {
             url = response
                 .header("Location")
@@ -347,6 +335,19 @@ fn download(options: &Options) -> Result<Vec<u8>, Failure> {
         return Ok(bytes);
     }
     Err(fail(&"too many redirects"))
+}
+
+/// What a refused download says, in plain words with a way forward.
+fn refused(code: u16) -> String {
+    match code {
+        404 | 410 => "this version is not published yet. Try again later, or use the project \
+                      page link above to install the exporter by hand."
+            .to_owned(),
+        _ => format!(
+            "the download server answered with an error ({code}). Try again later, or use the \
+             project page link above to install the exporter by hand."
+        ),
+    }
 }
 
 fn short(text: &str) -> String {
@@ -634,6 +635,39 @@ mod tests {
         let started = std::time::Instant::now();
         assert!(matches!(run(&o, false), Err(Failure::Download(_))));
         assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(entries(addins.path()).is_empty());
+    }
+
+    #[test]
+    fn a_missing_release_is_a_plain_message_with_a_way_forward() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut stream = stream;
+                let mut buf = [0u8; 2048];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nnot found",
+                );
+            }
+        });
+        let addins = tempfile::tempdir().unwrap();
+        let o = options(
+            addins.path(),
+            format!("http://127.0.0.1:{port}/x.zip"),
+            b"",
+            "0.4.0",
+        );
+        let started = std::time::Instant::now();
+        let Err(why) = run(&o, false) else {
+            panic!("a 404 installs nothing");
+        };
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let text = why.to_string();
+        assert!(text.contains("not published yet"), "{text}");
+        assert!(text.contains("project page"), "{text}");
+        assert!(!text.contains("404") && !text.contains("http"), "{text}");
         assert!(entries(addins.path()).is_empty());
     }
 

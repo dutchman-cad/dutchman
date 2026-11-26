@@ -114,19 +114,10 @@ pub fn input(path: &Path) -> Value {
 }
 
 /// Converts the library `input` to a `.camtools` at `output` and returns the report. An
-/// existing `output` is replaced only when `replace` is set.
+/// existing `output` is replaced only when `replace` is set; otherwise the library is written
+/// to the next free numbered name, and the report names it.
 pub fn convert(input_path: &Path, output: &Path, replace: bool) -> Value {
     let input = input(input_path);
-    if !replace && output.try_exists().unwrap_or(true) {
-        return crate::json::failure(
-            crate::json::CONVERT,
-            input,
-            &format!(
-                "{} already exists; choose another output, or replace it with --force",
-                output.display()
-            ),
-        );
-    }
     let converted = match camtools::convert_path(input_path) {
         Ok(converted) => converted,
         Err(message) => return crate::json::failure(crate::json::CONVERT, input, &message),
@@ -149,18 +140,16 @@ pub fn convert(input_path: &Path, output: &Path, replace: bool) -> Value {
         );
         return Value::Object(report);
     };
-    let written = output
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or(Ok(()), std::fs::create_dir_all)
-        .and_then(|()| std::fs::write(output, text));
-    if let Err(err) = written {
-        return crate::json::failure(
-            crate::json::CONVERT,
-            input_of(&report),
-            &format!("cannot write {}: {err}", output.display()),
-        );
-    }
+    let output = match crate::write_file(output, text.as_bytes(), replace) {
+        Ok(written) => written,
+        Err(err) => {
+            return crate::json::failure(
+                crate::json::CONVERT,
+                input_of(&report),
+                &format!("cannot write {}: {err}", output.display()),
+            );
+        }
+    };
     report.insert(
         "output".to_owned(),
         json!({"path": output.display().to_string(), "format": FORMAT}),

@@ -165,6 +165,8 @@ jobs:
           python3 scripts/check-version-gates.py --base "$BASE"
       - run: python3 scripts/check-test-accept.py
       - run: python3 scripts/changelog.py check
+      - run: python3 scripts/check-safe-output.py
+      - run: python3 scripts/check-american-english.py
       # The installed guidance (docs/, skills/) the archives and installer carry: a change to docs/
       # no longer starts the release builds, so check here that it still stages.
       - run: python3 scripts/package-docs.py "$RUNNER_TEMP/guide" --wix "$RUNNER_TEMP/guide.wxs"
@@ -175,6 +177,12 @@ jobs:
     runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
+      # flyer is shared with other work: cap cargo's parallelism there so a burst of
+      # these jobs does not push the box to load 100. GitHub-hosted runners are untouched.
+      - name: Cap cargo parallelism on the shared flyer runner
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: echo "CARGO_BUILD_JOBS=4" >> "$GITHUB_ENV"
       # A flyer runner's reused workspace can hold a clone missing objects it claims
       # ("remote did not send all necessary objects"); start that workspace clean.
       - name: Clear a corrupt reused workspace
@@ -254,6 +262,12 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       # Keep the low-space fallback for older images without deleting 19 GiB on every run.
+      # flyer is shared with other work: cap cargo's parallelism there so a burst of
+      # these jobs does not push the box to load 100. GitHub-hosted runners are untouched.
+      - name: Cap cargo parallelism on the shared flyer runner
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: echo "CARGO_BUILD_JOBS=4" >> "$GITHUB_ENV"
       # A flyer runner's reused workspace can hold a clone missing objects it claims
       # ("remote did not send all necessary objects"); start that workspace clean.
       - name: Clear a corrupt reused workspace
@@ -417,6 +431,12 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
+      # flyer is shared with other work: cap cargo's parallelism there so a burst of
+      # these jobs does not push the box to load 100. GitHub-hosted runners are untouched.
+      - name: Cap cargo parallelism on the shared flyer runner
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: echo "CARGO_BUILD_JOBS=4" >> "$GITHUB_ENV"
       # A flyer runner's reused workspace can hold a clone missing objects it claims
       # ("remote did not send all necessary objects"); start that workspace clean.
       - name: Clear a corrupt reused workspace
@@ -598,6 +618,12 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       # Debug=0 jobs on current images have ample disk; clean only smaller images.
+      # flyer is shared with other work: cap cargo's parallelism there so a burst of
+      # these jobs does not push the box to load 100. GitHub-hosted runners are untouched.
+      - name: Cap cargo parallelism on the shared flyer runner
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: echo "CARGO_BUILD_JOBS=4" >> "$GITHUB_ENV"
       # A flyer runner's reused workspace can hold a clone missing objects it claims
       # ("remote did not send all necessary objects"); start that workspace clean.
       - name: Clear a corrupt reused workspace

@@ -1376,6 +1376,10 @@ impl Builder<'_> {
                         "operation": "join",
                         "keep_tools": false,
                     }));
+                    // The joined pieces are no bodies of their own: they keep no look.
+                    for tool in tools {
+                        self.looks.remove(tool);
+                    }
                 }
             }
             (None, None) => unwritten_appearances(part, self.report),

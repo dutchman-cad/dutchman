@@ -810,6 +810,7 @@ fn folder_outputs_mirror_nested_duplicate_names_and_rerun_in_place() {
                 command,
                 "--json",
                 "--no-verify",
+                "--replace",
                 "--solidcraft-version",
                 "0.44.1",
             ];
@@ -883,12 +884,11 @@ fn folder_outputs_mirror_nested_duplicate_names_and_rerun_in_place() {
         "convert-all",
         "--json",
         "--no-verify",
-        "--no-clobber",
         "--out-dir",
         output.to_str().unwrap(),
         input.to_str().unwrap(),
     ]);
-    assert_eq!(json_of(&result)["failed"], 4);
+    assert_eq!(json_of(&result)["failed"], 0);
     for (path, bytes) in preserved {
         assert_eq!(std::fs::read(path).unwrap(), bytes);
     }
@@ -958,7 +958,7 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     let stdout = String::from_utf8_lossy(&text.stdout);
     // The notes are in plain words, so the report ends by saying `--verbose` prints them in full.
     assert!(
-        stdout.ends_with("1 converted, 0 failed\n(notes are summarised in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)\n"),
+        stdout.ends_with("1 converted, 0 failed\n(notes are summarized in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)\n"),
         "{stdout}"
     );
     // Each converted file's losses are listed beneath it, as `convert` prints them, after the
@@ -1076,13 +1076,44 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
 }
 
 #[test]
-fn no_clobber_keeps_an_existing_design() {
+fn an_existing_design_is_never_replaced() {
     let dir = std::env::temp_dir().join(format!("dutchman-noclobber-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let output = dir.join("cube.sc");
     std::fs::write(&output, b"SENTINEL").unwrap();
+    std::fs::write(dir.join("cube.report.json"), b"MINE").unwrap();
     let cube = fixture("synthetic_cube.ipt");
 
+    // An existing file at an explicit output stays: the design gets the next free name.
+    let out = dutchman(&[
+        "convert",
+        "--no-verify",
+        "--json",
+        &cube,
+        output.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let report = json_of(&out);
+    assert_eq!(
+        report["output"]["path"].as_str().unwrap(),
+        dir.join("cube (2).sc").to_str().unwrap()
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"SENTINEL");
+    assert_eq!(
+        std::fs::read(dir.join("cube.report.json")).unwrap(),
+        b"MINE"
+    );
+    assert!(std::fs::read(dir.join("cube (2).sc"))
+        .unwrap()
+        .starts_with(b"PK"));
+
+    // The same again keeps both: the next free number.
+    let out = dutchman(&["convert", "--no-verify", &cube, output.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(dir.join("cube (3).sc").is_file());
+    assert!(dir.join("cube (2).sc").is_file());
+
+    // `--no-clobber` is what happens anyway.
     let out = dutchman(&[
         "convert",
         "--no-verify",
@@ -1090,43 +1121,79 @@ fn no_clobber_keeps_an_existing_design() {
         &cube,
         output.to_str().unwrap(),
     ]);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("already exists"),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_eq!(out.status.code(), Some(0));
+    assert!(dir.join("cube (4).sc").is_file());
     assert_eq!(std::fs::read(&output).unwrap(), b"SENTINEL");
 
-    // Without it, the existing file is replaced, as `--help` says.
-    let out = dutchman(&["convert", "--no-verify", &cube, output.to_str().unwrap()]);
+    // Only `--replace` replaces.
+    let out = dutchman(&[
+        "convert",
+        "--no-verify",
+        "--replace",
+        &cube,
+        output.to_str().unwrap(),
+    ]);
     assert_eq!(out.status.code(), Some(0));
     assert_ne!(std::fs::read(&output).unwrap(), b"SENTINEL");
+    assert!(!dir.join("cube (5).sc").exists());
     let help = dutchman(&["convert", "--help"]);
-    assert!(String::from_utf8_lossy(&help.stdout).contains("An explicit output is replaced"));
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("--replace"), "{help}");
+    assert!(!help.contains("--no-clobber"), "{help}");
 
-    // convert-all fails that one file and converts the rest.
+    // convert-all keeps the design that is there, and converts both files beside it.
     let out_dir = dir.join("all");
     std::fs::create_dir_all(&out_dir).unwrap();
     std::fs::write(out_dir.join("synthetic_cube.sc"), b"SENTINEL").unwrap();
-    let out = dutchman(&[
-        "convert-all",
-        "--json",
-        "--no-verify",
-        "--no-clobber",
-        "--out-dir",
-        out_dir.to_str().unwrap(),
-        &cube,
-        &fixture("generated_unit_cube.f3d"),
-    ]);
-    let report = json_of(&out);
-    assert_eq!(report["converted"], 1);
-    assert_eq!(report["failed"], 1);
+    std::fs::write(out_dir.join("synthetic_cube.report.json"), b"MINE").unwrap();
+    let run_all = |extra: &[&str]| {
+        let mut args = vec!["convert-all", "--json", "--no-verify"];
+        args.extend(extra);
+        let out_dir = out_dir.to_str().unwrap().to_owned();
+        let cube = cube.clone();
+        let unit = fixture("generated_unit_cube.f3d");
+        let out = dutchman(
+            &args
+                .into_iter()
+                .chain(["--out-dir", out_dir.as_str(), cube.as_str(), unit.as_str()])
+                .collect::<Vec<_>>(),
+        );
+        json_of(&out)
+    };
+    let report = run_all(&[]);
+    assert_eq!(report["converted"], 2, "{report}");
+    assert_eq!(report["failed"], 0, "{report}");
     assert_eq!(
         std::fs::read(out_dir.join("synthetic_cube.sc")).unwrap(),
         b"SENTINEL"
     );
+    assert_eq!(
+        std::fs::read(out_dir.join("synthetic_cube.report.json")).unwrap(),
+        b"MINE"
+    );
+    assert!(out_dir.join("synthetic_cube (2).sc").is_file());
     assert!(out_dir.join("generated_unit_cube.sc").is_file());
+
+    // Running it again keeps every output of the first run, and adds the next free names.
+    let kept = std::fs::read(out_dir.join("generated_unit_cube.sc")).unwrap();
+    let report = run_all(&[]);
+    assert_eq!(report["failed"], 0, "{report}");
+    assert!(out_dir.join("synthetic_cube (2).sc").is_file());
+    assert!(out_dir.join("synthetic_cube (3).sc").is_file());
+    assert!(out_dir.join("generated_unit_cube (2).sc").is_file());
+    assert_eq!(
+        std::fs::read(out_dir.join("generated_unit_cube.sc")).unwrap(),
+        kept
+    );
+
+    // `--replace` replaces what is at the planned names, and writes nothing new.
+    let report = run_all(&["--replace"]);
+    assert_eq!(report["failed"], 0, "{report}");
+    assert_ne!(
+        std::fs::read(out_dir.join("synthetic_cube.sc")).unwrap(),
+        b"SENTINEL"
+    );
+    assert!(!out_dir.join("synthetic_cube (4).sc").exists());
 }
 
 /// A library whose folder, files and parts carry names that must not reach a shared report.
@@ -1770,17 +1837,22 @@ fn bare_and_explicit_conversion_derive_and_protect_default_outputs() {
     let output = dir.path().join("part.sc");
     std::fs::write(&output, b"sentinel").unwrap();
     let modified = output.metadata().unwrap().modified().unwrap();
-    let out = run(&["part.f3d"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert_eq!(out.stderr, b"dutchman: part.sc already exists; choose another output with -o PATH, or replace it with --force\n");
+    let out = run(&["part.f3d", "--no-verify"]);
+    assert!(out.status.success());
     assert_eq!(std::fs::read(&output).unwrap(), b"sentinel");
     assert_eq!(output.metadata().unwrap().modified().unwrap(), modified);
+    assert!(dir.path().join("part (2).sc").is_file());
     assert!(run(&["part.f3d", "--force", "--no-verify"])
         .status
         .success());
     assert_ne!(std::fs::read(&output).unwrap(), b"sentinel");
     std::fs::write(&output, b"sentinel").unwrap();
     assert!(run(&["part.f3d", "part.sc", "--no-verify"])
+        .status
+        .success());
+    assert_eq!(std::fs::read(&output).unwrap(), b"sentinel");
+    assert!(dir.path().join("part (3).sc").is_file());
+    assert!(run(&["part.f3d", "part.sc", "--no-verify", "--replace"])
         .status
         .success());
     assert_ne!(std::fs::read(&output).unwrap(), b"sentinel");
@@ -1996,8 +2068,7 @@ fn numbered_default_outputs_use_the_base_name_and_keep_existing_files() {
     std::fs::write(&input, b"#UGC:2").unwrap();
     std::fs::write(&output, b"keep this design").unwrap();
     let out = dutchman(&[input.to_str().unwrap()]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("bracket.sc already exists"));
+    assert!(!out.status.success());
     assert_eq!(std::fs::read(output).unwrap(), b"keep this design");
     assert!(!dir.path().join("bracket.prt.sc").exists());
 }
@@ -2190,14 +2261,15 @@ fn techdraw_dxf_exports_page_text_and_reports_missing_ir_geometry() {
     assert!(text.contains("Synthetic box"));
     assert!(!text.contains("%.2w"));
     let retry = dutchman(&["convert", input.to_str().unwrap(), "--to", "dxf", "--json"]);
-    assert!(!retry.status.success());
+    assert!(retry.status.success());
     assert_eq!(std::fs::read_to_string(&output).unwrap(), text);
+    assert!(folder.path().join("box-Page (2).dxf").is_file());
     let forced = dutchman(&[
         "convert",
         input.to_str().unwrap(),
         "--to",
         "dxf",
-        "--force",
+        "--replace",
         "--page",
         "Page",
         "--json",
@@ -2742,6 +2814,7 @@ fn part_threads_keep_assembly_json_and_design_bytes_identical() {
             output.to_str().unwrap(),
             "--threads",
             threads,
+            "--replace",
             "--no-verify",
             "--solidcraft-version",
             "0.26.0",
@@ -2772,7 +2845,7 @@ fn part_threads_keep_assembly_json_and_design_bytes_identical() {
 fn without_notes_hint(stdout: &str) -> String {
     stdout
         .lines()
-        .filter(|line| !(line.starts_with("(notes are summarised in plain words")))
+        .filter(|line| !(line.starts_with("(notes are summarized in plain words")))
         .map(|line| format!("{line}\n"))
         .collect()
 }
@@ -2839,6 +2912,7 @@ fn solidcraft_output_extensions_follow_the_target_and_accept_explicit_names() {
                 "part.f3d",
                 "-o",
                 &output,
+                "--replace",
                 "--solidcraft-version",
                 target,
                 "--no-verify",
@@ -4088,4 +4162,93 @@ fn stand_up_cli_flags_control_occurrence_transform() {
             [0.0, 0.0, 0.0, 1.0],
         ])
     );
+}
+
+/// Converts the unit cube from an export folder whose manifest says `up_axis`, with `flags`,
+/// and gives the written transform with the JSON report.
+fn export_orientation(
+    up_axis: serde_json::Value,
+    flags: &[&str],
+) -> (serde_json::Value, serde_json::Value) {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("Cube v1.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let mut entry = serde_json::json!({
+        "id": "urn:x:cube", "name": "Cube", "version": 1,
+        "files": [{"path": "Cube v1.f3d"}], "references": [],
+    });
+    if !up_axis.is_null() {
+        entry["up_axis"] = up_axis;
+    }
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "cad-export-manifest/1", "entries": [entry]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = dir.path().join("cube.sc");
+    let mut args = vec!["convert", "--json"];
+    args.extend_from_slice(flags);
+    args.push(input.to_str().unwrap());
+    args.push(output.to_str().unwrap());
+    let res = dutchman(&args);
+    assert!(res.status.success());
+    let report = json_of(&res);
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&output).unwrap()).unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+    (doc["occurrences"][0]["transform"].clone(), report)
+}
+
+#[test]
+fn up_axis_is_automatic_and_the_flags_override_it() {
+    let identity = serde_json::json!([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let stood = serde_json::json!([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let (transform, report) = export_orientation(serde_json::json!("y"), &[]);
+    assert_eq!(transform, stood);
+    assert_eq!(report["up_axis"]["found"], "y");
+    assert_eq!(report["up_axis"]["origin"], "export_manifest");
+    assert_eq!(report["up_axis"]["applied"], "stood_up");
+    assert_eq!(
+        report["up_axis"]["summary"],
+        "Stood up: the export says this design is Y-up"
+    );
+    let (transform, report) = export_orientation(serde_json::json!("z"), &[]);
+    assert_eq!(transform, identity);
+    assert_eq!(report["up_axis"]["applied"], "kept_axes");
+    let (transform, report) = export_orientation(serde_json::Value::Null, &[]);
+    assert_eq!(transform, identity);
+    assert_eq!(report["up_axis"]["found"], "unknown");
+    assert!(report["up_axis"]["summary"]
+        .as_str()
+        .unwrap()
+        .starts_with("Kept the file's axes: up axis unknown"));
+    // The flags win over what the export says.
+    assert_eq!(
+        export_orientation(serde_json::json!("z"), &["--stand-up"]).0,
+        stood
+    );
+    assert_eq!(
+        export_orientation(serde_json::json!("y"), &["--keep-axes"]).0,
+        identity
+    );
+    assert_eq!(
+        export_orientation(serde_json::json!("y"), &["--no-stand-up"]).0,
+        identity
+    );
+    // Both at once are refused.
+    let both = dutchman(&["convert", "--stand-up", "--keep-axes", "a.f3d", "b.sc"]);
+    assert_eq!(both.status.code(), Some(2));
 }

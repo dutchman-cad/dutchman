@@ -24,23 +24,29 @@ The **Designs** input row shows only the plain reader status.
 | ACIS | `.sat`, `.sab`, `.smt`, `.smb` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Onshape bundle | `.onshape-bundle` | Reads geometry | – | One offline Part Studio; geometry and editable history where features map |
-| IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
+| IGES | `.igs`, `.iges` | Recognized, not converted | – | Import it in SolidCraft directly (File > Import) |
 | Circuit board | `.PcbDoc` | Reads geometry with the electronics module | – | Placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately) |
 | Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
+| Inventor drawing | `.idw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| SolidWorks drawing | `.slddrw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Fusion drawing | `.f2d` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| DWG drawing | `.dwg` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| DXF drawing | `.dxf` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Solid Edge drawing | `.dft` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
 
-FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
+FreeCAD TechDraw pages are written into the converted SolidCraft design as a drawing (sheets and views), and also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
 
 Fusion tool libraries (`.tools`, `.json`) also convert to CamCraft's `.camtools` (`dutchman library.tools`): tool geometry, holder and cutting data, with every tool and field CamCraft has no place for named in the report. See docs/camcraft-tools.md.
 
 Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
-## How formats are recognised
+## How formats are recognized
 
 - Formats with geometry readers convert through STEP; Fusion, Inventor, and FreeCAD also
   keep feature history where it maps (see [Feature history](history.md)).
 - Creo and NX share `.prt` and are told apart by their contents; numbered saves (`.prt.N`)
-  are recognised too. A folder conversion keeps only the highest `.prt.N` of each part and
+  are recognized too. A folder conversion keeps only the highest `.prt.N` of each part and
   reports the older ones as skipped; `bracket.prt.7` writes `bracket.sc`, and an existing
   output for a numbered save is kept unless you choose another path (or `--force` for one
   file).
@@ -49,9 +55,31 @@ Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro
   IGES yet: open it in SolidCraft directly (File > Import)."
 - Circuit boards are read by the optional electronics module, a separate program,
   `dutchman-electronics`. The module lists the extensions it reads (`.PcbDoc` today); Dutchman
-  recognises `.PcbDoc` even without it and then says to install the module. See
+  recognizes `.PcbDoc` even without it and then says to install the module. See
   [Optional modules](modules.md#how-dutchman-finds-and-runs-a-module).
-- A recognised format whose geometry has no solids or surfaces SolidCraft can import says so.
+- A recognized format whose geometry has no solids or surfaces SolidCraft can import says so.
+
+## Drawings
+
+Drawing files are accepted everywhere models are: the desktop app (picker and drop),
+`convert`, `convert-all`, watch mode and the batch lists. Each one gets a result and a
+report with a `drawing` section ([JSON reports](json.md#drawings-additive-to-dutchmanconvert1)),
+and none is skipped without one. The format is checked against the file's contents, not
+only its suffix.
+
+| Drawing | Files | Level today |
+|---|---|---|
+| FreeCAD TechDraw | pages inside `.FCStd` | Sheets (paper size) and views (direction, scale, place) are written as a SolidCraft drawing inside the converted `.sc`, drawn from that model. Dimensions, notes, balloons, section and detail views are reported as not written. |
+| Inventor | `.idw` | Accepted and identified; sheets and views are not decoded yet (`drawing.format.not_decoded`). |
+| SolidWorks | `.slddrw` | Accepted and identified; not decoded yet. |
+| Fusion | `.f2d`, and drawings inside `.f3z` | Accepted and identified; not decoded yet. |
+| Solid Edge | `.dft` | Accepted and identified (compound file with the draft stream); not decoded yet. |
+| AutoCAD, Inventor | `.dwg` | Accepted; the version is named from the file's magic; not decoded yet. |
+| Onshape drawing export | `.dwg`, `.dxf` | Accepted as DWG or DXF; not decoded yet. A PDF export carries no geometry Dutchman can use and is not accepted. |
+
+A drawing that cannot be read yet is reported as a failed conversion with the section's
+`status: "not_decoded"`; the report says what was identified so the reader can be built
+from it. The plugin converts models only and does not list drawings.
 
 ## Onshape bundles
 

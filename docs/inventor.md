@@ -16,7 +16,7 @@ need earlier mapped body names; feature-local body selections remain unsupported
 |---|---|
 | The part B-rep, from one typed ACIS/ASM kernel carrier (verified for ACIS majors 217 and 218). | Converts it: restated as STEP, written as SolidCraft's import container, like Fusion. |
 | No geometry (empty or invalid carrier: blocking `geometry_not_transferred`). | Stops: "no geometry could be read". |
-| Parameters (closed scalar graphs, including ones whose stored unit type cadmpeg doesn't recognise), with their expression text (`Width / 2 + 5 mm`) and the parameters each one reads. | Mapped to SolidCraft parameters that keep the expression, so editing `Width` in SolidCraft drives every parameter that reads it. User parameters (`Width`) and the `d0`, `d1`, ... parameters Inventor makes for dimensions are both written, the second kind as model parameters. A sketch dimension and a blind extrude distance (one side, or each side of a two-sided extrude) stay driven by their parameter. Unitless numbers in an expression (`ul`) are written plain; an expression with a unit SolidCraft has no name for (`grad`), or with a function SolidCraft lacks, keeps the parameter's value and the report names why. A parameter with no stored expression text (its unit type is only read by record layout) keeps its value. |
+| Parameters (closed scalar graphs, including ones whose stored unit type cadmpeg doesn't recognize), with their expression text (`Width / 2 + 5 mm`) and the parameters each one reads. | Mapped to SolidCraft parameters that keep the expression, so editing `Width` in SolidCraft drives every parameter that reads it. User parameters (`Width`) and the `d0`, `d1`, ... parameters Inventor makes for dimensions are both written, the second kind as model parameters. A sketch dimension and a blind extrude distance (one side, or each side of a two-sided extrude) stay driven by their parameter. Unitless numbers in an expression (`ul`) are written plain; an expression with a unit SolidCraft has no name for (`grad`), or with a function SolidCraft lacks, keeps the parameter's value and the report names why. A parameter with no stored expression text (its unit type is only read by record layout) keeps its value. |
 | Planar sketches: points, lines, circles, ellipses, polygons, with typed and native constraints. | Mapped, ellipses as whole ellipses; typed constraints mapped, native ones reported as not carried. |
 | Periodic (closed) sketch B-splines, with a full knot vector and polynomial or equal-weight poles. | Mapped exactly by endpoint knot insertion into a clamped SolidCraft control spline. Nonuniform spacing and repeated interior knots become chains of exact spline pieces with shared endpoints, up to 200 pieces; uniform splines stay one spline. Unequal weights remain unsupported because SolidCraft control splines have no weights. |
 | Extrude, hole, constant-radius fillet, equal-distance chamfer, when every property, dimension and selection resolves. | Extrude: mapped when cadmpeg resolves its profile to sketch profiles or regions, blind, through all, or to a resolved plane parallel to the sketch before any body-building feature (including a placed work plane); resolved parallel planar faces on earlier named bodies also map. Native face selections, tilted terminating planes, vertex selections, and to-next-face ends are not mapped yet. Holes map where their placement resolves, drilled the way the hole points; constant-radius fillets and equal-setback chamfers map with proven feature input edge geometry (see guide.md). |
@@ -51,7 +51,7 @@ supplies an open line/arc chain and a blind normal sweep; see [sheet metal](hist
 
 On SolidCraft 0.44 and newer, the shared writer can confirm extrude body scope
 at the final body-building feature from resolved modified-body outputs and a
-matching replay against the final source geometry. Intermediate body centres
+matching replay against the final source geometry. Intermediate body centers
 cannot confirm scope. A consumed Combine tool without a final body row keeps
 its name only when the source retains exactly one history body whose
 `produced_by` matches its single-output producer, or a complete replay matches
@@ -112,7 +112,7 @@ Assemblies convert as placed parts, each with its own feature history when that 
 maps (see the parts table above for what blocks Inventor history today):
 
 - cadmpeg gives each occurrence its stored part path (often absolute on the machine that
-  saved it), its rigid placement in millimetres, and its name. Dutchman finds each part as
+  saved it), its rigid placement in millimeters, and its name. Dutchman finds each part as
   [below](#finding-the-part-files), reads each part file once, and writes one SolidCraft
   component per part, holding the part's geometry as an import, with one occurrence per
   placement.
@@ -176,7 +176,7 @@ cadmpeg publishes no Inventor part with geometry or history, and Dutchman never 
 files. `crates/dutchman-core/tests/fixtures/inventor_parameter_expressions.ipt` is a CC0 block
 made on purpose in Inventor 2016 with user parameters, model parameters and expressions that read
 each other; `an_inventor_part_keeps_its_parameter_expressions` converts it. `crates/dutchman-core/tests/fixtures/synthetic_cube.ipt` is generated from cadmpeg's own
-synthetic sources (its README has the recipe). History behaviour is tested on CADIR built in
+synthetic sources (its README has the recipe). History behavior is tested on CADIR built in
 the tests in the shape the Inventor codec emits, until cadmpeg publishes generated Inventor
 goldens with a design segment (sketch and extrude).
 

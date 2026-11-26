@@ -21,7 +21,7 @@ that are tool libraries) with its other inputs, writing `<name>.camtools` at the
   are read. Any other `.json` is not touched. A `.json` library converts exactly like a `.tools` one:
   `dutchman library.json`, `dutchman convert library.json -o tools.camtools`, and in `convert-all`.
   A `.tools` archive with several JSON files is read as one library, in file-name order.
-- **Output:** `.camtools`, CamCraft's `camcraft-tools` file, lengths in millimetres. The tool library
+- **Output:** `.camtools`, CamCraft's `camcraft-tools` file, lengths in millimeters. The tool library
   inside a CAM design (`.f3d`) is not read yet.
 - **Report:** the usual `dutchman.convert/1` report. Every tool CamCraft cannot hold and every field it
   has no place for is a named loss; the rest of the library is still converted. `--json` adds
@@ -36,7 +36,7 @@ would be refused, instead of writing a file CamCraft will not open.
 | Level | Meaning |
 |---|---|
 | Dropped | The tool is not in the `.camtools`: a type CamCraft has no kind for, a missing size, a unit that is not millimeters or inches, or numbers CamCraft's rules refuse. The reason is given. |
-| Degraded | The tool is written, but not exactly: a face mill written as a flat end mill that does not cut at its centre, a slot mill as a keyseat cutter, a center or spot drill as a drill, a countersink as a chamfer mill, a drill with no point angle (118 degrees), or a tool whose presets could not be used (placeholder 1000 rpm and 100 mm/min). |
+| Degraded | The tool is written, but not exactly: a face mill written as a flat end mill that does not cut at its center, a slot mill as a keyseat cutter, a center or spot drill as a drill, a countersink as a chamfer mill, a drill with no point angle (118 degrees), or a tool whose presets could not be used (placeholder 1000 rpm and 100 mm/min). |
 | Info | Fusion fields with data CamCraft has no place for (plunge, ramp, lead-in, lead-out, retract and transition feeds, coolant, ramp spindle speed, tip diameter, shoulder length, holder gauge length, offsets that differ from the tool number, turret and so on); presets that match no CamCraft material; values derived rather than read; a tool with no presets at all, which gets the placeholder 1000 rpm and 100 mm/min (the source had no cutting data, so nothing was changed); a name made unique; holder entries skipped. |
 
 A preset's `v_c` (surface speed) is not reported for a milling tool: it follows from `n` and the diameter. A Fusion field that is empty, zero, false or `disabled` is not reported. `guid`, `reference_guid`,
@@ -50,7 +50,7 @@ degrees.
 
 | Fusion field | CamCraft field | Notes |
 |---|---|---|
-| `description` | `name` | Without one, the name is made from the type and diameter, such as `flat end mill 1/16" (library entry 1)`: an inch size is a common fraction up to 64ths where it is one, else at most 4 decimals; a millimetre size has at most 3 decimals; trailing zeros are trimmed. A name used twice becomes `Name (2)`. |
+| `description` | `name` | Without one, the name is made from the type and diameter, such as `flat end mill 1/16" (library entry 1)`: an inch size is a common fraction up to 64ths where it is one, else at most 4 decimals; a millimeter size has at most 3 decimals; trailing zeros are trimmed. A name used twice becomes `Name (2)`. |
 | `type` | `kind` | See the next table. |
 | `geometry.DC` | `diameter` | Required. Turning tools take `INSD` (inscribed circle) or `IC` when there is no `DC`. |
 | `geometry.LCF` | `flute_len` | Falls back to `LB`, then `OAL`, and says so. |
