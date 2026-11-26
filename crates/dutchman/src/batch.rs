@@ -1684,10 +1684,14 @@ mod tests {
 
     #[test]
     fn many_jobs_start_largest_first_and_every_file_finishes_once() {
-        // Two workers, ample memory: assemblies first, then 9, 5, 2, 1 GiB.
+        // Two workers, ample memory: assemblies first, then 9, 5, 2, 1 GiB. The queue hands
+        // out the assembly and then the 9 GiB file, but the two workers say they started in
+        // either order; the exact order is the queue's test in `schedule`.
         let (started, mut finished, _) =
             fake_batch(&["a1", "b9", "asm2", "c5", "d2"], 2, Some(1 << 40));
-        assert_eq!(&started[..2], &[2, 1]);
+        let mut first = started[..2].to_vec();
+        first.sort_unstable();
+        assert_eq!(first, [1, 2]);
         assert_eq!(started.len(), 5);
         finished.sort_unstable();
         assert_eq!(finished, [0, 1, 2, 3, 4]);
