@@ -22769,7 +22769,7 @@ fn design_top_edge() -> Value {
 
 fn legacy_top_edge_state() -> (String, Value) {
     let id = format!("{}/edge/0", design_feature_id(2));
-    let row = json!({"id": id, "input_of": design_feature_id(2), "bodies": [], "faces": [],
+    let row = json!({"id": id, "input_of": design_feature_id(2), "bodies": [], "faces": [], "face_owners": [],
         "edges": [id], "vertices": [], "edge_geometry": [{"edge": id,
             "start": {"x": 0.0, "y": 0.0, "z": 10.0}, "end": {"x": 10.0, "y": 0.0, "z": 10.0},
             "interior": {"x": 5.0, "y": 0.0, "z": 10.0}, "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
