@@ -2496,6 +2496,9 @@ impl App {
     fn as_is_footer(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let p = *theme::palette(ui);
         let text = (crate::FOOTER, crate::FOOTER_MORE);
+        // The panel spans the whole window below both columns. A row is as tall as a button by
+        // default; the footer's is as tall as its small text, so it never costs the controls room.
+        ui.spacing_mut().interact_size.y = 0.0;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = theme::SPACE_2;
             ui.label(RichText::new(text.0).small().color(p.tide));
