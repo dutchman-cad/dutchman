@@ -29,7 +29,7 @@ dutchman-core = { workspace = true, features = ["formats"] }
 dutchman-solidcraft = { workspace = true, features = ["onshape"] }
 eframe = { version = "0.33", features = ["persistence"] }
 egui_extras = { version = "0.33", default-features = false, features = ["svg"] }
-pollster = "0.4"
+pollster = "1.0"
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }
 rfd = "0.17"
