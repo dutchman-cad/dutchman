@@ -125,6 +125,7 @@ fn not_supported(format: Format) -> String {
                 .to_owned()
         }
         Format::ModuleBoard => crate::module::missing_message(),
+        _ if format.is_drawing() => crate::drawing::not_decoded_message(format),
         // Built without the `freecad` feature.
         Format::FreeCadDocument => {
             format!(

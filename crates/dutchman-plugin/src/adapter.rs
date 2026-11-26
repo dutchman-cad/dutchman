@@ -137,6 +137,9 @@ mod guest {
                     return Err(folder_denied(&file.name, e));
                 }
             }
+            // Parts are counted by size before they are read, so a design the guest cannot hold
+            // is refused in one plain line instead of by a memory or fuel trap.
+            let load = crate::preflight::PartsLoad::new(file.size);
             let progress = std::sync::Arc::new(crate::progress::Progress::default());
             let budget = Cell::new(0u64);
             let index_error = RefCell::new(None);
@@ -158,7 +161,7 @@ mod guest {
             if let Some(error) = index_error.into_inner() {
                 return Err(error);
             }
-            checked.map_err(error)?;
+            checked.map_err(|e| error(&file.name, e))?;
             let main_bytes = RefCell::new(Some(read("", file.size, &budget)?));
             report(progress.file_read());
             let files = Cell::new(1usize);
@@ -194,6 +197,13 @@ mod guest {
                     return Err(keep(PluginError::LimitExceeded(format!(
                         "{host_path}: input exceeds the {limit}-byte file limit; choose a smaller CAD file"
                     ))));
+                }
+                // The 1 GiB aggregate limit is `read`'s to report; this refusal is for parts
+                // that are within it.
+                if size <= (1u64 << 30).saturating_sub(budget.get()) {
+                    if let Err(dutchman_core::Error::MemoryBudget(reason)) = load.add(size) {
+                        return Err(keep(PluginError::LimitExceeded(reason)));
+                    }
                 }
                 report(progress.part_read());
                 files.set(files.get() + 1);
@@ -238,7 +248,7 @@ mod guest {
             if let Some(host) = host_error.take() {
                 return Err(host);
             }
-            let (design, report) = converted.map_err(error)?;
+            let (design, report) = converted.map_err(|e| error(&file.name, e))?;
             if control::cancelled() {
                 return Err(PluginError::Cancelled);
             }
@@ -261,17 +271,18 @@ mod guest {
         }
     }
 
-    /// An unsupported or unreadable file is invalid input; a size budget is a limit.
-    fn error(e: dutchman_core::Error) -> PluginError {
+    /// An unsupported or unreadable file is invalid input; a size budget is a limit. Every
+    /// message carries the full failure report (`notice::failure_in`): the host gives a plugin
+    /// no clipboard and no file to write, so the text is where the report travels.
+    fn error(file_name: &str, e: dutchman_core::Error) -> PluginError {
         use dutchman_core::Error;
+        let text = crate::notice::failure_in(file_name, &e);
         match e {
-            Error::TooLarge { .. } | Error::MemoryBudget(_) => {
-                PluginError::LimitExceeded(crate::notice::failure(&e))
-            }
+            Error::TooLarge { .. } | Error::MemoryBudget(_) => PluginError::LimitExceeded(text),
             Error::Encode(ref reason) if reason.contains("exceeds") => {
-                PluginError::LimitExceeded(crate::notice::failure(&e))
+                PluginError::LimitExceeded(text)
             }
-            _ => invalid("file", crate::notice::failure(&e)),
+            _ => invalid("file", text),
         }
     }
 

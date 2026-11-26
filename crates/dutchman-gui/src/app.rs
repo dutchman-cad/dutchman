@@ -150,7 +150,7 @@ pub struct App {
     download_root: Option<tempfile::TempDir>,
     doctor: Option<crate::doctor::Page>,
     onshape: crate::onshape::Panel,
-    fusion: crate::fusion_export::panel::Panel,
+    fusion_export: crate::fusion_export::Panel,
     intake: crate::paste::Inbox,
     output_picker: Box<dyn Fn(Sender<Message>, egui::Context)>,
     clipboard: Box<dyn Fn() -> (Vec<PathBuf>, String)>,
@@ -267,6 +267,38 @@ fn select_preset(options: &mut ConvertOptions, preset: Preset) {
     options.no_joints = false;
 }
 
+/// What the options say about standing a design up.
+fn orientation_of(options: &ConvertOptions) -> dutchman_core::Orientation {
+    match options.stand_up_choice() {
+        Some(true) => dutchman_core::Orientation::StandUp,
+        Some(false) => dutchman_core::Orientation::KeepAxes,
+        None => dutchman_core::Orientation::Auto,
+    }
+}
+
+fn set_orientation(options: &mut ConvertOptions, orientation: dutchman_core::Orientation) {
+    options.stand_up = orientation == dutchman_core::Orientation::StandUp;
+    options.no_stand_up = orientation == dutchman_core::Orientation::KeepAxes;
+}
+
+fn orientation_label(orientation: dutchman_core::Orientation) -> &'static str {
+    match orientation {
+        dutchman_core::Orientation::Auto => "Automatic",
+        dutchman_core::Orientation::StandUp => "Stand up (Y-up to Z-up)",
+        dutchman_core::Orientation::KeepAxes => "Keep the file's axes",
+    }
+}
+
+fn orientation_help(orientation: dutchman_core::Orientation) -> &'static str {
+    match orientation {
+        dutchman_core::Orientation::Auto => {
+            "Stands a design up when its source says it is Y-up; keeps the axes when it is Z-up or says nothing."
+        }
+        dutchman_core::Orientation::StandUp => "Always rotates so +Y becomes +Z.",
+        dutchman_core::Orientation::KeepAxes => "Never rotates, even for a design that is Y-up.",
+    }
+}
+
 fn set_choices(options: &mut ConvertOptions, history: bool, sketches: bool, joints: bool) {
     options.import_only = !history;
     options.no_sketches = !sketches;
@@ -311,6 +343,14 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
         .get("no_joints")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    set_orientation(
+        options,
+        settings
+            .get("up_axis")
+            .and_then(Value::as_str)
+            .and_then(dutchman_core::Orientation::from_name)
+            .unwrap_or_default(),
+    );
     settings
         .get("custom")
         .and_then(Value::as_bool)
@@ -389,6 +429,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
         "no_verify": options.no_verify,
         "part_positions": options.effective_part_positions().name(),
+        "up_axis": orientation_of(options).name(),
     })
 }
 
@@ -472,7 +513,7 @@ impl App {
             download_root: None,
             doctor: None,
             onshape: crate::onshape::Panel::new(&cc.egui_ctx),
-            fusion: crate::fusion_export::panel::Panel::new(),
+            fusion_export: crate::fusion_export::Panel::new(),
             intake: crate::paste::Inbox::new(),
             output_picker: Box::new(|sender, ctx| worker::pick(Pick::Output, sender, ctx)),
             clipboard: Box::new(crate::paste::clipboard),
@@ -648,15 +689,56 @@ impl App {
         offered: bool,
         presence: crate::fusion_export::agent::Presence,
         installed: Option<&str>,
-        step: crate::fusion_export::panel::Install,
+        step: crate::fusion_export::installer::Install,
     ) {
-        self.fusion.preview(offered, presence, installed, step);
+        self.fusion_export
+            .preview_install(offered, presence, installed, step);
     }
 
     /// Supplies a saved account for UI previews without contacting Onshape.
     #[doc(hidden)]
     pub fn preview_onshape(&mut self, user: Option<&str>) {
         self.onshape.preview(user);
+    }
+
+    /// Points "Export from Fusion" at a test home and offers it on any system (UI tests and
+    /// screenshots only).
+    #[doc(hidden)]
+    pub fn preview_fusion_export(&mut self, env: crate::fusion_export::Env) {
+        self.fusion_export.preview(env);
+    }
+
+    /// Offers "Export from Fusion…" on any system (UI tests only).
+    #[doc(hidden)]
+    pub fn offer_everywhere_for_tests(&mut self) {
+        self.fusion_export.offer();
+    }
+
+    /// The designs and folders added to convert, for UI tests.
+    #[doc(hidden)]
+    pub fn inputs_for_test(&self) -> &[PathBuf] {
+        &self.inputs
+    }
+
+    /// Where the "Export from Fusion" window is, for UI tests.
+    #[doc(hidden)]
+    pub fn fusion_export_stage(&self) -> crate::fusion_export::Stage {
+        self.fusion_export.stage()
+    }
+
+    /// Converts the folder an export from Fusion wrote, like a folder dropped on the window:
+    /// it becomes an input and the conversion starts unless one is already running. The
+    /// manifest reader will replace the body of this function.
+    pub fn convert_export_folder(&mut self, dir: PathBuf, ctx: &egui::Context) {
+        self.add_inputs([dir]);
+        if self.running() {
+            self.notice = Some(
+                "The folder exported from Fusion is queued. Press Convert when the current conversion ends."
+                    .into(),
+            );
+        } else {
+            self.start(ctx);
+        }
     }
 
     /// Completes a connection save for headless UI tests without storing real keys.
@@ -2096,6 +2178,12 @@ impl App {
             let (_, clipboard) = (self.clipboard)();
             self.onshape.offer_link(&clipboard);
         }
+        if let Some(folder) = self.fusion_export.poll(ctx) {
+            self.convert_export_folder(folder, ctx);
+        }
+        if let Some(notice) = self.fusion_export.take_notice() {
+            self.notice = Some(notice);
+        }
         self.receive_links(ctx);
         self.take_dropped_files(ctx);
         self.refresh_estimates(ctx);
@@ -2199,7 +2287,9 @@ impl App {
         {
             self.queue_link(crate::paste::Source::Onshape(link), ctx);
         }
-        self.fusion.window(ctx, self.header_bottom);
+        if let Some(folder) = self.fusion_export.window(ctx, self.header_bottom) {
+            self.convert_export_folder(folder, ctx);
+        }
         self.download_window(ctx);
         self.approval_window(ctx);
         let can_restart =
@@ -2795,6 +2885,26 @@ impl App {
                             );
                         }
                     });
+                let current = orientation_of(&self.options);
+                let response = egui::ComboBox::from_label("Up axis")
+                    .selected_text(orientation_label(current))
+                    .show_ui(ui, |ui| {
+                        for choice in [
+                            dutchman_core::Orientation::Auto,
+                            dutchman_core::Orientation::StandUp,
+                            dutchman_core::Orientation::KeepAxes,
+                        ] {
+                            let response =
+                                ui.selectable_label(current == choice, orientation_label(choice));
+                            preset_help(&response, orientation_help(choice));
+                            if response.clicked() {
+                                set_orientation(&mut self.options, choice);
+                                ui.close();
+                            }
+                        }
+                    })
+                    .response;
+                preset_help(&response, orientation_help(current));
             });
             let choices = self.options.choices();
             let (mut history, mut sketches, mut joints) =
@@ -3140,13 +3250,19 @@ impl App {
                     ui.label(dutchman::tool_library::WORDS);
                 });
             });
-            if self.fusion.offered()
+            if self.fusion_export.offered()
                 && ui
-                    .button("Export from Fusion")
-                    .on_hover_text("Find the Fusion exporter in your Fusion, or install it")
+                    .add_enabled(
+                        !self.running() && !self.updater.blocks_conversions(),
+                        egui::Button::new("Export from Fusion…"),
+                    )
+                    .on_hover_text(
+                        "Ask the Fusion exporter in your Fusion to export designs, then convert them. \
+                         If the exporter is missing, you can install it from here",
+                    )
                     .clicked()
             {
-                self.fusion.toggle(ui.ctx());
+                self.fusion_export.toggle();
             }
         });
         if self.running() && self.diagnostic_stopped {
@@ -4736,6 +4852,36 @@ mod tests {
             assert!(window.contains_rect(harness.get_by_label("Report this design…").rect()));
             harness.get_by_value("About synthetic-0.f3d");
         }
+    }
+
+    #[test]
+    fn up_axis_choice_is_saved_and_restored() {
+        use dutchman_core::Orientation;
+        let mut options = ConvertOptions::default();
+        assert_eq!(orientation_of(&options), Orientation::Auto);
+        for choice in [
+            Orientation::StandUp,
+            Orientation::KeepAxes,
+            Orientation::Auto,
+        ] {
+            set_orientation(&mut options, choice);
+            assert_eq!(orientation_of(&options), choice);
+            assert_eq!(
+                options.stand_up_choice(),
+                match choice {
+                    Orientation::Auto => None,
+                    Orientation::StandUp => Some(true),
+                    Orientation::KeepAxes => Some(false),
+                }
+            );
+            let mut restored = ConvertOptions::default();
+            restore_choices(&mut restored, &saved_choices(&options, false));
+            assert_eq!(orientation_of(&restored), choice);
+        }
+        // Older settings say nothing: automatic.
+        let mut restored = ConvertOptions::default();
+        restore_choices(&mut restored, &json!({}));
+        assert_eq!(orientation_of(&restored), Orientation::Auto);
     }
 
     #[test]

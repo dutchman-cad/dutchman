@@ -227,9 +227,11 @@ without rounding. A genuine contradiction names the designation's dimensions and
 secondary numbers and asks you to check the source thread table.
 
 UNC/UNF designations are checked in millimetres (25.4 mm per inch), with pitch expressed as
-millimetres or threads per inch. Even when those numbers agree, a separate UNC/UNF cosmetic
-Thread feature remains not supported yet by SolidCraft; this limitation is reported rather
-than mislabeling it as an ISO metric thread. Tapped-hole support is separate.
+millimetres or threads per inch. When those numbers agree, a UNC, UNF or UNEF thread is written as a Thread feature in
+SolidCraft's Unified form (`#2-56 UNC`, `1/4-20 UNC`), keeping a class the source names
+(`-2A` external, `-2B` internal), on targets with Unified thread support. No SolidCraft release
+has it yet, so every target reports "Unified threads need a SolidCraft release with Unified
+thread support" rather than mislabeling the thread as ISO metric. Tapped-hole support is separate.
 
 The face must resolve to a complete cylindrical band between two circular rims. Historical
 face IDs without input surface geometry remain unresolved; Dutchman does not infer faces
@@ -238,7 +240,7 @@ and unresolved extents or face geometry remain reported losses. When the source 
 resolve whether the thread is modeled, the annotation is kept with a Degraded note; helical
 geometry is not reconstructed. Cosmetic annotations do not change the body's geometry.
 
-Fusion may store a cosmetic thread's face at the thread class's diameter (Ø9.85 for an M10 thread) while the sketch that made the cylinder keeps the nominal size (Ø10). A SolidCraft cosmetic thread cannot make that change, so such a thread is reported as not rebuilt and the stored shape is kept; the sketch and extrude keep their history. Only a face within 3 % of the nominal radius, along the axis of a sketch circle of the nominal size, counts.
+Fusion may store a cosmetic thread's face at the thread class's diameter (Ø9.85 for an M10 thread) while the sketch that made the cylinder keeps the nominal size (Ø10). A SolidCraft cosmetic thread cannot make that change, so the history writes it as an offset-face feature that sets the cylinder to the stored size, followed by the cosmetic thread; the sketch and extrude keep their history and the rebuilt body is checked against the stored one. Only a face within 3 % of the nominal radius, along the axis of a sketch circle of the nominal size, counts.
 
 Modeled threads retain their original helical geometry and stop the editable history.
 The Degraded loss `history/modeled-thread-retained` keeps the source designation when
