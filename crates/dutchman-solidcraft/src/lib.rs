@@ -121,9 +121,13 @@ pub struct SolidCraftWriter {
     timeout: Duration,
     opening_timeout: Option<Duration>,
     hide_unverified: bool,
-    stand_up: Option<bool>,
+    orientation: dutchman_core::Orientation,
+    /// Whether the caller rotates the written design itself and says so in the report.
+    caller_orients: bool,
+    /// The orientation fixed for the design being written, once its report has been read.
+    stands_up: Option<bool>,
     memory_budget: Option<u64>,
-    memory_skip: OnceLock<(u64, u64)>,
+    memory_skip: std::sync::Arc<OnceLock<(u64, u64)>>,
 }
 
 impl Default for SolidCraftWriter {
@@ -149,9 +153,11 @@ impl Default for SolidCraftWriter {
             timeout: DEFAULT_TIMEOUT,
             opening_timeout: None,
             hide_unverified: false,
-            stand_up: None,
+            orientation: dutchman_core::Orientation::Auto,
+            caller_orients: false,
+            stands_up: None,
             memory_budget: None,
-            memory_skip: OnceLock::new(),
+            memory_skip: std::sync::Arc::new(OnceLock::new()),
         }
     }
 }
@@ -329,21 +335,72 @@ impl SolidCraftWriter {
     }
 
     /// Whether to orient Y-up models (such as Fusion 360 designs) to SolidCraft's Z-up
-    /// coordinate system. By default (`None` or `false`), source axes are preserved.
-    pub fn stand_up(mut self, stand_up: Option<bool>) -> Self {
-        self.stand_up = stand_up;
+    /// coordinate system: `Some(true)` always, `Some(false)` never, `None` (the default) when
+    /// the source states that the design is Y-up.
+    pub fn stand_up(self, stand_up: Option<bool>) -> Self {
+        self.orientation(match stand_up {
+            Some(true) => dutchman_core::Orientation::StandUp,
+            Some(false) => dutchman_core::Orientation::KeepAxes,
+            None => dutchman_core::Orientation::Auto,
+        })
+    }
+
+    /// The orientation to give the design, as a person chose it.
+    pub fn orientation(mut self, orientation: dutchman_core::Orientation) -> Self {
+        self.orientation = orientation;
+        self.stands_up = None;
         self
     }
 
+    /// Leaves the rotation to the caller, who turns the written design and records it in the
+    /// report: the writer then neither rotates nor reports an orientation.
+    pub fn caller_orients(mut self) -> Self {
+        self.caller_orients = true;
+        self
+    }
+
+    /// Whether the design being written is stood up. Before a report has said what the
+    /// source states, only an explicit choice counts.
     pub(crate) fn should_stand_up(&self) -> bool {
-        self.stand_up.unwrap_or(false)
+        self.stands_up
+            .unwrap_or(self.orientation == dutchman_core::Orientation::StandUp)
+    }
+
+    /// This writer with the orientation fixed from what `report` says the source states, and
+    /// the report's note of what was done.
+    fn oriented(&self, report: &mut Report) -> Self {
+        if self.caller_orients {
+            let mut writer = self.clone();
+            writer.stands_up = Some(false);
+            return writer;
+        }
+        let found = report
+            .up_axis()
+            .map(|up| up.found.clone())
+            .unwrap_or_default();
+        let stands_up = self.orientation.stands_up(&found);
+        report.record_orientation(self.orientation, stands_up);
+        if report
+            .up_axis()
+            .is_some_and(dutchman_core::UpAxisReport::worth_stating)
+        {
+            report.push_at(
+                Stage::Write,
+                Severity::Info,
+                "orientation",
+                self.orientation.sentence(&found),
+            );
+        }
+        let mut writer = self.clone();
+        writer.stands_up = Some(stands_up);
+        writer
     }
 
     /// Additional memory estimated after reading the design. Recheck current free memory
     /// immediately before every geometry replay; a skipped check stays skipped for this design.
     pub fn history_check_memory(mut self, needed: u64, available: Option<u64>) -> Self {
         self.memory_budget = Some(needed);
-        self.memory_skip = OnceLock::new();
+        self.memory_skip = std::sync::Arc::new(OnceLock::new());
         if let Some(available) = available.filter(|free| needed > *free) {
             let _ = self.memory_skip.set((needed, available));
         }
@@ -1730,6 +1787,10 @@ impl Writer for SolidCraftWriter {
         report: &mut Report,
         progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<(), Error> {
+        if self.stands_up.is_none() {
+            let writer = self.oriented(report);
+            return writer.write_with_progress(model, out, report, progress);
+        }
         document::report_scoped_attributes(model, report);
         let _preparing = progress
             .filter(|_| model.assembly.is_none())

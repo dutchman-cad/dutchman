@@ -240,7 +240,7 @@ and unresolved extents or face geometry remain reported losses. When the source 
 resolve whether the thread is modeled, the annotation is kept with a Degraded note; helical
 geometry is not reconstructed. Cosmetic annotations do not change the body's geometry.
 
-Fusion may store a cosmetic thread's face at the thread class's diameter (Ø9.85 for an M10 thread) while the sketch that made the cylinder keeps the nominal size (Ø10). A SolidCraft cosmetic thread cannot make that change, so such a thread is reported as not rebuilt and the stored shape is kept; the sketch and extrude keep their history. Only a face within 3 % of the nominal radius, along the axis of a sketch circle of the nominal size, counts.
+Fusion may store a cosmetic thread's face at the thread class's diameter (Ø9.85 for an M10 thread) while the sketch that made the cylinder keeps the nominal size (Ø10). A SolidCraft cosmetic thread cannot make that change, so the history writes it as an offset-face feature that sets the cylinder to the stored size, followed by the cosmetic thread; the sketch and extrude keep their history and the rebuilt body is checked against the stored one. Only a face within 3 % of the nominal radius, along the axis of a sketch circle of the nominal size, counts.
 
 Modeled threads retain their original helical geometry and stop the editable history.
 The Degraded loss `history/modeled-thread-retained` keeps the source designation when
