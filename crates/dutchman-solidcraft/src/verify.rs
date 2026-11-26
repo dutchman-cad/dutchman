@@ -421,7 +421,7 @@ pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 49];
 pub const WINDOW_OLDEST: [u64; 3] = [0, 40, 0];
 
 /// Writer capabilities whose output depends on the target release.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VersionGate {
     /// Rigid moves of resolved earlier bodies. This feature-specific gate does not
     /// count towards an installed release's general history notice.
@@ -463,11 +463,44 @@ pub enum VersionGate {
     ClosedCircleBlend,
     /// Complete spatial hole entries represented by an editable location sketch.
     SpatialHoleLocations,
+    /// Thread features named by an inch Unified designation such as `1/4-20 UNC-2A`
+    /// (solidcraft#20136). No release carries it yet, so it has no minimum version and no
+    /// known target supports it. When a release does, give it that release here.
+    UnifiedThread,
+}
+
+/// Test-only switch that makes the Unified thread capability available, to check what it writes.
+#[cfg(test)]
+pub(crate) mod tests_force {
+    use std::cell::Cell;
+
+    thread_local! {
+        static UNIFIED_THREAD: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(crate) fn unified_thread() -> bool {
+        UNIFIED_THREAD.with(Cell::get)
+    }
+
+    /// Switches the capability on until the returned guard drops.
+    pub(crate) struct Forced;
+
+    pub(crate) fn force_unified_thread() -> Forced {
+        UNIFIED_THREAD.with(|f| f.set(true));
+        Forced
+    }
+
+    impl Drop for Forced {
+        fn drop(&mut self) {
+            UNIFIED_THREAD.with(|f| f.set(false));
+        }
+    }
 }
 
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::UnifiedThread => SolidCraftVersion::UNRELEASED,
             Self::MoveBody => SolidCraftVersion::V0_45_0,
             Self::LinkedDesign => SolidCraftVersion::V0_44_0,
             Self::ThinExtrude => SolidCraftVersion::V0_44_0,
@@ -488,6 +521,10 @@ impl VersionGate {
 
     /// Whether this target can write the gated representation.
     pub fn supported(self, target: SolidCraftVersion) -> bool {
+        #[cfg(test)]
+        if self == Self::UnifiedThread && tests_force::unified_thread() {
+            return true;
+        }
         target >= self.minimum()
     }
 }
@@ -581,6 +618,10 @@ impl SolidCraftVersion {
 
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
+
+    /// Stands for a release that does not exist yet: above every real version, so a gate set to
+    /// it is never supported.
+    pub const UNRELEASED: Self = Self([u64::MAX, 0, 0]);
 
     /// First release that stores a tapped hole's `thread_class`.
     pub const V0_43_0: Self = Self([0, 43, 0]);
@@ -2329,6 +2370,50 @@ pub(crate) fn run_script(
     }
 }
 
+/// Runs `script` on `design` and saves the result to `save`, returning the raw
+/// `--results` JSON: the list of results, or `{results, error}` when a step failed (nothing
+/// is saved then).
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_and_save(
+    cli: &Path,
+    deadline: Instant,
+    dir: &Path,
+    design: &Path,
+    save: &Path,
+    script: &[Value],
+) -> Result<Value, String> {
+    let path = dir.join("drawing-script.json");
+    let output = dir.join("drawing-out.json");
+    let text =
+        serde_json::to_string(script).map_err(|err| format!("cannot write the script: {err}"))?;
+    std::fs::write(&path, text).map_err(|err| format!("cannot stage the script: {err}"))?;
+    let mut child = spawn(cli, |command| {
+        command
+            .arg("run")
+            .arg(&path)
+            .arg("--in")
+            .arg(design)
+            .arg("--save")
+            .arg(save)
+            .arg("--results")
+            .arg("--json-out")
+            .arg(&output)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    })
+    .map_err(|err| launch_failure(cli, err))?;
+    let status = wait(&mut child, cli, deadline)?;
+    let text = std::fs::read_to_string(&output);
+    match text {
+        Ok(text) => serde_json::from_str(&text).map_err(|err| format!("{CLI_NAME} result: {err}")),
+        Err(err) if status.success() => Err(format!("{CLI_NAME} wrote no result: {err}")),
+        Err(_) => {
+            Err(blocked_failure(cli).unwrap_or_else(|| format!("{CLI_NAME} exited with {status}")))
+        }
+    }
+}
+
 /// Starts the CLI, retrying while the system says it is busy being written.
 /// Keeps a console program this one starts from opening a window of its own, as it does when
 /// this one has no console: the desktop app, and the children it converts in. Attached to a
@@ -3949,6 +4034,26 @@ mod cli_tests {
             usable_cli(&Verification::Off),
             Err(NoCli::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn unified_threads_are_supported_by_no_known_release() {
+        let [major, newest] = NEWEST_SOLIDCRAFT;
+        for minor in 0..=newest + 1 {
+            for patch in [0, 1, 99] {
+                let target = SolidCraftVersion([major, minor, patch]);
+                assert!(
+                    !VersionGate::UnifiedThread.supported(target),
+                    "{major}.{minor}.{patch}"
+                );
+            }
+        }
+        assert!(!VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
+        {
+            let _forced = tests_force::force_unified_thread();
+            assert!(VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
+        }
+        assert!(!VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
     }
 
     #[test]

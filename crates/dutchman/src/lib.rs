@@ -19,6 +19,7 @@ pub mod counts;
 pub mod diagnose;
 pub mod diagnostics;
 pub mod doctor;
+pub mod drawings;
 pub mod dxf;
 pub mod formats;
 pub mod investigate;
@@ -228,12 +229,14 @@ pub struct ConvertOptions {
     /// Seconds each SolidCraft check may run before the history is written unverified.
     #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_TIMEOUT.as_secs())]
     pub verify_timeout: u64,
-    /// Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis.
-    /// By default source axes are preserved; pass --stand-up to rotate or --no-stand-up to keep identity.
+    /// Rotate the design so its +Y axis becomes SolidCraft's +Z axis, whatever its source says.
+    /// By default a design is stood up only when its source states that it is Y-up (a Fusion
+    /// export's manifest does); one that is Z-up or says nothing keeps its axes.
     #[arg(long, conflicts_with = "no_stand_up")]
     pub stand_up: bool,
-    /// Keep source axes without standing Y-up models up along +Z (default).
-    #[arg(long, conflicts_with = "stand_up")]
+    /// Keep the file's axes, never rotating, even for a design its source says is Y-up.
+    /// `--no-stand-up` is the same option.
+    #[arg(long = "keep-axes", alias = "no-stand-up", conflicts_with = "stand_up")]
     pub no_stand_up: bool,
     /// The project folder an assembly's part files are searched in when they are not at their
     /// stored paths (default: the nearest folder above the assembly holding an Inventor .ipj,
@@ -339,7 +342,8 @@ impl ConvertOptions {
         choices
     }
 
-    /// User's explicit choice for standing up Y-up models, if any.
+    /// User's explicit choice for standing up Y-up models; `None` leaves it to the source's
+    /// stated up axis.
     pub fn stand_up_choice(&self) -> Option<bool> {
         if self.stand_up {
             Some(true)
@@ -653,6 +657,10 @@ pub(crate) fn convert_options_with_observer(
     if tool_library::is_library(input) {
         return tool_library::convert(input, output, replace);
     }
+    // Every drawing file gets a report, even when nothing in it can be read yet.
+    if dutchman_core::Format::from_path(input).is_some_and(dutchman_core::Format::is_drawing) {
+        return drawings::convert_unread(input);
+    }
     if options.diagnostics.as_ref().is_some_and(|path| {
         path == output
             || std::fs::canonicalize(path)
@@ -708,6 +716,7 @@ fn convert_prepared(
         fields.insert("solidcraft".to_owned(), solidcraft);
     }
     json::conversion_choices(&mut report, input, options);
+    drawings::attach(input, options, &mut report);
     report
 }
 
@@ -746,6 +755,9 @@ pub fn convert(
     replace: bool,
     search: &PartSearch,
 ) -> Value {
+    if dutchman_core::Format::from_path(input).is_some_and(dutchman_core::Format::is_drawing) {
+        return drawings::convert_unread(input);
+    }
     match dutchman_core::convert_traced(input, output, writer, replace, search, &mut |_| {}) {
         Ok(report) => convert_success(input, output, &report),
         Err(err) => json::error(json::CONVERT, json::input(input), &err),
@@ -762,6 +774,9 @@ pub fn convert_with_progress(
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
     let progress = dutchman_core::Progress::new(on_progress);
+    if dutchman_core::Format::from_path(input).is_some_and(dutchman_core::Format::is_drawing) {
+        return drawings::convert_unread(input);
+    }
     match dutchman_core::convert_with_progress(input, output, writer, replace, search, &progress) {
         Ok(report) => convert_success(input, output, &report),
         Err(err) => json::error(json::CONVERT, json::input(input), &err),

@@ -105,7 +105,7 @@ CAD extension selects conversion.
 | `--no-joints` | Leave assembly joints out and retain the selected placements before joint solving. |
 | `--part-positions MODE` | Part positions: `smart` (default), `last-shown`, or `first-placed`. |
 | `--stored-placements` | Alias of `--part-positions first-placed`: place parts where they were first placed, ignoring later moves. |
-| `--stand-up`, `--no-stand-up` | Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis (+90° about +X). By default, source axes are preserved; pass `--stand-up` to rotate or `--no-stand-up` to keep identity. |
+| `--stand-up`, `--keep-axes` | The up axis. By default (automatic) a design is stood up (+90° about +X, so +Y becomes SolidCraft's +Z) when its source states that it is Y-up, as a Fusion export's manifest does; a design that is Z-up, or whose up axis is unknown, keeps its axes. `--stand-up` always rotates; `--keep-axes` never rotates (`--no-stand-up` is the same option). The report's `up_axis` states what was found, where, and what was done. |
 | `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH` or beside `dutchman`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). The same search runs in the desktop app; see [How Dutchman finds SolidCraft](desktop.md#how-dutchman-finds-solidcraft). When none is found, the report's `solidcraft.search` lists the places tried. |
@@ -472,7 +472,7 @@ For `parts/cube.f3d`, the default results are `parts/cube.sc` and
 there, with the ordinary `dutchman.convert/1` error report. A failed update keeps the
 previous design. Successful updates replace the design and report; obsolete report sidecars
 are removed only when they still contain the watcher's bytes. Unrelated or externally
-edited outputs and sidecars are skipped, as are destinations assigned to another input. Without `--replace`, a changed upload is written to the next free name (`part (2).sc`) rather than over the earlier output.
+edited outputs and sidecars are skipped, as are destinations assigned to another input. A changed upload refreshes the watcher's own earlier output; an output it did not write is skipped and reported, never replaced and never numbered.
 
 The output folder's `.dutchman-watch.json` records SHA-256 input hashes and outcomes,
 plus hashes proving which outputs the watcher owns. It is saved by temporary file and

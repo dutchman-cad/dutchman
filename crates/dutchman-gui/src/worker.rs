@@ -213,6 +213,8 @@ impl Run {
         messages: Sender<Message>,
         ctx: egui::Context,
     ) -> Self {
+        // `job.replace` and `job.output` were settled by the window: the file this session wrote
+        // at that name is replaced only while it is unchanged, else the job has a free name.
         let stop = Arc::new(AtomicBool::new(false));
         let writer = options.writer();
         let options = options.clone();
@@ -311,7 +313,14 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
                         &[
                             "f3d", "f3z", "ipt", "iam", "sldprt", "sldasm", "FCStd", "fcstd",
                             "CATPart", "catpart", "prt", "pvz", "3dm", "sat", "sab", "smt", "smb",
-                            "step", "stp", "igs", "iges", "zip",
+                            "step", "stp", "igs", "iges", "zip", "idw", "slddrw", "f2d", "dft",
+                            "dwg", "dxf",
+                        ],
+                    )
+                    .add_filter(
+                        "Drawings",
+                        &[
+                            "idw", "slddrw", "f2d", "dft", "dwg", "dxf", "FCStd", "fcstd",
                         ],
                     )
                     .add_filter("Fusion tool libraries", &["tools", "json"])
