@@ -113,9 +113,11 @@ receive a numbered alternative.
 Folder runs keep the input tree under the selected output folder. For example,
 `in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`, with linked design companions
 and its `.report.json` beside it. Same-named designs in different subfolders stay
-separate. Repeating a run into the same selected folder reuses the output paths;
-existing designs and reports are replaced, identical linked companions are reused,
-and edited companions are kept with a conflict report.
+separate. Repeating a run into the same selected folder never replaces a design that is
+there: each new design gets the next free name (`part (2).sc`), with its `.report.json`
+beside it, unless **Replace designs already in the output folder** is ticked (it is off by
+default). Identical linked companions are reused, and edited companions are kept with a
+conflict report.
 
 ZIP projects unpack into a private temporary folder, limited to 10,000 entries and 4 GiB
 of extracted data. Paths outside the project are refused and symbolic links are skipped.
@@ -470,12 +472,20 @@ Dutchman can be closed while a download is still running.
 - **Portable ZIP: Update now.** When neither MSI nor Scoop identifies the copy, all three
   release programs beside the Windows executable identify a portable folder. Dutchman
   downloads and verifies the ZIP, stages all three programs and bundled guidance on the
-  install volume, renames the originals to `.old`, and puts the new files beside them.
+  install volume, renames each file the package lists (the three programs and the files under
+  `docs`, `skills` and `AGENTS.md`) to `<name>.dutchman-old`, and puts the new files beside
+  them. Your own files, including other files inside `docs` or `skills`, are never moved.
   If replacement fails, it attempts to restore the originals and explains any recovery
   needed. The running app keeps working; **Restart now** becomes available once conversions
   finish. A detached helper waits for this copy to exit before opening the updated app.
-  The next start deletes the `.old` backups. A folder without write access offers the manual
+  The backups are recorded in `.dutchman-update-state`; the next start deletes exactly those
+  and nothing else, so your own `.old` files stay. A folder without write access offers the manual
   download fallback. Other Windows copies keep **Download**.
+
+On Linux, **Update now** replaces an AppImage only when this Dutchman is running from it
+(`APPIMAGE` names the Dutchman file and the running program lives inside its `APPDIR`
+mount). An `APPIMAGE` inherited from another app's terminal is ignored and Dutchman offers
+the download.
 
 Scoop and Homebrew retain their package-manager paths. macOS and Linux downloads are unchanged.
 

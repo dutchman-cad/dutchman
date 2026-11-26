@@ -19644,6 +19644,75 @@ fn intermediate_coincident_join() -> Model {
     model
 }
 
+/// A source join of one body among two, with a later independent extrusion so the join is
+/// an intermediate state. The source stores `before` bodies after the second cube and
+/// `after` after the join.
+fn counted_intermediate_join(before: &str, after: &str) -> Model {
+    let mut model = scoped_extrude("join");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][2]["source_properties"] = json!({"body_centers": before});
+    wire["model"]["features"][3]["source_properties"] = json!({"body_centers": after});
+    let mut later = wire["model"]["features"][2].clone();
+    later["id"] = json!("synthetic:later:feature#1");
+    later["ordinal"] = json!(4);
+    later["name"] = json!("Later extrusion");
+    later["outputs"] = json!(["synthetic:other:body#0"]);
+    later["source_properties"] = json!({});
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(later);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_join_that_merges_no_body_targets_its_output_body() {
+    let (document, report) = convert(
+        &counted_intermediate_join("1:5,5,5;2:5,5,5", "1:5,5,10;2:5,5,5"),
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some("0.44.0".parse().unwrap())),
+    );
+    let join = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|feature| feature["name"] == "Scoped extrusion")
+        .unwrap();
+    assert_eq!(join["targets"], json!(["unit cube"]), "{report:?}");
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("history/body-scope-confirmed")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn a_join_that_loses_a_body_keeps_its_untargeted_mapping() {
+    {
+        let (before, after) = ("1:5,5,5;2:5,5,5", "1:5,5,5");
+        let (document, report) = convert(
+            &counted_intermediate_join(before, after),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some("0.44.0".parse().unwrap())),
+        );
+        let join = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|feature| feature["name"] == "Scoped extrusion")
+            .unwrap();
+        assert!(
+            join.get("targets").is_none(),
+            "{before} -> {after}: {report:?}"
+        );
+    }
+}
+
 /// Recorded cube evaluations preserve the count difference that the anonymous
 /// intermediate centre comparison permits: a scoped join leaves two coincident cubes.
 #[derive(Debug, Default)]

@@ -49,8 +49,10 @@ For SolidCraft 0.44 and newer, an extrude join, cut or intersection can select t
 bodies it modifies. Dutchman tries the reader's modified-body outputs as targets
 when earlier features have named every one, and keeps that scope only at the final
 body-building feature when replay matches the final source geometry. Intermediate
-body centres do not establish all participants, even when exact; intermediate
-features keep the previous mapping. Unknown or conflicting evidence also retains
+body centres do not establish all participants, even when exact; an intermediate
+join with one output body is the exception when the source stores as many bodies
+right after it as right before it: it consumed none, so it targets its output body.
+Other intermediate features keep the previous mapping. Unknown or conflicting evidence also retains
 the previous mapping. Native participant expressions are not interpreted. A join
 with several output bodies still uses the previous mapping because its surviving
 body identities are not established by those outputs.
@@ -191,7 +193,8 @@ Body moves require SolidCraft 0.45 or newer. This requirement applies only to de
 with a body move; it does not trigger a general history-loss notice for older targets.
 Dutchman keeps resolved translations
 and axis-angle rotations, including explicit pivots, when every selected body has
-a proven earlier name. CADIR supplies millimetres and radians; the writer never
+a proven earlier name; in a design state that holds several bodies, a moved body is the
+one earlier named body whose creating feature affected exactly its history slot. CADIR supplies millimetres and radians; the writer never
 infers a transform from final geometry. Unresolved body selections, unresolved
 point-to-point motion, and copied body result identities remain blockers. Bodies
 available only as final geometry also require a captured pre-move body. Older
@@ -232,7 +235,7 @@ Fusion's own STEP export leaves hidden bodies out, so a STEP you export from Fus
 | A mesh body whose container cadmpeg cannot decode. | Leaves it out and reports it as an undecoded mesh body. |
 | Parameters, planar sketches with typed and native constraints. | Mapped, including point-on-curve coincidences, point-to-line distances, resolved finite-endpoint distances, and parallel-line spacing. Dimensions keep their parameter expressions, so user parameters drive the editable geometry. Native constraints without neutral operands are reported as not carried. |
 | Spatial (3D) sketches. | Mapped as SolidCraft 3D sketches at their solved positions (lines, arcs, circles, splines, points). On targets 0.44 and newer, neutral point joins, point distances, line lengths (including repeated lengths), principal-axis directions and line-to-line and line-to-arc endpoint tangencies carry across; dimensions keep their parameters. Meeting endpoints alone do not create relations. Sweep paths and rails follow their selected curves. Other constraints and links to model edges are reported as not carried. |
-| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. The designation supplies the nominal size (a Unified numbered size such as 2-56 UNC or #10-32 UNF is read by its gauge diameter, 0.060 + 0.013 x N inches); secondary diameter and pitch may agree at their stated decimal precision. An absent designation is derived exactly from diameter and pitch. Contradictions name both sizes; UNC/UNF cosmetic Thread output (written only on a SolidCraft release with Unified thread support, none yet), modeled threads, and unresolved faces remain reported losses. A thread whose stored face is slightly smaller than the nominal-size sketch circle that made it (the thread class's diameter, such as Ø9.85 for M10) is reported, not rebuilt: a SolidCraft cosmetic thread cannot change the size. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
+| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. The designation supplies the nominal size (a Unified numbered size such as 2-56 UNC or #10-32 UNF is read by its gauge diameter, 0.060 + 0.013 x N inches); secondary diameter and pitch may agree at their stated decimal precision. An absent designation is derived exactly from diameter and pitch. Contradictions name both sizes; UNC/UNF cosmetic Thread output (written only on a SolidCraft release with Unified thread support, none yet), modeled threads, and unresolved faces remain reported losses. A thread whose stored face is slightly smaller than the nominal-size sketch circle that made it (the thread class's diameter, such as Ø9.85 for M10) is rebuilt as an offset-face feature that sets the cylinder to the stored size, then the cosmetic thread: a SolidCraft cosmetic thread cannot change the size itself. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
 | Body Mirror and Remove steps. | A Mirror of bodies maps when its bodies are named by earlier features, are a body the final model leaves out that cadmpeg names by the extrude that made it, or are the only body in the Mirror's own input; it joins its copy to the body when Fusion did. A Remove of such bodies maps as a SolidCraft Remove on SolidCraft 0.40 and newer. |
 | Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map, on a face of the extrusion or box made just before them; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, including on full circles such as a boss's top edge or a hole's rim, and unequal chamfers on straight edges and full circles with the face their distance runs along proven on the source's final body, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
 
@@ -517,10 +520,23 @@ candidate edges apart.
 Fusion 360 models in a right-handed coordinate system that defaults to Y-up in older versions
 (Autodesk made Z-up default for new installations around 2019). SolidCraft uses Z-up.
 
-By default, Dutchman preserves the source coordinates unchanged (`--no-stand-up`).
-For models created with Y-up orientation, `--stand-up` rotates the model +90° about +X
-(mapping source +Y to SolidCraft +Z and +Z to -Y). The rotation applies to imported geometry,
-assemblies, and rebuilt history.
+By default (automatic), Dutchman stands a design up when its source states that it is Y-up,
+and keeps the source coordinates when it is Z-up or when nothing states the up axis. It never
+guesses. The Fusion exporter writes each design's `up_axis` (`"y"` or `"z"`, or `null` with
+an `up_axis_error`) in the export folder's `manifest.json`; an export without the field, or a
+design outside an export folder, has an unknown up axis. Standing up rotates the model +90°
+about +X (mapping source +Y to SolidCraft +Z and +Z to -Y), for imported geometry, assemblies
+and rebuilt history.
+
+`--stand-up` always rotates, and `--keep-axes` (or `--no-stand-up`) never does, whatever the
+source says. In an assembly every design shares one frame: the root design's up axis applies,
+and the report names any inserted design that states another.
+
+The report's `up_axis` object gives `found` (`y`, `z` or `unknown`), `origin`
+(`export_manifest`, `file` or `none`), `reason` when unknown, `mode`, `applied` (`stood_up` or
+`kept_axes`) and a `summary` such as "Stood up: the export says this design is Y-up" or
+"Kept the file's axes: up axis unknown (...)". The same sentence is an information line under
+the subject `orientation`.
 
 ## Assembly placements
 

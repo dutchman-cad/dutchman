@@ -15,13 +15,34 @@ use crate::update::{version, RELEASES};
 /// reported); `$0` is the AppImage's path.
 const WAIT_THEN_START: &str = r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$0""#;
 
-/// The AppImage this process runs from, when `APPIMAGE` names an existing file (only Linux
-/// runs AppImages, so only Linux asks).
+/// The AppImage this process runs from. `APPIMAGE` and `APPDIR` are inherited by anything
+/// started from an AppImage app's terminal, so they count only when they describe this very
+/// process: the file exists and is named for Dutchman, `APPDIR` is a mount of that file, and
+/// the running executable lives under `APPDIR`. Anything else is not an AppImage install.
 #[cfg(any(target_os = "linux", test))]
-pub(super) fn detect(env: Option<&OsStr>) -> Install {
-    match env.map(PathBuf::from) {
-        Some(path) if path.is_absolute() && path.is_file() => Install::AppImage(path),
-        _ => Install::Direct,
+pub(super) fn detect(env: Option<&OsStr>, appdir: Option<&OsStr>, exe: &Path) -> Install {
+    let (Some(image), Some(appdir)) = (env.map(PathBuf::from), appdir.map(PathBuf::from)) else {
+        return Install::Direct;
+    };
+    // The file's own name, or (for a renamed file) the program inside it.
+    let is_dutchman = |p: &Path| {
+        p.file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(|n| n.to_ascii_lowercase().contains("dutchman"))
+    };
+    let named = is_dutchman(&image) || is_dutchman(exe);
+    let inside = appdir.is_absolute()
+        && appdir
+            .file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(|n| n.starts_with(".mount_"))
+        && std::fs::canonicalize(&appdir)
+            .and_then(|a| std::fs::canonicalize(exe).map(|e| e.starts_with(a)))
+            .unwrap_or(false);
+    if image.is_absolute() && image.is_file() && named && inside {
+        Install::AppImage(image)
+    } else {
+        Install::Direct
     }
 }
 
@@ -122,16 +143,64 @@ mod tests {
     }
 
     #[test]
-    fn detection_needs_an_existing_absolute_file() {
+    fn detection_needs_this_process_to_run_from_the_named_appimage() {
         let folder = tempfile::tempdir().unwrap();
         let file = folder.path().join("Dutchman.AppImage");
-        assert_eq!(detect(None), Install::Direct);
-        assert_eq!(detect(Some(file.as_os_str())), Install::Direct);
+        let other = folder.path().join("Other-App.AppImage");
+        let mount = folder.path().join(".mount_Dutchm1x2y3");
+        std::fs::create_dir_all(mount.join("usr/bin")).unwrap();
+        let exe = mount.join("usr/bin/dutchman-gui");
+        std::fs::write(&exe, b"x").unwrap();
+        std::fs::write(&other, b"other").unwrap();
+        let d = |image: Option<&Path>, dir: Option<&Path>, exe: &Path| {
+            detect(image.map(Path::as_os_str), dir.map(Path::as_os_str), exe)
+        };
+        assert_eq!(d(None, None, &exe), Install::Direct);
+        assert_eq!(d(Some(&file), Some(&mount), &exe), Install::Direct);
         std::fs::write(&file, b"old").unwrap();
-        assert_eq!(detect(Some(file.as_os_str())), Install::AppImage(file));
         assert_eq!(
-            detect(Some(OsStr::new("relative.AppImage"))),
+            d(Some(&file), Some(&mount), &exe),
+            Install::AppImage(file.clone())
+        );
+        assert_eq!(d(Some(&file), None, &exe), Install::Direct);
+        assert_eq!(
+            detect(
+                Some(OsStr::new("relative.AppImage")),
+                Some(mount.as_os_str()),
+                &exe
+            ),
             Install::Direct
+        );
+    }
+
+    #[test]
+    fn an_inherited_appimage_for_another_app_is_ignored() {
+        let folder = tempfile::tempdir().unwrap();
+        let other = folder.path().join("Other-App.AppImage");
+        std::fs::write(&other, b"other").unwrap();
+        let mount = folder.path().join(".mount_Other1x2y3");
+        std::fs::create_dir_all(&mount).unwrap();
+        // An Arch or tarball Dutchman run from that app's terminal.
+        let exe = folder.path().join("usr/bin/dutchman-gui");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"x").unwrap();
+        assert_eq!(
+            detect(Some(other.as_os_str()), Some(mount.as_os_str()), &exe),
+            Install::Direct
+        );
+        // Even a Dutchman-named file does not count when the executable is outside the mount.
+        let named = folder.path().join("dutchman-old.AppImage");
+        std::fs::write(&named, b"x").unwrap();
+        assert_eq!(
+            detect(Some(named.as_os_str()), Some(mount.as_os_str()), &exe),
+            Install::Direct
+        );
+        // A renamed AppImage still counts when the running program inside its mount is ours.
+        let inside = mount.join("dutchman-gui");
+        std::fs::write(&inside, b"x").unwrap();
+        assert_eq!(
+            detect(Some(other.as_os_str()), Some(mount.as_os_str()), &inside),
+            Install::AppImage(other)
         );
     }
 

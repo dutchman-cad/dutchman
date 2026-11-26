@@ -10,7 +10,7 @@ no server to connect. Optional follow-up commands
 use `--json` and a fresh scratch folder next to the converted design. `inspect INPUT --json`
 reads without converting; `diagnose INPUT --out SCRATCH --time-limit 30s --json` tries
 parts separately. For a specific trial use
-`convert INPUT -o SCRATCH/trial.sc --part P --stop-at-feature N --no-clobber --json`.
+`convert INPUT -o SCRATCH/trial.sc --part P --stop-at-feature N --json`.
 `--stop-at-feature` requires `--part`; feature numbers count active timeline features,
 and 0 tries stored shape only. Once diagnosis has identified a failing part,
 `repro INPUT --out FRESH_SCRATCH --from-diagnose DIAGNOSIS --json` reuses that diagnosis.
@@ -87,9 +87,10 @@ Omit the output to write beside the input, using its stem and the extension chos
 Targets before SolidCraft 0.25.1 get `.solidcraft` by default.
 `--to dxf` writes one `part-PageName.dxf` per TechDraw page; see
 [TechDraw drawing output](freecad.md#techdraw-to-dxf). If a model default exists, Dutchman
-exits 2 without changing it: choose `-o PATH` or pass `--force` to replace it. A default
-that is the input itself is always refused. `--force` conflicts with `--no-clobber`.
-Explicit output paths are replaced unless `--no-clobber` is given. Built-in commands win
+writes the next free name (`part (2).sc`) and leaves it as it is. A default
+that is the input itself is always refused. An existing file is never replaced unless you pass
+`--replace` (`--force` means the same); the old `--no-clobber` is accepted and does nothing,
+and `--force` conflicts with it. The report names the file actually written. Built-in commands win
 over files with the same name; use `dutchman convert pilot` for a file named `pilot`.
 Installed tools take precedence over bare files; otherwise an existing file or a recognised
 CAD extension selects conversion.
@@ -104,7 +105,7 @@ CAD extension selects conversion.
 | `--no-joints` | Leave assembly joints out and retain the selected placements before joint solving. |
 | `--part-positions MODE` | Part positions: `smart` (default), `last-shown`, or `first-placed`. |
 | `--stored-placements` | Alias of `--part-positions first-placed`: place parts where they were first placed, ignoring later moves. |
-| `--stand-up`, `--no-stand-up` | Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis (+90° about +X). By default, source axes are preserved; pass `--stand-up` to rotate or `--no-stand-up` to keep identity. |
+| `--stand-up`, `--keep-axes` | The up axis. By default (automatic) a design is stood up (+90° about +X, so +Y becomes SolidCraft's +Z) when its source states that it is Y-up, as a Fusion export's manifest does; a design that is Z-up, or whose up axis is unknown, keeps its axes. `--stand-up` always rotates; `--keep-axes` never rotates (`--no-stand-up` is the same option). The report's `up_axis` states what was found, where, and what was done. |
 | `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH` or beside `dutchman`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). The same search runs in the desktop app; see [How Dutchman finds SolidCraft](desktop.md#how-dutchman-finds-solidcraft). When none is found, the report's `solidcraft.search` lists the places tried. |
@@ -112,10 +113,11 @@ CAD extension selects conversion.
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--write-replay` | For a `.sc` design, also write `<design>.replay.json` beside it (the design's name with `.replay.json` in place of `.sc`): the command script that rebuilds the history step by step. See [Replay a history by hand](troubleshooting.md#replay-a-history-by-hand). Works with `convert` and `convert-all`; the JSON report names it as `replay_script`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
-| `--no-clobber` | Do not replace an existing `.sc` file: that file's conversion fails instead. By default it is replaced. |
+| `--replace` | Replace an existing design at the output. Without it nothing already there is replaced: a taken name gets the next free one (`part (2).sc`, `part (3).sc`), and the `.report.json`, `.failed.json` and `.replay.json` beside it, the logs and the anonymous report follow the same rule. The report states the path written. |
+| `--no-clobber` | Does nothing: not replacing is the default. Kept so existing scripts work. |
 | `--project DIR` | The project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an `.ipj`, else two folders up. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `--search DIR` | Another folder to search for part files the project folder does not hold, such as a shared library. May be given more than once. |
-| `-o PATH`, `--force` | Write to `PATH`; `--force` replaces an existing default output (see [Output files](#output-files)). |
+| `-o PATH`, `--force` | Write to `PATH`; `--force` is the same as `--replace` (see [Output files](#output-files)). |
 | `--to freecad`, `--to fcstd`, `--to dxf` | Write a FreeCAD macro or document, or TechDraw pages as DXF (see [FreeCAD](freecad.md)). |
 | `--threads N` | Bound the assembly part workers; `1` is serial (see [Assembly workers](#assembly-workers)). |
 | `--diagnostics`, `--diagnostics-default` | Write an anonymous diagnostic log while converting (see [Diagnostic logs](troubleshooting.md#diagnostic-logs-for-unfinished-runs)). |
@@ -397,8 +399,9 @@ Folder paths are relative to each input folder: `in/ProjectA/part.f3d` writes
 `out/ProjectA/part.sc`. Linked design companions are written beside that design.
 Same-named files in different subfolders keep their own paths. Output names that
 would collide, including names differing only in case, receive a numeric suffix.
-An explicit output folder is reused on a rerun: designs at the same paths are
-replaced unless `--no-clobber` is set. Identical linked companions are reused;
+A rerun into the same output folder never replaces a design that is there: each new design gets
+the next free name (`part (2).sc`), unless `--replace` is set. A run stopped and carried on with
+`--journal` still skips the files it already converted. Identical linked companions are reused;
 edited companions are kept and the conversion reports the conflict.
 
 Large batches:
@@ -469,7 +472,7 @@ For `parts/cube.f3d`, the default results are `parts/cube.sc` and
 there, with the ordinary `dutchman.convert/1` error report. A failed update keeps the
 previous design. Successful updates replace the design and report; obsolete report sidecars
 are removed only when they still contain the watcher's bytes. Unrelated or externally
-edited outputs and sidecars are skipped, as are destinations assigned to another input. `--no-clobber` also keeps existing watcher outputs.
+edited outputs and sidecars are skipped, as are destinations assigned to another input. A changed upload refreshes the watcher's own earlier output; an output it did not write is skipped and reported, never replaced and never numbered.
 
 The output folder's `.dutchman-watch.json` records SHA-256 input hashes and outcomes,
 plus hashes proving which outputs the watcher owns. It is saved by temporary file and

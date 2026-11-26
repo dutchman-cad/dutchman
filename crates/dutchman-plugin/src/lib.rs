@@ -28,8 +28,12 @@ pub const EDITABLE_HISTORY_OFF: &str = "Keep editable history is turned off";
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UpAxis {
+    /// Stand the design up when its source states it is Y-up; otherwise keep its axes.
     #[default]
+    Auto,
+    /// Keep the file's axes.
     AsIs,
+    /// Always rotate +Y to +Z.
     StandUp,
 }
 
@@ -44,7 +48,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             editable_history: true,
-            up_axis: UpAxis::AsIs,
+            up_axis: UpAxis::Auto,
             include_hidden_bodies: false,
         }
     }
@@ -159,6 +163,7 @@ pub fn convert(
         .threads(1)
         .target_version(Some(SolidCraftVersion::default()))
         .hide_unverified_history(true)
+        .caller_orients()
         .import_only(!options.editable_history)
         .import_only_reason(EDITABLE_HISTORY_OFF);
     let writer = match evaluator {
@@ -166,7 +171,30 @@ pub fn convert(
         None => writer.verification(Verification::Off),
     };
     writer.write(&model, &mut design, &mut report)?;
-    if matches!(options.up_axis, UpAxis::StandUp) {
+    // The rotation is applied to the written design, so the writer leaves it to this choice.
+    let orientation = match options.up_axis {
+        UpAxis::Auto => dutchman_core::Orientation::Auto,
+        UpAxis::AsIs => dutchman_core::Orientation::KeepAxes,
+        UpAxis::StandUp => dutchman_core::Orientation::StandUp,
+    };
+    let found = report
+        .up_axis()
+        .map(|up| up.found.clone())
+        .unwrap_or_default();
+    let stands_up = orientation.stands_up(&found);
+    report.record_orientation(orientation, stands_up);
+    if report
+        .up_axis()
+        .is_some_and(dutchman_core::UpAxisReport::worth_stating)
+    {
+        report.push_at(
+            dutchman_core::Stage::Write,
+            dutchman_core::Severity::Info,
+            "orientation",
+            orientation.sentence(&found),
+        );
+    }
+    if stands_up {
         design = stand_up::apply(&design)?;
     }
     if design.len() > MAX_OUTPUT_BYTES {

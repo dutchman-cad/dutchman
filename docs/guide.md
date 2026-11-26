@@ -254,9 +254,10 @@ The exit code is 0, and the first line, on stdout, says what was written where: 
 geometry, as this file has no feature history (else `editable history, verified in SolidCraft`
 or `editable history, unverified`). After progress updates, the lines on stderr are the loss report, explained
 [below](#reading-the-loss-report). Long notes are cut to their first sentence, marked `…`;
-`--verbose` prints them whole. An explicitly named existing output file is
-replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
-when the conversion fails.
+`--verbose` prints them whole. An existing file at the output is never
+replaced: the design is written to the next free name (`part (2).sc`), and its reports
+beside it carry the same number. `--replace` replaces it. Nothing is written when the
+conversion fails.
 
 Inventor attached sheet-metal plates and their bends can keep editable history on an unchanged
 L-shaped or notched base. The plate must span one proven straight profile edge at 90 degrees;
@@ -608,7 +609,8 @@ Folder runs in the desktop app and CLI keep paths relative to the input folder:
 `in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`. Designs with the same name in
 other subfolders stay separate. Linked design companions and desktop reports stay
 beside their design. Repeating a run into an explicit output folder reuses those
-paths and replaces designs unless `--no-clobber` is set; edited linked companions
+paths, and a design already there is kept: the new one gets the next free name
+(`part (2).sc`) unless `--replace` is set; edited linked companions
 are kept and reported as a conflict. Single-file output paths are unchanged.
 
 [Convert a whole folder: convert-all](command-line.md#convert-a-whole-folder-convert-all)
@@ -1003,7 +1005,9 @@ in the JSON report and do not count as placed. The CLI, app and plugin say
 “N parts couldn't be placed (their position in the archive couldn't be read).”
 The result is incomplete, with `verification.status` set to `partial`. Output is
 still written; JSON `ok` is `false` and the CLI returns exit status 1
-when parts are unplaced. This also covers single designs whose local components
+when parts are unplaced. That report has no `error`; its `reason` object (`stage`, `kind`,
+`code: "unplaced_parts"`, `message`, such as “47 of 49 parts placed: 2 parts couldn't be
+placed …”) says why, in batch results and in `failed.json`. This also covers single designs whose local components
 remain flattened because their occurrence positions could not be read. A replay
 against the same flattened source cannot prove their positions. Geometry and
 fallback transforms are unchanged. Decoded bodies without a written component
@@ -1140,9 +1144,10 @@ Library planning outcomes used by preflight keep empty output ids with
 
 ## Orient a Y-up design
 
-Use `--stand-up` with `convert` or `convert-all` to rotate a Y-up design +90°
-about +X, so its +Y axis becomes SolidCraft's +Z axis. Source axes are preserved
-by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
+A design is stood up (+90° about +X, so +Y becomes SolidCraft's +Z) by default when
+its source states that it is Y-up, as a Fusion export's manifest does; Z-up designs and
+designs of unknown up axis keep their axes. Use `--stand-up` with `convert` or
+`convert-all` to always rotate; `--keep-axes` (or `--no-stand-up`) never rotates. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.

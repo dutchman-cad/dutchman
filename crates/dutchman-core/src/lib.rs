@@ -35,15 +35,18 @@ pub mod preflight;
 mod progress;
 pub mod progress_words;
 mod refusal;
+pub mod safe_output;
 pub mod source;
 mod source_errors;
 mod source_version;
 pub mod time;
+mod up_axis;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
     classify as classify_refusal, clean as clean_refusal, Refusal,
     GENERIC_CATEGORY as GENERIC_REFUSAL,
 };
+pub use up_axis::{Orientation, SourceUpAxis, UpAxisFinding, UpAxisOrigin, UpAxisReport};
 mod report;
 pub mod repro;
 
@@ -467,7 +470,49 @@ pub fn read_with_progress(
         report,
     );
     report.note_part_positions(search.part_positions);
+    if matches!(format, Format::FusionArchive | Format::FusionMultiDocument) {
+        record_up_axis(&model, input, search, report);
+    }
     Ok(model)
+}
+
+/// Records the up axis the export folder states for the Fusion design at `input`. An assembly
+/// is one frame: its root design's axis counts, and a design it inserts that states another
+/// is named.
+fn record_up_axis(model: &Model, input: &Path, search: &PartSearch, report: &mut Report) {
+    let top = search.project.as_deref();
+    let root = up_axis::resolve(
+        up_axis::from_file(model),
+        export_folder::up_axis(input, top),
+    );
+    let mut differing: Vec<String> = Vec::new();
+    if let Some(Ok(listing)) = export_folder::inserted(input, top) {
+        for reference in &listing.references {
+            let part = export_folder::up_axis(&reference.file, top);
+            if part.axis != SourceUpAxis::Unknown && part.axis != root.axis {
+                let name = reference
+                    .file
+                    .file_name()
+                    .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+                differing.push(format!("{name} is {}-up", part.axis.name().to_uppercase()));
+            }
+        }
+    }
+    let disagreement = (!differing.is_empty()).then(|| {
+        let shown: Vec<&str> = differing.iter().take(5).map(String::as_str).collect();
+        format!(
+            "inserted designs state another up axis than the root design ({}{}); the root's \
+             axis ({}) applies to the whole assembly",
+            shown.join("; "),
+            if differing.len() > shown.len() {
+                "; ..."
+            } else {
+                ""
+            },
+            root.axis.name()
+        )
+    });
+    report.record_up_axis(root, disagreement);
 }
 
 /// Gathers the components a single file places itself into `model.assembly`, and records the
@@ -798,6 +843,12 @@ fn convert_impl(
     };
     stage(Stage::Input);
     check_output(output, writer)?;
+    if safe_output::same_file(input, output) {
+        return Err(Error::Encode(format!(
+            "{}: the output is the input file; choose another output",
+            output.display()
+        )));
+    }
     if !replace && output.exists() {
         return Err(Error::OutputExists {
             path: output.to_path_buf(),
@@ -910,25 +961,21 @@ fn companion_conflict(path: &Path) -> Error {
 
 /// Writes `bytes` to `output`; when `replace` is not set, only if no file is there.
 fn write_output(output: &Path, bytes: &[u8], replace: bool) -> Result<(), Error> {
-    use std::io::Write as _;
-    let io = |source| Error::Io {
-        path: output.to_path_buf(),
-        source,
-    };
-    if replace {
-        return std::fs::write(output, bytes).map_err(io);
+    // Lets a test stop a conversion in its write stage: a write no longer waits on a named pipe.
+    if std::env::var_os("DUTCHMAN_TEST_STALL_WRITE").is_some() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
     }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(output)
-        .map_err(|source| match source.kind() {
-            std::io::ErrorKind::AlreadyExists => Error::OutputExists {
-                path: output.to_path_buf(),
-            },
-            _ => io(source),
-        })?;
-    file.write_all(bytes).map_err(io)
+    safe_output::write(output, bytes, replace).map_err(|source| match source.kind() {
+        std::io::ErrorKind::AlreadyExists => Error::OutputExists {
+            path: output.to_path_buf(),
+        },
+        _ => Error::Io {
+            path: output.to_path_buf(),
+            source,
+        },
+    })
 }
 
 fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {

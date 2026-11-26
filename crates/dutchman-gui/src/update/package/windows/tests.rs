@@ -81,7 +81,7 @@ fn checksum_failure_deletes_each_download_without_changing_the_install() {
                 std::fs::read(installed.join(name)).unwrap(),
                 format!("old {name}").as_bytes()
             );
-            assert!(!installed.join(format!("{name}.old")).exists());
+            assert!(!installed.join(format!("{name}.dutchman-old")).exists());
         }
         assert_eq!(
             std::fs::read(installed.join("settings.txt")).unwrap(),
@@ -120,7 +120,7 @@ fn verified_msi_waits_for_close_and_portable_zip_swaps_all_three_programs() {
             format!("new {name}").as_bytes()
         );
         assert_eq!(
-            std::fs::read(installed.join(format!("{name}.old"))).unwrap(),
+            std::fs::read(installed.join(format!("{name}.dutchman-old"))).unwrap(),
             format!("old {name}").as_bytes()
         );
     }
@@ -131,12 +131,66 @@ fn verified_msi_waits_for_close_and_portable_zip_swaps_all_three_programs() {
     assert!(installed.join("AGENTS.md").is_file());
     cleanup(&kind);
     for name in PROGRAMS {
-        assert!(!installed.join(format!("{name}.old")).exists());
+        assert!(!installed.join(format!("{name}.dutchman-old")).exists());
     }
     assert_eq!(
         std::fs::read(installed.join("settings.txt")).unwrap(),
         b"keep"
     );
+}
+
+#[test]
+fn a_users_own_old_files_and_folders_survive_an_update_and_the_next_cleanup() {
+    let root = tempfile::tempdir().unwrap();
+    let installed = fixture(root.path());
+    std::fs::write(installed.join("notes.old"), b"mine").unwrap();
+    std::fs::write(installed.join("dutchman.exe.old"), b"mine too").unwrap();
+    std::fs::create_dir_all(installed.join("docs")).unwrap();
+    std::fs::write(installed.join("docs/my-notes.md"), b"my docs").unwrap();
+    std::fs::create_dir_all(installed.join("skills/mine")).unwrap();
+    std::fs::write(installed.join("skills/mine/SKILL.md"), b"my skill").unwrap();
+    std::fs::write(installed.join("AGENTS.md.old"), b"my agents").unwrap();
+    let bytes = package(false);
+    let kind = Install::Zip(installed.clone());
+    assert!(prepare_in(
+        &kind,
+        "v1.2.3",
+        &root.path().join("logs"),
+        &fetcher(&bytes, true)
+    )
+    .unwrap()
+    .is_none());
+    cleanup(&kind);
+    cleanup(&kind);
+    for (name, content) in [
+        ("notes.old", "mine"),
+        ("dutchman.exe.old", "mine too"),
+        ("docs/my-notes.md", "my docs"),
+        ("skills/mine/SKILL.md", "my skill"),
+        ("AGENTS.md.old", "my agents"),
+        ("settings.txt", "keep"),
+    ] {
+        assert_eq!(
+            std::fs::read(installed.join(name)).unwrap(),
+            content.as_bytes(),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        std::fs::read(installed.join("docs/guide.md")).unwrap(),
+        b"new guidance"
+    );
+    // The update's own backups are gone, and a second update works.
+    assert!(!installed.join("dutchman.exe.dutchman-old").exists());
+    assert!(!installed.join(STATE).exists());
+    assert!(prepare_in(
+        &kind,
+        "v1.2.3",
+        &root.path().join("logs"),
+        &fetcher(&bytes, true)
+    )
+    .unwrap()
+    .is_none());
 }
 
 #[test]
@@ -220,7 +274,7 @@ fn windows_portable_swap_while_gui_is_running() {
     child.wait().unwrap();
     result.unwrap();
     for name in PROGRAMS {
-        assert!(installed.join(format!("{name}.old")).exists());
+        assert!(installed.join(format!("{name}.dutchman-old")).exists());
     }
     for guide in [
         "AGENTS.md",
@@ -237,7 +291,7 @@ fn windows_portable_swap_while_gui_is_running() {
     assert!(String::from_utf8_lossy(&version.stdout).contains(env!("CARGO_PKG_VERSION")));
     cleanup(&Install::Zip(installed.clone()));
     for name in PROGRAMS {
-        assert!(!installed.join(format!("{name}.old")).exists());
+        assert!(!installed.join(format!("{name}.dutchman-old")).exists());
     }
 }
 
