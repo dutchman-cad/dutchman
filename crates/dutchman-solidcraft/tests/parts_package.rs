@@ -627,6 +627,9 @@ fn a_part_whose_model_has_two_solids_names_them_part_and_part_2() {
     });
     let (bytes, _) = write(dir.path(), manifest.to_string().as_bytes());
     let names = import_body_names(&bytes);
-    assert!(names.contains(&vec!["Pair".to_owned(), "Pair (2)".to_owned()]), "{names:?}");
+    assert!(
+        names.contains(&vec!["Pair".to_owned(), "Pair (2)".to_owned()]),
+        "{names:?}"
+    );
     assert!(names.contains(&vec!["Plate".to_owned()]), "{names:?}");
 }
