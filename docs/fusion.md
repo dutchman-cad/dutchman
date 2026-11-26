@@ -81,7 +81,8 @@ It runs only in Fusion, so the entry appears on Windows and macOS.
    Fusion's process still alive shows "Fusion is busy" and keeps waiting (Fusion can take
    minutes over one large design); a stale file with the process gone means Fusion closed.
 2. If it is not found, choose **Install the Fusion exporter**. Dutchman downloads one pinned
-   release, checks its SHA-256 before writing anything, and puts it in Fusion's Add-Ins folder
+   release (Fusion Bulk Export 0.4.1, which records each design's up axis in the export
+   manifest), checks its SHA-256 before writing anything, and puts it in Fusion's Add-Ins folder
    (macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns`; Windows:
    `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns`), replacing an older
    `FusionBulkExport` folder. It never installs while the exporter is exporting, and never puts an
@@ -111,6 +112,54 @@ When a share needs login, has expired, disables downloads, or exposes no public 
 Dutchman asks you to download the design in Fusion and drop the file into the app.
 Downloads stay on allowlisted Autodesk HTTPS hosts, with a 200 MB cap and two-minute
 timeout. See [Public share links](guide.md#public-share-links) for limits and cleanup.
+
+## Export from Fusion
+
+On Windows and macOS, Dutchman Convert can ask the Fusion exporter, an add-in running inside
+your Fusion, to export designs from your Fusion account, and convert them. It needs the exporter
+running (open Fusion with the exporter switched on). Choose **Export from Fusion…** (in the bar with Convert) and:
+
+1. Dutchman asks Fusion for the list of your hubs, projects and designs. Nothing is opened
+   or changed in your account.
+2. Pick designs in the list (hub, project, folder, design). The search box matches any of
+   those names. Everything a picked design inserts is exported with it.
+3. **Export** starts the export. The window shows which design Fusion is on and how many are
+   done. **Stop** keeps everything finished so far.
+4. When it ends, the export folder is converted like a folder you dropped on the window, and
+   the results appear as usual.
+
+If the window cannot find the exporter, it says so and offers **Install the Fusion exporter**,
+which downloads the release Dutchman was tested with, checks it and puts it in Fusion's
+Add-Ins folder; then it shows the one step you do yourself in Fusion (switch the add-in on).
+If the download is not available, the window says so in plain words and points to the
+exporter's project page; you can try again later. The window keeps waiting, and carries on
+with the list of your designs by itself as soon as the exporter is running. While Fusion is busy with a large
+design it says so and waits.
+
+Dutchman writes the export into its own folder, `Dutchman Fusion exports` in your home folder.
+The same set of designs always goes to the same folder, so asking again carries on where an
+earlier export stopped, and designs that already exported are checked and skipped.
+
+If some designs fail, the window says how many and offers **Try again**; the same export
+resumes and only retries the failed ones. A failed or stopped export says in plain words what
+happened and what to do: another export using the folder, Fusion signed out or out of
+memory, a full disk, Fusion closed during the export, and so on. **Convert what exported**
+converts what was finished.
+
+Dutchman waits for Fusion while a list or an export runs. If Fusion closes, or the exporter stops
+answering, for a whole minute, or Fusion does not take a request within two minutes, Dutchman gives
+up with a plain message and **Try again** (the export carries on where it stopped). **Stop**
+asks Fusion to stop; **Stop waiting** leaves the step without waiting for an answer. If the list
+cannot be made, the window says why and waits for **Try again**; it never asks again by itself.
+Dutchman only uses the exporter whose jobs folder is the `jobs` folder inside `.cad-export`, and it
+shows at most 100,000 designs and 32 levels of folders.
+
+This uses the exporter's job files in `~/.cad-export` (`%USERPROFILE%\.cad-export` on Windows):
+an `inventory` job into Dutchman's folder, then an `export` job with the picked designs by id,
+`include_references: true`, `formats: ["f3d", "step"]`, `rebuilt_f3z: true` and
+`older_versions: "move"`. Progress comes from the job's status file, **Stop** creates its
+`.cancel` file, and after the job ends Dutchman deletes its three job files. Everything the
+exporter writes stays on your computer.
 
 ## Mesh bodies
 
@@ -183,7 +232,7 @@ Fusion's own STEP export leaves hidden bodies out, so a STEP you export from Fus
 | A mesh body whose container cadmpeg cannot decode. | Leaves it out and reports it as an undecoded mesh body. |
 | Parameters, planar sketches with typed and native constraints. | Mapped, including point-on-curve coincidences, point-to-line distances, resolved finite-endpoint distances, and parallel-line spacing. Dimensions keep their parameter expressions, so user parameters drive the editable geometry. Native constraints without neutral operands are reported as not carried. |
 | Spatial (3D) sketches. | Mapped as SolidCraft 3D sketches at their solved positions (lines, arcs, circles, splines, points). On targets 0.44 and newer, neutral point joins, point distances, line lengths (including repeated lengths), principal-axis directions and line-to-line and line-to-arc endpoint tangencies carry across; dimensions keep their parameters. Meeting endpoints alone do not create relations. Sweep paths and rails follow their selected curves. Other constraints and links to model edges are reported as not carried. |
-| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. The designation supplies the nominal size (a Unified numbered size such as 2-56 UNC or #10-32 UNF is read by its gauge diameter, 0.060 + 0.013 x N inches); secondary diameter and pitch may agree at their stated decimal precision. An absent designation is derived exactly from diameter and pitch. Contradictions name both sizes; UNC/UNF cosmetic Thread output, modeled threads, and unresolved faces remain reported losses. A thread whose stored face is slightly smaller than the nominal-size sketch circle that made it (the thread class's diameter, such as Ø9.85 for M10) is reported, not rebuilt: a SolidCraft cosmetic thread cannot change the size. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
+| Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. The designation supplies the nominal size (a Unified numbered size such as 2-56 UNC or #10-32 UNF is read by its gauge diameter, 0.060 + 0.013 x N inches); secondary diameter and pitch may agree at their stated decimal precision. An absent designation is derived exactly from diameter and pitch. Contradictions name both sizes; UNC/UNF cosmetic Thread output (written only on a SolidCraft release with Unified thread support, none yet), modeled threads, and unresolved faces remain reported losses. A thread whose stored face is slightly smaller than the nominal-size sketch circle that made it (the thread class's diameter, such as Ø9.85 for M10) is reported, not rebuilt: a SolidCraft cosmetic thread cannot change the size. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
 | Body Mirror and Remove steps. | A Mirror of bodies maps when its bodies are named by earlier features, are a body the final model leaves out that cadmpeg names by the extrude that made it, or are the only body in the Mirror's own input; it joins its copy to the body when Fusion did. A Remove of such bodies maps as a SolidCraft Remove on SolidCraft 0.40 and newer. |
 | Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map, on a face of the extrusion or box made just before them; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, including on full circles such as a boss's top edge or a hole's rim, and unequal chamfers on straight edges and full circles with the face their distance runs along proven on the source's final body, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
 

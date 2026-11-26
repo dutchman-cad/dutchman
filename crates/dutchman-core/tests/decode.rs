@@ -273,11 +273,12 @@ fn a_numbered_save_strips_one_suffix_and_uses_contents_for_its_program() {
 #[test]
 fn conversion_requires_geometry_and_an_available_codec() {
     for format in Format::ALL {
-        let geometry = !matches!(format, Format::UnclassifiedPart | Format::Iges);
+        let geometry =
+            !matches!(format, Format::UnclassifiedPart | Format::Iges) && !format.is_drawing();
         assert_eq!(format.reads_geometry(), geometry, "{}", format.name());
         assert_eq!(
             format.can_convert(),
-            geometry && format.codec_id().is_some()
+            format.is_drawing() || (geometry && format.codec_id().is_some())
         );
     }
 }

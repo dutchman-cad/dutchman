@@ -12,6 +12,7 @@ pub mod camtools;
 mod companion;
 pub mod contents;
 mod decode;
+pub mod drawing;
 mod error;
 pub mod estimate;
 mod export_folder;
@@ -368,7 +369,7 @@ pub fn read_drawings(input: &Path, report: &mut Report) -> Result<Model, Error> 
     let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
         path: input.to_path_buf(),
     })?;
-    if !format.can_convert() {
+    if !format.can_convert() || format.is_drawing() {
         return Err(Error::NotSupportedYet { format });
     }
     check_input(input)?;

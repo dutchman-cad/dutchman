@@ -63,15 +63,18 @@ pub(super) fn map(
             ));
         }
         if inch || unified {
-            return Err(format!(
-                "its thread designation {source:?} agrees with its numbers, but a UNC/UNF cosmetic Thread feature is not supported yet by SolidCraft"
-            ));
+            unified_gate(ctx)?;
+            unified_name(source, major)?
+        } else {
+            // Write the table's nominal size, never the rounded secondary numbers.
+            format!("M{major}x{lead}")
         }
-        // Write the table's nominal size, never the rounded secondary numbers.
-        format!("M{major}x{lead}")
     } else {
         if unified {
-            return Err("a UNC/UNF cosmetic thread requires a designation and is not supported yet by SolidCraft".to_owned());
+            unified_gate(ctx)?;
+            return Err(
+                "a UNC/UNF cosmetic thread requires a designation that names its size".to_owned(),
+            );
         }
         if pitch >= diameter {
             return Err("cosmetic threads require a resolved diameter and pitch".to_owned());
@@ -160,6 +163,7 @@ fn designation_size(source: &str) -> Result<(f64, f64, bool), String> {
                 "its cosmetic thread designation does not resolve a nominal size".to_owned()
             });
     }
+    let (upper, _) = split_class(&upper);
     let unified = upper
         .strip_suffix(" UNC")
         .or_else(|| upper.strip_suffix(" UNF"))
@@ -182,6 +186,57 @@ fn designation_size(source: &str) -> Result<(f64, f64, bool), String> {
             .then_some((major, pitch, true))
     });
     parsed.ok_or_else(|| "its cosmetic thread designation is not supported yet".to_owned())
+}
+
+/// Refuses a Unified thread on a target without Unified thread support.
+fn unified_gate(ctx: &Context) -> Result<(), String> {
+    if crate::VersionGate::UnifiedThread.supported(ctx.target_version) {
+        return Ok(());
+    }
+    let [major, minor] = crate::NEWEST_SOLIDCRAFT;
+    Err(format!(
+        "Unified threads need a SolidCraft release with Unified thread support (newer than {major}.{minor})"
+    ))
+}
+
+/// Splits a trailing ASME B1.1 class (`-2A` external, `-2B` internal) off an upper-case
+/// designation such as `1/4-20 UNC-2A`.
+fn split_class(upper: &str) -> (&str, Option<&str>) {
+    if let Some((rest, class)) = upper.rsplit_once('-') {
+        let series = rest.rsplit(char::is_whitespace).next().unwrap_or_default();
+        if matches!(series, "UNC" | "UNF" | "UNEF")
+            && matches!(class, "1A" | "2A" | "3A" | "1B" | "2B" | "3B")
+        {
+            return (rest, Some(class));
+        }
+    }
+    (upper, None)
+}
+
+/// A Unified designation in SolidCraft's spelling (solidcraft#20136): `<size>-<TPI> <series>`
+/// with a leading hash on a numbered size and the source's class, when it states one. A
+/// source with no class gives none; SolidCraft takes the side from the face.
+fn unified_name(source: &str, major: f64) -> Result<String, String> {
+    let upper = source.trim().to_ascii_uppercase();
+    let (body, class) = split_class(&upper);
+    let parts = body
+        .rsplit_once(char::is_whitespace)
+        .and_then(|(size, series)| {
+            let (diameter, tpi) = size.trim().split_once('-')?;
+            Some((diameter.trim(), tpi.trim(), series))
+        });
+    let (diameter, tpi, series) =
+        parts.ok_or("its cosmetic thread designation is not supported yet")?;
+    let size = match numbered_size(diameter) {
+        Some(inches) if (inches * 25.4 - major).abs() < 1e-6 => {
+            format!("#{}", diameter.trim_start_matches('#'))
+        }
+        _ => diameter.to_owned(),
+    };
+    Ok(match class {
+        Some(class) => format!("{size}-{tpi} {series}-{class}"),
+        None => format!("{size}-{tpi} {series}"),
+    })
 }
 
 /// Unified numbered screw sizes #0 to #12 give a gauge number, not inches: the major
@@ -405,61 +460,104 @@ mod tests {
         }
     }
 
-    #[test]
-    fn unified_table_units_agree_but_the_target_thread_feature_is_not_supported() {
-        let model = model();
-        for (designation, diameter, pitch) in [
-            ("1/4-20 UNC", 6.35, 1.27),
-            ("1/4-28 UNF", 6.35, 0.907),
-            ("5/16-18 UNC", 7.94, 18.0),
-        ] {
-            let mut d = definition();
-            d["standard"] = json!("ANSI Unified Screw Threads");
-            d["designation"] = json!(designation);
-            d["diameter"] = json!(diameter);
-            d["pitch"] = json!(pitch);
-            let reason = map(
-                &json!({}),
-                &d,
-                &mut Context::testing(&model),
-                &mut Report::default(),
-            )
-            .unwrap_err();
-            assert!(reason.contains("agrees with its numbers"), "{reason}");
-            assert!(reason.contains("not supported yet by SolidCraft"));
-        }
+    fn unified_definition(designation: &str, diameter: f64, pitch: f64) -> Value {
+        let mut d = definition();
+        d["standard"] = json!("ANSI Unified Screw Threads");
+        d["designation"] = json!(designation);
+        d["diameter"] = json!(diameter);
+        d["pitch"] = json!(pitch);
+        d
     }
 
-    #[test]
-    fn numbered_unified_sizes_use_the_gauge_diameter() {
+    fn unified_result(designation: &str, diameter: f64, pitch: f64) -> Result<Value, String> {
         let model = model();
-        for (designation, diameter, pitch, tpi) in [
-            ("2-56 UNC", 2.1844, 0.4536, 56.0),
-            ("#2-56 UNC", 2.1844, 0.4536, 56.0),
-            ("#10-32 UNF", 4.826, 0.79375, 32.0),
-            ("#0-80 UNF", 1.524, 0.3175, 80.0),
-            ("12-24 UNC", 5.4864, 1.0583, 24.0),
-            ("1/4-20 UNC", 6.35, 1.27, 20.0),
-        ] {
-            let (major, lead, inch) = designation_size(designation).unwrap();
-            assert!(inch && (major - diameter).abs() < 1e-9, "{designation}");
-            assert!((lead - 25.4 / tpi).abs() < 1e-9, "{designation}");
-            let mut d = definition();
-            d["standard"] = json!("ANSI Unified Screw Threads");
-            d["designation"] = json!(designation);
-            d["diameter"] = json!(diameter);
-            d["pitch"] = json!(pitch);
+        map(
+            &json!({}),
+            &unified_definition(designation, diameter, pitch),
+            &mut Context::testing(&model),
+            &mut Report::default(),
+        )
+    }
+
+    const UNIFIED_CASES: [(&str, f64, f64); 8] = [
+        ("2-56 UNC", 2.1844, 0.4536),
+        ("#2-56 UNC", 2.1844, 0.4536),
+        ("#10-32 UNF", 4.826, 0.79375),
+        ("#0-80 UNF", 1.524, 0.3175),
+        ("12-24 UNC", 5.4864, 1.0583),
+        ("1/4-20 UNC", 6.35, 1.27),
+        ("1/4-28 UNF", 6.35, 0.907),
+        ("1/4-20 UNC-2B", 6.35, 1.27),
+    ];
+
+    #[test]
+    fn unified_threads_are_refused_while_no_release_supports_them() {
+        for (designation, diameter, pitch) in UNIFIED_CASES {
+            let reason = unified_result(designation, diameter, pitch).unwrap_err();
+            assert_eq!(
+                reason,
+                "Unified threads need a SolidCraft release with Unified thread support (newer than 0.49)",
+                "{designation}"
+            );
+        }
+        // Every known target refuses; so does a thread with no designation.
+        let model = model();
+        for minor in 19..=49 {
+            let mut ctx = Context::testing(&model);
+            ctx.target_version = format!("0.{minor}.0").parse().unwrap();
             let reason = map(
                 &json!({}),
-                &d,
-                &mut Context::testing(&model),
+                &unified_definition("1/4-20 UNC", 6.35, 1.27),
+                &mut ctx,
                 &mut Report::default(),
             )
             .unwrap_err();
             assert!(
-                reason.contains("agrees with its numbers"),
-                "{designation}: {reason}"
+                reason.contains("Unified thread support"),
+                "0.{minor}: {reason}"
             );
+        }
+        let mut d = unified_definition("1/4-20 UNC", 6.35, 1.27);
+        d.as_object_mut().unwrap().remove("designation");
+        let reason = map(
+            &json!({}),
+            &d,
+            &mut Context::testing(&model),
+            &mut Report::default(),
+        )
+        .unwrap_err();
+        assert!(reason.contains("Unified thread support"), "{reason}");
+    }
+
+    #[test]
+    fn a_supporting_target_gets_solidcrafts_unified_designation() {
+        let _forced = crate::verify::tests_force::force_unified_thread();
+        for (designation, diameter, pitch, expected) in [
+            ("2-56 UNC", 2.1844, 0.4536, "#2-56 UNC"),
+            ("#2-56 UNC-2A", 2.1844, 0.4536, "#2-56 UNC-2A"),
+            ("#10-32 UNF", 4.826, 0.79375, "#10-32 UNF"),
+            ("1/4-20 UNC", 6.35, 1.27, "1/4-20 UNC"),
+            ("1/4-20 unc-2a", 6.35, 1.27, "1/4-20 UNC-2A"),
+            ("1/4-28 UNF-3A", 6.35, 0.907, "1/4-28 UNF-3A"),
+            ("1/4-20 UNC-2B", 6.35, 1.27, "1/4-20 UNC-2B"),
+            ("5/16-18 UNC-1B", 7.94, 1.411, "5/16-18 UNC-1B"),
+        ] {
+            let out = unified_result(designation, diameter, pitch)
+                .unwrap_or_else(|reason| panic!("{designation}: {reason}"));
+            assert_eq!(out["type"], "thread");
+            assert_eq!(out["designation"], expected, "{designation}");
+        }
+        // A wrong size is still refused with the forced capability on.
+        let reason = unified_result("#2-56 UNC-2A", 6.35, 0.4536).unwrap_err();
+        assert!(reason.contains("specifies diameter 2.18"), "{reason}");
+    }
+
+    #[test]
+    fn numbered_unified_sizes_use_the_gauge_diameter() {
+        for (designation, diameter, pitch) in UNIFIED_CASES {
+            let (major, lead, inch) = designation_size(designation).unwrap();
+            assert!(inch && (major - diameter).abs() < 1e-9, "{designation}");
+            assert!((lead - pitch).abs() < 1e-3, "{designation}");
         }
         assert!(designation_size("13-20 UNC").is_ok_and(|(major, _, _)| major > 300.0));
         assert!(designation_size("#13-20 UNC").is_err());
@@ -621,7 +719,7 @@ mod tests {
                 json!("M3x0.6"),
                 "specifies diameter 3 mm and pitch 0.6 mm",
             ),
-            ("standard", json!("UNC"), "not supported yet by SolidCraft"),
+            ("standard", json!("UNC"), "Unified thread support"),
             ("standard", json!("Trapezoidal metric"), "ISO metric"),
             ("designation", json!("M3x0.5-LH"), "class or hand"),
             ("extent", Value::Null, "extent is not resolved"),

@@ -423,8 +423,9 @@ the tip extends beyond it. An unproven target still blocks body-building history
 
 Cosmetic thread contradictions name both the designation's nominal size and secondary
 numeric values. Metric labels tolerate decimal rounding and unit-conversion noise.
-Matching UNC/UNF values still report that SolidCraft's separate cosmetic Thread feature
-is not supported yet; tapped-hole support does not imply separate Thread support.
+Matching UNC/UNF values are written as a Unified Thread only on a SolidCraft release with
+Unified thread support (none yet), and are reported otherwise; tapped-hole support does not
+imply separate Thread support.
 
 Separate modeled Thread features keep their helical shape in the imported final geometry
 and stop editable history. When reached in the timeline, a Degraded `history/modeled-thread-retained` loss
