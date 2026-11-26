@@ -31,6 +31,8 @@ pub enum Status {
     Flattened,
     Incomplete,
     Failed,
+    /// A drawing file that is recognised but whose sheets are not read yet: not a failure.
+    NotSupported,
     /// Stopped at a limit and resumable: not a failure.
     Stopped,
     NotStarted,
@@ -41,6 +43,8 @@ pub enum Status {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LossLine {
     pub level: String,
+    /// What the default view shows: the note's plain sentence when
+    /// `dutchman_core::PLAIN_NOTES` covers it, else its subject and message.
     pub text: String,
     pub full_text: String,
 }
@@ -80,9 +84,20 @@ pub struct FileView {
     pub missing_summary: Option<String>,
     pub assembly: Option<String>,
     pub assembly_causes: Vec<String>,
+    /// What "unverified" means, when this file's editable history was not checked.
+    pub unverified_note: Option<&'static str>,
+    /// Counts of the notes the default view lists.
     pub loss_summary: String,
     pub losses: Vec<LossGroup>,
+    /// The notes the default view lists, by component, each leading with its plain sentence.
+    /// Notes that change nothing the person sees are left out.
     pub components: Vec<ComponentView>,
+    /// The raw subject, code and message of the notes the card lists that lead with a plain
+    /// sentence, for the "Details" toggle. A note with no plain sentence that changes nothing
+    /// the person sees is in neither list.
+    pub details: Vec<LossLine>,
+    /// Whether the report has any note, so the full log is worth saving.
+    pub has_log: bool,
     pub can_report: bool,
     /// Converted reports start collapsed; failed reports offer help immediately.
     pub report_case: Option<ReportCase>,
@@ -97,7 +112,14 @@ pub enum ReportCase {
 
 pub const REPORT_CONVERTED: &str = "Something wrong? Report this file";
 pub const SEND_CONVERTED_INTRO: &str =
-    "If the converted result has lost features, wrong placement or missing colours, help us fix it:";
+    "If the converted result has lost features, wrong placement or missing colors, help us fix it:";
+
+/// The third card's note for a Fusion tool library.
+pub const SEND_TOOLS_STEP_NOTE: &str =
+    "The other export of the same library lets us check every tool's sizes.";
+
+/// The panel's intro for a Fusion tool library.
+pub const SEND_TOOLS_INTRO: &str = "If tools are missing or their sizes are wrong, help us fix it:";
 
 pub const REPORT_HELP: &str = "Opens a prefilled GitHub issue under your GitHub username.";
 pub const MISSING_HELP: &str =
@@ -143,6 +165,10 @@ pub const SEND_DM_BUTTON: &str = "Copy and open DM";
 pub const SEND_STEP_TITLE: &str = "Please add a STEP export";
 pub const SEND_STEP_TEXT: &str = "Strongly recommended: a STEP export of the exact same design \
      (same version, part positions and state) lets us check every part. It really helps us fix it.";
+/// The third card for a drawing, which has no STEP export: the same drawing as a PDF or DXF.
+pub const SEND_DRAWING_TITLE: &str = "Please add a PDF or DXF export";
+pub const SEND_DRAWING_TEXT: &str = "Strongly recommended: a PDF or DXF export of the same \
+     drawing lets us check what the sheets should show. It really helps us fix it.";
 pub const SEND_SMALL_PRINT: &str = "Only the Dutchman team sees it. It's never published or \
      used in public tests, and we delete it on request.";
 pub const SEND_COPIED: &str = "The message is copied: paste it into the DM with Dutchy.";
@@ -164,6 +190,10 @@ pub struct SendSteps {
     pub drag: bool,
     /// Whether to ask for a STEP export too.
     pub step_card: bool,
+    /// The third card's title and note: a STEP export of the design, or for a Fusion tool library
+    /// the same library exported the other way.
+    pub step_title: String,
+    pub step_note: Option<&'static str>,
 }
 
 impl SendSteps {
@@ -177,6 +207,10 @@ impl SendSteps {
         let dm_text = match (drag, surface) {
             (true, Surface::Desktop) => "Drag the file in (its folder is open).".to_owned(),
             (true, Surface::Web) => "Drag the file in (the file you picked).".to_owned(),
+            (false, _) if crate::tool_library::is_report(report) => format!(
+                "Paste the message. Dutchy replies with a private upload link for the tool library ({} hours).",
+                policy.private_link.hours
+            ),
             (false, _) => format!(
                 "Paste the message. Dutchy replies with a private upload link (up to {}).",
                 policy.link_limits()
@@ -184,15 +218,36 @@ impl SendSteps {
         };
         Self {
             dm_text,
-            intro: if report.get("ok").and_then(Value::as_bool) == Some(true) {
+            intro: if crate::tool_library::is_report(report) {
+                SEND_TOOLS_INTRO
+            } else if report.get("ok").and_then(Value::as_bool) == Some(true) {
                 SEND_CONVERTED_INTRO
             } else {
                 SEND_INTRO
             },
             drag,
             step_card: !source_is_step(report),
+            step_title: if crate::tool_library::is_report(report) {
+                crate::tool_library::other_export_title(report)
+            } else if not_supported_yet(report) {
+                SEND_DRAWING_TITLE.to_owned()
+            } else {
+                SEND_STEP_TITLE.to_owned()
+            },
+            step_note: if crate::tool_library::is_report(report) {
+                Some(SEND_TOOLS_STEP_NOTE)
+            } else if not_supported_yet(report) {
+                Some(SEND_DRAWING_TEXT)
+            } else {
+                None
+            },
         }
     }
+}
+
+/// Whether `report` is of a drawing file that is recognised but whose sheets are not read yet.
+pub fn not_supported_yet(report: &Value) -> bool {
+    report.pointer("/drawing/status").and_then(Value::as_str) == Some("not_decoded")
 }
 
 /// Whether the file of `report` is itself a STEP file.
@@ -231,7 +286,20 @@ pub fn anonymous_report(
     (anonymous, id)
 }
 
+/// A loss as the default view shows it: its plain sentence when there is one.
 pub fn loss_line(loss: &Value) -> LossLine {
+    let view = json::plain_view(loss);
+    if view.rewritten {
+        return LossLine {
+            text: view.summary,
+            ..raw_loss_line(loss)
+        };
+    }
+    raw_loss_line(loss)
+}
+
+/// A loss as the Details view shows it: its subject and message, whatever the table says.
+pub fn raw_loss_line(loss: &Value) -> LossLine {
     let field = |key: &str| loss.get(key).and_then(Value::as_str).unwrap_or("");
     LossLine {
         level: field("level").to_owned(),
@@ -275,11 +343,17 @@ impl FileView {
         let incomplete = report.is_some_and(incomplete);
         let missing_parts = report.and_then(missing_parts);
         let missing_summary = missing_parts.as_deref().map(missing_summary);
-        let raw: Vec<&Value> = report
+        let every_note: Vec<&Value> = report
             .and_then(|r| r.get("losses"))
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
+            .collect();
+        // Notes that change nothing the person sees stay in the details only.
+        let raw: Vec<&Value> = every_note
+            .iter()
+            .copied()
+            .filter(|loss| json::is_shown(loss))
             .collect();
         let flattened = report
             .and_then(|r| r.pointer("/verification/status"))
@@ -288,6 +362,7 @@ impl FileView {
         let status = match progress {
             Progress::Waiting => Status::Waiting,
             Progress::Converting => Status::Converting,
+            Progress::Failed if report.is_some_and(not_supported_yet) => Status::NotSupported,
             Progress::Failed => Status::Failed,
             Progress::Stopped => Status::Stopped,
             Progress::NotStarted => Status::NotStarted,
@@ -299,8 +374,22 @@ impl FileView {
         };
         let (status_word, severity_rank) = match status {
             Status::Failed => ("Failed", 0),
+            Status::NotSupported => ("Not supported yet", 1),
             Status::Incomplete => ("Incomplete", 0),
             Status::Flattened => ("Converted, no history", 1),
+            Status::Converted | Status::ConvertedWithLosses
+                if report.is_some_and(crate::tool_library::is_report) =>
+            {
+                let left = report
+                    .and_then(|r| r.pointer("/tools/not_written"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                if left == 0 {
+                    ("Converted", 2)
+                } else {
+                    ("Converted, some tools left out", 1)
+                }
+            }
             Status::Converted | Status::ConvertedWithLosses => {
                 let word = match report.and_then(|r| r.get("mode")).and_then(Value::as_str) {
                     Some("partial_history") => "Partly converted",
@@ -331,7 +420,7 @@ impl FileView {
             })
             .collect();
         let components = report
-            .map(json::components)
+            .map(json::shown_components)
             .unwrap_or_default()
             .into_iter()
             .map(|c| ComponentView {
@@ -391,6 +480,7 @@ impl FileView {
             assembly: report
                 .and_then(json::assembly_line)
                 .filter(|_| !assembly_lines.is_empty()),
+            unverified_note: report.and_then(|r| json::unverified_history(r, false)),
             assembly_causes: assembly_lines
                 .into_iter()
                 .skip(1)
@@ -399,6 +489,12 @@ impl FileView {
             loss_summary: loss_counts(&raw),
             losses,
             components,
+            details: raw
+                .iter()
+                .filter(|loss| json::plain_view(loss).rewritten)
+                .map(|loss| raw_loss_line(loss))
+                .collect(),
+            has_log: !every_note.is_empty(),
         }
     }
 }
@@ -408,6 +504,8 @@ pub struct Counts {
     pub converted: usize,
     pub incomplete: usize,
     pub failed: usize,
+    /// Drawing files that are recognised but not read yet.
+    pub not_supported: usize,
     pub stopped: usize,
     pub not_started: usize,
     pub skipped: usize,
@@ -442,6 +540,7 @@ impl RunView {
                 | Status::Flattened
                 | Status::Incomplete => counts.converted += 1,
                 Status::Failed => counts.failed += 1,
+                Status::NotSupported => counts.not_supported += 1,
                 Status::Stopped => counts.stopped += 1,
                 Status::NotStarted => counts.not_started += 1,
                 Status::Skipped => counts.skipped += 1,
@@ -451,24 +550,34 @@ impl RunView {
         }
         let first_to_show = files
             .iter()
-            .position(|f| matches!(f.status, Status::Failed | Status::Incomplete))
+            .position(|f| {
+                matches!(
+                    f.status,
+                    Status::Failed | Status::NotSupported | Status::Incomplete
+                )
+            })
             .unwrap_or(0);
         let summary = (!files.is_empty()).then(|| {
             if running {
                 return format!(
                     "{} of {} done",
-                    counts.converted + counts.failed + counts.stopped,
+                    counts.converted + counts.failed + counts.not_supported + counts.stopped,
                     files.len()
                 );
             }
-            // A stop is resumable, so it is not counted as a failure.
-            let failed_or_stopped = if counts.stopped > 0 && counts.failed == 0 {
-                format!("{} stopped", counts.stopped)
-            } else if counts.stopped > 0 {
-                format!("{} failed, {} stopped", counts.failed, counts.stopped)
-            } else {
-                format!("{} failed", counts.failed)
-            };
+            // A stop is resumable and a drawing not read yet is not a failure: neither is
+            // counted as one.
+            let mut tail = Vec::new();
+            if counts.failed > 0 || (counts.stopped == 0 && counts.not_supported == 0) {
+                tail.push(format!("{} failed", counts.failed));
+            }
+            if counts.not_supported > 0 {
+                tail.push(format!("{} not supported yet", counts.not_supported));
+            }
+            if counts.stopped > 0 {
+                tail.push(format!("{} stopped", counts.stopped));
+            }
+            let failed_or_stopped = tail.join(", ");
             let mut text = if counts.incomplete > 0 {
                 format!(
                     "{} converted ({} incomplete), {failed_or_stopped}",
@@ -580,7 +689,13 @@ pub fn missing_summary(missing: &[String]) -> String {
 
 /// What was written, in a sentence.
 pub fn outcome(report: &Value) -> String {
+    if crate::tool_library::is_report(report) {
+        return crate::tool_library::outcome(report);
+    }
     let mut text = outcome_without_memory_note(report);
+    if let Some(message) = json::inserted_designs_message(report) {
+        text.push_str(&format!(" {message}"));
+    }
     if let Some(message) = json::unplaced_message(report) {
         text.push_str(&format!(" {message}"));
     }
@@ -765,6 +880,27 @@ fn identity_note(report: &Value) -> Option<String> {
     }
 }
 
+/// Where the editable features of a partial history end and the imported body begins, from the
+/// report's feature rows.
+fn rest_imported(report: &Value) -> Option<dutchman_core::RestImported> {
+    use dutchman_core::FeatureStatus;
+    let rows = report.pointer("/history/features")?.as_array()?;
+    dutchman_core::RestImported::find(rows.iter().filter_map(|row| {
+        let status = match row.get("status")?.as_str()? {
+            "mapped" => FeatureStatus::Mapped,
+            "not_needed" => FeatureStatus::NotNeeded,
+            "left_out" => FeatureStatus::LeftOut,
+            "blocked" => FeatureStatus::Blocked,
+            _ => return None,
+        };
+        Some((
+            status,
+            row.get("name").and_then(Value::as_str),
+            row.get("reason").and_then(Value::as_str),
+        ))
+    }))
+}
+
 fn outcome_without_memory_note(report: &Value) -> String {
     let field = |pointer: &str| report.pointer(pointer).and_then(Value::as_str);
     // Features kept but re-applied to a base body as the design ends are not rebuilt.
@@ -789,12 +925,13 @@ fn outcome_without_memory_note(report: &Value) -> String {
         count("/history/needing", "/history/total"),
     );
     match field("/mode") {
-        Some("partial_history") => match counts {
-            (Some(m), Some(t)) => format!(
-                "Partial editable history, {}; imported final shape visible.",
+        Some("partial_history") => match (rest_imported(report), counts) {
+            (Some(rest), _) => rest.sentence(),
+            (None, (Some(m), Some(t))) => format!(
+                "Partial editable history, {}; the rest is one imported body.",
                 history(m, t)
             ),
-            _ => "Partial editable history; imported final shape visible.".to_owned(),
+            _ => "Partial editable history; the rest is one imported body.".to_owned(),
         },
         Some("history") => {
             let check = match (field("/verification/status"), field("/verification/reason")) {
@@ -876,6 +1013,58 @@ pub fn batch_outcome(report: &Value) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
+
+    fn drawing_report() -> Value {
+        json!({
+            "ok": false,
+            "error": {"kind": "not_supported_yet", "message": "Inventor drawing (.idw): no drawing was written"},
+            "drawing": {"status": "not_decoded"},
+        })
+    }
+
+    #[test]
+    fn a_drawing_not_read_yet_is_not_supported_not_failed() {
+        let report = drawing_report();
+        let view = FileView::from_report(&report);
+        assert_eq!(view.status, Status::NotSupported);
+        assert_eq!(view.status_word, "Not supported yet");
+        let failed = FileView::from_report(&json!({"ok": false, "error": {"message": "x"}}));
+        assert_eq!(failed.status, Status::Failed);
+        let run = RunView::new(vec![view.clone()], None, false);
+        assert_eq!(run.counts.not_supported, 1);
+        assert_eq!(run.counts.failed, 0);
+        assert_eq!(
+            run.summary.as_deref(),
+            Some("0 converted, 1 not supported yet")
+        );
+        let mixed = RunView::new(vec![view.clone(), failed], None, false);
+        assert_eq!(
+            mixed.summary.as_deref(),
+            Some("0 converted, 1 failed, 1 not supported yet")
+        );
+        let running = RunView::new(vec![view], None, true);
+        assert_eq!(running.summary.as_deref(), Some("1 of 1 done"));
+    }
+
+    #[test]
+    fn a_drawing_asks_for_a_pdf_or_dxf_export_not_a_step() {
+        let steps = SendSteps::new(
+            crate::report_policy::ReportPolicy::bundled(),
+            Some(1000),
+            &drawing_report(),
+            Surface::Desktop,
+        );
+        assert_eq!(steps.step_title, SEND_DRAWING_TITLE);
+        assert_eq!(steps.step_note, Some(SEND_DRAWING_TEXT));
+        assert!(!SEND_DRAWING_TITLE.contains("STEP") && !SEND_DRAWING_TEXT.contains("STEP"));
+        let model = SendSteps::new(
+            crate::report_policy::ReportPolicy::bundled(),
+            Some(1000),
+            &json!({"ok": false}),
+            Surface::Desktop,
+        );
+        assert_eq!(model.step_title, SEND_STEP_TITLE);
+    }
     use super::*;
 
     #[test]
@@ -914,13 +1103,31 @@ mod tests {
             {"name": "part.f3d: Extrude 1", "kind": "extrude", "status": "mapped", "reapplied": true}
         ]}});
         let text = outcome(&report);
-        assert!(text.starts_with("Partial editable history, 43 of 235 features rebuilt, 76 kept and re-applied to the final body; imported final shape visible."), "{text}");
+        assert!(text.starts_with("Partial editable history, 43 of 235 features rebuilt, 76 kept and re-applied to the final body; the rest is one imported body."), "{text}");
         assert!(text.ends_with("Base Feature 1 holds the body as the design ends. The features after it are kept but re-apply to that body, so editing them may not change the shape."), "{text}");
         let plain = serde_json::json!({"ok": true, "mode": "partial_history",
             "history": {"rebuilt": 3, "needing": 4, "reapplied": 0, "features": []}});
         assert_eq!(
             outcome(&plain),
-            "Partial editable history, 3 of 4 features rebuilt; imported final shape visible."
+            "Partial editable history, 3 of 4 features rebuilt; the rest is one imported body."
+        );
+    }
+
+    #[test]
+    fn the_card_says_which_features_are_editable_and_where_the_imported_body_starts() {
+        let report = serde_json::json!({"ok": true, "mode": "partial_history",
+        "history": {"rebuilt": 2, "needing": 4, "rest_imported_from": "Hole 1", "features": [
+            {"name": "Sketch 1", "kind": "sketch", "status": "mapped"},
+            {"name": "Extrude 1", "kind": "extrude", "status": "mapped"},
+            {"name": "Hole 1", "kind": "hole", "status": "blocked",
+                "reason": "its entry is not resolved"},
+            {"name": "Hole 2", "kind": "hole", "status": "blocked",
+                "reason": "after the first blocking feature"}
+        ]}});
+        assert_eq!(
+            outcome(&report),
+            "Features 1\u{2013}2 are editable; from Hole 1 on, the part is one imported body. \
+             Hole 1: its entry is not resolved."
         );
     }
 
@@ -1107,7 +1314,7 @@ mod tests {
     fn reporting_distinguishes_converted_and_failed_files_and_excludes_missing_parts() {
         for report in [
             json!({"ok": true}),
-            json!({"ok": true, "losses": [{"level": "Dropped", "message": "Colour omitted"}]}),
+            json!({"ok": true, "losses": [{"level": "Dropped", "message": "Color omitted"}]}),
             json!({"ok": true, "verification": {"status": "flattened"}}),
             json!({"ok": true, "completeness": {"placed_empty": 1}}),
         ] {
@@ -1158,6 +1365,7 @@ mod tests {
                 converted: 3,
                 incomplete: 1,
                 failed: 2,
+                not_supported: 0,
                 stopped: 0,
                 skipped: 4,
                 not_started: 0
@@ -1396,5 +1604,77 @@ mod tests {
                 .invitation
                 .is_none()
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod plain_note_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn report() -> Value {
+        json!({"ok": true, "mode": "import", "losses": [
+            {"level": "Degraded", "code": "inventor/source.kernel-history-unclosed",
+             "subject": "inventor/source.kernel-history-unclosed",
+             "message": "The kernel carrier's delta_state chain does not frame or close."},
+            {"level": "Degraded", "code": "inventor/rse.segment-pair-untyped",
+             "subject": "inventor/rse.segment-pair-untyped",
+             "message": "Retained 1 structurally paired RSe segment(s) without record semantics."},
+            {"level": "Info", "code": "step/native.source-record-omitted",
+             "subject": "step/native.source-record-omitted",
+             "message": "67 source-native record(s) were not represented in STEP"},
+        ]})
+    }
+
+    #[test]
+    fn the_card_lists_plain_sentences_and_keeps_every_raw_note_under_details() {
+        let view = FileView::from_report(&report());
+        assert_eq!(view.loss_summary, "Losses: 1 Degraded");
+        assert_eq!(view.components.len(), 1);
+        let lines = &view.components[0].lines;
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0]
+            .text
+            .starts_with("This part's feature history couldn't be read"));
+        assert!(!lines[0].text.contains("delta_state"));
+        // Details hold the raw words of the listed note only; the notes that change nothing
+        // are in the full log alone.
+        assert_eq!(view.details.len(), 1);
+        assert!(view.details[0].text.contains("delta_state"));
+        assert!(view.has_log);
+    }
+
+    #[test]
+    fn a_file_whose_only_notes_change_nothing_is_not_converted_with_losses() {
+        let report = json!({"ok": true, "mode": "import", "losses": [
+            {"level": "Info", "code": "step/native.source-record-omitted",
+             "subject": "step/native.source-record-omitted", "message": "1 record"}]});
+        let view = FileView::from_report(&report);
+        assert_eq!(view.status, Status::Converted);
+        assert!(view.components.is_empty());
+        assert!(view.details.is_empty());
+        assert!(view.has_log);
+    }
+
+    #[test]
+    fn unknown_notes_show_as_before() {
+        let report = json!({"ok": true, "losses": [
+            {"level": "Info", "subject": "history", "message": "kept alongside"}]});
+        let view = FileView::from_report(&report);
+        assert_eq!(view.components[0].lines[0].text, "history: kept alongside");
+    }
+
+    #[test]
+    fn an_unchecked_history_carries_the_explanation() {
+        let view = FileView::from_report(&json!({"ok": true, "mode": "history"}));
+        assert!(view
+            .unverified_note
+            .unwrap()
+            .contains("Check feature history in SolidCraft"));
+        let view = FileView::from_report(
+            &json!({"ok": true, "mode": "history", "verification": {"status": "verified"}}),
+        );
+        assert!(view.unverified_note.is_none());
     }
 }

@@ -148,11 +148,15 @@ pub(crate) fn block(span: Option<Value>) -> CadIr {
     )
 }
 
+/// The feature rows in timeline order. The model writes its arenas in id order, so the
+/// timeline is read back from each row's ordinal.
 fn rows(ir: &CadIr) -> Vec<Value> {
-    serde_json::to_value(&ir.model).unwrap()["features"]
+    let mut rows = serde_json::to_value(&ir.model).unwrap()["features"]
         .as_array()
         .unwrap()
-        .clone()
+        .clone();
+    rows.sort_by_key(|row| row["ordinal"].as_u64().unwrap());
+    rows
 }
 
 fn operation(row: &Value) -> &Value {

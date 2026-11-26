@@ -414,14 +414,14 @@ pub fn chosen_cli(chosen: &Path) -> Result<PathBuf, String> {
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
 /// The newest minor known at build time. Patch releases need no constant update.
-pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 46];
+pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 49];
 
 /// The oldest SolidCraft release published in the 14 days before the tag, never below
 /// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
 pub const WINDOW_OLDEST: [u64; 3] = [0, 40, 0];
 
 /// Writer capabilities whose output depends on the target release.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VersionGate {
     /// Rigid moves of resolved earlier bodies. This feature-specific gate does not
     /// count towards an installed release's general history notice.
@@ -463,11 +463,44 @@ pub enum VersionGate {
     ClosedCircleBlend,
     /// Complete spatial hole entries represented by an editable location sketch.
     SpatialHoleLocations,
+    /// Thread features named by an inch Unified designation such as `1/4-20 UNC-2A`
+    /// (solidcraft#20136). No release carries it yet, so it has no minimum version and no
+    /// known target supports it. When a release does, give it that release here.
+    UnifiedThread,
+}
+
+/// Test-only switch that makes the Unified thread capability available, to check what it writes.
+#[cfg(test)]
+pub(crate) mod tests_force {
+    use std::cell::Cell;
+
+    thread_local! {
+        static UNIFIED_THREAD: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(crate) fn unified_thread() -> bool {
+        UNIFIED_THREAD.with(Cell::get)
+    }
+
+    /// Switches the capability on until the returned guard drops.
+    pub(crate) struct Forced;
+
+    pub(crate) fn force_unified_thread() -> Forced {
+        UNIFIED_THREAD.with(|f| f.set(true));
+        Forced
+    }
+
+    impl Drop for Forced {
+        fn drop(&mut self) {
+            UNIFIED_THREAD.with(|f| f.set(false));
+        }
+    }
 }
 
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::UnifiedThread => SolidCraftVersion::UNRELEASED,
             Self::MoveBody => SolidCraftVersion::V0_45_0,
             Self::LinkedDesign => SolidCraftVersion::V0_44_0,
             Self::ThinExtrude => SolidCraftVersion::V0_44_0,
@@ -488,6 +521,10 @@ impl VersionGate {
 
     /// Whether this target can write the gated representation.
     pub fn supported(self, target: SolidCraftVersion) -> bool {
+        #[cfg(test)]
+        if self == Self::UnifiedThread && tests_force::unified_thread() {
+            return true;
+        }
         target >= self.minimum()
     }
 }
@@ -581,6 +618,10 @@ impl SolidCraftVersion {
 
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
+
+    /// Stands for a release that does not exist yet: above every real version, so a gate set to
+    /// it is never supported.
+    pub const UNRELEASED: Self = Self([u64::MAX, 0, 0]);
 
     /// First release that stores a tapped hole's `thread_class`.
     pub const V0_43_0: Self = Self([0, 43, 0]);
@@ -1209,9 +1250,20 @@ pub(crate) fn replay(
     timeout: Duration,
     design: &[u8],
 ) -> (Outcome, Option<Vec<Placed>>) {
+    let (outcome, placed, _) = replay_named(cli, timeout, design);
+    (outcome, placed)
+}
+
+/// As [`replay`], also giving the names of the bodies the replay holds, in the order of the
+/// placed bodies; `None` when SolidCraft did not replay, or did not name every body.
+pub(crate) fn replay_named(
+    cli: &(impl SolidCraftEvaluator + ?Sized),
+    timeout: Duration,
+    design: &[u8],
+) -> (Outcome, Option<Vec<Placed>>, Option<Vec<String>>) {
     match evaluate(cli, timeout, "prefix", design) {
         Ok(Evaluation::Done(eval)) => match timeline_outcome(&eval) {
-            Some(outcome) => (outcome, None),
+            Some(outcome) => (outcome, None, None),
             None => {
                 let placed = eval
                     .bodies
@@ -1221,11 +1273,26 @@ pub(crate) fn replay(
                         size: body.size,
                     })
                     .collect();
-                (Outcome::Matches, Some(placed))
+                let names = eval
+                    .raw
+                    .get("bodies")
+                    .and_then(Value::as_array)
+                    .and_then(|bodies| {
+                        bodies
+                            .iter()
+                            .map(|body| {
+                                body.get("name")
+                                    .and_then(Value::as_str)
+                                    .filter(|name| !name.is_empty())
+                                    .map(str::to_owned)
+                            })
+                            .collect::<Option<Vec<String>>>()
+                    });
+                (Outcome::Matches, Some(placed), names)
             }
         },
-        Ok(Evaluation::Failed(why)) => (Outcome::Unverified(why), None),
-        Err(why) => (Outcome::Unverified(why), None),
+        Ok(Evaluation::Failed(why)) => (Outcome::Unverified(why), None, None),
+        Err(why) => (Outcome::Unverified(why), None, None),
     }
 }
 
@@ -2300,6 +2367,50 @@ pub(crate) fn run_script(
     match value {
         Value::Array(results) => Ok(results),
         _ => Err(format!("{CLI_NAME} result is not a list of results")),
+    }
+}
+
+/// Runs `script` on `design` and saves the result to `save`, returning the raw
+/// `--results` JSON: the list of results, or `{results, error}` when a step failed (nothing
+/// is saved then).
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_and_save(
+    cli: &Path,
+    deadline: Instant,
+    dir: &Path,
+    design: &Path,
+    save: &Path,
+    script: &[Value],
+) -> Result<Value, String> {
+    let path = dir.join("drawing-script.json");
+    let output = dir.join("drawing-out.json");
+    let text =
+        serde_json::to_string(script).map_err(|err| format!("cannot write the script: {err}"))?;
+    std::fs::write(&path, text).map_err(|err| format!("cannot stage the script: {err}"))?;
+    let mut child = spawn(cli, |command| {
+        command
+            .arg("run")
+            .arg(&path)
+            .arg("--in")
+            .arg(design)
+            .arg("--save")
+            .arg(save)
+            .arg("--results")
+            .arg("--json-out")
+            .arg(&output)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    })
+    .map_err(|err| launch_failure(cli, err))?;
+    let status = wait(&mut child, cli, deadline)?;
+    let text = std::fs::read_to_string(&output);
+    match text {
+        Ok(text) => serde_json::from_str(&text).map_err(|err| format!("{CLI_NAME} result: {err}")),
+        Err(err) if status.success() => Err(format!("{CLI_NAME} wrote no result: {err}")),
+        Err(_) => {
+            Err(blocked_failure(cli).unwrap_or_else(|| format!("{CLI_NAME} exited with {status}")))
+        }
     }
 }
 
@@ -3431,7 +3542,7 @@ mod cli_tests {
             ),
             (
                 "SolidCraft 2.app",
-                Some("0.46.2"),
+                Some("0.48.0"),
                 "io.tangencylabs.solidcraft",
             ),
             ("SolidCraft old.app", None, "ai.storyteller.solidcraft"),
@@ -3485,14 +3596,14 @@ mod cli_tests {
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("dutchman");
         assert_eq!(beside(&program), None);
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.46.2");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.48.0");
         assert_eq!(beside(&program), Some(cli));
     }
 
     #[test]
     fn a_chosen_cli_must_answer_as_solidcraft() {
         let dir = tempfile::tempdir().unwrap();
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.46.2");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.48.0");
         assert_eq!(chosen_cli(&cli), Ok(cli));
         let other = version_script(dir.path(), "other-tool", "other-tool 1.2.3");
         assert!(chosen_cli(&other)
@@ -3525,7 +3636,7 @@ mod cli_tests {
         .unwrap();
         std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(chosen_cli(&app).unwrap_err().contains("portable ZIP"));
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.46.1");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.48.1");
         assert_eq!(chosen_cli(&app), Ok(cli));
         assert!(!started.exists());
     }
@@ -3846,7 +3957,7 @@ mod cli_tests {
         for version in [
             "0.18.2", "0.20.0", "0.25.1", "0.27.1", "0.40.0", "0.41.0", "0.42.0", "0.43.0",
             "0.44.0", "0.44.1", "0.44.9", "0.45.0", "0.45.9", "0.46.0", "0.46.9", "0.47.0",
-            "nonsense", "0.17.0",
+            "0.47.9", "0.48.0", "0.48.9", "0.49.0", "0.49.9", "0.50.0", "nonsense", "0.17.0",
         ] {
             let cli = dir.path().join(version);
             std::fs::write(
@@ -3923,6 +4034,26 @@ mod cli_tests {
             usable_cli(&Verification::Off),
             Err(NoCli::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn unified_threads_are_supported_by_no_known_release() {
+        let [major, newest] = NEWEST_SOLIDCRAFT;
+        for minor in 0..=newest + 1 {
+            for patch in [0, 1, 99] {
+                let target = SolidCraftVersion([major, minor, patch]);
+                assert!(
+                    !VersionGate::UnifiedThread.supported(target),
+                    "{major}.{minor}.{patch}"
+                );
+            }
+        }
+        assert!(!VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
+        {
+            let _forced = tests_force::force_unified_thread();
+            assert!(VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
+        }
+        assert!(!VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
     }
 
     #[test]
@@ -4118,6 +4249,69 @@ mod version_tests {
     }
 
     #[test]
+    fn target_047_keeps_046_writer_capabilities() {
+        let target: SolidCraftVersion = "0.47.0".parse().unwrap();
+        let previous: SolidCraftVersion = "0.46.2".parse().unwrap();
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+            VersionGate::HistoryBody,
+            VersionGate::SplitFaces,
+            VersionGate::ScopedBodies,
+            VersionGate::ClosedCircleBlend,
+            VersionGate::MoveBody,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
+        assert!(!target_loses_history(target));
+    }
+
+    #[test]
+    fn target_048_keeps_047_writer_capabilities() {
+        let target: SolidCraftVersion = "0.48.0".parse().unwrap();
+        let previous: SolidCraftVersion = "0.47.0".parse().unwrap();
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+            VersionGate::HistoryBody,
+            VersionGate::SplitFaces,
+            VersionGate::ScopedBodies,
+            VersionGate::ClosedCircleBlend,
+            VersionGate::MoveBody,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
+        assert!(!target_loses_history(target));
+    }
+
+    #[test]
+    fn target_049_keeps_048_writer_capabilities() {
+        let target: SolidCraftVersion = "0.49.0".parse().unwrap();
+        let previous: SolidCraftVersion = "0.48.0".parse().unwrap();
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+            VersionGate::HistoryBody,
+            VersionGate::SplitFaces,
+            VersionGate::ScopedBodies,
+            VersionGate::ClosedCircleBlend,
+            VersionGate::MoveBody,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
+        assert!(!target_loses_history(target));
+    }
+
+    #[test]
     fn minor_status_preserves_patch_sensitive_writer_rules() {
         for (found, status) in [
             ("0.27.0", "current"),
@@ -4132,7 +4326,13 @@ mod version_tests {
             ("0.45.9", "current"),
             ("0.46.0", "current"),
             ("0.46.9", "current"),
-            ("0.47.0", "newer"),
+            ("0.47.0", "current"),
+            ("0.47.9", "current"),
+            ("0.48.0", "current"),
+            ("0.48.9", "current"),
+            ("0.49.0", "current"),
+            ("0.49.9", "current"),
+            ("0.50.0", "newer"),
             ("0.17.99", "too_old"),
         ] {
             assert_eq!(

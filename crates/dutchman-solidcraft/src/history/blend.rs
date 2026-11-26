@@ -1598,18 +1598,30 @@ pub(crate) fn candidates(
             });
         if distinct && square && picked.len() == per_input.len() {
             let mut selections: Vec<Selection> = Vec::new();
-            for (b, _, at) in picked {
-                let name = bodies.get(b).map(|(name, _)| name.clone())?;
-                if let Some(selection) = selections.iter_mut().find(|s| s.body == name) {
-                    selection.points.push(at);
-                } else {
-                    selections.push(Selection {
-                        body: name,
-                        points: vec![at],
-                    });
+            // A pick must lie on exactly one rebuilt edge, or SolidCraft refuses it up front.
+            let alone = picked.iter().all(|&(b, e, at)| {
+                bodies.iter().enumerate().all(|(ob, (_, edges))| {
+                    edges.iter().enumerate().all(|(oe, edge)| {
+                        (ob, oe) == (b, e)
+                            || !(straight(edge) && on_segment(at, (edge.start, edge.end)))
+                    })
+                })
+            });
+            // Skip only this combination; the advance below must still run.
+            if alone {
+                for (b, _, at) in picked {
+                    let name = bodies.get(b).map(|(name, _)| name.clone())?;
+                    if let Some(selection) = selections.iter_mut().find(|s| s.body == name) {
+                        selection.points.push(at);
+                    } else {
+                        selections.push(Selection {
+                            body: name,
+                            points: vec![at],
+                        });
+                    }
                 }
+                out.push(selections);
             }
-            out.push(selections);
         }
         // The next combination, the last input edge turning fastest.
         let mut position = choice.len();
@@ -1639,8 +1651,9 @@ fn closest(point: V3, edge: &ReplayedEdge) -> (f64, V3) {
         let length2 = dot(direction, direction).max(f64::MIN_POSITIVE);
         let t = dot(sub(point, edge.start), direction) / length2;
         let gap = distance(point, add(edge.start, scale(direction, t.clamp(0.0, 1.0))));
-        // The pick is kept off the ends, where it would touch the neighbouring edges too.
-        (gap, add(edge.start, scale(direction, t.clamp(0.25, 0.75))))
+        // The pick is the edge's own midpoint: on the edge, off the ends where it would touch
+        // the neighbouring edges, and never between two parallel edges.
+        (gap, add(edge.start, scale(direction, 0.5)))
     } else {
         let gap = [edge.start, edge.mid, edge.end]
             .into_iter()
@@ -2309,6 +2322,56 @@ mod tests {
         // Nothing near enough, or more combinations than allowed: no candidates.
         assert!(super::candidates(&proof(vec![straight_input(50.0)]), &bodies, 24).is_none());
         assert!(super::candidates(&proof(vec![a.clone(), a]), &bodies, 3).is_none());
+    }
+
+    #[test]
+    fn candidates_between_two_parallel_edges_are_picked_on_the_edges_themselves() {
+        // Two parallel straight edges 1 mm apart, different lengths, as on a 1 mm land; the
+        // source's pick lies halfway between them.
+        let long = crate::verify::ReplayedEdge {
+            start: [54.0, 0.75, 18.0],
+            end: [54.0, 12.25, 18.0],
+            mid: [54.0, 6.5, 18.0],
+            length: 11.5,
+            name: String::new(),
+            index: None,
+            circle: None,
+        };
+        let short = crate::verify::ReplayedEdge {
+            start: [55.0, 2.0, 18.0],
+            end: [55.0, 11.0, 18.0],
+            mid: [55.0, 6.5, 18.0],
+            length: 9.0,
+            name: String::new(),
+            index: None,
+            circle: None,
+        };
+        let between = super::Input {
+            point: [54.5, 3.75, 18.0],
+            ends: ([54.5, 2.0, 18.0], [54.5, 5.5, 18.0]),
+            tangent: [0.0, 1.0, 0.0],
+            length: 3.5,
+            straight: true,
+            circle: None,
+        };
+        let bodies = vec![("B".to_owned(), vec![long.clone(), short.clone()])];
+        let found = super::candidates(&proof(vec![between]), &bodies, 24).unwrap();
+        assert_eq!(found.len(), 2);
+        let picks: Vec<_> = found
+            .iter()
+            .flat_map(|s| s.iter().flat_map(|s| s.points.clone()))
+            .collect();
+        assert!(
+            picks.contains(&long.mid) && picks.contains(&short.mid),
+            "{picks:?}"
+        );
+        for pick in picks {
+            let hits = [&long, &short]
+                .iter()
+                .filter(|e| super::on_segment(pick, (e.start, e.end)))
+                .count();
+            assert_eq!(hits, 1, "{pick:?} must lie on exactly one edge");
+        }
     }
 
     #[test]

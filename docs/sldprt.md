@@ -47,7 +47,7 @@ seam.
 Stored base features name only regions that STEP can emit: a region with no shells
 contributes no shape and consumes no appearance target. Empty exterior or void regions
 therefore do not discard the editable history. Other shape-count mismatches leave the explicit appearance targets unbound while
-keeping the base geometry and history; colours must never shift onto different bodies.
+keeping the base geometry and history; colors must never shift onto different bodies.
 
 Offset datum planes retain their resolved reference frame and signed distance for later
 plane consumers. A missing support does not block history when every consumer is a sketch
@@ -110,8 +110,9 @@ occurrences and placements; Dutchman resolves external `.sldprt` and `.sldasm` r
 through the shared assembly file finder. Absolute Windows paths are matched by file name,
 case-insensitively, beside the assembly first, then through the project and `--search` folders.
 When none of the assembly's part files can be found or read, and the assembly holds no bodies
-of its own, conversion stops with "none of the assembly's parts could be found or read", and the
-report lists each part file it looked for.
+of its own, conversion stops with "none of the assembly's parts could be found or read", naming
+the first part files it looked for. "Beside the assembly" also holds for a bare file name such as
+`dutchman convert A01a.SLDASM` run in the assembly's own folder.
 See [finding part files](inventor.md#finding-the-part-files) for the shared search rules.
 
 The file's root component stays around its placed parts, including when CADIR stores
@@ -122,8 +123,8 @@ configuration share one read across the whole assembly tree, including sibling s
 Saved display tessellations are released before building that tree; exact geometry and feature
 history are kept.
 
-Assemblies with many coloured faces retain their body and face colours without long pauses
-while mapping those colours, including with the fast preset.
+Assemblies with many colored faces retain their body and face colors without long pauses
+while mapping those colors, including with the fast preset.
 
 Parts that cannot be found or read are left out and reported for every affected occurrence;
 the remaining parts still convert. Virtual components without readable geometry are reported.

@@ -6,38 +6,51 @@
 //! not be carried across. See `docs/ARCHITECTURE.md`.
 
 mod assembly;
+/// The file name of a bulk export's manifest.
+pub const EXPORT_MANIFEST: &str = export_folder::MANIFEST;
+pub mod camtools;
 mod companion;
 pub mod contents;
 mod decode;
 pub mod design_history;
+pub mod drawing;
 mod error;
 pub mod estimate;
+mod export_folder;
 mod format;
 mod hidden;
 mod input_edges;
+mod ir_retain;
 mod locate;
 mod memory;
+pub mod module;
 mod names;
 #[cfg(feature = "onshape")]
 mod onshape;
+pub mod package;
 pub mod parallel;
 mod part_positions;
 pub mod parts;
 pub mod placement;
+mod plain_notes;
 pub mod preflight;
 mod progress;
 pub mod progress_words;
 mod refusal;
+pub mod safe_output;
 pub mod source;
 mod source_errors;
+mod source_version;
 #[cfg(test)]
 mod test_products;
 pub mod time;
+mod up_axis;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
     classify as classify_refusal, clean as clean_refusal, Refusal,
     GENERIC_CATEGORY as GENERIC_REFUSAL,
 };
+pub use up_axis::{Orientation, SourceUpAxis, UpAxisFinding, UpAxisOrigin, UpAxisReport};
 mod report;
 pub mod repro;
 
@@ -74,6 +87,10 @@ pub struct Model {
     /// The input file's text when it is a STEP file whose geometry is used unchanged: writers
     /// hand it on as it is instead of restating the decoded model as STEP.
     pub source_step: Option<String>,
+    /// Whether a writer puts the part's solids in one body. A circuit board's overlay is one
+    /// closed solid per area, and its plating one per plated hole: each is one thing to the
+    /// person, so SolidCraft holds each as one body of several pieces, not a body per piece.
+    pub merge_bodies: bool,
 }
 
 impl Model {
@@ -159,10 +176,11 @@ impl Model {
         )
     }
 }
+pub use plain_notes::{plain_view, row_for, PlainNote, PlainView, Shown, PLAIN_NOTES};
 pub use report::{
     AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureOutput, FeatureStatus, Inferred,
     InferredAgainst, InferredSelection, LeftOutGroup, Loss, Mode, Outcome, OutputMatch,
-    PartHistory, Report, Severity, SourceError, Stage,
+    PartHistory, Report, RestImported, Severity, SourceError, Stage,
 };
 
 /// Whether a source-native CADIR operation identifies a construction binder. Keep native
@@ -234,6 +252,38 @@ pub fn assembly_references(
     input: &Path,
     search: &PartSearch,
 ) -> Result<Vec<std::path::PathBuf>, Error> {
+    // A Fusion assembly from a bulk export: the designs it inserts that conversion will place,
+    // that is, the ones an insertion of the file matches and that can be read. A design the
+    // manifest lists that nothing matches, or that cannot be read, is not placed inside the
+    // assembly, so it stays a result of its own.
+    if Format::from_path(input) == Some(Format::FusionArchive) {
+        // Only an assembly the manifest lists designs for is read.
+        let lists = export_folder::inserted(input, search.project.as_deref())
+            .and_then(Result::ok)
+            .is_some_and(|inserted| !inserted.references.is_empty());
+        if !lists {
+            return Ok(Vec::new());
+        }
+        let decode = |format: Format, path: &Path, report: &mut Report| {
+            decode_file(format, path, report, None)
+        };
+        let Ok(model) = decode(Format::FusionArchive, input, &mut Report::default()) else {
+            return Ok(Vec::new());
+        };
+        return Ok(assembly::placed_files(
+            &model,
+            input,
+            search.project.as_deref(),
+            &decode,
+        ));
+    }
+    // A rebuilt .f3z carries the designs its manifest entry lists inside it.
+    if Format::from_path(input) == Some(Format::FusionMultiDocument) {
+        return Ok(export_folder::inserted(input, search.project.as_deref())
+            .and_then(Result::ok)
+            .map(|inserted| inserted.references.into_iter().map(|r| r.file).collect())
+            .unwrap_or_default());
+    }
     let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
         path: input.to_path_buf(),
     })?;
@@ -243,7 +293,7 @@ pub fn assembly_references(
     let model = decode_file(format, input, &mut Report::default(), None)?;
     let value = assembly::products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
     let finder = locate::Finder::new(search);
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = assembly::input_folder(input);
     let mut references: std::collections::BTreeSet<_> = value
         .as_array()
         .into_iter()
@@ -295,8 +345,16 @@ pub fn assembly_references(
             .map(|definition| (definition.id.as_str(), definition))
             .collect();
         for row in value.as_array().into_iter().flatten().take(MAX_PLACEMENTS) {
-            // The document root is now a definition rather than a placed holder.
+            // The document root is a definition the file itself holds, placed by a
+            // synthetic row. Its name is the input's own, so it is not a reference.
             // Its direct children can themselves be saved local sub-assemblies.
+            if row
+                .get("file_root_component")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            {
+                continue;
+            }
             let definition = row
                 .pointer("/prototype/definition")
                 .and_then(serde_json::Value::as_str)
@@ -319,7 +377,7 @@ pub fn read_drawings(input: &Path, report: &mut Report) -> Result<Model, Error> 
     let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
         path: input.to_path_buf(),
     })?;
-    if !format.can_convert() {
+    if !format.can_convert() || format.is_drawing() {
         return Err(Error::NotSupportedYet { format });
     }
     check_input(input)?;
@@ -356,12 +414,10 @@ pub fn read_with_progress(
     }
     let read = std::sync::Mutex::new(std::collections::BTreeSet::new());
     let finder = locate::Finder::new(search);
-    let mut model = assembly::read(
-        format,
-        input,
-        report,
-        &|format, path, report| {
+    let decode_design =
+        |format: Format, path: &Path, report: &mut Report| -> Result<Model, Error> {
             let model = decode_file(format, path, report, progress)?;
+            source_version::record(report, path, input, &model.ir.native);
             // The codec owns Fusion archive members; do not count the whole archive as one.
             if format != Format::FusionMultiDocument {
                 if let Some(progress) = progress {
@@ -377,7 +433,12 @@ pub fn read_with_progress(
                 }
             }
             Ok(model)
-        },
+        };
+    let mut model = assembly::read(
+        format,
+        input,
+        report,
+        &decode_design,
         &finder,
         &mut Vec::new(),
     )?;
@@ -387,9 +448,77 @@ pub fn read_with_progress(
     if let Some(searched) = finder.searched_note() {
         report.push_at(Stage::Input, Severity::Info, "parts search", searched);
     }
-    local_components(&mut model, finder.threads, search.part_positions, report);
+    // A Fusion assembly from a bulk export: the designs it inserts are in the export folder.
+    let inserted = if format == Format::FusionArchive {
+        if let (Some(progress), Some(Ok(listing))) = (
+            progress,
+            export_folder::inserted(input, search.project.as_deref()),
+        ) {
+            progress.designs_total(1 + listing.references.len() as u64);
+        }
+        assembly::resolve_inserted(
+            &model,
+            input,
+            search.project.as_deref(),
+            report,
+            &decode_design,
+            &finder,
+            &mut Vec::new(),
+        )
+    } else {
+        assembly::ExternalParts::new()
+    };
+    local_components_with(
+        &mut model,
+        &inserted,
+        finder.threads,
+        search.part_positions,
+        report,
+    );
     report.note_part_positions(search.part_positions);
+    if matches!(format, Format::FusionArchive | Format::FusionMultiDocument) {
+        record_up_axis(&model, input, search, report);
+    }
     Ok(model)
+}
+
+/// Records the up axis the export folder states for the Fusion design at `input`. An assembly
+/// is one frame: its root design's axis counts, and a design it inserts that states another
+/// is named.
+fn record_up_axis(model: &Model, input: &Path, search: &PartSearch, report: &mut Report) {
+    let top = search.project.as_deref();
+    let root = up_axis::resolve(
+        up_axis::from_file(model),
+        export_folder::up_axis(input, top),
+    );
+    let mut differing: Vec<String> = Vec::new();
+    if let Some(Ok(listing)) = export_folder::inserted(input, top) {
+        for reference in &listing.references {
+            let part = export_folder::up_axis(&reference.file, top);
+            if part.axis != SourceUpAxis::Unknown && part.axis != root.axis {
+                let name = reference
+                    .file
+                    .file_name()
+                    .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+                differing.push(format!("{name} is {}-up", part.axis.name().to_uppercase()));
+            }
+        }
+    }
+    let disagreement = (!differing.is_empty()).then(|| {
+        let shown: Vec<&str> = differing.iter().take(5).map(String::as_str).collect();
+        format!(
+            "inserted designs state another up axis than the root design ({}{}); the root's \
+             axis ({}) applies to the whole assembly",
+            shown.join("; "),
+            if differing.len() > shown.len() {
+                "; ..."
+            } else {
+                ""
+            },
+            root.axis.name()
+        )
+    });
+    report.record_up_axis(root, disagreement);
 }
 
 /// Gathers the components a single file places itself into `model.assembly`, and records the
@@ -400,8 +529,26 @@ fn local_components(
     positions: PartPositions,
     report: &mut Report,
 ) {
+    local_components_with(
+        model,
+        &assembly::ExternalParts::new(),
+        threads,
+        positions,
+        report,
+    );
+}
+
+/// [`local_components`], with the inserted designs read from a bulk export's folder, by the
+/// id of the insertion they fill.
+fn local_components_with(
+    model: &mut Model,
+    inserted: &assembly::ExternalParts,
+    threads: usize,
+    positions: PartPositions,
+    report: &mut Report,
+) {
     if model.assembly.is_none() {
-        match assembly::local(model, threads, positions, report) {
+        match assembly::local(model, inserted, threads, positions, report) {
             assembly::Components::None => {}
             // The writer reports the assembly's joint notes: what it leaves out depends on
             // what it can build.
@@ -431,24 +578,35 @@ fn local_components(
     } else if let Some(completeness) = assembly::flattened_completeness(model, report) {
         report.set_completeness(completeness);
     }
-    report.record_missing_links(&missing_linked_components(model));
+    let missing = missing_linked_components(model, inserted);
+    let fusion_f3d = model
+        .source_file
+        .as_deref()
+        .and_then(|file| Path::new(file).extension())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("f3d"));
+    if fusion_f3d {
+        report.record_missing_inserted_designs(&missing);
+    } else {
+        report.record_missing_links(&missing);
+    }
 }
 
 /// Occurrences whose design is a linked document the file doesn't contain: the reader states
 /// their prototype as unresolved or refers to an empty unresolved definition.
-fn missing_linked_components(model: &Model) -> Vec<String> {
+fn missing_linked_components(model: &Model, inserted: &assembly::ExternalParts) -> Vec<String> {
     let (Ok(definitions), Ok(occurrences)) = (
         serde_json::to_value(&model.ir.model.product_definitions),
         serde_json::to_value(&model.ir.model.occurrences),
     ) else {
         return Vec::new();
     };
-    missing_linked_component_names(&definitions, &occurrences)
+    missing_linked_component_names(&definitions, &occurrences, inserted)
 }
 
 fn missing_linked_component_names(
     definitions: &serde_json::Value,
     occurrences: &serde_json::Value,
+    inserted: &assembly::ExternalParts,
 ) -> Vec<String> {
     // The placeholder is either a definition with no bodies and no children, or no definition
     // at all (readers that name the unresolved prototype without stating it).
@@ -470,6 +628,12 @@ fn missing_linked_component_names(
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|row| {
+            // An insertion the export folder filled is placed, or left out with its own reason.
+            !row.get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| inserted.contains_key(id))
+        })
         .filter_map(|row| {
             // Definition-owned products name the prototype directly by id. Keep the older
             // tagged forms too; an unresolved suffix alone must not hide stored geometry.
@@ -544,6 +708,15 @@ fn decode_file(
     }
     if let Some(progress) = progress {
         progress.stage(Stage::Input);
+    }
+    if format.needs_module() {
+        names::saw_path(input, report);
+        check_input(input)?;
+        if let Some(progress) = progress {
+            progress.stage(Stage::Decode);
+        }
+        let model = module::read(input, report)?;
+        return source::finish_decoded(format, model, false, report);
     }
     let input_name = input.file_name().map(|name| name.to_string_lossy());
     let opening = progress.map(|p| p.step(StepKind::Opening, input_name.as_deref(), None, None));
@@ -688,6 +861,12 @@ fn convert_impl(
     };
     stage(Stage::Input);
     check_output(output, writer)?;
+    if safe_output::same_file(input, output) {
+        return Err(Error::Encode(format!(
+            "{}: the output is the input file; choose another output",
+            output.display()
+        )));
+    }
     if !replace && output.exists() {
         return Err(Error::OutputExists {
             path: output.to_path_buf(),
@@ -800,25 +979,21 @@ fn companion_conflict(path: &Path) -> Error {
 
 /// Writes `bytes` to `output`; when `replace` is not set, only if no file is there.
 fn write_output(output: &Path, bytes: &[u8], replace: bool) -> Result<(), Error> {
-    use std::io::Write as _;
-    let io = |source| Error::Io {
-        path: output.to_path_buf(),
-        source,
-    };
-    if replace {
-        return std::fs::write(output, bytes).map_err(io);
+    // Lets a test stop a conversion in its write stage: a write no longer waits on a named pipe.
+    if std::env::var_os("DUTCHMAN_TEST_STALL_WRITE").is_some() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
     }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(output)
-        .map_err(|source| match source.kind() {
-            std::io::ErrorKind::AlreadyExists => Error::OutputExists {
-                path: output.to_path_buf(),
-            },
-            _ => io(source),
-        })?;
-    file.write_all(bytes).map_err(io)
+    safe_output::write(output, bytes, replace).map_err(|source| match source.kind() {
+        std::io::ErrorKind::AlreadyExists => Error::OutputExists {
+            path: output.to_path_buf(),
+        },
+        _ => Error::Io {
+            path: output.to_path_buf(),
+            source,
+        },
+    })
 }
 
 fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {
@@ -946,6 +1121,54 @@ mod tests {
     }
 
     #[test]
+    fn a_fusion_f3d_with_inserted_designs_missing_says_to_export_an_f3z() {
+        let mut report = Report::default();
+        let mut model = read(
+            Format::FusionArchive,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/generated_unit_cube.f3d"),
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(
+            model.source_file.as_deref(),
+            Some("generated_unit_cube.f3d")
+        );
+        // Synthetic: two insertions whose source designs the reader states as unresolved.
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        // On this CADIR, an insertion whose design is not in the file is a part definition
+        // with no bodies, as in `missing_links_are_reported_but_embedded_components_are_complete`.
+        wire["model"]["product_definitions"] = json!([{
+            "id": "synthetic:assembly:component#part/unresolved", "kind": "part",
+            "bodies": [], "sketches": [], "bom_properties": {}
+        }]);
+        let prototype =
+            json!({"kind": "local", "definition": "synthetic:assembly:component#part/unresolved"});
+        wire["model"]["occurrences"] = json!([
+            {"id": "synthetic:assembly:occurrence#1", "ordinal": 1, "name": "Component Insert",
+             "parent": {"kind": "root"}, "prototype": prototype,
+             "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]},
+            {"id": "synthetic:assembly:occurrence#2", "ordinal": 2, "name": "Component Insert",
+             "parent": {"kind": "root"}, "prototype": prototype,
+             "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]}
+        ]);
+        model.ir = crate::test_products::read(&wire);
+        let mut report = Report::default();
+        local_components(&mut model, 1, PartPositions::FirstPlaced, &mut report);
+        let dropped: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.severity == Severity::Dropped)
+            .collect();
+        assert_eq!(dropped.len(), 3, "{dropped:?}");
+        assert!(dropped[2].detail.starts_with(
+            "2 inserted components come from other Fusion designs that this .f3d doesn't \
+             contain; convert the whole export folder (or its zip) so the inserted designs \
+             come along, or export the assembly as a Fusion Archive (.f3z) from Fusion's \
+             File > Export."
+        ));
+    }
+
+    #[test]
     fn missing_links_are_reported_but_embedded_components_are_complete() {
         let mut model = read(
             Format::FusionArchive,
@@ -958,7 +1181,8 @@ mod tests {
             missing_linked_component_names(
                 &json!([]),
                 &json!([{"id": "synthetic:assembly:occurrence#1", "name": "Component",
-                    "prototype": {"kind": "unresolved"}}])
+                    "prototype": {"kind": "unresolved"}}]),
+                &assembly::ExternalParts::new()
             ),
             vec!["Component"]
         );
@@ -988,7 +1212,7 @@ mod tests {
                 "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]
             }]);
             model.ir = crate::test_products::read(&wire);
-            let names = missing_linked_components(&model);
+            let names = missing_linked_components(&model, &assembly::ExternalParts::new());
             assert_eq!(names, if missing { vec!["Component"] } else { vec![] });
             let mut report = Report::default();
             report.set_completeness(Completeness {
@@ -1090,8 +1314,62 @@ mod missing_links_tests {
             {"name":"local empty", "prototype":"local"}
         ]);
         assert_eq!(
-            missing_linked_component_names(&definitions, &occurrences),
+            missing_linked_component_names(
+                &definitions,
+                &occurrences,
+                &crate::assembly::ExternalParts::new()
+            ),
             ["direct", "tagged", "old", "absent", "old absent"]
         );
+    }
+
+    #[test]
+    fn a_solidworks_assembly_is_not_its_own_reference() {
+        use super::*;
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        for fixture in [
+            "local_cubes.sldasm",
+            "nested_cubes.sldasm",
+            "placed_cubes.sldasm",
+        ] {
+            let source = fixtures.join(fixture);
+            let model = decode_file(
+                Format::SolidWorksAssembly,
+                &source,
+                &mut Report::default(),
+                None,
+            )
+            .unwrap();
+            // Save the assembly under the name its own root component carries (a placed
+            // sub-assembly's name is a reference, so only the root counts).
+            let roots: Vec<_> = model
+                .ir
+                .model
+                .product_definitions
+                .iter()
+                .filter(|definition| {
+                    matches!(
+                        definition.storage,
+                        cadmpeg_ir::products::Storage::File { source: None, .. }
+                    )
+                })
+                .filter_map(|definition| definition.source_name.clone())
+                .collect();
+            for name in roots {
+                let dir = tempfile::tempdir().unwrap();
+                let input = dir.path().join(format!("{name}.sldasm"));
+                if std::fs::copy(&source, &input).is_err() {
+                    continue;
+                }
+                let found = assembly_references(&input, &PartSearch::default()).unwrap();
+                let own = input.canonicalize().unwrap();
+                assert!(
+                    found
+                        .iter()
+                        .all(|path| path.canonicalize().unwrap_or_else(|_| path.clone()) != own),
+                    "{fixture} saved as {name}.sldasm lists itself: {found:?}"
+                );
+            }
+        }
     }
 }

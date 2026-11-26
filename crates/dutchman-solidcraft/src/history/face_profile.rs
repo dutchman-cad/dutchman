@@ -438,6 +438,16 @@ impl EntryFace {
 
     pub(super) fn pending(mut self, direction: V3, fixed: bool) -> super::blend::Pending {
         self.proof.entry = Some((direction, fixed));
+        self.into_pending()
+    }
+
+    /// A proof that exactly this bounded face exists before the feature, for a face the
+    /// hole ends at: it never changes the hole's direction.
+    pub(super) fn existing(self) -> super::blend::Pending {
+        self.into_pending()
+    }
+
+    fn into_pending(self) -> super::blend::Pending {
         super::blend::Pending {
             feature: 0,
             outcome: 0,
@@ -1760,6 +1770,22 @@ mod tests {
             why,
             "a hole entry face that is not planar is not supported yet"
         );
+    }
+
+    #[test]
+    fn a_curved_face_a_hole_ends_at_is_proven_without_a_direction() {
+        // A ring face with a circular outer and inner boundary.
+        let face = entry_from_rows(vec![
+            row((10.0, 0.0), (-10.0, 0.0), (10.0, 0.0), (0.0, 1.0)),
+            row((3.0, 0.0), (-3.0, 0.0), (3.0, 0.0), (0.0, 1.0)),
+        ])
+        .unwrap()
+        .unwrap();
+        assert!(face.contains([6.0, 0.0, 0.0]));
+        assert!(!face.contains([0.0, 0.0, 0.0]));
+        let proof = face.existing().face.unwrap();
+        assert!(proof.entry.is_none());
+        assert_eq!(proof.entry_direction(false).unwrap(), None);
     }
 
     #[test]

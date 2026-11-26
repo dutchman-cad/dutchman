@@ -65,6 +65,12 @@ pub(crate) struct History {
     pub(crate) default_bodies: BTreeMap<String, String>,
     /// Why the editable timeline stops before the source ends.
     pub(crate) stop: Option<String>,
+    /// The names SolidCraft gives the bodies the retained features make, once a replay of
+    /// them has shown it; `None` when no replay did. A partial history takes them away again
+    /// before the imported final shape, which needs every name.
+    pub(crate) replayed_bodies: Option<Vec<String>>,
+    /// The name of the first source feature the editable timeline does not hold.
+    pub(crate) rest_from: Option<String>,
     /// The source row that emitted each feature, including auxiliary features.
     pub(crate) sources: BTreeMap<u64, usize>,
     /// The centres of the bodies the source stores in the state right after a feature, by the
@@ -335,7 +341,23 @@ pub(crate) fn imported(
     report: &mut Report,
     name_all: bool,
 ) -> Result<History, dutchman_core::Error> {
-    if model.source_step.is_some() || (!name_all && model.ir.model.appearance_bindings.is_empty()) {
+    // A STEP input goes to SolidCraft as its own text, whose names and looks the model's
+    // appearance bindings do not describe.
+    if model.source_step.is_some() {
+        return Ok(History::default());
+    }
+    imported_restated(model, step, report, name_all)
+}
+
+/// Like [`imported`], for a part whose `step` was restated from its geometry (an assembly
+/// part, whatever text it was read from): the model's own bindings and colours describe it.
+pub(crate) fn imported_restated(
+    model: &Model,
+    step: &str,
+    report: &mut Report,
+    name_all: bool,
+) -> Result<History, dutchman_core::Error> {
+    if !name_all && model.ir.model.appearance_bindings.is_empty() {
         return Ok(History::default());
     }
     let wire = serde_json::to_value(&model.ir)
@@ -665,6 +687,9 @@ impl History {
             .map(|(name, look)| (rename(&name), look))
             .collect();
         for name in &mut self.hidden_bodies {
+            *name = rename(name);
+        }
+        for name in self.replayed_bodies.iter_mut().flatten() {
             *name = rename(name);
         }
         for face in &mut self.face_looks {

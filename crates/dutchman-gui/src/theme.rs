@@ -268,6 +268,25 @@ fn visuals(theme: Theme, p: &Palette) -> Visuals {
     v
 }
 
+/// The baseline of a one-line label in `style`, measured up from the label's bottom edge.
+pub fn descent(ui: &egui::Ui, style: &TextStyle) -> f32 {
+    let font = style.resolve(ui.style());
+    ui.fonts_mut(|fonts| {
+        let galley = fonts.layout_no_wrap("Dv".into(), font, egui::Color32::WHITE);
+        galley.rows.first().map_or(0.0, |row| {
+            row.glyphs
+                .first()
+                .map_or(0.0, |glyph| row.size.y - glyph.pos.y)
+        })
+    })
+}
+
+/// How far a label in `small` must be raised, when both labels end at the same bottom edge,
+/// for its baseline to sit on the baseline of a label in `large`.
+pub fn baseline_lift(ui: &egui::Ui, large: &TextStyle, small: &TextStyle) -> f32 {
+    (descent(ui, large) - descent(ui, small)).max(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -175,6 +175,13 @@ fn unresolved(value: &Value) -> bool {
     }
 }
 
+/// A number as text with float noise removed: 12 significant digits, trailing zeros trimmed,
+/// so `30.000000000000004` is `30` and `0.1 + 0.2` is `0.3` on every platform.
+pub(crate) fn clean(value: f64) -> String {
+    let rounded = format!("{value:.11e}").parse::<f64>().unwrap_or(value);
+    format!("{rounded}")
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
@@ -374,5 +381,21 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod clean_tests {
+    use super::clean;
+
+    #[test]
+    fn float_noise_is_removed_from_numbers() {
+        assert_eq!(clean(30.000000000000004), "30");
+        assert_eq!(clean(0.1 + 0.2), "0.3");
+        assert_eq!(clean(1.5000000000000002), "1.5");
+        assert_eq!(clean(-0.006000000000000001), "-0.006");
+        assert_eq!(clean(0.0), "0");
+        assert_eq!(clean(12.5), "12.5");
+        assert_eq!(clean(1234567.0), "1234567");
     }
 }

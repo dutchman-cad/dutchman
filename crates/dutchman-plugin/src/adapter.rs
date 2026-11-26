@@ -53,7 +53,15 @@ mod guest {
     /// SolidCraft's `evaluate` import: each design is staged and opened in a private host
     /// session, apart from every open design and every file, and discarded after its commands.
     #[derive(Debug)]
-    struct HostSessions;
+    struct HostSessions(std::sync::Arc<crate::progress::Progress>);
+
+    /// Tell the operations panel where the conversion is; SolidCraft 0.48 draws it and
+    /// older versions ignore it.
+    fn report(step: Option<(f32, String)>) {
+        if let Some((fraction, message)) = step {
+            control::progress(fraction, &message);
+        }
+    }
     struct Staged;
     impl crate::evaluator::Session for Staged {
         fn run(
@@ -76,8 +84,9 @@ mod guest {
             execute: &mut crate::evaluator::Execute<'_>,
         ) -> Result<Vec<serde_json::Value>, String> {
             if control::cancelled() {
-                return Err("Cancelled".into());
+                return Err("Canceled".into());
             }
+            report(self.0.check_started());
             // Staging after a run starts a new design; reset also drops the last one.
             evaluate::reset();
             for chunk in design.chunks(crate::CHUNK_BYTES) {
@@ -128,6 +137,10 @@ mod guest {
                     return Err(folder_denied(&file.name, e));
                 }
             }
+            // Parts are counted by size before they are read, so a design the guest cannot hold
+            // is refused in one plain line instead of by a memory or fuel trap.
+            let load = crate::preflight::PartsLoad::new(file.size);
+            let progress = std::sync::Arc::new(crate::progress::Progress::default());
             let budget = Cell::new(0u64);
             let index_error = RefCell::new(None);
             let checked =
@@ -148,8 +161,9 @@ mod guest {
             if let Some(error) = index_error.into_inner() {
                 return Err(error);
             }
-            checked.map_err(error)?;
+            checked.map_err(|e| error(&file.name, e))?;
             let main_bytes = RefCell::new(Some(read("", file.size, &budget)?));
+            report(progress.file_read());
             let files = Cell::new(1usize);
             // The first error a host import returned, passed back to the host unchanged.
             let host_error: RefCell<Option<PluginError>> = RefCell::new(None);
@@ -184,6 +198,14 @@ mod guest {
                         "{host_path}: input exceeds the {limit}-byte file limit; choose a smaller CAD file"
                     ))));
                 }
+                // The 1 GiB aggregate limit is `read`'s to report; this refusal is for parts
+                // that are within it.
+                if size <= (1u64 << 30).saturating_sub(budget.get()) {
+                    if let Err(dutchman_core::Error::MemoryBudget(reason)) = load.add(size) {
+                        return Err(keep(PluginError::LimitExceeded(reason)));
+                    }
+                }
+                report(progress.part_read());
                 files.set(files.get() + 1);
                 if files.get() > 4096 {
                     return Err(keep(PluginError::LimitExceeded(
@@ -217,14 +239,16 @@ mod guest {
                     path == Path::new(&canonical)
                 })
             };
-            let evaluator = std::sync::Arc::new(crate::evaluator::HostEvaluator(HostSessions));
+            let evaluator = std::sync::Arc::new(crate::evaluator::HostEvaluator(HostSessions(
+                progress.clone(),
+            )));
             let converted = crate::convert(&file.name, options, &reader, &resolve, Some(evaluator));
             // Assembly salvage may have succeeded. A fatal capability failure still
             // aborts the whole import, before any design bytes reach the host.
             if let Some(host) = host_error.take() {
                 return Err(host);
             }
-            let (design, report) = converted.map_err(error)?;
+            let (design, report) = converted.map_err(|e| error(&file.name, e))?;
             if control::cancelled() {
                 return Err(PluginError::Cancelled);
             }
@@ -247,17 +271,18 @@ mod guest {
         }
     }
 
-    /// An unsupported or unreadable file is invalid input; a size budget is a limit.
-    fn error(e: dutchman_core::Error) -> PluginError {
+    /// An unsupported or unreadable file is invalid input; a size budget is a limit. Every
+    /// message carries the full failure report (`notice::failure_in`): the host gives a plugin
+    /// no clipboard and no file to write, so the text is where the report travels.
+    fn error(file_name: &str, e: dutchman_core::Error) -> PluginError {
         use dutchman_core::Error;
+        let text = crate::notice::failure_in(file_name, &e);
         match e {
-            Error::TooLarge { .. } | Error::MemoryBudget(_) => {
-                PluginError::LimitExceeded(crate::notice::failure(&e))
-            }
+            Error::TooLarge { .. } | Error::MemoryBudget(_) => PluginError::LimitExceeded(text),
             Error::Encode(ref reason) if reason.contains("exceeds") => {
-                PluginError::LimitExceeded(crate::notice::failure(&e))
+                PluginError::LimitExceeded(text)
             }
-            _ => invalid("file", crate::notice::failure(&e)),
+            _ => invalid("file", text),
         }
     }
 
@@ -274,7 +299,7 @@ mod guest {
             }
             if control::cancelled() {
                 *self.error.borrow_mut() = Some(PluginError::Cancelled);
-                return Err(std::io::Error::other("Cancelled"));
+                return Err(std::io::Error::other("Canceled"));
             }
             let length = (buf.len() as u64)
                 .min(self.size.saturating_sub(self.position))

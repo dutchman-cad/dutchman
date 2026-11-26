@@ -6,6 +6,7 @@
 //! it, so a part is looked for at that path, then by its file name next to the assembly. Each
 //! part file is read once, however often it is placed.
 
+mod export;
 mod freecad;
 mod poses;
 mod position_bounds;
@@ -16,6 +17,8 @@ mod sketch_instance;
 mod slicing;
 mod solidworks;
 
+pub(crate) use export::placed_files;
+pub(crate) use export::resolve as resolve_inserted;
 pub(crate) use poses::flattened_completeness;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -320,8 +323,8 @@ pub struct Placement {
     pub part: usize,
     /// Its placement in the assembly: a rigid transform, row-major 3 × 4, in millimetres.
     pub transform: [[f64; 4]; 3],
-    /// Whether the source hides it: the occurrence is hidden, or every body of the part it
-    /// places is. It is placed all the same, and the writer keeps it hidden.
+    /// Whether the source hides it: the occurrence is hidden or suppressed, or every body of
+    /// the part it places is hidden. It is placed all the same, and the writer keeps it hidden.
     pub hidden: bool,
 }
 
@@ -332,6 +335,24 @@ fn all_hidden(part: &Model) -> bool {
     part.assembly.is_none()
         && !bodies.is_empty()
         && bodies.iter().all(|body| body.visible == Some(false))
+}
+
+/// Whether the source suppresses an occurrence. cadmpeg states `suppressed` on the occurrence
+/// itself where the source holds the instance out of the product: Inventor's and Solid Edge's
+/// suppressed components. There the component is neither shown nor counted, so it is placed
+/// hidden. Suppression an override states (Fusion's selection of a stored layout) never
+/// reaches here: the placed tree leaves that occurrence out. (SolidWorks leaves a suppressed
+/// component out of the decoded design; STEP, FreeCAD and Onshape state none.)
+fn suppresses(occurrence: &Value) -> bool {
+    occurrence.get("suppressed").and_then(Value::as_bool) == Some(true)
+}
+
+/// Whether an occurrence is placed hidden: the source suppresses it or hides it, or every
+/// body of the part it places (`part_hidden`) is hidden. Suppression wins over `visible`.
+fn occurrence_hidden(occurrence: &Value, part_hidden: bool) -> bool {
+    suppresses(occurrence)
+        || occurrence.get("visible").and_then(Value::as_bool) == Some(false)
+        || part_hidden
 }
 
 /// Decodes one file, without reading the parts an assembly places.
@@ -482,10 +503,7 @@ pub(crate) fn resolve(
     }
     occurrences.sort_by_key(|row| row.get("ordinal").and_then(Value::as_u64));
 
-    let folder = input
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+    let folder = input_folder(input);
     let mut parts: Vec<Model> = Vec::new();
     let mut identities = Vec::new();
     // Each file read, once: its part, or the stage and reason it could not be read.
@@ -701,11 +719,12 @@ pub(crate) enum Components {
 /// of part models each holding only its component's bodies, plus the design's loose bodies.
 pub(crate) fn local(
     model: &Model,
+    external: &ExternalParts,
     threads: usize,
     positions: crate::PartPositions,
     report: &mut Report,
 ) -> Components {
-    match local_components_with_threads(model, &BTreeMap::new(), threads, positions, report) {
+    match local_components_with_threads(model, external, threads, positions, report) {
         Ok(Some((assembly, _))) => Components::Assembly(Box::new(assembly)),
         Ok(None) => Components::None,
         Err(reason) => Components::Unplaceable(reason),
@@ -740,7 +759,18 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
     local_components_with(model, &BTreeMap::new())
 }
 
-type ExternalParts = BTreeMap<String, Result<(usize, std::rc::Rc<Model>), LeftOut>>;
+/// The folder an assembly's part files are looked for in first: the input's own folder, or the
+/// current folder for a bare file name (whose `parent()` is an empty path, not `None`).
+pub(crate) fn input_folder(input: &Path) -> &Path {
+    input
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+/// Designs read from other files that fill an occurrence, by the occurrence's id: each with
+/// its number among the designs read, or the placement left out and why.
+pub(crate) type ExternalParts = BTreeMap<String, Result<(usize, std::rc::Rc<Model>), LeftOut>>;
 
 #[cfg(test)]
 fn local_components_with(
@@ -805,16 +835,17 @@ fn local_components_in_document(
     };
     let mut occurrences: Vec<&Value> = all
         .iter()
-        .filter(|row| match scope(row) {
-            Some("local") => true,
-            Some("external") => {
-                holds_local(row)
-                    || row
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|id| external.contains_key(id))
+        .filter(|row| {
+            let filled = row
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| external.contains_key(id));
+            match scope(row) {
+                Some("local") => true,
+                Some("external") => holds_local(row) || filled,
+                // An insertion the file doesn't hold, filled from another file.
+                _ => filled,
             }
-            _ => false,
         })
         .collect();
     if occurrences.is_empty() {
@@ -890,6 +921,7 @@ fn local_components_in_document(
         all_owned: loose.is_empty(),
         some_owned: !owned.is_empty(),
         unattributed: Vec::new(),
+        suppressed: Vec::new(),
         model,
         slices: &slices,
         definitions,
@@ -921,6 +953,24 @@ fn local_components_in_document(
                 "{} components written as {} definitions because their instances hold different layouts",
                 split.len(),
                 split.iter().sum::<usize>()
+            ),
+        );
+    }
+    if !tree.suppressed.is_empty() {
+        let shown: Vec<&str> = tree.suppressed.iter().take(5).map(String::as_str).collect();
+        report.push(
+            Severity::Info,
+            "suppressed components",
+            format!(
+                "{} component(s) the source suppresses are placed hidden, at their position ({}{}); \
+                 show them in SolidCraft to use them",
+                tree.suppressed.len(),
+                shown.join(", "),
+                if tree.suppressed.len() > shown.len() {
+                    ", ..."
+                } else {
+                    ""
+                }
             ),
         );
     }
@@ -956,7 +1006,8 @@ fn local_components_in_document(
     let mut identities = std::mem::take(&mut tree.part_identities);
     let worlds = world_placements(&occurrences)?;
     let inserted = inserted_designs(&occurrences);
-    let (joints, mut left_out) = joints(arena("assembly_joints"), &tree.paths, &worlds, &inserted);
+    let ordered = joints_in_timeline_order(arena("assembly_joints"), arena("features"));
+    let (joints, mut left_out) = joints(&ordered, &tree.paths, &worlds, &inserted);
 
     let own_part = if !loose.is_empty() {
         parts.push(tree.sliced(Slice::Loose, &loose, model.name.clone())?);
@@ -999,6 +1050,13 @@ fn local_components_in_document(
         .paths
         .iter()
         .filter(|(id, _)| world_ids.contains(**id))
+        .map(|(_, located)| located.path.clone())
+        .collect();
+    let unstored_ids = unstored_poses(&document);
+    let unstored: BTreeSet<Vec<usize>> = tree
+        .paths
+        .iter()
+        .filter(|(id, _)| unstored_ids.contains(**id))
         .map(|(_, located)| located.path.clone())
         .collect();
     let mut assembly = Assembly {
@@ -1085,7 +1143,7 @@ fn local_components_in_document(
     }
     assembly.remember_placements();
     left_out.extend(
-        place_by_joints_with(&mut assembly, &posed, &world_posed)
+        place_by_joints_with(&mut assembly, &posed, &world_posed, &unstored)
             .into_iter()
             .map(|text| JointNote { text, family: None }),
     );
@@ -1124,6 +1182,41 @@ fn world_posed(document: &Value) -> BTreeSet<String> {
             row.get("native_ref")
                 .and_then(Value::as_str)
                 .is_some_and(|native| posed_refs.contains(native))
+        })
+        .filter_map(|row| Some(row.get("id")?.as_str()?.to_owned()))
+        .collect()
+}
+
+/// The occurrences the file stores no pose for: an identity placement whose Fusion record has
+/// neither a placement matrix nor a current pose. An occurrence with no record to read is
+/// not one: its placement is the pose the file stores.
+fn unstored_poses(document: &Value) -> BTreeSet<String> {
+    let records = |name: &str| {
+        document
+            .pointer(&format!("/native/f3d/{name}"))
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
+    };
+    let unstored_refs: BTreeSet<&str> = records("xref_references")
+        .iter()
+        .chain(records("design_component_occurrences"))
+        .filter(|row| {
+            ["transform", "current_pose"]
+                .iter()
+                .all(|key| row.get(key).is_none_or(Value::is_null))
+        })
+        .filter_map(|row| row.get("id")?.as_str())
+        .collect();
+    document
+        .pointer("/model/occurrences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|row| {
+            row.get("native_ref")
+                .and_then(Value::as_str)
+                .is_some_and(|native| unstored_refs.contains(native))
+                && transform(row).is_ok_and(|placed| same(&placed, &IDENTITY))
         })
         .filter_map(|row| Some(row.get("id")?.as_str()?.to_owned()))
         .collect()
@@ -1277,7 +1370,7 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
 #[cfg(test)]
 /// [`place_by_joints_with`] with no world poses.
 fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec<String> {
-    place_by_joints_with(assembly, posed, &BTreeSet::new())
+    place_by_joints_with(assembly, posed, &BTreeSet::new(), &BTreeSet::new())
 }
 
 /// Place joined parts from stored poses and constraints. Closing joints anchor
@@ -1295,14 +1388,19 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
 ///
 /// `world_posed` are the posed occurrences whose pose is a world
 /// pose (see [`world_posed`]). Such a pose does not follow its holder, so an occurrence a joint
-/// names that holds one is placed where the file puts it: moving it to meet the joint would
-/// carry the posed one away from its pose, or leave it behind.
+/// names that holds one is held at the pose the file stores for it, rather than solved. When
+/// the file stores none (`unstored`, see [`unstored_poses`]), the joint places it, and the
+/// world-posed occurrences inside it stay where they are.
 fn place_by_joints_with(
     assembly: &mut Assembly,
     posed: &BTreeSet<Vec<usize>>,
     world_posed: &BTreeSet<Vec<usize>>,
+    unstored: &BTreeSet<Vec<usize>>,
 ) -> Vec<String> {
     let mut with_world_pose = posed.clone();
+    // The holders of a world pose the file stores no pose for: they pose the parts inside them,
+    // but nothing fixes them, so a joint places them.
+    let mut released = BTreeSet::new();
     for joint in assembly.joints.iter().filter(|joint| !joint.suppressed) {
         for path in [&joint.a, &joint.b] {
             if !path.is_empty()
@@ -1310,6 +1408,9 @@ fn place_by_joints_with(
                     .iter()
                     .any(|inner| inner.len() > path.len() && inner.starts_with(path))
             {
+                if unstored.contains(path) && !posed.contains(path) {
+                    released.insert(path.clone());
+                }
                 with_world_pose.insert(path.clone());
             }
         }
@@ -1353,7 +1454,13 @@ fn place_by_joints_with(
     // it. Internal joints therefore do not anchor their holder in the outer design.
     let mut fixed: BTreeMap<Vec<usize>, Vec<usize>> = BTreeMap::new();
     fixed.insert(Vec::new(), Vec::new());
-    fixed.extend(posed.iter().cloned().map(|path| (path, Vec::new())));
+    fixed.extend(
+        posed
+            .iter()
+            .filter(|path| !released.contains(*path))
+            .cloned()
+            .map(|path| (path, Vec::new())),
+    );
     // A joint between two components holding parts the file poses, which already holds as the
     // file places them, shows both placed in the design: no other joint moves them.
     for (index, row) in assembly.joints.iter().enumerate() {
@@ -1578,6 +1685,7 @@ fn place_by_joints_with(
         } else {
             (a_fixed, b_fixed)
         };
+        let stay: Vec<Vec<usize>> = placed_by_outer.iter().chain(world_posed).cloned().collect();
         match (a_fixed, b_fixed) {
             (true, true) => {
                 let b_frame = compose(&b, &joint.frame_b);
@@ -1600,7 +1708,7 @@ fn place_by_joints_with(
                     assembly,
                     &fixed,
                     posed,
-                    &placed_by_outer,
+                    &stay,
                     &joint.b,
                     &compose(&reach, &inverse(&joint.frame_b)),
                 );
@@ -1612,7 +1720,7 @@ fn place_by_joints_with(
                     &compose(&compose(&b, &joint.frame_b), &inverse(&joint.meeting())),
                     &inverse(&joint.frame_a),
                 );
-                move_keeping_placed(assembly, &fixed, posed, &placed_by_outer, &joint.a, &at);
+                move_keeping_placed(assembly, &fixed, posed, &stay, &joint.a, &at);
                 hold_in(&mut fixed, joint.a.clone(), &scope);
                 hold_in(&mut fixed, joint.b.clone(), &scope);
             }
@@ -2149,11 +2257,75 @@ fn world_placements<'a>(
     Ok(out)
 }
 
+/// The joint rows in the order Fusion solved them. cadmpeg writes the joint arena in id
+/// order, and a joint id is its stream and record index, not its place in the timeline. Each
+/// joint is bound to a feature whose operation is `assembly_joint` naming it; that feature's
+/// `ordinal` is the joint's place. A rigid group binds only its first joint, and its other
+/// joints (ids ending in `m<N>`) follow it, by N. Joints no feature names come after those,
+/// by id.
+pub(crate) fn joints_in_timeline_order<'a>(
+    joints: &'a [Value],
+    features: &[Value],
+) -> Vec<&'a Value> {
+    let mut ordinals: BTreeMap<&str, u64> = BTreeMap::new();
+    for feature in features {
+        if feature
+            .pointer("/definition/value/kind")
+            .and_then(Value::as_str)
+            != Some("assembly_joint")
+        {
+            continue;
+        }
+        let (Some(joint), Some(ordinal)) = (
+            feature
+                .pointer("/definition/value/value/joint")
+                .and_then(Value::as_str),
+            feature.get("ordinal").and_then(Value::as_u64),
+        ) else {
+            continue;
+        };
+        let entry = ordinals.entry(joint).or_insert(ordinal);
+        *entry = (*entry).min(ordinal);
+    }
+    let key = |row: &Value| {
+        let id = row.get("id").and_then(Value::as_str).unwrap_or("");
+        let (place, member) = match ordinals.get(id) {
+            Some(&ordinal) => (ordinal, 0),
+            None => match group_member(id) {
+                Some((first, member)) => match ordinals.get(first) {
+                    Some(&ordinal) => (ordinal, member),
+                    None => (u64::MAX, 0),
+                },
+                None => (u64::MAX, 0),
+            },
+        };
+        (place, member, id.to_owned())
+    };
+    let mut ordered: Vec<&Value> = joints.iter().collect();
+    ordered.sort_by_cached_key(|row| key(row));
+    ordered
+}
+
+/// A rigid-group member joint's id as its group's first joint's id and its member number.
+/// Both end `#<length>:<stream><record index>`, the member's with `m<N>` after; the length
+/// is the stream's, so a stream that ends in `m` is not mistaken for the marker.
+fn group_member(id: &str) -> Option<(&str, u64)> {
+    let (_, tail) = id.rsplit_once('#')?;
+    let (length, rest) = tail.split_once(':')?;
+    let after_stream = rest.get(length.parse::<usize>().ok()?..)?;
+    let (index, member) = after_stream.split_once('m')?;
+    if index.is_empty() || !index.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let number = member.parse::<u64>().ok()?;
+    Some((&id[..id.len() - member.len() - 1], number))
+}
+
 /// The joints that can be written between placed parts, and a note for each that cannot.
 /// `paths` gives where each occurrence is placed; `worlds`, its placement in the world as
 /// cadmpeg stores it.
 fn joints(
-    rows: &[Value],
+    rows: &[&Value],
     paths: &BTreeMap<&str, Located>,
     worlds: &BTreeMap<&str, Placement3x4>,
     inserted: &BTreeMap<&str, &str>,
@@ -2629,7 +2801,7 @@ impl<'a> Layouts<'a> {
                         self.classify(child, children, external, depth + 1),
                         // A malformed placement never matches; the build reports it.
                         transform(child).unwrap_or([[f64::NAN; 4]; 3]),
-                        child.get("visible").and_then(Value::as_bool) == Some(false),
+                        occurrence_hidden(child, false),
                     )
                 })
                 .collect()
@@ -2805,6 +2977,8 @@ struct Tree<'a> {
     some_owned: bool,
     /// The components kept empty because cadmpeg does not say which bodies they own.
     unattributed: Vec<String>,
+    /// The occurrences placed hidden because the source suppresses them, by name or id.
+    suppressed: Vec<String>,
 }
 
 impl<'a> Tree<'a> {
@@ -2872,10 +3046,19 @@ impl<'a> Tree<'a> {
             let part = self.part(occurrence, inner);
             self.path.pop();
             self.placed += 1;
-            let hidden = occurrence.get("visible").and_then(Value::as_bool) == Some(false)
-                || part
-                    .as_ref()
-                    .is_ok_and(|part| self.parts.get(*part).is_some_and(all_hidden));
+            let suppressed = suppresses(occurrence);
+            if suppressed {
+                let name = occurrence
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(id);
+                self.suppressed.push(name.to_owned());
+            }
+            let part_hidden = part
+                .as_ref()
+                .is_ok_and(|part| self.parts.get(*part).is_some_and(all_hidden));
+            let hidden = occurrence_hidden(occurrence, part_hidden);
             placements.push(Placement {
                 unproven: self.unproven.contains(id),
                 hidden,
@@ -3104,7 +3287,7 @@ fn scope(occurrence: &Value) -> Option<&str> {
 /// design inserted into this one, the occurrence itself.
 fn definition_key(occurrence: &Value) -> Option<&str> {
     match scope(occurrence) {
-        Some("external") => occurrence.get("id").and_then(Value::as_str),
+        Some("external" | "unresolved") => occurrence.get("id").and_then(Value::as_str),
         _ => occurrence
             .pointer("/prototype/definition")
             .and_then(Value::as_str),
@@ -3251,9 +3434,37 @@ fn slice(
         HistoryOwner::Definition(id) => Some(id).filter(|id| !root_definitions.contains(id)),
         HistoryOwner::Root | HistoryOwner::Unknown => None,
     };
+    // A Fusion root component folded into an embedded part has a file container beside it
+    // (see `products::file_containers`). cadmpeg leaves the history of the document root
+    // unowned. That history has exactly one owner: the folded root's slice when that slice
+    // exists (the root holds bodies), else the loose slice, as before.
+    let folds_root = |id: &str| {
+        id.starts_with("f3d:model:component#")
+            && root_definitions.contains(serde_json::json!([id, "file"]).to_string().as_str())
+    };
+    let folded_root = matches!(owner, HistoryOwner::Definition(id) if folds_root(id));
+    let root_slice_exists = wire
+        .get("product_definitions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|row| {
+            row.get("id")
+                .and_then(Value::as_str)
+                .is_some_and(folds_root)
+                && row
+                    .get("bodies")
+                    .and_then(Value::as_array)
+                    .is_some_and(|bodies| !bodies.is_empty())
+        });
     let owned = |row: &Value| match owner {
-        HistoryOwner::Definition(_) | HistoryOwner::Root => {
-            product_definition(row, &root_definitions) == definition
+        HistoryOwner::Definition(_) => {
+            let owner = product_definition(row, &root_definitions);
+            owner == definition || (folded_root && owner.is_none())
+        }
+        HistoryOwner::Root => {
+            let owner = product_definition(row, &root_definitions);
+            owner == definition && !(owner.is_none() && root_slice_exists)
         }
         HistoryOwner::Unknown => false,
     };
@@ -3494,118 +3705,14 @@ fn slice(
             keep.insert(id, ());
         }
     }
-    // Visit just the reached rows, then restore their original order within each arena.
-    // No component rebuilds a global index or scans the complete geometry again.
-    let mut selected: BTreeMap<&str, Vec<(usize, slicing::Selected<'_>)>> = slices
-        .arenas
-        .iter()
-        .map(|arena| (*arena, Vec::new()))
-        .collect();
-    for entry in keep.keys().filter_map(|id| rows.get(*id)).chain(
-        slices
-            .duplicates
-            .iter()
-            .filter_map(|(id, entry)| keep.contains_key(id.as_str()).then_some(entry)),
-    ) {
-        let row = if entry.arena == "features" {
-            let mut row = entry.row.value()?.into_owned();
-            if let Some(fields) = row.as_object_mut() {
-                // A sketch feature carried in from another component is this one's now.
-                if fields
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| carried_features.contains(id))
-                {
-                    match definition {
-                        Some(id) => {
-                            fields.insert("product_definition".to_owned(), Value::from(id));
-                        }
-                        None => {
-                            fields.remove("product_definition");
-                        }
-                    }
-                }
-                // A predecessor outside this slice is not part of its timeline.
-                if fields
-                    .get("regeneration_parent")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| !keep.contains_key(id))
-                {
-                    fields.remove("regeneration_parent");
-                }
-                if let Some(ids) = fields.get_mut("dependencies").and_then(Value::as_array_mut) {
-                    ids.retain(|id| id.as_str().is_some_and(|id| keep.contains_key(id)));
-                }
-                if let Some(properties) = fields
-                    .get_mut("source_properties")
-                    .and_then(Value::as_object_mut)
-                {
-                    if properties
-                        .get("body_centers")
-                        .and_then(Value::as_str)
-                        .is_some_and(|centers| slices.shared_centers.contains(centers))
-                    {
-                        properties.remove("body_centers");
-                    }
-                }
-            }
-            slicing::Selected::Value(std::borrow::Cow::Owned(row))
-        } else if entry.arena == "sketches" && !carried.is_empty() {
-            let mut row = entry.row.value()?.into_owned();
-            let moved = row
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|id| carried.get(id))
-                .copied();
-            if let Some(by) = moved {
-                if let Some(frame) = row.pointer_mut("/placement/frame") {
-                    move_frame(frame, &by).ok_or("a carried sketch's plane is malformed")?;
-                }
-            }
-            slicing::Selected::Value(std::borrow::Cow::Owned(row))
-        } else {
-            entry.row.selected()
-        };
-        selected
-            .entry(entry.arena)
-            .or_default()
-            .push((entry.ordinal, row));
-    }
-    let (geometry, reduced) = selected
-        .into_iter()
-        .map(|(arena, mut rows)| {
-            rows.sort_by_key(|(ordinal, _)| *ordinal);
-            (arena, rows.into_iter().map(|(_, row)| row).collect())
-        })
-        .partition::<BTreeMap<_, _>, _>(|(arena, _)| {
-            cadmpeg_ir::document::ArenaName::parse(arena)
-                .is_some_and(|name| name.home() == cadmpeg_ir::document::ArenaHome::Geometry)
-        });
-    // The document's other fields, without copying its model or native records: those are
-    // the bulk of a large archive, and each part would otherwise copy them once.
-    let mut fields: serde_json::Map<String, Value> = document
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter(|(key, _)| {
-            key.as_str() != "model" && key.as_str() != "geometry" && key.as_str() != "native"
-        })
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    // A component slice is a fragment: its document root can lie outside it.
-    fields.insert("fragment".to_owned(), Value::Bool(true));
-    // V11 requires the native home even when the slice deliberately retains no records.
-    fields.insert("native".to_owned(), serde_json::json!({}));
-    let part = slicing::Part {
-        fields,
-        geometry,
-        model: reduced,
-    };
-    // cadmpeg is third-party code; a panic in it is a reason, not a crash.
-    let text = serde_json::to_string(&part).map_err(|err| err.to_string())?;
-    let ir = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text))
-        .map_err(|_| "cadmpeg failed unexpectedly on a component's geometry".to_owned())?
-        .map_err(|err| format!("a component's geometry does not stand alone: {err}"))?;
+    let ir = typed_part(
+        model,
+        slices,
+        &keep,
+        &carried,
+        &carried_features,
+        definition,
+    )?;
     Ok(Model {
         ir,
         fidelity: None,
@@ -3613,7 +3720,78 @@ fn slice(
         source_file: model.source_file.clone(),
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     })
+}
+
+/// The component's document: `keep`'s rows of `model`, in their order, with the history edits a
+/// slice makes, and the document's other fields whole. Native records are left out.
+fn typed_part(
+    model: &Model,
+    slices: &slicing::Index<'_>,
+    keep: &BTreeMap<&str, ()>,
+    carried: &BTreeMap<String, Placement3x4>,
+    carried_features: &BTreeSet<String>,
+    definition: Option<&str>,
+) -> Result<cadmpeg_ir::CadIr, String> {
+    let kept = |id: &str| keep.contains_key(id);
+    let source = &model.ir;
+    let mut ir = cadmpeg_ir::CadIr::empty();
+    // A component slice is a fragment: its document root can lie outside it.
+    ir.fragment = true;
+    ir.repro.clone_from(&source.repro);
+    ir.source.clone_from(&source.source);
+    ir.tolerances = source.tolerances;
+    // The design records of the rows kept: every other record of the design stays with the
+    // design it came from, rather than being copied into each of its components.
+    ir.design = crate::ir_retain::design(&source.design, &kept);
+    ir.process = source.process.clone();
+    ir.geometry = crate::ir_retain::geometry(&source.geometry, &kept);
+    ir.model = crate::ir_retain::model(&source.model, &kept)?;
+    for feature in &mut ir.model.features {
+        edit_feature(feature, slices, &kept, carried_features, definition)?;
+    }
+    if !carried.is_empty() {
+        for sketch in &mut ir.model.sketches {
+            let Some(by) = carried.get(sketch.id.as_str()) else {
+                continue;
+            };
+            let moved = move_placement(sketch.placement, by);
+            sketch.placement = moved.ok_or("a carried sketch's plane is malformed")?;
+        }
+    }
+    ir.set_scope(source.scope())
+        .map_err(|err| err.to_string())?;
+    Ok(ir)
+}
+
+/// What a component's slice changes in a feature it keeps.
+fn edit_feature(
+    feature: &mut cadmpeg_ir::features::Feature,
+    slices: &slicing::Index<'_>,
+    kept: &dyn Fn(&str) -> bool,
+    carried_features: &BTreeSet<String>,
+    definition: Option<&str>,
+) -> Result<(), String> {
+    // A sketch feature carried in from another component is this one's now.
+    if carried_features.contains(feature.id.as_str()) {
+        feature.product_definition = match definition {
+            Some(id) => Some(
+                cadmpeg_ir::ids::ProductDefinitionId::mint(id).map_err(|err| err.to_string())?,
+            ),
+            None => None,
+        };
+    }
+    // A predecessor outside this slice is not part of its timeline.
+    feature.dependencies.retain(|id| kept(id.as_str()));
+    if feature
+        .source_properties
+        .get("body_centers")
+        .is_some_and(|centers| slices.shared_centers.contains(centers.as_str()))
+    {
+        feature.source_properties.remove("body_centers");
+    }
+    Ok(())
 }
 
 /// The sketch a feature builds, when it builds one.
@@ -3674,28 +3852,28 @@ fn single_world(occurrences: &[Value], definition: Option<&str>) -> Option<Place
     None
 }
 
-/// `frame` (a sketch placement's `origin`, `normal` and `u_axis`) moved by `by`.
-fn move_frame(frame: &mut Value, by: &Placement3x4) -> Option<()> {
-    let read = |value: &Value| -> Option<[f64; 3]> {
-        Some([
-            value.get("x")?.as_f64()?,
-            value.get("y")?.as_f64()?,
-            value.get("z")?.as_f64()?,
-        ])
-    };
-    let apply = |[x, y, z]: [f64; 3], translate: bool| -> Value {
+/// A resolved sketch placement (its `origin`, `normal` and `u_axis`) moved by `by`; `None` for
+/// an unresolved one, or when the moved plane is no longer a plane.
+fn move_placement(
+    placement: cadmpeg_ir::sketches::SketchPlacement,
+    by: &Placement3x4,
+) -> Option<cadmpeg_ir::sketches::SketchPlacement> {
+    let (origin, normal, u_axis) = placement.resolved()?;
+    let apply = |[x, y, z]: [f64; 3], translate: bool| {
         let at = |[a, b, c, t]: [f64; 4]| a * x + b * y + c * z + if translate { t } else { 0.0 };
         let [first, second, third] = *by;
-        serde_json::json!({"x": at(first), "y": at(second), "z": at(third)})
+        [at(first), at(second), at(third)]
     };
-    let origin = read(frame.get("origin")?)?;
-    let normal = read(frame.get("normal")?)?;
-    let u_axis = read(frame.get("u_axis")?)?;
-    let fields = frame.as_object_mut()?;
-    fields.insert("origin".to_owned(), apply(origin, true));
-    fields.insert("normal".to_owned(), apply(normal, false));
-    fields.insert("u_axis".to_owned(), apply(u_axis, false));
-    Some(())
+    let (origin, normal, u_axis) = (origin.get(), normal.get(), u_axis.get());
+    let [ox, oy, oz] = apply([origin.x, origin.y, origin.z], true);
+    let [nx, ny, nz] = apply([normal.x, normal.y, normal.z], false);
+    let [ux, uy, uz] = apply([u_axis.x, u_axis.y, u_axis.z], false);
+    cadmpeg_ir::sketches::SketchPlacement::try_resolved(
+        cadmpeg_ir::math::Point3::new(ox, oy, oz),
+        cadmpeg_ir::math::Vector3::new(nx, ny, nz),
+        cadmpeg_ir::math::Vector3::new(ux, uy, uz),
+    )
+    .ok()
 }
 
 /// The file name in a stored path, whichever separators the saving machine used.
@@ -3824,6 +4002,7 @@ mod tests {
                 name: name.trim_end_matches(".iam").to_owned(),
                 source_file: Some(name),
                 source_step: None,
+                merge_bodies: false,
                 assembly: None,
             })
         }
@@ -3907,6 +4086,17 @@ mod tests {
                  project folder {}",
                 crate::locate::tests::absolute_for_tests(project.dir.path()).display()
             )]
+        );
+    }
+
+    #[test]
+    fn a_bare_file_name_looks_for_its_parts_in_the_current_folder() {
+        assert_eq!(input_folder(Path::new("A01a.SLDASM")), Path::new("."));
+        assert_eq!(input_folder(Path::new("./A01a.SLDASM")), Path::new("."));
+        assert_eq!(input_folder(Path::new("sub/A01a.SLDASM")), Path::new("sub"));
+        assert_eq!(
+            input_folder(Path::new("/abs/A01a.SLDASM")),
+            Path::new("/abs")
         );
     }
 
@@ -4369,7 +4559,13 @@ mod tests {
     fn definition_appearance_bindings_still_reach_shared_parts() {
         let model = component_appearance(None, None);
         let mut report = Report::default();
-        let assembly = match local(&model, 1, crate::PartPositions::LastShown, &mut report) {
+        let assembly = match local(
+            &model,
+            &ExternalParts::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut report,
+        ) {
             Components::Assembly(assembly) => Some(assembly),
             _ => None,
         }
@@ -4408,7 +4604,13 @@ mod tests {
 
     fn scoped_component_appearance_is_left_out(model: Model, reason: &str) {
         let mut report = Report::default();
-        let assembly = match local(&model, 1, crate::PartPositions::LastShown, &mut report) {
+        let assembly = match local(
+            &model,
+            &ExternalParts::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut report,
+        ) {
             Components::Assembly(assembly) => Some(assembly),
             _ => None,
         }
@@ -4456,7 +4658,13 @@ mod tests {
         model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         assert!(matches!(
-            local(&model, 1, crate::PartPositions::LastShown, &mut report),
+            local(
+                &model,
+                &ExternalParts::new(),
+                1,
+                crate::PartPositions::LastShown,
+                &mut report
+            ),
             Components::Assembly(_)
         ));
         let losses: Vec<_> = report
@@ -4498,7 +4706,13 @@ mod tests {
         model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         assert!(matches!(
-            local(&model, 1, crate::PartPositions::LastShown, &mut report),
+            local(
+                &model,
+                &ExternalParts::new(),
+                1,
+                crate::PartPositions::LastShown,
+                &mut report
+            ),
             Components::Assembly(_)
         ));
         let losses: Vec<_> = report
@@ -4627,7 +4841,13 @@ mod tests {
         model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         assert!(matches!(
-            local(&model, 1, crate::PartPositions::LastShown, &mut report),
+            local(
+                &model,
+                &BTreeMap::new(),
+                1,
+                crate::PartPositions::LastShown,
+                &mut report
+            ),
             Components::Assembly(_)
         ));
         let losses: Vec<_> = report
@@ -5127,6 +5347,7 @@ mod tests {
             source_file: None,
             assembly: None,
             source_step: None,
+            merge_bodies: false,
         }
     }
 
@@ -5144,6 +5365,81 @@ mod tests {
             "Part".to_owned(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_folded_fusion_root_keeps_the_history_no_component_owns() {
+        // cadmpeg leaves root-level features unowned. When the root component is folded into
+        // an embedded part, its slice must still take them.
+        let model = repeated_sketch_part([0.0, 0.0], selected_layout_profile());
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let root = "f3d:model:component#root";
+        let body = wire["model"]["product_definitions"][0]["bodies"].clone();
+        wire["model"]["product_definitions"] = json!([{
+            "id": root, "kind": "part", "bodies": body, "sketches": [], "bom_properties": {},
+            "storage": {"kind": "file", "document": {}}, "tessellations": [], "occurrences": [],
+            "instance_bodies": [], "representations": []
+        }]);
+        wire["model"]["occurrences"] = json!([]);
+        for feature in wire["model"]["features"].as_array_mut().unwrap() {
+            feature
+                .as_object_mut()
+                .unwrap()
+                .remove("product_definition");
+        }
+        let model = Model {
+            ir: serde_json::from_value(wire).unwrap(),
+            ..model
+        };
+        let document = placed_document(&model);
+        let part = only(
+            &model,
+            &document,
+            &["synthetic:model:body#part"],
+            HistoryOwner::Definition(root),
+            "Root".to_owned(),
+        )
+        .unwrap();
+        let kept = feature_ids(&part);
+        assert!(
+            kept.contains(&"synthetic:model:feature#sketch".to_owned()),
+            "{kept:?}"
+        );
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        // With loose bodies as well, each unowned feature and parameter lives in one slice.
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["geometry"]["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "synthetic:model:body#loose", "kind": "general"}));
+        wire["model"]["parameters"] = json!([{
+            "id": "synthetic:model:parameter#length", "name": "length", "expression": "1 mm",
+            "ordinal": 0, "dependencies": [], "properties": {}
+        }]);
+        let with_loose = Model {
+            ir: serde_json::from_value(wire).unwrap(),
+            ..model
+        };
+        let document = placed_document(&with_loose);
+        let slice_of = |bodies: &[&str], owner| {
+            only(&with_loose, &document, bodies, owner, "Slice".to_owned()).unwrap()
+        };
+        let folded = slice_of(
+            &["synthetic:model:body#part"],
+            HistoryOwner::Definition(root),
+        );
+        let loose = slice_of(&["synthetic:model:body#loose"], HistoryOwner::Root);
+        let parameters = |part: &Model| {
+            serde_json::to_value(&part.ir).unwrap()["model"]["parameters"]
+                .as_array()
+                .map_or(0, Vec::len)
+        };
+        for feature in feature_ids(&folded) {
+            assert!(!feature_ids(&loose).contains(&feature), "{feature} twice");
+        }
+        assert_eq!(feature_ids(&folded).len(), 2);
+        assert_eq!(parameters(&folded) + parameters(&loose), 1);
+        assert_eq!(parameters(&folded), 1);
     }
 
     #[test]
@@ -5590,6 +5886,146 @@ mod tests {
             ir: crate::test_products::read(&wire),
             ..model
         }
+    }
+
+    /// The model with a feature at each ordinal naming the joint with that key, as cadmpeg
+    /// binds a joint to the timeline step that made it.
+    fn with_joint_features(model: Model, bound: &[(u64, &str)]) -> Model {
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let features = wire["model"]["features"].as_array_mut().unwrap();
+        for (ordinal, joint) in bound {
+            features.push(json!({
+                "id": format!("f3d:model:feature#joint{ordinal}"), "ordinal": ordinal,
+                "suppressed": false,
+                "definition": {"kind": "operation", "value": {"kind": "assembly_joint", "value": {"joint": joint}}},
+                "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [],
+            }));
+        }
+        Model {
+            ir: crate::test_products::read(&wire),
+            ..model
+        }
+    }
+
+    fn ids(rows: &[&Value]) -> Vec<String> {
+        rows.iter()
+            .map(|row| {
+                row["id"]
+                    .as_str()
+                    .unwrap()
+                    .rsplit_once('#')
+                    .unwrap()
+                    .1
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn joints_solve_in_timeline_order_not_id_order() {
+        let rows = |model: Model| {
+            with_joints(
+                model,
+                json!([
+                    joint(
+                        1,
+                        json!({"kind": "fixed"}),
+                        connector(None),
+                        connector_at(1, &[], facing(IDENTITY))
+                    ),
+                    joint(
+                        2,
+                        json!({"kind": "fixed"}),
+                        connector(None),
+                        connector_at(2, &[], facing(IDENTITY))
+                    ),
+                    joint(
+                        3,
+                        json!({"kind": "fixed"}),
+                        connector(None),
+                        connector_at(3, &[], facing(IDENTITY))
+                    ),
+                ]),
+            )
+        };
+        let base = || {
+            nested(
+                false,
+                Some(json!([
+                    placed(0, "frame", root(), 0.0),
+                    placed(1, "block", inside(0), 5.0),
+                    placed(2, "block", inside(0), 9.0),
+                    placed(3, "block", root(), 0.0),
+                ])),
+            )
+        };
+        let by_id = local_components(&rows(base())).unwrap().unwrap().0;
+        let timeline = with_joint_features(
+            rows(base()),
+            &[
+                (1, "f3d:model:joint#3"),
+                (2, "f3d:model:joint#2"),
+                (3, "f3d:model:joint#1"),
+            ],
+        );
+        let by_time = local_components(&timeline).unwrap().unwrap().0;
+        let held: Vec<_> = by_id.joints.iter().map(|j| j.b.clone()).collect();
+        let mut expected = held.clone();
+        expected.reverse();
+        assert_eq!(held.len(), 3);
+        assert_eq!(
+            by_time
+                .joints
+                .iter()
+                .map(|j| j.b.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[test]
+    fn rigid_group_members_follow_the_first_joint_by_member_number() {
+        let rows: Vec<Value> = [
+            "f3d:model:joint#3:abc1",
+            "f3d:model:joint#3:abc3",
+            "f3d:model:joint#3:abc7",
+            "f3d:model:joint#3:abc7m10",
+            "f3d:model:joint#3:abc7m2",
+            "f3d:model:joint#3:abc9",
+            "f3d:model:joint#4:foom5",
+        ]
+        .iter()
+        .map(|id| json!({ "id": id }))
+        .collect();
+        let feature = |ordinal: u64, joint: &str| {
+            json!({"id": format!("f#{ordinal}"), "ordinal": ordinal,
+                "definition": {"kind": "operation", "value": {"kind": "assembly_joint", "value": {"joint": joint}}}})
+        };
+        let features = [
+            feature(5, "f3d:model:joint#3:abc7"),
+            feature(3, "f3d:model:joint#3:abc3"),
+            feature(1, "f3d:model:joint#4:foom5"),
+            json!({"id": "f#9", "ordinal": 0,
+                "definition": {"kind": "operation", "value": {"kind": "native", "value": {}}}}),
+        ];
+        let ordered = joints_in_timeline_order(&rows, &features);
+        assert_eq!(
+            ids(&ordered),
+            [
+                "4:foom5",
+                "3:abc3",
+                "3:abc7",
+                "3:abc7m2",
+                "3:abc7m10",
+                "3:abc1",
+                "3:abc9"
+            ]
+        );
+        // With no features at all, the joints keep their id order.
+        let plain = joints_in_timeline_order(&rows, &[]);
+        let mut sorted = ids(&plain);
+        sorted.sort();
+        assert_eq!(ids(&plain), sorted);
     }
 
     /// One side of a joint: the design's root, or an occurrence (with nested occurrence keys).
@@ -6270,19 +6706,85 @@ mod tests {
         };
         let child = BTreeSet::from([vec![0, 0]]);
         let mut moved = build();
-        place_by_joints_with(&mut moved, &child, &BTreeSet::new());
+        place_by_joints_with(&mut moved, &child, &BTreeSet::new(), &BTreeSet::new());
         assert!(
             !near(&world_at(&moved, &[0]).unwrap(), &at([0.0, 0.0, 0.0], 0.0)),
             "the holder moves to the joint when the child's pose follows it"
         );
         let mut kept = build();
-        place_by_joints_with(&mut kept, &child, &child);
+        place_by_joints_with(&mut kept, &child, &child, &BTreeSet::new());
         for (path, x) in [(vec![0], 0.0), (vec![0, 0], 5.0), (vec![1], 0.0)] {
             assert!(
                 near(&world_at(&kept, &path).unwrap(), &at([x, 0.0, 0.0], 0.0)),
                 "{path:?} {:?}",
                 world_at(&kept, &path)
             );
+        }
+    }
+
+    #[test]
+    fn a_joint_places_an_empty_holder_of_a_world_posed_child_the_file_stores_no_pose_for() {
+        // An empty holder (x = 0) carries a world-posed child at x = 5 and is joined to a
+        // carrier at x = 100. With no stored pose the joint places the holder; with one it
+        // stays there. The child stays at its world pose either way.
+        for (record, holder_x) in [
+            (json!({}), 100.0),
+            (json!({"transform": at([0.0, 0.0, 0.0], 0.0)}), 0.0),
+            (
+                json!({"current_pose": {"carrier_record_index": 1, "transform": at([0.0, 0.0, 0.0], 0.0)}}),
+                0.0,
+            ),
+        ] {
+            let mut holder = placed(0, "frame", root(), 0.0);
+            holder["native_ref"] = json!("f3d:Design/BulkStream.dat:design-component-occurrence#5");
+            let (part, mut wire) = nested_wire(
+                false,
+                Some(json!([
+                    holder,
+                    placed(1, "block", inside(0), 5.0),
+                    placed(2, "block", root(), 100.0),
+                ])),
+            );
+            let mut stored = record.clone();
+            stored["id"] = json!("f3d:Design/BulkStream.dat:design-component-occurrence#5");
+            wire["native"]["f3d"]["design_component_occurrences"] = json!([stored]);
+            let holder_id = wire["model"]["occurrences"][0]["id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let unstored = unstored_poses(&wire);
+            assert_eq!(unstored.contains(&holder_id), holder_x == 100.0, "{record}");
+            let model = Model {
+                ir: crate::test_products::read(&wire),
+                ..part
+            };
+            let mut assembly = local_components(&model).unwrap().unwrap().0;
+            assembly.joints = vec![Joint {
+                a: vec![1],
+                b: vec![0],
+                frame_a: IDENTITY,
+                frame_b: IDENTITY,
+                motion: Motion::Rigid,
+                flip: true,
+                suppressed: false,
+            }];
+            let child = BTreeSet::from([vec![0, 0]]);
+            let unstored = if unstored.contains(&holder_id) {
+                BTreeSet::from([vec![0]])
+            } else {
+                BTreeSet::new()
+            };
+            place_by_joints_with(&mut assembly, &child, &child, &unstored);
+            for (path, x) in [(vec![0], holder_x), (vec![0, 0], 5.0), (vec![1], holder_x)] {
+                assert!(
+                    near(
+                        &world_at(&assembly, &path).unwrap(),
+                        &at([x, 0.0, 0.0], 0.0)
+                    ),
+                    "{record} {path:?} {:?}",
+                    world_at(&assembly, &path)
+                );
+            }
         }
     }
 
@@ -6434,7 +6936,21 @@ mod tests {
                         ),
                     );
                 }
-                let mut wire = serde_json::to_value(&with_joints(model.clone(), rows).ir).unwrap();
+                // The joints are stored in id order; the timeline order is their order here.
+                let bound: Vec<(u64, String)> = rows
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .zip(0..)
+                    .map(|(row, ordinal)| (ordinal, row["id"].as_str().unwrap().to_owned()))
+                    .collect();
+                let bound: Vec<(u64, &str)> =
+                    bound.iter().map(|(n, id)| (*n, id.as_str())).collect();
+                let mut stored = rows.as_array().unwrap().clone();
+                stored.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+                let timeline = with_joints(model.clone(), json!(stored));
+                let mut wire =
+                    serde_json::to_value(&with_joint_features(timeline, &bound).ir).unwrap();
                 if posed {
                     wire["native"]["f3d"]["xref_references"] = json!([
                         {"id": "f3d:xref:reference#0", "current_pose": {"carrier_record_index": 7}}
@@ -7811,6 +8327,35 @@ mod tests {
     }
 
     #[test]
+    fn layouts_separate_a_suppressed_child_from_a_shown_one() {
+        // Two insertions of one component: its child is suppressed in one and shown in the
+        // other. They are different layouts, not copies.
+        let mut suppressed = placed(2, "block", inside(0), 0.0);
+        suppressed["suppressed"] = json!(true);
+        let mut shown = placed(5, "block", inside(3), 0.0);
+        shown["suppressed"] = json!(false);
+        let rows = [
+            placed(0, "frame", root(), 0.0),
+            suppressed,
+            placed(3, "frame", root(), 50.0),
+            shown,
+        ];
+        let mut children: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+        children
+            .entry(rows[0]["id"].as_str().unwrap())
+            .or_default()
+            .push(&rows[1]);
+        children
+            .entry(rows[2]["id"].as_str().unwrap())
+            .or_default()
+            .push(&rows[3]);
+        let mut layouts = Layouts::default();
+        let a = layouts.classify(&rows[0], &children, &ExternalParts::new(), 0);
+        let b = layouts.classify(&rows[2], &children, &ExternalParts::new(), 0);
+        assert_ne!(a, b);
+    }
+
+    #[test]
     fn placements_the_source_hides_are_placed_hidden() {
         // Block 2 is a hidden occurrence; the frame and block 1 are shown.
         let mut hidden_block = placed(2, "block", inside(0), 30.0);
@@ -7851,6 +8396,68 @@ mod tests {
             .parts
             .iter()
             .all(|part| !part.ir.geometry.bodies.is_empty()));
+    }
+
+    #[test]
+    fn a_suppressed_occurrence_is_placed_hidden() {
+        let base = placed(1, "block", inside(0), 0.0);
+        assert!(!occurrence_hidden(&base, false));
+        let mut suppressed = base.clone();
+        suppressed["suppressed"] = json!(true);
+        assert!(occurrence_hidden(&suppressed, false));
+        // Suppression wins over an explicit visible state.
+        suppressed["visible"] = json!(true);
+        assert!(occurrence_hidden(&suppressed, false));
+        assert!(suppresses(&suppressed));
+        // Not suppressed: visible state and the part's bodies decide as before.
+        let mut shown = base.clone();
+        shown["suppressed"] = json!(false);
+        assert!(!suppresses(&shown));
+        assert!(!occurrence_hidden(&shown, false));
+        assert!(occurrence_hidden(&shown, true));
+        shown["visible"] = json!(false);
+        assert!(occurrence_hidden(&shown, false));
+    }
+
+    #[test]
+    fn a_suppressed_component_is_placed_hidden_and_reported() {
+        let mut suppressed = placed(1, "block", inside(0), 0.0);
+        suppressed["suppressed"] = json!(true);
+        suppressed["visible"] = json!(true);
+        suppressed["name"] = json!("Gone");
+        let mut off = placed(2, "block", inside(0), 30.0);
+        off["suppressed"] = json!(false);
+        let model = nested(
+            false,
+            Some(json!([placed(0, "frame", root(), 100.0), suppressed, off])),
+        );
+        let mut report = Report::default();
+        let (assembly, _) = local_components_with_threads(
+            &model,
+            &BTreeMap::new(),
+            1,
+            crate::PartPositions::Smart,
+            &mut report,
+        )
+        .unwrap()
+        .unwrap();
+        let frame = assembly.parts[assembly.placements[0].part]
+            .assembly
+            .as_ref()
+            .unwrap();
+        let hidden: Vec<bool> = frame.placements.iter().map(|p| p.hidden).collect();
+        assert_eq!(hidden, [true, false]);
+        // Placed, not dropped, and still where the file puts it.
+        assert_eq!(frame.placements.len(), 2);
+        assert_eq!(frame.placements[0].transform[0][3], 0.0);
+        let notes: Vec<&crate::Loss> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.subject == "suppressed components")
+            .collect();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].severity, Severity::Info);
+        assert!(notes[0].detail.contains("Gone"));
     }
 
     #[test]

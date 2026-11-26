@@ -1,0 +1,3 @@
+### Reports
+
+- Import notes lead with one plain sentence about what is missing or different and what to do, in the desktop app, the command line and the SolidCraft plugin's report. Notes that change nothing you see (records STEP has no place for, a placement statistic or any other count of nothing) are left out of the result card, including its **Details**, and are only in **Save the full log…**, behind `--verbose` on the command line, and in the JSON report, which also gains a `summary` sentence and `shown_by_default` on each note. **Details** in the app holds the raw code and message of the notes the card lists.

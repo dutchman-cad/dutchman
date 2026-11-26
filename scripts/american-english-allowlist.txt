@@ -1,0 +1,36 @@
+# File\tfragment\twhy. A hit inside the fragment is allowed (a fragment starting with = must be the whole line or string). Only for a stable interface name, a quote of another program, a proper name. See scripts/check-american-english.py.
+crates/dutchman-solidcraft/src/tolerances.rs	=centre	JSON key of verification_tolerances.replay.centre, documented in docs/json.md
+docs/json.md	replay.centre	JSON key of verification_tolerances.replay.centre
+crates/dutchman-core/src/format.rs	=recognised, not read yet	documented input.words value in the JSON report
+docs/json.md	recognised, not read yet	documented input.words value in the JSON report
+docs/mcp.md	recognised, not read yet	documented input.words value in the JSON report
+crates/dutchman/src/mcp.rs	=neighbours	MCP tool argument name
+crates/dutchman/src/mcp.rs	neighbours must be true or false	error naming the MCP tool argument
+docs/mcp.md	neighbours: true	MCP tool argument name
+docs/json.md	`neighbours`	JSON report scope value and MCP tool argument name
+skills/dutchman-converting/SKILL.md	neighbours?	MCP tool argument name
+crates/dutchman/src/diagnose/narrow.rs	=neighbours	JSON scope value and CLI/MCP argument
+crates/dutchman/src/diagnose/narrow/tests.rs	=neighbours	JSON scope value
+crates/dutchman/src/worker.rs	=cancelled	JSON status and reason value
+crates/dutchman-gui/src/fusion_export/fake.rs	=cancelled	state value of the Fusion exporter add-in protocol
+crates/dutchman-gui/src/fusion_export/fake.rs	=Cancelled.	message the Fusion exporter add-in sends, quoted by the test stand-in
+crates/dutchman-gui/src/fusion_export/job.rs	=cancelled	state value of the Fusion exporter add-in protocol
+crates/dutchman-gui/src/fusion_export/mod.rs	=cancelled	state value of the Fusion exporter add-in protocol
+crates/dutchman-gui/src/fusion_export/view.rs	=cancelled	state value of the Fusion exporter add-in protocol
+crates/dutchman-gui/src/fusion_export/tests.rs	=cancelled	state value of the Fusion exporter add-in protocol
+crates/dutchman-gui/src/fusion_export/tests.rs	=Cancelled.	message the Fusion exporter add-in sends
+crates/dutchman-core/src/report.rs	=colour	accepted spelling of a loss-category word in a typed filter
+crates/dutchman-core/src/refusal.rs	neighbouring face	SolidCraft's own refusal text, matched verbatim, and the stable refusal category id
+crates/dutchman/src/json.rs	neighbouring face	SolidCraft's own refusal text and the stable refusal category id
+docs/json.md	neighbouring face	SolidCraft's own refusal text and the stable refusal category id
+docs/plugin.md	control.cancelled	SolidCraft plugin control API name
+crates/dutchman-core/src/refusal.rs	fillet-overflows-neighbouring-face	stable refusal category id
+crates/dutchman/src/json.rs	fillet-overflows-neighbouring-face	stable refusal category id
+docs/json.md	fillet-overflows-neighbouring-face	stable refusal category id
+docs/troubleshooting.md	fillet-overflows-neighbouring-face	stable refusal category id
+docs/troubleshooting.md	neighbouring faces	SolidCraft's own refusal text
+NOTICE	licences/	name of the licenses/ folder in the release archives
+crates/dutchman-core/src/camtools/map.rs	=millimetres	unit name accepted in a CamCraft tool library file
+crates/dutchman-core/src/package.rs	#{colour}	format argument naming a Rust variable
+docs/formats.md	Recognised, not read yet	capitalized input.words value, the table is generated from it (dutchman formats --markdown)
+README.md	Recognised, not read yet	capitalized input.words value, as in dutchman formats --markdown

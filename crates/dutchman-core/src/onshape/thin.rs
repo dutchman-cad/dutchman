@@ -371,9 +371,21 @@ pub(super) fn install_scope(
         {
             continue;
         }
-        report.push_coded(crate::Severity::Degraded, source.id.as_str(), "onshape/design.operation-native",
-            "design timeline retains the native source operation; model history carries its decoded construction");
-        let mut row = json!({"id":source.id,"definition":{"operation":{"kind":"native","value":{"kind":"onshape:timeline-member","native_options":{},"source_settings":{}}}}});
+        // A feature that owns a design sketch holds it as its operation, which is how the
+        // design layer states ownership of a sketch.
+        let operation = if let Some(sketch) = ir
+            .design
+            .sketches
+            .iter()
+            .find(|sketch| sketch.owner == source.id)
+        {
+            json!({"kind":"sketch","value":sketch.id})
+        } else {
+            report.push_coded(crate::Severity::Degraded, source.id.as_str(), "onshape/design.operation-native",
+                "design timeline retains the native source operation; model history carries its decoded construction");
+            json!({"kind":"native","value":{"kind":"onshape:timeline-member","native_options":{},"source_settings":{}}})
+        };
+        let mut row = json!({"id":source.id,"definition":{"operation":operation}});
         let fields = row
             .as_object_mut()
             .ok_or("the design timeline row is missing")?;

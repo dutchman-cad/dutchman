@@ -1,5 +1,17 @@
 # The desktop app
 
+The window opens wider than tall (1180 by 800 points, or 90% of a smaller monitor) and
+never smaller than 520 by 420.
+
+## Fusion tool libraries
+
+A Fusion tool library (`.tools`, or the `.json` export of one) converts to CamCraft's
+`.camtools`. The Designs list counts it as a tool library, its result says `Converted` or
+`Converted, some tools left out` with how many tools were written, and the only button on the
+card is **Show in folder**. The report panel asks about missing tools or wrong sizes, and its third step asks for the
+same library exported the other way (`.tools` for a `.json`, `.json` for a `.tools`). The
+Designs list shows each entry's name, with the full path in its tooltip.
+
 ## Ask your AI about this file
 
 Each completed conversion saves its full `dutchman.convert/1` JSON report beside the
@@ -101,9 +113,11 @@ receive a numbered alternative.
 Folder runs keep the input tree under the selected output folder. For example,
 `in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`, with linked design companions
 and its `.report.json` beside it. Same-named designs in different subfolders stay
-separate. Repeating a run into the same selected folder reuses the output paths;
-existing designs and reports are replaced, identical linked companions are reused,
-and edited companions are kept with a conflict report.
+separate. Repeating a run into the same selected folder never replaces a design that is
+there: each new design gets the next free name (`part (2).sc`), with its `.report.json`
+beside it, unless **Replace designs already in the output folder** is ticked (it is off by
+default). Identical linked companions are reused, and edited companions are kept with a
+conflict report.
 
 ZIP projects unpack into a private temporary folder, limited to 10,000 entries and 4 GiB
 of extracted data. Paths outside the project are refused and symbolic links are skipped.
@@ -113,7 +127,7 @@ with their parts resolved inside the project; unused parts convert afterwards. A
 a native file is kept as a fallback if the native conversion fails.
 
 The Inventor project folder setting appears only for inputs containing Inventor files.
-Available memory is labelled as memory and hidden when unknown. Automatic SolidCraft
+Available memory is labeled as memory and hidden when unknown. Automatic SolidCraft
 selection compares the versions found on PATH, beside Dutchman and in installed applications, choosing
 the newest; `SOLIDCRAFT_CLI` remains an explicit override.
 
@@ -171,7 +185,7 @@ and times below 60 seconds show **under a minute**, just as in the CLI. **M GB o
 once when the machine's free memory can be read. On a Mac this counts memory the system can give back
 (not in use by apps, system or compression), not only the few pages it keeps empty. These are estimates, not limits or promises; an unavailable estimate
 leaves no label. An estimate of five minutes or more, or of more than half the free memory
-(8 GB when that is unknown), is shown in the warning colour. Planning and estimation run in the
+(8 GB when that is unknown), is shown in the warning color. Planning and estimation run in the
 background.
 
 Pressing Convert starts the conversion at once; there is no memory dialog. The estimate in the
@@ -206,11 +220,26 @@ original where the history stops (0 bodies where it has 1). The final shape is c
 rebuilt features before editing them." In an assembly it gives how many parts. The JSON report has
 the loss `history/body-mismatch`.
 
+Each note on a result card leads with one plain sentence: what is missing or different and, when
+there is something to do, what to do. Notes that change nothing you see (records STEP has no place
+for or keeps as they are, an edge tolerance, a timeline folder, a placement statistic of nothing) are left out and not counted, and so is a note that is only
+a count of nothing. **Details**, under the notes, holds the code and message Dutchman wrote for
+each note listed above it, for a bug report. **Save the full log…** saves every note, including
+those the card leaves out. A note Dutchman has no plain sentence for yet keeps its own words. When an
+editable history was written without being checked, the card says what "unverified" means: SolidCraft
+did not replay it and compare the result with the original shape, which is not a warning that it
+is wrong; turn on **Check feature history in SolidCraft** and use **Add matching STEP** to check it.
+
 Expanded **Losses** lists wrap long feature ids inside their result card. Ordinary text
 wraps at spaces.
 
-A converted design opens in SolidCraft from its card: the app that `SOLIDCRAFT_APP` names, else
-`solidcraft` on `PATH` or beside Dutchman, else the system's app for `.sc` files. When an Inventor assembly's part
+A converted design opens in SolidCraft from its card, in the SolidCraft the version pill shows
+when you chose a `solidcraft-cli`: on macOS the `.app` that `solidcraft-cli` sits in (`open -a`),
+on Linux the `solidcraft` app, AppImage or Flatpak of the same install, on Windows the
+`SolidCraft.exe` beside it. If that install has only the command-line tool, the card says so and
+opens nothing. With no `solidcraft-cli` chosen it is the app that `SOLIDCRAFT_APP` names, else
+`solidcraft` on `PATH` or beside Dutchman, else the system's app for `.sc` files, and the status
+line says when the system's app was used. When an Inventor assembly's part
 files are not found, its card names them: **Search a folder…** or **Find a file…** converts it
 again, searching there too. The app follows the system's light or dark setting, or can be set to
 Day or Night, and its **Output format** choice also offers a FreeCAD macro.
@@ -220,7 +249,7 @@ Day or Night, and its **Output format** choice also offers a FreeCAD macro.
 The header’s SolidCraft status pill opens a small panel with **Target SolidCraft** and a
 notice explaining when the installed SolidCraft is newer than Dutchman knows, too old
 (before minor 0.18), or older and the selected target loses editable history. Only the last case suggests newer SolidCraft for more history;
-0.44 patch 1 through 0.46 currently need no such notice. The notice never blocks conversion.
+0.44 patch 1 through 0.49 currently need no such notice. The notice never blocks conversion.
 The pill shows the detected release, or **SolidCraft not found** with a download link in its
 panel. **Advanced > SolidCraft version…** opens the same panel. Narrow windows show only
 the version or **not found**, shorten **Update**, and put theme choices in a menu.
@@ -236,7 +265,7 @@ SolidCraft, or answers as a release older than 0.18.2, is refused with a message
 `solidcraft-cli` beside it. Without one, the panel says so: on Windows, the single-file SolidCraft
 download leaves it out, and the portable ZIP and the MSI installer include it.
 
-Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.46), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
+Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.49), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
 
 History checking stays on by default. Before a SolidCraft rebuild, Dutchman compares the
 memory needed for a second build with free memory, using what the design holds after
@@ -255,7 +284,7 @@ Small imports avoid extra preparation workers.
 The window opens where and at the size it was last closed. A saved size smaller than the
 app's minimum, 520 by 420 points, is ignored, and the window opens at its default size instead.
 
-With no saved size, the window opens centred at 1180 by 800 points, or 90% of the screen where
+With no saved size, the window opens centerd at 1180 by 800 points, or 90% of the screen where
 that is smaller, which fits the whole main screen with the **Advanced** choices open and nothing
 scrolled. From 1100 points wide, **Designs** and **Output folder** stand in a left column, with
 **Is there a problem? Is something missing?** in the room under them, and **Results** in a right
@@ -412,6 +441,16 @@ Windows copies have two update paths, using the versioned package and its `.sha2
 the same stable release. Nothing changes until the SHA-256 matches; a failed download or
 checksum check deletes the download and leaves the installed copy untouched. **Download**
 remains available for a manual install.
+The release check and the Windows and AppImage downloads give up on their own: up to 15 seconds
+for the host-name lookup and then up to 15 seconds for each connection attempt, and 30 seconds
+without a single byte arriving. The release check, the API fallback and the checksum file also
+have 20 seconds in total; the package download has no total limit, so a slow download that keeps
+moving is never cut. The Homebrew and Scoop hand-offs run those tools, which are only bounded
+by the 15-minute limit on their commands.
+Behind a firewall that blocks `github.com` or its download hosts, the update then stops with a
+plain message, leaves the installed copy untouched, and offers **Try
+again** and **Download manually**. Nothing retries by itself, and
+Dutchman can be closed while a download is still running.
 
 - **MSI: Install (closes Dutchman).** Detection requires the running executable at
   `%LOCALAPPDATA%\Programs\Dutchman\dutchman-gui.exe` and a matching `InstallDir` string in
@@ -433,12 +472,20 @@ remains available for a manual install.
 - **Portable ZIP: Update now.** When neither MSI nor Scoop identifies the copy, all three
   release programs beside the Windows executable identify a portable folder. Dutchman
   downloads and verifies the ZIP, stages all three programs and bundled guidance on the
-  install volume, renames the originals to `.old`, and puts the new files beside them.
+  install volume, renames each file the package lists (the three programs and the files under
+  `docs`, `skills` and `AGENTS.md`) to `<name>.dutchman-old`, and puts the new files beside
+  them. Your own files, including other files inside `docs` or `skills`, are never moved.
   If replacement fails, it attempts to restore the originals and explains any recovery
   needed. The running app keeps working; **Restart now** becomes available once conversions
   finish. A detached helper waits for this copy to exit before opening the updated app.
-  The next start deletes the `.old` backups. A folder without write access offers the manual
+  The backups are recorded in `.dutchman-update-state`; the next start deletes exactly those
+  and nothing else, so your own `.old` files stay. A folder without write access offers the manual
   download fallback. Other Windows copies keep **Download**.
+
+On Linux, **Update now** replaces an AppImage only when this Dutchman is running from it
+(`APPIMAGE` names the Dutchman file and the running program lives inside its `APPDIR`
+mount). An `APPIMAGE` inherited from another app's terminal is ignored and Dutchman offers
+the download.
 
 Scoop and Homebrew retain their package-manager paths. macOS and Linux downloads are unchanged.
 
@@ -469,7 +516,7 @@ app's quarantine attribute and its user-approved flag without changing them. The
 retries a blocked check when its window regains focus or you start a conversion.
 
 On Linux it needs a desktop session (X11 or Wayland with OpenGL); the file dialogs use the
-desktop portal, and dropping files works without it.
+desktop portal, reached through the system's libdbus, and dropping files works without it.
 
 ## What the update check sends
 

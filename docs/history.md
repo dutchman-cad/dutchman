@@ -51,8 +51,8 @@ history, with no flattened-history warning.
     tangency weight of exactly 1 maps as a circular fillet.
 
   The sections below have the detail, and what stops a history.
-- A blocker keeps the editable prefix and resolved sketches hidden beside the visible
-  original shape. Without a body-building prefix, the design keeps imported geometry and
+- A blocker keeps the editable prefix and resolved sketches live in the part's timeline, then
+  a Remove of the bodies they make and one Import of the rest of the design. Without a body-building prefix, the design keeps imported geometry and
   hidden reference sketches.
 - Assemblies keep their components and placements. Fusion and FreeCAD assemblies keep their
   joints too (revolute, slider, and rigid), with their grounded parts held where they are.
@@ -70,18 +70,18 @@ history, with no flattened-history warning.
 
 A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
 and each body's position, box, area, and volume with the original. Position and box checks
-allow the larger of 0.01 mm and 0.02% of the larger box diagonal, for the centre distance and
+allow the larger of 0.01 mm and 0.02% of the larger box diagonal, for the center distance and
 each minimum/maximum coordinate. The size term is four times the measuring mesh chord
 allowance, with margin above the measured 0.0022 mm difference on a 38 mm curved body.
 Volume and area keep their measuring mesh tolerances ([every number](#verification-tolerances)). Bodies are paired by nearest box
-centre, with volume breaking ties. When the evaluator gives no box for a pair, the position and box checks are unavailable. The result is in the
+center, with volume breaking ties. When the evaluator gives no box for a pair, the position and box checks are unavailable. The result is in the
 `history:` line of the report and in `verification.status` in `--json`:
 
 | Status | Meaning |
 |---|---|
 | `verified` | The history replays in SolidCraft and matches the original. |
 | `unverified` | The history was written without the check: no `solidcraft-cli` was found, it timed out, or `--no-verify`. The reason is given. |
-| `partial` | An editable prefix and resolved sketches are retained in a hidden component. The imported final shape is visible. The reason names the blocker, counts kept features, and says whether retained features replayed; this does not verify the full history. |
+| `partial` | An editable prefix and resolved sketches stay live in the part's timeline, then a Remove feature takes away the bodies they make and one Import named "Rest of the design (from <first feature not converted>)" holds the imported final shape. The reason names the blocker, counts kept features, and says whether retained features replayed; this does not verify the full history. |
 | `flattened` | No body-building prefix could be retained. The design keeps the imported geometry and mapped sketches with resolved planes, hidden for reference. |
 | `not_applicable` | There was no history to write, or `--import-only`. |
 
@@ -100,7 +100,7 @@ keep their existing one-to-one comparisons.
 ### Verification tolerances
 
 Every number below is a constant in `crates/dutchman-solidcraft/src/tolerances.rs`, and the
-conversion report states them in `verification_tolerances` (see [json.md](json.md)). Millimetres
+conversion report states them in `verification_tolerances` (see [json.md](json.md)). Millimeters
 are mm; a "share" is a fraction of the size it applies to.
 
 **Replay against the original** (both evaluated in the same SolidCraft, so kernel differences
@@ -108,15 +108,15 @@ cancel):
 
 | Compared | Allowed difference |
 |---|---|
-| Bodies | The same comparison count after the single-body disconnected-region normalization described above. Otherwise, bodies are paired by nearest box centre, volume breaking ties. |
+| Bodies | The same comparison count after the single-body disconnected-region normalization described above. Otherwise, bodies are paired by nearest box center, volume breaking ties. |
 | Volume | The larger of 1e-4 (0.01%) of the larger volume and the mesh allowance: each body's area times the mesh chord, `max(5e-5 of the box diagonal, 1e-4 mm)`, summed for both bodies. With no area or box from SolidCraft, only 1e-4. |
 | Area | 1e-3 (0.1%) of the larger area, when SolidCraft gives both. |
-| Position (box centre) and box corners | The larger of 0.01 mm and 2e-4 (0.02%, four mesh chords) of the larger box diagonal; the centre distance and each minimum and maximum coordinate. Skipped when SolidCraft gives no box. |
+| Position (box center) and box corners | The larger of 0.01 mm and 2e-4 (0.02%, four mesh chords) of the larger box diagonal; the center distance and each minimum and maximum coordinate. Skipped when SolidCraft gives no box. |
 | Kernel face, edge and shell counts | Informational only: `info` when equal, `differs` when unequal. Equivalent split or merged faces may differ; counts never reject a final history. Earlier inference retains its geometry comparison policy. |
 | Merged face counts | Final history comparisons require equal available top-level counts per paired body. SolidCraft merges adjacent pieces of one surface and periodic seams. A mismatch retains the imported final shape and reports the differing count. Free-form and mesh surface totals are not comparable and are not checked. Missing counts are not checked. |
 | Merged edge counts | Informational only: `info` when equal, `differs` when unequal. Edge splitting after mirrors and full-turn revolves can differ across SolidCraft releases without changing the faces or shape. |
 | Analytic surface-kind counts | Available merged counts of planes, cylinders, cones and spheres must match, including in bodies with free-form faces. Mesh bodies are not checked. |
-| Centre of mass | Final history comparisons use the position allowance above on actual centroids, when both are available. A box centre is never substituted. |
+| Center of mass | Final history comparisons use the position allowance above on actual centroids, when both are available. A box center is never substituted. |
 | Closed shell | Final history comparisons require source and replay closure to agree; a source sheet may be open. |
 | Named parameters | Replayed numeric values must match source values within 5e-12 times max(1, absolute source value), allowing measured reply serialization roundoff. Omitted or renamed parameters are not checked. |
 | Manifoldness | Not checked: the evaluator exposes no explicit manifold result. |
@@ -129,7 +129,7 @@ geometry is retained. See [source comparison evidence](json.md#source-comparison
 
 **Bodies the source stores at a point in a partial history** (a retained prefix against the
 source's own body at that step): the source's body count must not exceed the replay's, and each
-stored body needs a replayed body whose box centre is within the larger of 0.5 mm and 1% of the
+stored body needs a replayed body whose box center is within the larger of 0.5 mm and 1% of the
 replayed box diagonal when the stored box is the solid's own, or 1 mm and 2% when it is a box
 over sampled points. More replayed bodies than the source lists is not a difference.
 
@@ -144,6 +144,7 @@ refuses the choice rather than failing the replay):
 | Proof | Allowed difference |
 |---|---|
 | Fillet and chamfer input edge | Exactly one rebuilt edge passes through the edge midpoint within 1e-6 mm, with ends and length within 1e-6 (of the larger, at least 1 mm), and direction within 1e-6 of parallel. A refusal says the nearest rebuilt edge is farther than 0.01 mm when the rebuilt body, not the tolerance, differs. |
+| Inferred fillet and chamfer edges | When the midpoint proof finds no edge, each nearby straight rebuilt edge is a candidate and is picked at its own midpoint; a pick that also lies on another straight rebuilt edge is dropped, so two close parallel edges are never picked between. |
 | Profile face the source names | Positions within 1e-5 mm; directions within 1e-5 of parallel; the face's plane within 1e-4 mm of the sketch plane; area within 1e-4 (2e-2 when an edge is curved, as SolidCraft measures those from a mesh) of the face's, at least 1 mm². Its edges are covered within 1e-4 of a straight edge's length, within 1e-3 of the radius (at least 1 mm) from the circle, and within 2e-3 rad of a curved edge's turn. |
 | Extrude end cap | The swept profile's area within the larger of 1 mm² and 3% of the cap's area; a face's plane within 1e-4 mm of the end plane. |
 
@@ -225,10 +226,12 @@ or designation does not block a known metric size: `3 mm` and `0.5 mm` become `M
 without rounding. A genuine contradiction names the designation's dimensions and the
 secondary numbers and asks you to check the source thread table.
 
-UNC/UNF designations are checked in millimetres (25.4 mm per inch), with pitch expressed as
-millimetres or threads per inch. Even when those numbers agree, a separate UNC/UNF cosmetic
-Thread feature remains not supported yet by SolidCraft; this limitation is reported rather
-than mislabeling it as an ISO metric thread. Tapped-hole support is separate.
+UNC/UNF designations are checked in millimeters (25.4 mm per inch), with pitch expressed as
+millimeters or threads per inch. When those numbers agree, a UNC, UNF or UNEF thread is written as a Thread feature in
+SolidCraft's Unified form (`#2-56 UNC`, `1/4-20 UNC`), keeping a class the source names
+(`-2A` external, `-2B` internal), on targets with Unified thread support. No SolidCraft release
+has it yet, so every target reports "Unified threads need a SolidCraft release with Unified
+thread support" rather than mislabeling the thread as ISO metric. Tapped-hole support is separate.
 
 The face must resolve to a complete cylindrical band between two circular rims. Historical
 face IDs without input surface geometry remain unresolved; Dutchman does not infer faces
@@ -237,7 +240,7 @@ and unresolved extents or face geometry remain reported losses. When the source 
 resolve whether the thread is modeled, the annotation is kept with a Degraded note; helical
 geometry is not reconstructed. Cosmetic annotations do not change the body's geometry.
 
-Fusion may store a cosmetic thread's face at the thread class's diameter (Ø9.85 for an M10 thread) while the sketch that made the cylinder keeps the nominal size (Ø10). A SolidCraft cosmetic thread cannot make that change, so such a thread is reported as not rebuilt and the stored shape is kept; the sketch and extrude keep their history. Only a face within 3 % of the nominal radius, along the axis of a sketch circle of the nominal size, counts.
+Fusion may store a cosmetic thread's face at the thread class's diameter (Ø9.85 for an M10 thread) while the sketch that made the cylinder keeps the nominal size (Ø10). A SolidCraft cosmetic thread cannot make that change, so the history writes it as an offset-face feature that sets the cylinder to the stored size, followed by the cosmetic thread; the sketch and extrude keep their history and the rebuilt body is checked against the stored one. Only a face within 3 % of the nominal radius, along the axis of a sketch circle of the nominal size, counts.
 
 Modeled threads retain their original helical geometry and stop the editable history.
 The Degraded loss `history/modeled-thread-retained` keeps the source designation when
@@ -253,7 +256,7 @@ Replacing the thread with a cosmetic feature on the earlier body would lose the 
 Attaching a cosmetic feature to the imported final body also needs a proven cylindrical
 band between circular rims; a helical face does not meet that condition. Dutchman keeps
 the designation in the loss report rather than guessing a face for an annotation. Later
-features remain blocked, and the imported final shape stays visible.
+features remain blocked, and they stay in the imported final shape.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain
@@ -278,12 +281,12 @@ a curved edge along the polyline it draws, so a rebuilt arc's length must lie be
 and the input arc's length. Arcs SolidCraft
 splits into pieces and other non-circular curves are refused. Closed input circles map for
 targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
-stored circle with exact centre, axis, radius and full-turn parameter range; historical
+stored circle with exact center, axis, radius and full-turn parameter range; historical
 samples cannot establish circularity. Stored topology must identify one earlier named owning
 body, and only that body supplies replay candidates. Missing carrier or ownership evidence,
 ellipses, and transformed source carriers are refused. Each rebuilt piece must lie on its
 plane and radius, with mesh length between the sample chords and the circular arc. An extra
-`inspect.measure` pass confirms the circular carrier's centre, axis, radius, and analytic
+`inspect.measure` pass confirms the circular carrier's center, axis, radius, and analytic
 length; it cannot certify a circle from its two seam samples alone. Sorted
 angular intervals must cover exactly one turn without gaps or overlaps on exactly one body.
 An overlapping candidate without carrier metadata on the selected body also blocks the proof.
@@ -405,7 +408,7 @@ the way FreeCAD's default (bullseye) face maker builds them stop the history, an
 names which.
 
 Whole-sketch hole placements exclude construction entities; explicit entity selections
-can still use construction points or circle centres.
+can still use construction points or circle centers.
 
 When every feature using a sketch selects regions (whole loops or trimmed) or a list of its
 profile loops, curves that bound none of the selected regions or loops are written as
@@ -517,7 +520,9 @@ from the sheet's outer face. The unchanged base can be a single simple polygon, 
 L-shaped or notched sheet: attachment uses the actual profile edge, including a concave edge,
 rather than the edge of a bounding rectangle. Curved, open, crossing, disconnected, or
 collinear base edges and base profiles with holes or partial regions are not supported yet
-by this attachment proof. Any other plate, or a bend without its plate, keeps the geometry
+by this attachment proof. A plate attached along several edges is the same flange on every edge when each further
+edge is as long as the first, parallel to it and on the same face of the sheet; the flange lists
+all of them. Any other plate, or a bend without its plate, keeps the geometry
 and reports the unsupported shape. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
 outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. A sheet-metal
 corner that cadmpeg proves leaves its body unchanged (a single flange's corner, with nothing to
@@ -533,13 +538,10 @@ is still converted.
 
 ## Partial history
 
-Show **Editable history (partial)** in the browser, unsuppress its features in the timeline to keep editing its body, and suppress or hide the imported final shape while you work on it. Until you do, the hidden copy builds no body, so an export or a measure of the design holds each part once.
+Roll the timeline marker back before **Remove** to see and edit the body the converted features build.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and
-resolved sketches are kept in a hidden **Editable history (partial)** component. The
-original final shape remains visible as an Import after the kept history. The hidden
-copy's body-building features are suppressed, so it adds no second body to an export;
-unsuppress them to continue editing it. The report names the blocker and counts
+resolved sketches are kept live in the part's own timeline, followed by a **Remove** feature that takes away the bodies they make and one **Import** named "Rest of the design (from <first feature not converted>)" that holds the source's final shape. The visible result is exactly the original shape, with one body per source body. Roll the timeline marker back before **Remove** to see and edit the body the converted features build; to keep modeling from them, delete or suppress the last two features. SolidCraft needs the CLI to name the bodies the features make; without it the kept features stay in a hidden **Editable history (partial)** component beside the visible Import, as before, with their body-building features suppressed so an export holds each part once. The report names the blocker and counts
 retained source features; `mode: partial_history` and verification `partial` distinguish
 this from full verified history. The reason says whether retained features replayed or
 remain unverified. Later sketches with unresolved planes or external geometry are
@@ -556,11 +558,11 @@ When a partial history is checked against the source's stored bodies, each kept 
 sit where the source has it: within the larger of 1 mm and 2% of its box diagonal when the
 source's position is approximate, or 0.5 mm and 1% when it is exact.
 
-Dutchman targets SolidCraft 0.46 by default with the writer capabilities available in 0.45 and
-keeps design format 23, as for earlier targets. SolidCraft 0.46 opens every earlier
-design format. Saving in SolidCraft 0.46 upgrades a design to format 64 (drawing format 3);
-SolidCraft 0.45 asks to update before opening that saved design. Dutchman does not write
-drawings or require format 64. Explicit older targets keep their existing output.
+Dutchman targets SolidCraft 0.49 by default with the writer capabilities available in 0.48 and
+keeps design format 23, as for earlier targets. SolidCraft 0.49 opens every earlier
+design format. Saving in SolidCraft 0.49 upgrades a design to format 67 (drawing format 6);
+SolidCraft 0.48 warns about a design saved in 0.49, opens what it can read and keeps the rest.
+Dutchman does not write drawings or require format 67. Explicit older targets keep their existing output.
 
 Converted assemblies embed their parts and STEP blobs in the design container; they do
 not link back to the source part files. SolidCraft's requirement (since 0.45) to use Update Links

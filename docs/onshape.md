@@ -46,10 +46,10 @@ name its root with `root_element`; conversion starts with that studio.
 A Part Studio with several parts converts as one design holding every part as a
 body, with one shared history, as in Onshape. Its STEP export lists each part as a
 product of its own; when every part sits once in the Part Studio's own frame, those
-products are not written as an assembly. Each part keeps its name and colour when
+products are not written as an assembly. Each part keeps its name and color when
 the bundle proves which feature made it: exactly one named part appears across that
 feature, and exactly one body in the STEP export has that name. Otherwise SolidCraft
-names the part, its colour is left out, and the conversion says how many parts were
+names the part, its color is left out, and the conversion says how many parts were
 not matched. Bundles fetched before this check lack the states it needs; fetch them
 again.
 
@@ -61,7 +61,7 @@ continue to apply. A present consistency flag must be a JSON boolean.
 
 Face-attached sketches use their stored `sketches.json` record, matched by
 `featureId`. Onshape's sixteen-value, row-major `sketchMatrix` supplies the sketch's
-origin (metres), x direction and normal as a sketch-to-world transform. The reader
+origin (meters), x direction and normal as a sketch-to-world transform. The reader
 checks finite, rigid axes and agreement with the selected planar rollback face;
 it never substitutes that face's origin or chooses an in-plane direction. An
 absent member in an older bundle, missing sketch entry or contradictory frame
@@ -107,7 +107,7 @@ and pinned microversion, and the shared source-body comparison before history co
 Assigned variables remain design parameters even if no sketch can be mapped and
 conversion falls back to the STEP body. Sketch dimensions and blind extrude depths
 that use `#name` retain the parameter dependency, including symmetric extrudes.
-The reader evaluates lengths in millimetres while keeping literal units in the
+The reader evaluates lengths in millimeters while keeping literal units in the
 written expression and a compatible display unit on design parameters. Neutral
 parameter properties explicitly request retention without sketches, and feature
 properties identify symmetric parameters measured over the total span. Readers
@@ -211,7 +211,7 @@ The reader emits CADIR v11: final STEP topology and solved carriers belong to
 `model`. Parameter ordinals start at zero within each owning feature. The wire
 schema changes do not change the reader's selections, units or history limits.
 
-Lengths from REST geometry are converted from metres to millimetres; angles use
+Lengths from REST geometry are converted from meters to millimeters; angles use
 radians. The source axes, origin and scale are preserved. Unsupported constructions
 stop body-building history rather than guessing a selection.
 
@@ -312,6 +312,33 @@ in the current folder, from the names the fetch already reads (no extra API call
 already there is replaced; when another file has the name, the new bundle gets ` (2)`, ` (3)`
 and so on. An explicit `--out` is used exactly as given, and an existing
 output is replaced only after a successful fetch.
+
+### Before you fetch
+
+- **You need Onshape API keys.** Fetching reads the document through the Onshape API with your
+  own keys. Converting a `.onshape-bundle` you already have needs no keys. Make them in Onshape
+  under My account > Developer > API keys
+  ([Onshape help: My Account - Developer](https://cad.onshape.com/help/Content/Plans/my_account_developer.htm));
+  [Connect your Onshape account](#connect-your-onshape-account) lists the two permissions to tick.
+- **Not every account can make keys.** Onshape caps individual accounts at two API keys, and
+  company, classroom and enterprise accounts have no cap (same help page). A newly created Free
+  account was seen without the option to create keys, while another user's account could
+  create them. If you don't see **Create new API key**, someone who can make keys and open the
+  document can fetch it and send you the `.onshape-bundle`.
+- **A fetch spends your yearly API calls.** Onshape allows 2,500 API calls a year per user on
+  EDU Student, Free and Standard, 5,000 per user on Professional, and 10,000 per full user on
+  Enterprise ([Onshape API limits](https://onshape-public.github.io/docs/auth/limits/)). Onshape
+  counts only calls that succeed. My account > Developer shows how many you have used.
+- **A small Part Studio costs about 11 calls.** From a version link: three to list the document
+  (microversion, name, tabs), the feature list, one body-detail state, the configuration, the
+  variables, the sketches, and the STEP export (request, one poll, download). A workspace link
+  adds one final check. Each feature whose faces or parts the conversion needs adds one
+  body-detail call, and a Derived Part Studio or an assembly adds the studios it reads. Before
+  fetching, Dutchman estimates 30 calls for each Part Studio or assembly and asks above 50; see
+  [Calls and cache](#calls-and-cache). Fetching the same version again is read from the cache and usually costs no calls.
+- **Cap a fetch with `--max-calls N`** (`max_calls` in the MCP tool). The fetch stops before
+  call N+1, and `--max-calls 0` reads only the cache. A stopped fetch picks up later with only
+  the calls it is missing ([Continue a stopped fetch](#continue-a-stopped-fetch)).
 
 ### Connect your Onshape account
 
@@ -432,7 +459,7 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
   included when their endpoints return data. A Part Studio containing only sketches
   and assigned variables skips the export request and has no `export.step`. For
   other Part Studios, final `export.step` is fetched through
-  an asynchronous AP242 STEP export, grouped into one file, in metres with the
+  an asynchronous AP242 STEP export, grouped into one file, in meters with the
   source orientation. The export does not store a blob in the source document,
   email anyone, or trigger a browser download.
 - An assembly has `assemblies/<element>/definition.json` and `features.json`, with

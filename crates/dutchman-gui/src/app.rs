@@ -71,6 +71,19 @@ fn running_file_line(rows: &[Row]) -> Option<String> {
     ))
 }
 
+/// Whether `path` is a file Dutchman converts by itself: a design in a known format, or a Fusion
+/// tool library (written as CamCraft's `.camtools`).
+fn is_known_file(path: &Path) -> bool {
+    dutchman_core::Format::from_path(path).is_some() || dutchman::tool_library::is_library(path)
+}
+
+/// The reader's status line for `path`, whichever kind of file it is.
+fn status_line(path: &Path) -> Option<String> {
+    dutchman_core::Format::from_path(path)
+        .map(|format| format.status_for(path))
+        .or_else(|| dutchman::tool_library::status(path))
+}
+
 /// The "last shown" Part positions choice, naming the program when every queued design comes from one.
 fn last_shown_label(inputs: &[PathBuf]) -> String {
     let mut families = inputs
@@ -94,8 +107,7 @@ impl Row {
             self.report.as_ref(),
         );
         if view.capability.is_none() {
-            view.capability = dutchman_core::Format::from_path(&self.input)
-                .map(|format| format.status_for(&self.input));
+            view.capability = status_line(&self.input);
         }
         view
     }
@@ -138,6 +150,7 @@ pub struct App {
     download_root: Option<tempfile::TempDir>,
     doctor: Option<crate::doctor::Page>,
     onshape: crate::onshape::Panel,
+    fusion_export: crate::fusion_export::Panel,
     intake: crate::paste::Inbox,
     output_picker: Box<dyn Fn(Sender<Message>, egui::Context)>,
     clipboard: Box<dyn Fn() -> (Vec<PathBuf>, String)>,
@@ -182,6 +195,9 @@ pub struct App {
     /// The SolidCraft CLI that checks histories when nothing else is chosen, if one is found.
     checker: Result<PathBuf, dutchman_solidcraft::NoCli>,
     solidcraft_open: bool,
+    /// What this session wrote at each output path: its size and modified time then. A design is
+    /// converted again over its own file only while the file is still exactly that.
+    written: std::collections::BTreeMap<PathBuf, (u64, std::time::SystemTime)>,
     /// Keep an explicit UI preview independent of the installed CLI.
     solidcraft_preview: bool,
     /// Where the search for `solidcraft-cli` looked, when it found none.
@@ -225,6 +241,12 @@ struct PendingRun {
     kind: RunKind,
 }
 
+/// The size and modified time of the file at `path`.
+fn file_stamp(path: &Path) -> Option<(u64, std::time::SystemTime)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.len(), metadata.modified().ok()?))
+}
+
 enum RunKind {
     Batch {
         inputs: Vec<PathBuf>,
@@ -252,6 +274,38 @@ fn select_preset(options: &mut ConvertOptions, preset: Preset) {
     options.import_only = false;
     options.no_sketches = false;
     options.no_joints = false;
+}
+
+/// What the options say about standing a design up.
+fn orientation_of(options: &ConvertOptions) -> dutchman_core::Orientation {
+    match options.stand_up_choice() {
+        Some(true) => dutchman_core::Orientation::StandUp,
+        Some(false) => dutchman_core::Orientation::KeepAxes,
+        None => dutchman_core::Orientation::Auto,
+    }
+}
+
+fn set_orientation(options: &mut ConvertOptions, orientation: dutchman_core::Orientation) {
+    options.stand_up = orientation == dutchman_core::Orientation::StandUp;
+    options.no_stand_up = orientation == dutchman_core::Orientation::KeepAxes;
+}
+
+fn orientation_label(orientation: dutchman_core::Orientation) -> &'static str {
+    match orientation {
+        dutchman_core::Orientation::Auto => "Automatic",
+        dutchman_core::Orientation::StandUp => "Stand up (Y-up to Z-up)",
+        dutchman_core::Orientation::KeepAxes => "Keep the file's axes",
+    }
+}
+
+fn orientation_help(orientation: dutchman_core::Orientation) -> &'static str {
+    match orientation {
+        dutchman_core::Orientation::Auto => {
+            "Stands a design up when its source says it is Y-up; keeps the axes when it is Z-up or says nothing."
+        }
+        dutchman_core::Orientation::StandUp => "Always rotates so +Y becomes +Z.",
+        dutchman_core::Orientation::KeepAxes => "Never rotates, even for a design that is Y-up.",
+    }
 }
 
 fn set_choices(options: &mut ConvertOptions, history: bool, sketches: bool, joints: bool) {
@@ -298,6 +352,14 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
         .get("no_joints")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    set_orientation(
+        options,
+        settings
+            .get("up_axis")
+            .and_then(Value::as_str)
+            .and_then(dutchman_core::Orientation::from_name)
+            .unwrap_or_default(),
+    );
     settings
         .get("custom")
         .and_then(Value::as_bool)
@@ -376,6 +438,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
         "no_verify": options.no_verify,
         "part_positions": options.effective_part_positions().name(),
+        "up_axis": orientation_of(options).name(),
     })
 }
 
@@ -459,6 +522,7 @@ impl App {
             download_root: None,
             doctor: None,
             onshape: crate::onshape::Panel::new(&cc.egui_ctx),
+            fusion_export: crate::fusion_export::Panel::new(),
             intake: crate::paste::Inbox::new(),
             output_picker: Box::new(|sender, ctx| worker::pick(Pick::Output, sender, ctx)),
             clipboard: Box::new(crate::paste::clipboard),
@@ -500,6 +564,7 @@ impl App {
             has_app: platform::has_solidcraft_app(),
             checker: dutchman_solidcraft::usable_cli(&checking_with),
             solidcraft_open: false,
+            written: std::collections::BTreeMap::new(),
             solidcraft_preview: false,
             search_note,
             header_bottom: 72.0,
@@ -627,10 +692,63 @@ impl App {
         }
     }
 
+    /// Shows the Export from Fusion window in a given state, for tests and screenshots.
+    #[doc(hidden)]
+    pub fn preview_fusion(
+        &mut self,
+        offered: bool,
+        presence: crate::fusion_export::agent::Presence,
+        installed: Option<&str>,
+        step: crate::fusion_export::installer::Install,
+    ) {
+        self.fusion_export
+            .preview_install(offered, presence, installed, step);
+    }
+
     /// Supplies a saved account for UI previews without contacting Onshape.
     #[doc(hidden)]
     pub fn preview_onshape(&mut self, user: Option<&str>) {
         self.onshape.preview(user);
+    }
+
+    /// Points "Export from Fusion" at a test home and offers it on any system (UI tests and
+    /// screenshots only).
+    #[doc(hidden)]
+    pub fn preview_fusion_export(&mut self, env: crate::fusion_export::Env) {
+        self.fusion_export.preview(env);
+    }
+
+    /// Offers "Export from Fusion…" on any system (UI tests only).
+    #[doc(hidden)]
+    pub fn offer_everywhere_for_tests(&mut self) {
+        self.fusion_export.offer();
+    }
+
+    /// The designs and folders added to convert, for UI tests.
+    #[doc(hidden)]
+    pub fn inputs_for_test(&self) -> &[PathBuf] {
+        &self.inputs
+    }
+
+    /// Where the "Export from Fusion" window is, for UI tests.
+    #[doc(hidden)]
+    pub fn fusion_export_stage(&self) -> crate::fusion_export::Stage {
+        self.fusion_export.stage()
+    }
+
+    /// Converts the folder an export from Fusion wrote, like a folder dropped on the window:
+    /// it becomes an input and the conversion starts unless one is already running. The
+    /// manifest reader will replace the body of this function.
+    pub fn convert_export_folder(&mut self, dir: PathBuf, ctx: &egui::Context) {
+        self.add_inputs([dir]);
+        if self.running() {
+            self.notice = Some(
+                "The folder exported from Fusion is queued. Press Convert when the current conversion ends."
+                    .into(),
+            );
+        } else {
+            self.start(ctx);
+        }
     }
 
     /// Completes a connection save for headless UI tests without storing real keys.
@@ -911,7 +1029,7 @@ impl App {
             self.intake.approval = None;
             if !approval.resume {
                 self.notice =
-                    Some("Fetch cancelled. No more Onshape API calls were used.".to_owned());
+                    Some("Fetch canceled. No more Onshape API calls were used.".to_owned());
             }
         }
         if go {
@@ -1019,6 +1137,14 @@ impl App {
         self.estimate_key = None;
     }
 
+    /// Shows `text` as the Designs summary and drops any plan still being made, for screenshots
+    /// of files that do not exist on this machine.
+    #[cfg(feature = "test-support")]
+    pub fn set_project_summary_for_test(&mut self, text: &str) {
+        self.estimate_generation += 1;
+        self.project_summary = text.to_owned();
+    }
+
     #[cfg(feature = "test-support")]
     pub fn set_checker_for_test(&mut self, found: bool) {
         self.checker = if found {
@@ -1106,6 +1232,7 @@ impl App {
             job.search.also.push(folder);
         }
         let job = job.clone();
+        let job = self.retry_job(job);
         self.pending = Some(PendingRun {
             options: self.options.clone(),
             kind: RunKind::Retry {
@@ -1114,6 +1241,23 @@ impl App {
             },
         });
         self.start_checked(ctx);
+    }
+
+    /// `job` set to convert again: over the file this session wrote at its output name when that
+    /// file is still exactly as written, else to the next free name, so a file the user changed or
+    /// put there since is never replaced.
+    fn retry_job(&self, mut job: Job) -> Job {
+        job.replace = false;
+        if job.output.try_exists().unwrap_or(true) {
+            if file_stamp(&job.output)
+                .is_some_and(|now| self.written.get(&job.output) == Some(&now))
+            {
+                job.replace = true;
+            } else {
+                job.output = dutchman_core::safe_output::free_slot(&job.output);
+            }
+        }
+        job
     }
 
     /// The anonymous report of the file of the row at `index`, its id in it, and its convert
@@ -1609,7 +1753,7 @@ impl App {
             && self
                 .inputs
                 .first()
-                .is_some_and(|input| dutchman_core::Format::from_path(input).is_some());
+                .is_some_and(|input| is_known_file(input));
         let text = if single_file {
             sentences.first()?.clone()
         } else {
@@ -1824,6 +1968,16 @@ impl App {
                             row.status = Status::NotStarted;
                             row.report = None;
                         } else {
+                            if let Some((path, stamp)) = report
+                                .get("ok")
+                                .filter(|ok| **ok == Value::Bool(true))
+                                .and_then(|_| report.pointer("/output/path"))
+                                .and_then(Value::as_str)
+                                .map(PathBuf::from)
+                                .and_then(|path| file_stamp(&path).map(|stamp| (path, stamp)))
+                            {
+                                self.written.insert(path, stamp);
+                            }
                             row.status = if report.get("ok") == Some(&Value::Bool(true)) {
                                 Status::Converted
                             } else {
@@ -2062,6 +2216,12 @@ impl App {
             let (_, clipboard) = (self.clipboard)();
             self.onshape.offer_link(&clipboard);
         }
+        if let Some(folder) = self.fusion_export.poll(ctx) {
+            self.convert_export_folder(folder, ctx);
+        }
+        if let Some(notice) = self.fusion_export.take_notice() {
+            self.notice = Some(notice);
+        }
         self.receive_links(ctx);
         self.take_dropped_files(ctx);
         self.refresh_estimates(ctx);
@@ -2164,6 +2324,9 @@ impl App {
             .window(ctx, self.header_bottom, !self.running())
         {
             self.queue_link(crate::paste::Source::Onshape(link), ctx);
+        }
+        if let Some(folder) = self.fusion_export.window(ctx, self.header_bottom) {
+            self.convert_export_folder(folder, ctx);
         }
         self.download_window(ctx);
         self.approval_window(ctx);
@@ -2285,19 +2448,32 @@ impl App {
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.with_layout(Layout::left_to_right(Align::Max), |ui| {
                 ui.spacing_mut().item_spacing.x = theme::SPACE_2;
-                if compact {
-                    ui.label(RichText::new(crate::APP_NAME).heading());
+                let title_style = if compact {
+                    egui::TextStyle::Heading
                 } else {
-                    ui.label(RichText::new(crate::APP_NAME).text_style(theme::title()));
-                }
-                ui.label(RichText::new(crate::version_label()).small().color(p.tide));
+                    theme::title()
+                };
+                let lift = theme::baseline_lift(ui, &title_style, &egui::TextStyle::Small);
+                ui.label(RichText::new(crate::APP_NAME).text_style(title_style));
+                // Both texts end at the row's bottom edge; the smaller one has a different
+                // descent, so lift it until the two baselines are the same line.
+                let version = crate::version_label();
+                let font = egui::TextStyle::Small.resolve(ui.style());
+                let size = ui
+                    .fonts_mut(|fonts| fonts.layout_no_wrap(version.clone(), font, p.tide).size())
+                    + egui::vec2(1.0, lift);
+                ui.allocate_ui_with_layout(size, Layout::top_down(Align::Min), |ui| {
+                    ui.label(RichText::new(version).small().color(p.tide));
+                });
             });
             if !compact {
-                ui.label(
-                    RichText::new("Converts native CAD designs into SolidCraft designs.")
-                        .small()
-                        .color(p.tide),
-                );
+                #[allow(unused_mut)]
+                let mut subtitle = crate::SUBTITLE.to_owned();
+                #[cfg(feature = "test-support")]
+                if let Some(text) = crate::SUBTITLE_FOR_TEST.lock().ok().and_then(|t| t.clone()) {
+                    subtitle = text;
+                }
+                ui.label(RichText::new(subtitle).small().color(p.tide));
             }
         });
     }
@@ -2523,21 +2699,14 @@ impl App {
                                 ui,
                                 |ui| {
                                     ui.vertical(|ui| {
-                                        let folder =
-                                            if dutchman_core::Format::from_path(input).is_some() {
-                                                input.parent().filter(|parent| {
-                                                    !parent.as_os_str().is_empty()
-                                                        && *parent != Path::new(".")
-                                                })
-                                            } else {
-                                                Some(input.as_path())
-                                            };
-                                        // Keep real folders and their estimates in one paragraph.
+                                        // Each entry shows its name, not its path; the full path is
+                                        // in the tooltip. A folder or link has no separate name
+                                        // line, so its name leads the paragraph with the estimate.
+                                        let known = is_known_file(input);
                                         let mut line = egui::text::LayoutJob::default();
-                                        let mut tooltip = String::new();
-                                        if let Some(folder) = folder {
-                                            tooltip = display(folder);
-                                            RichText::new(&tooltip).append_to(
+                                        let mut tooltip = display(input);
+                                        if !known {
+                                            RichText::new(file_name(input)).append_to(
                                                 &mut line,
                                                 ui.style(),
                                                 egui::FontSelection::Default,
@@ -2547,8 +2716,7 @@ impl App {
                                         if let Some((text, hover, large)) =
                                             estimate.as_ref().filter(|_| index == 0)
                                         {
-                                            let prefix =
-                                                if folder.is_some() { " — " } else { "" };
+                                            let prefix = if known { "" } else { " — " };
                                             RichText::new(format!("{prefix}{text}"))
                                                 .small()
                                                 .color(if *large { p.lantern_text } else { p.tide })
@@ -2558,26 +2726,19 @@ impl App {
                                                     egui::FontSelection::Default,
                                                     Align::Center,
                                                 );
-                                            if !tooltip.is_empty() {
-                                                tooltip.push('\n');
-                                            }
+                                            tooltip.push('\n');
                                             tooltip.push_str(hover);
                                         }
                                         if !line.text.is_empty() {
                                             ui.add(egui::Label::new(line).wrap())
-                                                .on_hover_text(tooltip);
+                                                .on_hover_text(tooltip.clone());
                                         }
-                                        if dutchman_core::Format::from_path(input).is_some()
-                                            && (self.inputs.len() > 1 || estimate.is_none())
-                                        {
-                                            ui.add(egui::Label::new(file_name(input)).wrap());
+                                        if known && (self.inputs.len() > 1 || estimate.is_none()) {
+                                            ui.add(egui::Label::new(file_name(input)).wrap())
+                                                .on_hover_text(display(input));
                                         }
-                                        if let Some(format) =
-                                            dutchman_core::Format::from_path(input)
-                                        {
-                                            ui.add(
-                                                egui::Label::new(format.status_for(input)).wrap(),
-                                            );
+                                        if let Some(status) = status_line(input) {
+                                            ui.add(egui::Label::new(status).wrap());
                                         }
                                     });
                                 },
@@ -2607,11 +2768,16 @@ impl App {
                     );
                 }
             };
-            if self.inputs.is_empty() {
-                summary(ui);
-            } else {
-                ui.horizontal_wrapped(summary);
-            }
+            // One fixed scope, whatever it holds: the free-memory line arrives from a background
+            // estimate, and widgets added here must not shift the ids of the controls below. A
+            // shifted id drops a click or the share-link field's keyboard focus in that frame.
+            ui.push_id("input-summary", |ui| {
+                if self.inputs.is_empty() {
+                    summary(ui);
+                } else {
+                    ui.horizontal_wrapped(summary);
+                }
+            });
             if self.inputs.is_empty() {
                 ui.add_space(theme::SPACE_2);
             }
@@ -2757,6 +2923,26 @@ impl App {
                             );
                         }
                     });
+                let current = orientation_of(&self.options);
+                let response = egui::ComboBox::from_label("Up axis")
+                    .selected_text(orientation_label(current))
+                    .show_ui(ui, |ui| {
+                        for choice in [
+                            dutchman_core::Orientation::Auto,
+                            dutchman_core::Orientation::StandUp,
+                            dutchman_core::Orientation::KeepAxes,
+                        ] {
+                            let response =
+                                ui.selectable_label(current == choice, orientation_label(choice));
+                            preset_help(&response, orientation_help(choice));
+                            if response.clicked() {
+                                set_orientation(&mut self.options, choice);
+                                ui.close();
+                            }
+                        }
+                    })
+                    .response;
+                preset_help(&response, orientation_help(current));
             });
             let choices = self.options.choices();
             let (mut history, mut sketches, mut joints) =
@@ -2923,12 +3109,12 @@ impl App {
                         });
                 });
                 side_by_side(ui, wide, |ui| {
-                    let mut replace = !self.options.no_clobber;
+                    let mut replace = self.options.replace;
                     if ui
                         .checkbox(&mut replace, "Replace designs already in the output folder")
                         .changed()
                     {
-                        self.options.no_clobber = !replace;
+                        self.options.replace = replace;
                     }
                     if ui.small_button("SolidCraft version…").clicked() {
                         self.solidcraft_open = true;
@@ -3097,7 +3283,25 @@ impl App {
                         }
                     });
                 }
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Fusion tool library (.tools, .json)");
+                    ui.label(dutchman::tool_library::WORDS);
+                });
             });
+            if self.fusion_export.offered()
+                && ui
+                    .add_enabled(
+                        !self.running() && !self.updater.blocks_conversions(),
+                        egui::Button::new("Export from Fusion…"),
+                    )
+                    .on_hover_text(
+                        "Ask the Fusion exporter in your Fusion to export designs, then convert them. \
+                         If the exporter is missing, you can install it from here",
+                    )
+                    .clicked()
+            {
+                self.fusion_export.toggle();
+            }
         });
         if self.running() && self.diagnostic_stopped {
             ui.label(RichText::new(report_panel::STOPPING).color(p.lantern_text));
@@ -3222,7 +3426,16 @@ impl App {
     /// Does what a button on a result card or in the report panel asked for.
     fn act(&mut self, action: Action, ctx: &egui::Context) -> Result<(), String> {
         match action {
-            Action::Open(path) => platform::open_in_solidcraft(&path),
+            Action::Open(path) => {
+                let chosen = self.options.solidcraft.clone();
+                let how = platform::open_in_solidcraft(&path, chosen.as_deref())?;
+                if how == platform::Opened::SystemDefault {
+                    self.notice = Some(
+                        "No SolidCraft is chosen, so the design opened with the system's default app for it, which may be another SolidCraft release. Choose a solidcraft-cli in the SolidCraft version window to open it in that release.".into(),
+                    );
+                }
+                Ok(())
+            }
             Action::Reveal(path) => platform::reveal(&path),
             Action::Check(index) => {
                 if let Some(row) = self.rows.get(index) {
@@ -3464,9 +3677,14 @@ impl App {
             ];
             if step_card {
                 cards.push(report_panel::Card {
-                    title: present::SEND_STEP_TITLE,
+                    title: steps
+                        .as_ref()
+                        .map_or(present::SEND_STEP_TITLE, |steps| steps.step_title.as_str()),
                     button: None,
-                    hint: report_panel::STEP_TEXT,
+                    hint: steps
+                        .as_ref()
+                        .and_then(|steps| steps.step_note)
+                        .unwrap_or(report_panel::STEP_TEXT),
                     done: None,
                 });
             }
@@ -3626,12 +3844,13 @@ enum Action {
 
 /// Completed designs with missing history or degraded content need review.
 fn result_colour(p: &Palette, report: Option<&Value>, view: &FileView) -> egui::Color32 {
-    let needs_review = report
-        .is_some_and(|report| report.get("mode").and_then(Value::as_str) != Some("history"))
-        || view
-            .losses
-            .iter()
-            .any(|group| matches!(group.level.as_str(), "Degraded" | "Dropped"))
+    let needs_review = report.is_some_and(|report| {
+        !dutchman::tool_library::is_report(report)
+            && report.get("mode").and_then(Value::as_str) != Some("history")
+    }) || view
+        .losses
+        .iter()
+        .any(|group| matches!(group.level.as_str(), "Degraded" | "Dropped"))
         || view
             .components
             .iter()
@@ -3642,7 +3861,7 @@ fn result_colour(p: &Palette, report: Option<&Value>, view: &FileView) -> egui::
             p.lantern_text
         }
         present::Status::Converted | present::Status::ConvertedWithLosses => p.spectre,
-        present::Status::Stopped => p.lantern_text,
+        present::Status::Stopped | present::Status::NotSupported => p.lantern_text,
         present::Status::Failed => p.danger,
         _ => p.tide,
     }
@@ -3681,19 +3900,27 @@ fn row_ui(
             .on_hover_text(display(&row.input));
     });
     let stopped = row.status == Status::Stopped;
-    let step_button = !running && row.report.is_some() && !stopped;
+    let tool_library = row
+        .report
+        .as_ref()
+        .is_some_and(dutchman::tool_library::is_report);
+    // A tool library has no design to open and no STEP to match, and nor does a drawing.
+    let drawing = view.status == present::Status::NotSupported;
+    let step_button = !running && row.report.is_some() && !stopped && !tool_library && !drawing;
     let bundle =
         crate::onshape::is_bundle(&row.input) && row.input.is_file() && row.report.is_some();
     if output.is_some() || step_button || bundle {
         // One row of buttons under it.
         theme::control_row(ui, |ui| {
             if let Some(output) = output {
-                if is_macro {
+                if is_macro || tool_library {
                     if ui.button("Show in folder").clicked() {
                         action = Some(Action::Reveal(output.clone()));
                     }
-                    ui.label("Run macro in FreeCAD")
-                        .on_hover_text("In FreeCAD, choose Macro > Macros… > Execute.");
+                    if is_macro {
+                        ui.label("Run macro in FreeCAD")
+                            .on_hover_text("In FreeCAD, choose Macro > Macros… > Execute.");
+                    }
                 } else {
                     let open = ui.button("Open in SolidCraft");
                     let open = if has_app {
@@ -3801,7 +4028,13 @@ fn row_ui(
         return action;
     }
     if let Some(message) = &view.error {
-        text_with_links(ui, message, p.danger);
+        // A drawing that is not read yet is not a failure: its note is in the warning colour.
+        let colour = if view.status == present::Status::NotSupported {
+            p.lantern_text
+        } else {
+            p.danger
+        };
+        text_with_links(ui, message, colour);
         if let Some((path, ready)) = log {
             if let Err(message) = platform::log_controls(ui, path, ready) {
                 action = Some(Action::Notice(message));
@@ -3830,6 +4063,9 @@ fn row_ui(
         .on_hover_text(output);
         let (outcome, history) = outcome_and_history(&view.outcome, row.report.as_ref());
         ui.label(RichText::new(outcome).color(p.ink));
+        if let Some(meaning) = view.unverified_note {
+            ui.label(RichText::new(meaning).small().color(p.tide));
+        }
         for loss in history {
             ui.label(RichText::new(loss).color(p.tide));
         }
@@ -3873,8 +4109,19 @@ fn row_ui(
                     }
                 });
         }
+        if !view.details.is_empty() {
+            // The raw subject, code and message of the notes above that lead with a plain
+            // sentence. Notes that change nothing are only in the saved full log.
+            egui::CollapsingHeader::new(RichText::new("Details").color(p.tide))
+                .id_salt(("details", index))
+                .show(ui, |ui| {
+                    for loss in &view.details {
+                        loss_line(ui, p, loss);
+                    }
+                });
+        }
         theme::control_row(ui, |ui| {
-            if !view.components.is_empty() && ui.button("Save the full log…").clicked() {
+            if view.has_log && ui.button("Save the full log…").clicked() {
                 action = Some(Action::Pick(Pick::SaveLog(index)));
             }
             // Every finished file has the way to report it, whatever the card says: Dutchman
@@ -4356,7 +4603,8 @@ mod tests {
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty() && *parent != Path::new("."))
             {
-                assert!(harness.query_by_label(&display(parent)).is_some());
+                // Entries show their name; the folder is only in the tooltip.
+                assert!(harness.query_by_label(&display(parent)).is_none());
             }
         }
     }
@@ -4567,7 +4815,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
             let mut app = App::new(cc);
             app.options.no_verify = true;
-            app.found_version = Some("0.46.2".into());
+            app.found_version = Some("0.49.0".into());
             app.rows.push(Row {
                 input: PathBuf::from("synthetic.f3d"),
                 output: Some(PathBuf::from("synthetic.sc")),
@@ -4649,6 +4897,36 @@ mod tests {
             assert!(window.contains_rect(harness.get_by_label("Report this design…").rect()));
             harness.get_by_value("About synthetic-0.f3d");
         }
+    }
+
+    #[test]
+    fn up_axis_choice_is_saved_and_restored() {
+        use dutchman_core::Orientation;
+        let mut options = ConvertOptions::default();
+        assert_eq!(orientation_of(&options), Orientation::Auto);
+        for choice in [
+            Orientation::StandUp,
+            Orientation::KeepAxes,
+            Orientation::Auto,
+        ] {
+            set_orientation(&mut options, choice);
+            assert_eq!(orientation_of(&options), choice);
+            assert_eq!(
+                options.stand_up_choice(),
+                match choice {
+                    Orientation::Auto => None,
+                    Orientation::StandUp => Some(true),
+                    Orientation::KeepAxes => Some(false),
+                }
+            );
+            let mut restored = ConvertOptions::default();
+            restore_choices(&mut restored, &saved_choices(&options, false));
+            assert_eq!(orientation_of(&restored), choice);
+        }
+        // Older settings say nothing: automatic.
+        let mut restored = ConvertOptions::default();
+        restore_choices(&mut restored, &json!({}));
+        assert_eq!(orientation_of(&restored), Orientation::Auto);
     }
 
     #[test]
@@ -5302,7 +5580,8 @@ mod tests {
                         app
                     });
                 h.run_steps(8);
-                let paragraph = format!("{} — {sentence}", display(&folder));
+                // The entry shows its name, with the full path in the tooltip.
+                let paragraph = format!("{} — {sentence}", file_name(&folder));
                 let text_rect = h.get_by_label(&paragraph).rect();
                 let remove = h.get_by_label("Remove").rect();
                 assert!(text_rect.right() < remove.left());
