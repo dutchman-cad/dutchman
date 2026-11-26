@@ -282,6 +282,7 @@ pub struct Report {
     /// Linked components the source file places but doesn't contain: how many, and why the
     /// design can't be verified complete.
     missing_links: Option<(u64, String)>,
+    up_axis: Option<crate::UpAxisReport>,
 }
 
 /// How much of an assembly was placed: every placement its file and its placed sub-assemblies'
@@ -681,6 +682,34 @@ impl Report {
         self.source_version.get_or_insert(version);
     }
 
+    /// What the source states about its up axis and what the writer did about it.
+    pub fn up_axis(&self) -> Option<&crate::UpAxisReport> {
+        self.up_axis.as_ref()
+    }
+
+    /// Records what the source states about its up axis, with a note when the designs of an
+    /// assembly disagree. The first one recorded is kept.
+    pub fn record_up_axis(&mut self, found: crate::UpAxisFinding, disagreement: Option<String>) {
+        if self.up_axis.is_none() {
+            self.up_axis = Some(crate::UpAxisReport {
+                found,
+                applied: None,
+                disagreement,
+            });
+        }
+    }
+
+    /// Records the orientation a writer applied. A source no reader recorded anything for is
+    /// recorded as unknown.
+    pub fn record_orientation(&mut self, mode: crate::Orientation, stands_up: bool) {
+        let entry = self.up_axis.get_or_insert_with(|| crate::UpAxisReport {
+            found: crate::UpAxisFinding::default(),
+            applied: None,
+            disagreement: None,
+        });
+        entry.applied = Some((mode, stands_up));
+    }
+
     /// Requested and bounded maximum Dutchman part workers, excluding child-process threads.
     pub fn threads(&self) -> Option<(usize, usize)> {
         self.threads
@@ -818,6 +847,13 @@ impl Report {
             None => self.part_positions = Some((mode, counts)),
         }
     }
+    /// Forgets how a part was placed and the notes about it, for a part read on its own whose
+    /// place something else states: a parts package says where each of its parts goes.
+    pub(crate) fn forget_part_positions(&mut self) {
+        self.part_positions = None;
+        self.placement_assumptions.clear();
+        self.losses.retain(|loss| loss.subject != "part positions");
+    }
     /// Records a part placed by an assumption, by the names the design gives it.
     pub(crate) fn assume_placement(&mut self, part: String, why: crate::PlacementAssumption) {
         self.placement_assumptions.push((part, why));
@@ -900,6 +936,9 @@ impl Report {
 
     /// Records every loss of `other`, after this report's own.
     pub fn append(&mut self, other: Report) {
+        if let Some(up) = other.up_axis.clone() {
+            self.record_up_axis(up.found, up.disagreement);
+        }
         for checks in other.verification_checks {
             self.record_verification_checks(checks);
         }
@@ -924,6 +963,9 @@ impl Report {
 
     /// Records every loss of `other` under `prefix` (`part.ipt: …`), after this report's own.
     pub fn append_prefixed(&mut self, other: Report, prefix: &str) {
+        if let Some(up) = other.up_axis.clone() {
+            self.record_up_axis(up.found, up.disagreement);
+        }
         for checks in other.verification_checks {
             self.record_verification_checks(checks);
         }
@@ -1023,11 +1065,11 @@ impl Report {
             }
             format!(
                 "{count} inserted component{} {} from other Fusion designs that this .f3d \
-                 doesn't contain; export the assembly as a Fusion Archive (.f3z) to bring \
-                 {} along.",
+                 doesn't contain; convert the whole export folder (or its zip) so the \
+                 inserted designs come along, or export the assembly as a Fusion Archive \
+                 (.f3z) from Fusion's File > Export.",
                 if plural { "s" } else { "" },
                 if plural { "come" } else { "comes" },
-                if plural { "them" } else { "it" },
             )
         } else {
             let named = if names.iter().all(|name| name.is_empty()) {
@@ -1158,8 +1200,9 @@ mod tests {
             ]
         );
         let summary = "2 inserted components come from other Fusion designs that this .f3d \
-                       doesn't contain; export the assembly as a Fusion Archive (.f3z) to \
-                       bring them along.";
+                       doesn't contain; convert the whole export folder (or its zip) so the \
+                       inserted designs come along, or export the assembly as a Fusion Archive \
+                       (.f3z) from Fusion's File > Export.";
         let left_out = &report.completeness().unwrap().left_out;
         assert_eq!(
             (left_out[0].reason.as_str(), left_out[0].count),
@@ -1173,7 +1216,8 @@ mod tests {
         one.record_missing_inserted_designs(&["Washer".to_owned()]);
         assert!(one.losses().last().unwrap().detail.starts_with(
             "1 inserted component comes from other Fusion designs that this .f3d doesn't contain; \
-             export the assembly as a Fusion Archive (.f3z) to bring it along."
+             convert the whole export folder (or its zip) so the inserted designs come along, \
+             or export the assembly as a Fusion Archive (.f3z) from Fusion's File > Export."
         ));
     }
 

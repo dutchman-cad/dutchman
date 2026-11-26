@@ -810,6 +810,7 @@ fn folder_outputs_mirror_nested_duplicate_names_and_rerun_in_place() {
                 command,
                 "--json",
                 "--no-verify",
+                "--replace",
                 "--solidcraft-version",
                 "0.44.1",
             ];
@@ -883,12 +884,11 @@ fn folder_outputs_mirror_nested_duplicate_names_and_rerun_in_place() {
         "convert-all",
         "--json",
         "--no-verify",
-        "--no-clobber",
         "--out-dir",
         output.to_str().unwrap(),
         input.to_str().unwrap(),
     ]);
-    assert_eq!(json_of(&result)["failed"], 4);
+    assert_eq!(json_of(&result)["failed"], 0);
     for (path, bytes) in preserved {
         assert_eq!(std::fs::read(path).unwrap(), bytes);
     }
@@ -956,7 +956,11 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     ]);
     assert_eq!(text.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&text.stdout);
-    assert!(stdout.ends_with("1 converted, 0 failed\n"), "{stdout}");
+    // The notes are in plain words, so the report ends by saying `--verbose` prints them in full.
+    assert!(
+        stdout.ends_with("1 converted, 0 failed\n(notes are summarized in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)\n"),
+        "{stdout}"
+    );
     // Each converted file's losses are listed beneath it, as `convert` prints them, after the
     // SolidCraft version it targets.
     let lines = without_target_line(&stdout);
@@ -965,13 +969,13 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     assert_eq!(lines[0], "Fusion .f3d: reads geometry");
     assert!(lines[1].starts_with("converted  "), "{stdout}");
     assert!(
-        lines[2..lines.len() - 1]
+        lines[2..lines.len() - 2]
             .iter()
             .all(|line| line.starts_with("           ") && line.contains(": ")),
         "{stdout}"
     );
     assert!(
-        stdout.contains("Degraded: f3d/material.not-transferred"),
+        stdout.contains("Degraded: The design's materials and appearances weren't carried over"),
         "{stdout}"
     );
 
@@ -992,7 +996,10 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
             .unwrap(),
     ]);
     let stdout = String::from_utf8_lossy(&text.stdout);
-    assert!(stdout.ends_with("2 converted, 1 failed\n"), "{stdout}");
+    assert!(
+        without_notes_hint(&stdout).ends_with("2 converted, 1 failed\n"),
+        "{stdout}"
+    );
     let text = dutchman(&[
         "convert-all",
         "--quiet",
@@ -1003,7 +1010,8 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     ]);
     let stdout = String::from_utf8_lossy(&text.stdout);
     assert!(
-        stdout.ends_with("2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)\n"),
+        without_notes_hint(&stdout)
+            .ends_with("2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)\n"),
         "{stdout}"
     );
 }
@@ -1029,16 +1037,9 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
         )
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains(
-            "step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s)"
-        ),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains("step/native.source-record-omitted: 1 source-native record(s)"),
-        "{stderr}"
-    );
+    // Records STEP has no place for change nothing the person sees: they wait for --verbose.
+    assert!(!stderr.contains("step/native."), "{stderr}");
+    assert!(!stderr.contains("source-native record(s)"), "{stderr}");
     assert!(
         stderr.contains("so no declared identity was verified. …\n"),
         "{stderr}"
@@ -1061,17 +1062,58 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
         stderr.contains("Agreement is consistency, not a declaration."),
         "{stderr}"
     );
+    assert!(
+        stderr.contains(
+            "step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s)"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("step/native.source-record-omitted: 1 source-native record(s)"),
+        "{stderr}"
+    );
     assert!(!stderr.contains("--verbose prints"), "{stderr}");
 }
 
 #[test]
-fn no_clobber_keeps_an_existing_design() {
+fn an_existing_design_is_never_replaced() {
     let dir = std::env::temp_dir().join(format!("dutchman-noclobber-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let output = dir.join("cube.sc");
     std::fs::write(&output, b"SENTINEL").unwrap();
+    std::fs::write(dir.join("cube.report.json"), b"MINE").unwrap();
     let cube = fixture("synthetic_cube.ipt");
 
+    // An existing file at an explicit output stays: the design gets the next free name.
+    let out = dutchman(&[
+        "convert",
+        "--no-verify",
+        "--json",
+        &cube,
+        output.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let report = json_of(&out);
+    assert_eq!(
+        report["output"]["path"].as_str().unwrap(),
+        dir.join("cube (2).sc").to_str().unwrap()
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"SENTINEL");
+    assert_eq!(
+        std::fs::read(dir.join("cube.report.json")).unwrap(),
+        b"MINE"
+    );
+    assert!(std::fs::read(dir.join("cube (2).sc"))
+        .unwrap()
+        .starts_with(b"PK"));
+
+    // The same again keeps both: the next free number.
+    let out = dutchman(&["convert", "--no-verify", &cube, output.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(dir.join("cube (3).sc").is_file());
+    assert!(dir.join("cube (2).sc").is_file());
+
+    // `--no-clobber` is what happens anyway.
     let out = dutchman(&[
         "convert",
         "--no-verify",
@@ -1079,43 +1121,79 @@ fn no_clobber_keeps_an_existing_design() {
         &cube,
         output.to_str().unwrap(),
     ]);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("already exists"),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_eq!(out.status.code(), Some(0));
+    assert!(dir.join("cube (4).sc").is_file());
     assert_eq!(std::fs::read(&output).unwrap(), b"SENTINEL");
 
-    // Without it, the existing file is replaced, as `--help` says.
-    let out = dutchman(&["convert", "--no-verify", &cube, output.to_str().unwrap()]);
+    // Only `--replace` replaces.
+    let out = dutchman(&[
+        "convert",
+        "--no-verify",
+        "--replace",
+        &cube,
+        output.to_str().unwrap(),
+    ]);
     assert_eq!(out.status.code(), Some(0));
     assert_ne!(std::fs::read(&output).unwrap(), b"SENTINEL");
+    assert!(!dir.join("cube (5).sc").exists());
     let help = dutchman(&["convert", "--help"]);
-    assert!(String::from_utf8_lossy(&help.stdout).contains("An explicit output is replaced"));
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("--replace"), "{help}");
+    assert!(!help.contains("--no-clobber"), "{help}");
 
-    // convert-all fails that one file and converts the rest.
+    // convert-all keeps the design that is there, and converts both files beside it.
     let out_dir = dir.join("all");
     std::fs::create_dir_all(&out_dir).unwrap();
     std::fs::write(out_dir.join("synthetic_cube.sc"), b"SENTINEL").unwrap();
-    let out = dutchman(&[
-        "convert-all",
-        "--json",
-        "--no-verify",
-        "--no-clobber",
-        "--out-dir",
-        out_dir.to_str().unwrap(),
-        &cube,
-        &fixture("generated_unit_cube.f3d"),
-    ]);
-    let report = json_of(&out);
-    assert_eq!(report["converted"], 1);
-    assert_eq!(report["failed"], 1);
+    std::fs::write(out_dir.join("synthetic_cube.report.json"), b"MINE").unwrap();
+    let run_all = |extra: &[&str]| {
+        let mut args = vec!["convert-all", "--json", "--no-verify"];
+        args.extend(extra);
+        let out_dir = out_dir.to_str().unwrap().to_owned();
+        let cube = cube.clone();
+        let unit = fixture("generated_unit_cube.f3d");
+        let out = dutchman(
+            &args
+                .into_iter()
+                .chain(["--out-dir", out_dir.as_str(), cube.as_str(), unit.as_str()])
+                .collect::<Vec<_>>(),
+        );
+        json_of(&out)
+    };
+    let report = run_all(&[]);
+    assert_eq!(report["converted"], 2, "{report}");
+    assert_eq!(report["failed"], 0, "{report}");
     assert_eq!(
         std::fs::read(out_dir.join("synthetic_cube.sc")).unwrap(),
         b"SENTINEL"
     );
+    assert_eq!(
+        std::fs::read(out_dir.join("synthetic_cube.report.json")).unwrap(),
+        b"MINE"
+    );
+    assert!(out_dir.join("synthetic_cube (2).sc").is_file());
     assert!(out_dir.join("generated_unit_cube.sc").is_file());
+
+    // Running it again keeps every output of the first run, and adds the next free names.
+    let kept = std::fs::read(out_dir.join("generated_unit_cube.sc")).unwrap();
+    let report = run_all(&[]);
+    assert_eq!(report["failed"], 0, "{report}");
+    assert!(out_dir.join("synthetic_cube (2).sc").is_file());
+    assert!(out_dir.join("synthetic_cube (3).sc").is_file());
+    assert!(out_dir.join("generated_unit_cube (2).sc").is_file());
+    assert_eq!(
+        std::fs::read(out_dir.join("generated_unit_cube.sc")).unwrap(),
+        kept
+    );
+
+    // `--replace` replaces what is at the planned names, and writes nothing new.
+    let report = run_all(&["--replace"]);
+    assert_eq!(report["failed"], 0, "{report}");
+    assert_ne!(
+        std::fs::read(out_dir.join("synthetic_cube.sc")).unwrap(),
+        b"SENTINEL"
+    );
+    assert!(!out_dir.join("synthetic_cube (4).sc").exists());
 }
 
 /// A library whose folder, files and parts carry names that must not reach a shared report.
@@ -1477,7 +1555,7 @@ mod external_tools {
             file.write_all(
                 br#"#!/bin/sh
 if [ "$1" = "--version" ]; then
-    printf 'solidcraft-cli 0.48.0\n'
+    printf 'solidcraft-cli 0.49.0\n'
     exit 0
 fi
 printf 'replay\n' >> "$DUTCHMAN_TEST_REPLAY_MARKER"
@@ -1495,7 +1573,7 @@ exit 1
             "-o",
             output.to_str().unwrap(),
             "--solidcraft-version",
-            "0.48.0",
+            "0.49.0",
             "--json",
         ];
         // Preflight fits while the calibrated check does not.
@@ -1759,17 +1837,22 @@ fn bare_and_explicit_conversion_derive_and_protect_default_outputs() {
     let output = dir.path().join("part.sc");
     std::fs::write(&output, b"sentinel").unwrap();
     let modified = output.metadata().unwrap().modified().unwrap();
-    let out = run(&["part.f3d"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert_eq!(out.stderr, b"dutchman: part.sc already exists; choose another output with -o PATH, or replace it with --force\n");
+    let out = run(&["part.f3d", "--no-verify"]);
+    assert!(out.status.success());
     assert_eq!(std::fs::read(&output).unwrap(), b"sentinel");
     assert_eq!(output.metadata().unwrap().modified().unwrap(), modified);
+    assert!(dir.path().join("part (2).sc").is_file());
     assert!(run(&["part.f3d", "--force", "--no-verify"])
         .status
         .success());
     assert_ne!(std::fs::read(&output).unwrap(), b"sentinel");
     std::fs::write(&output, b"sentinel").unwrap();
     assert!(run(&["part.f3d", "part.sc", "--no-verify"])
+        .status
+        .success());
+    assert_eq!(std::fs::read(&output).unwrap(), b"sentinel");
+    assert!(dir.path().join("part (3).sc").is_file());
+    assert!(run(&["part.f3d", "part.sc", "--no-verify", "--replace"])
         .status
         .success());
     assert_ne!(std::fs::read(&output).unwrap(), b"sentinel");
@@ -1840,7 +1923,7 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
     let first = dir.path().join("first.prt");
     let second = dir.path().join("second.prt");
     for path in [&first, &second] {
-        std::fs::write(path, b"#UGC:2").unwrap();
+        std::fs::write(path, b"unclassified").unwrap();
     }
     let output = dir.path().join("out.sc");
     for option in [None, Some("--quiet"), Some("--json")] {
@@ -1852,11 +1935,11 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if option == Some("--json") {
             let report = json_of(&out);
-            assert_eq!(report["input"]["format"], "creo_part");
-            assert_eq!(report["input"]["words"], "opens, no geometry yet");
+            assert_eq!(report["input"]["format"], "unclassified_part");
+            assert_eq!(report["input"]["words"], "recognised, not read yet");
             assert!(!stderr.contains("Want to help"));
         } else {
-            assert!(stdout.starts_with("Creo .prt: opens, no geometry yet\n"));
+            assert!(stdout.starts_with("Creo or NX .prt: recognised, not read yet\n"));
         }
         assert_eq!(
             stdout.matches("Want to help").count(),
@@ -1887,7 +1970,7 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
                 .lines()
                 .find(|l| l.starts_with("Want to help"))
                 .unwrap();
-            assert!(pitch.starts_with("Want to help Dutchman read Creo better?"));
+            assert!(pitch.starts_with("Want to help Dutchman read Creo or NX better?"));
             assert!(pitch.contains("https://dutchmancad.xyz/fixtures/"));
             assert!(!pitch.contains("first") && !pitch.contains("second"));
         }
@@ -1939,7 +2022,7 @@ fn numbered_saves_select_the_newest_and_report_the_older_revision() {
     let outputs = dir.path().join("outputs");
     std::fs::create_dir_all(&inputs).unwrap();
     for name in ["bracket.prt.3", "bracket.prt.7"] {
-        std::fs::write(inputs.join(name), b"#UGC:2").unwrap();
+        std::fs::write(inputs.join(name), b"unclassified").unwrap();
     }
     for json in [false, true] {
         let mut args = vec![
@@ -1952,7 +2035,7 @@ fn numbered_saves_select_the_newest_and_report_the_older_revision() {
             args.push("--json");
         }
         let out = dutchman(&args);
-        // Creo is recognised but does not supply geometry yet; only the newest is attempted.
+        // An unclassified part is recognised but does not supply geometry; only the newest is attempted.
         assert_eq!(out.status.code(), Some(1));
         if json {
             let report = json_of(&out);
@@ -1969,10 +2052,10 @@ fn numbered_saves_select_the_newest_and_report_the_older_revision() {
             );
         } else {
             let text = String::from_utf8(out.stdout).unwrap();
-            assert!(text.contains("Creo .prt.7: opens, no geometry yet"));
+            assert!(text.contains("Creo or NX .prt.7: recognised, not read yet"));
             assert!(text.contains("bracket.prt.3: older revision; using "));
             assert!(text.contains("1 skipped (older revisions)"));
-            assert!(!text.contains("Creo .prt.3:"));
+            assert!(!text.contains("Creo or NX .prt.3:"));
         }
     }
 }
@@ -1985,8 +2068,7 @@ fn numbered_default_outputs_use_the_base_name_and_keep_existing_files() {
     std::fs::write(&input, b"#UGC:2").unwrap();
     std::fs::write(&output, b"keep this design").unwrap();
     let out = dutchman(&[input.to_str().unwrap()]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("bracket.sc already exists"));
+    assert!(!out.status.success());
     assert_eq!(std::fs::read(output).unwrap(), b"keep this design");
     assert!(!dir.path().join("bracket.prt.sc").exists());
 }
@@ -2179,14 +2261,15 @@ fn techdraw_dxf_exports_page_text_and_reports_missing_ir_geometry() {
     assert!(text.contains("Synthetic box"));
     assert!(!text.contains("%.2w"));
     let retry = dutchman(&["convert", input.to_str().unwrap(), "--to", "dxf", "--json"]);
-    assert!(!retry.status.success());
+    assert!(retry.status.success());
     assert_eq!(std::fs::read_to_string(&output).unwrap(), text);
+    assert!(folder.path().join("box-Page (2).dxf").is_file());
     let forced = dutchman(&[
         "convert",
         input.to_str().unwrap(),
         "--to",
         "dxf",
-        "--force",
+        "--replace",
         "--page",
         "Page",
         "--json",
@@ -2478,7 +2561,7 @@ fn a_check_stopped_for_memory_keeps_the_design_unverified() {
     let cli = dir.path().join("solidcraft-cli");
     std::fs::write(
         &cli,
-        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.48.1'; exit 0; fi\nsleep 30\n",
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.49.1'; exit 0; fi\nsleep 30\n",
     )
     .unwrap();
     std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -2731,6 +2814,7 @@ fn part_threads_keep_assembly_json_and_design_bytes_identical() {
             output.to_str().unwrap(),
             "--threads",
             threads,
+            "--replace",
             "--no-verify",
             "--solidcraft-version",
             "0.26.0",
@@ -2757,6 +2841,15 @@ fn part_threads_keep_assembly_json_and_design_bytes_identical() {
 }
 
 /// Conversion lines without the target line and optional installed-version notice.
+/// The report with its closing "notes are summarised ... --verbose" line removed.
+fn without_notes_hint(stdout: &str) -> String {
+    stdout
+        .lines()
+        .filter(|line| !(line.starts_with("(notes are summarized in plain words")))
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
 fn without_target_line(stdout: &str) -> Vec<&str> {
     let (target, rest): (Vec<&str>, Vec<&str>) = stdout
         .lines()
@@ -2819,6 +2912,7 @@ fn solidcraft_output_extensions_follow_the_target_and_accept_explicit_names() {
                 "part.f3d",
                 "-o",
                 &output,
+                "--replace",
                 "--solidcraft-version",
                 target,
                 "--no-verify",
@@ -3682,7 +3776,7 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
         "-o",
         output.to_str().unwrap(),
         "--solidcraft-version",
-        "0.48.0",
+        "0.49.0",
         "--json",
     ];
     let out = dutchman_with(&args, &env);
@@ -3728,7 +3822,7 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
             "--out-dir",
             dir.path().to_str().unwrap(),
             "--solidcraft-version",
-            "0.48.0",
+            "0.49.0",
             "--json",
         ],
         &env,
@@ -3755,7 +3849,7 @@ fn low_memory_keeps_editable_history_unverified_and_the_original_shape_visible()
             "-o",
             output.to_str().unwrap(),
             "--solidcraft-version",
-            "0.48.0",
+            "0.49.0",
             "--part",
             "1",
             "--stop-at-feature",
@@ -3803,7 +3897,7 @@ fn automatic_assembly_workers_use_the_synthetic_free_memory_budget() {
             output.to_str().unwrap(),
             "--no-verify",
             "--solidcraft-version",
-            "0.48.0",
+            "0.49.0",
             "--json",
         ],
         &[("DUTCHMAN_TEST_MEMORY", "100000000,500000000")],
@@ -4068,4 +4162,93 @@ fn stand_up_cli_flags_control_occurrence_transform() {
             [0.0, 0.0, 0.0, 1.0],
         ])
     );
+}
+
+/// Converts the unit cube from an export folder whose manifest says `up_axis`, with `flags`,
+/// and gives the written transform with the JSON report.
+fn export_orientation(
+    up_axis: serde_json::Value,
+    flags: &[&str],
+) -> (serde_json::Value, serde_json::Value) {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("Cube v1.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let mut entry = serde_json::json!({
+        "id": "urn:x:cube", "name": "Cube", "version": 1,
+        "files": [{"path": "Cube v1.f3d"}], "references": [],
+    });
+    if !up_axis.is_null() {
+        entry["up_axis"] = up_axis;
+    }
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "cad-export-manifest/1", "entries": [entry]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = dir.path().join("cube.sc");
+    let mut args = vec!["convert", "--json"];
+    args.extend_from_slice(flags);
+    args.push(input.to_str().unwrap());
+    args.push(output.to_str().unwrap());
+    let res = dutchman(&args);
+    assert!(res.status.success());
+    let report = json_of(&res);
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&output).unwrap()).unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+    (doc["occurrences"][0]["transform"].clone(), report)
+}
+
+#[test]
+fn up_axis_is_automatic_and_the_flags_override_it() {
+    let identity = serde_json::json!([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let stood = serde_json::json!([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let (transform, report) = export_orientation(serde_json::json!("y"), &[]);
+    assert_eq!(transform, stood);
+    assert_eq!(report["up_axis"]["found"], "y");
+    assert_eq!(report["up_axis"]["origin"], "export_manifest");
+    assert_eq!(report["up_axis"]["applied"], "stood_up");
+    assert_eq!(
+        report["up_axis"]["summary"],
+        "Stood up: the export says this design is Y-up"
+    );
+    let (transform, report) = export_orientation(serde_json::json!("z"), &[]);
+    assert_eq!(transform, identity);
+    assert_eq!(report["up_axis"]["applied"], "kept_axes");
+    let (transform, report) = export_orientation(serde_json::Value::Null, &[]);
+    assert_eq!(transform, identity);
+    assert_eq!(report["up_axis"]["found"], "unknown");
+    assert!(report["up_axis"]["summary"]
+        .as_str()
+        .unwrap()
+        .starts_with("Kept the file's axes: up axis unknown"));
+    // The flags win over what the export says.
+    assert_eq!(
+        export_orientation(serde_json::json!("z"), &["--stand-up"]).0,
+        stood
+    );
+    assert_eq!(
+        export_orientation(serde_json::json!("y"), &["--keep-axes"]).0,
+        identity
+    );
+    assert_eq!(
+        export_orientation(serde_json::json!("y"), &["--no-stand-up"]).0,
+        identity
+    );
+    // Both at once are refused.
+    let both = dutchman(&["convert", "--stand-up", "--keep-axes", "a.f3d", "b.sc"]);
+    assert_eq!(both.status.code(), Some(2));
 }

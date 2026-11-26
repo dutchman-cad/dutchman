@@ -132,6 +132,8 @@ pub struct Run {
     pub verify: bool,
     /// Whether only geometry was asked for.
     pub import_only: bool,
+    /// Whether an existing report at the path may be replaced (`--replace`).
+    pub replace: bool,
     /// How many files converted at once.
     pub jobs: usize,
     /// One file's time limit, in seconds.
@@ -226,6 +228,12 @@ pub fn report(
     out.insert("errors".to_owned(), errors(&files, &scrub));
     out.insert("losses".to_owned(), losses(&files, &scrub));
     out.insert("blocked_features".to_owned(), blocked(&files, &scrub));
+    // Drawings share like models do: by format, status and first stop. Present only when a
+    // file in the run held a drawing.
+    let drawings = drawings(&files);
+    if drawings.as_array().is_some_and(|rows| !rows.is_empty()) {
+        out.insert("drawings".to_owned(), drawings);
+    }
     out.insert("verification".to_owned(), verification(&files, &scrub));
     out.insert("timing".to_owned(), timing(files.iter()));
     out.insert("slowest".to_owned(), slowest(&files));
@@ -301,6 +309,7 @@ impl Run {
             solidcraft_search,
             solidcraft,
             import_only: options.import_only,
+            replace: options.replace,
             jobs: 1,
             timeout_s: None,
             max_memory_mb: None,
@@ -325,6 +334,7 @@ impl Run {
             solidcraft_search,
             solidcraft,
             import_only: options.import_only,
+            replace: options.replace,
             jobs: settings.map_or(1, |settings| crate::batch::workers(settings.jobs)),
             timeout_s: settings
                 .filter(|settings| settings.worker.is_some())
@@ -365,7 +375,9 @@ fn write_run(
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent).map_err(error)?;
         }
-        std::fs::write(path, text + "\n").map_err(error)
+        // The path was made free when the request was made, unless `--replace` asked for it.
+        dutchman_core::safe_output::write(path, (text + "\n").as_bytes(), run.replace)
+            .map_err(error)
     };
     save(&request.path, &anon)?;
     if let Some(path) = &request.key {
@@ -622,6 +634,35 @@ fn losses(files: &[File], scrub: &Scrubber) -> Value {
             }
             cause.add(file);
         }
+    }
+    ranked(causes)
+}
+
+/// The drawings of the run, by format, status and the code of the first thing dropped. Only
+/// fixed words and counts: no file, sheet or view name.
+fn drawings(files: &[File]) -> Value {
+    let mut causes: BTreeMap<String, Cause> = BTreeMap::new();
+    for file in files {
+        let Some(section) = file.report.get("drawing").filter(|d| d.is_object()) else {
+            continue;
+        };
+        let text = |pointer: &str| {
+            section
+                .pointer(pointer)
+                .and_then(Value::as_str)
+                .unwrap_or("none")
+                .to_owned()
+        };
+        let (format, status, code) = (text("/format"), text("/status"), text("/first_stop/code"));
+        let cause = causes
+            .entry(format!("{format}|{status}|{code}"))
+            .or_default();
+        if cause.fields.is_empty() {
+            cause.fields.insert("format".to_owned(), json!(format));
+            cause.fields.insert("status".to_owned(), json!(status));
+            cause.fields.insert("first_stop".to_owned(), json!(code));
+        }
+        cause.add(file);
     }
     ranked(causes)
 }

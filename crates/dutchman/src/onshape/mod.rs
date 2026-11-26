@@ -421,7 +421,7 @@ impl Estimate {
 }
 
 pub const APPROVAL_NEEDED: &str = "This Onshape document needs more of your yearly API calls than Dutchman spends without asking (Onshape's Free plan allows 2,500 a year), so it stopped before fetching. Ask the user, then allow it with --yes on the command line, or with an explicit --max-calls (MCP: max_calls) that caps the calls it may use.";
-pub const APPROVAL_DECLINED: &str = "Fetch cancelled. No more Onshape API calls were used.";
+pub const APPROVAL_DECLINED: &str = "Fetch canceled. No more Onshape API calls were used.";
 
 /// Lists the document, which costs at most three calls and is cached, and counts what the
 /// fetch will read.

@@ -114,6 +114,7 @@ impl Copies<'_> {
                     source_file: part.source_file.clone(),
                     assembly: None,
                     source_step: part.source_step.clone(),
+                    merge_bodies: part.merge_bodies,
                 };
                 if mirrored {
                     copy.name = format!("{} (mirrored)", part.name);

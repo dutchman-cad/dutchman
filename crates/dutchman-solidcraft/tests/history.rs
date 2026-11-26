@@ -115,6 +115,7 @@ fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Mode
         name: "cube".to_owned(),
         source_file: Some("cube.f3d".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: None,
     }
 }
@@ -981,7 +982,7 @@ fn lofts_solidcraft_would_build_differently_flatten_the_history() {
         ),
         (
             json!({"guidance": {"kind": "centerline", "value": {"kind": "native", "value": "n"}}}),
-            "lofts along a centreline are not mapped yet",
+            "lofts along a centerline are not mapped yet",
         ),
         (
             json!({"sections": [first_profile(), {"kind": "native_point", "value": "native:apex"}]}),
@@ -1817,6 +1818,24 @@ fn target_048_keeps_the_previous_compatible_history_document() {
     };
     let previous = write("0.47.0");
     let newest = write("0.48.0");
+    assert_eq!(newest["format"], "solidcraft/23");
+    assert_eq!(newest, previous);
+}
+
+#[test]
+fn target_049_keeps_the_previous_compatible_history_document() {
+    let model = cube_with_history(10.0, first_profile(), None);
+    let write = |target: &str| {
+        convert(
+            &model,
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(target.parse().unwrap())),
+        )
+        .0
+    };
+    let previous = write("0.48.0");
+    let newest = write("0.49.0");
     assert_eq!(newest["format"], "solidcraft/23");
     assert_eq!(newest, previous);
 }
@@ -6469,6 +6488,7 @@ fn assembly_of_histories() -> Model {
         name: name.to_owned(),
         source_file: Some(format!("{name}.ipt")),
         source_step: None,
+        merge_bodies: false,
         ..cube_with_history(10.0, first_profile(), None)
     };
     let at = |x: f64| {
@@ -6489,6 +6509,7 @@ fn assembly_of_histories() -> Model {
         name: "pair".to_owned(),
         source_file: Some("pair.iam".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: Some(dutchman_core::Assembly {
             own_part: None,
             joints: Vec::new(),
@@ -10510,6 +10531,7 @@ fn cube_under(features: &[(&str, Value)]) -> Model {
         name: "cube".to_owned(),
         source_file: Some("cube.ipt".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: None,
     }
 }
@@ -10621,6 +10643,7 @@ fn parameters_alone() -> Model {
         name: "Parameters".to_owned(),
         source_file: Some("Parameters.f3d".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: None,
     }
 }
@@ -17348,10 +17371,10 @@ fn an_inventor_extrude_distance_keeps_its_value_when_the_bound_parameter_differs
     assert_eq!(document["features"][1]["extent"]["distance"], "10 mm");
 }
 
-/// The Inventor block with user parameters Width = 40 mm, Height = Width / 2 and Hole = 6 mm,
-/// sketch dimensions Width, Width / 2 + 5 mm and Height, an extrude of Height * 1.5 and
-/// d2 = d1 * 2.
-// TODO: the fixture is filled in when the file is added to dutchman-core/tests/fixtures.
+/// The CC0 Inventor 2016 block (`inventor_parameter_expressions.ipt`): user parameters
+/// Width = 40 mm, Height = Width / 2 and Hole = 6 mm; model parameters d0 = Width (rectangle
+/// length), d1 = Width / 2 + 5 mm (rectangle height), d2 = Height (hole 1 offset), d3 = Hole
+/// (hole 1 diameter), d4 = d3 * 2 (hole 2 diameter) and d5 = Height * 1.5 (extrude distance).
 const INVENTOR_EXPRESSIONS_FIXTURE: &str = "inventor_parameter_expressions.ipt";
 
 #[test]
@@ -17359,10 +17382,6 @@ fn an_inventor_part_keeps_its_parameter_expressions() {
     let input = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../dutchman-core/tests/fixtures")
         .join(INVENTOR_EXPRESSIONS_FIXTURE);
-    if !input.exists() {
-        eprintln!("{INVENTOR_EXPRESSIONS_FIXTURE} is not in the fixtures yet");
-        return;
-    }
     let model = dutchman_core::read(
         dutchman_core::Format::InventorPart,
         &input,
@@ -17375,21 +17394,80 @@ fn an_inventor_part_keeps_its_parameter_expressions() {
     );
     let params = document["params"].as_array().unwrap();
     let find = |name: &str| params.iter().find(|p| p["name"] == name);
-    let width = find("Width").expect("Width is a parameter");
-    assert_eq!(width["expr"], "40 mm");
-    assert_eq!(width["model"], false);
-    assert_eq!(find("Hole").expect("Hole is a parameter")["expr"], "6 mm");
-    let height = find("Height").expect("Height is a parameter");
-    assert!(
-        height["expr"].as_str().unwrap().contains("Width"),
-        "{height}"
-    );
-    // d2 = d1 * 2 keeps its reference to d1.
-    let d2 = find("d2").expect("d2 is a parameter");
-    assert!(d2["expr"].as_str().unwrap().contains("d1"), "{d2}");
-    assert_eq!(d2["model"], true);
-    // The sketch dimensions (40, 25 and 20 mm) and the extrude distance (30 mm) are driven by
-    // parameters; the dimensions read Width and Height.
+    // The expression without spaces or grouping parentheses, so the test does not depend on how
+    // the writer spaces it.
+    let expr = |name: &str| -> String {
+        let text: String = find(name).unwrap_or_else(|| panic!("{name} is a parameter"))["expr"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '(' && *c != ')')
+            .collect();
+        // Numbers rounded to nine decimals, so float noise from the decoder (`1.5000000000000002`)
+        // does not matter.
+        let mut out = String::new();
+        let mut number = String::new();
+        for c in text.chars().chain(std::iter::once(' ')) {
+            if c.is_ascii_digit() || c == '.' {
+                number.push(c);
+                continue;
+            }
+            if !number.is_empty() {
+                let value: f64 = number.parse().unwrap();
+                out.push_str(&format!("{}", (value * 1e9).round() / 1e9));
+                number.clear();
+            }
+            if c != ' ' {
+                out.push(c);
+            }
+        }
+        out
+    };
+    // A length literal in millimetres, whether written as `40mm` or as metres (`0.04m`, with
+    // whatever float noise the decoder leaves).
+    let millimetres = |text: &str| -> f64 {
+        match text.strip_suffix("mm") {
+            Some(number) => number.parse::<f64>().unwrap(),
+            None => text.strip_suffix('m').unwrap().parse::<f64>().unwrap() * 1000.0,
+        }
+    };
+    // The user parameters.
+    for (name, expected) in [("Width", 40.0), ("Hole", 6.0)] {
+        assert!(
+            (millimetres(&expr(name)) - expected).abs() < 1e-6,
+            "{name}: {}",
+            expr(name)
+        );
+        assert_eq!(
+            find(name).unwrap()["model"],
+            false,
+            "{name} is a user parameter"
+        );
+    }
+    assert_eq!(expr("Height"), "Width/2");
+    assert_eq!(find("Height").unwrap()["model"], false);
+    // The model parameters Inventor made for the dimensions keep their expressions.
+    for (name, expected) in [
+        ("d0", "Width"),
+        ("d2", "Height"),
+        ("d3", "Hole"),
+        ("d4", "d3*2"),
+        ("d5", "Height*1.5"),
+    ] {
+        assert_eq!(expr(name), expected, "{name}");
+        assert_eq!(
+            find(name).unwrap()["model"],
+            true,
+            "{name} is a model parameter"
+        );
+    }
+    let d1 = expr("d1");
+    let offset = d1
+        .strip_prefix("Width/2+")
+        .unwrap_or_else(|| panic!("d1: {d1}"));
+    assert!((millimetres(offset) - 5.0).abs() < 1e-6, "d1: {d1}");
+    assert_eq!(find("d1").unwrap()["model"], true);
+    // The sketch dimensions are bound to their parameters.
     let driven: Vec<&str> = document["features"]
         .as_array()
         .unwrap()
@@ -17402,22 +17480,35 @@ fn an_inventor_part_keeps_its_parameter_expressions() {
                 .filter_map(|c| c["param"].as_str())
         })
         .collect();
-    for expected in ["Width", "Height"] {
+    for name in ["d0", "d1", "d2", "d3", "d4"] {
         assert!(
-            driven
-                .iter()
-                .any(|name| find(name)
-                    .is_some_and(|p| p["expr"].as_str().unwrap().contains(expected))),
-            "no sketch dimension is driven by a parameter reading {expected}: {driven:?}"
+            driven.contains(&name),
+            "no sketch dimension is bound to {name}: {driven:?}"
         );
     }
+    // The extrude distance is bound to d5 when the decoder records which parameter sets it
+    // (cadmpeg's `extent_distance_parameter`); before that it is the plain 30 mm.
+    let wire = serde_json::to_value(&model.ir).unwrap();
+    let decoder_binds_distance = wire["model"]["features"]
+        .as_array()
+        .is_some_and(|features| {
+            features.iter().any(|f| {
+                f["source_properties"]
+                    .get("extent_distance_parameter")
+                    .is_some()
+            })
+        });
     let extrude = document["features"]
         .as_array()
         .unwrap()
         .iter()
         .find_map(|f| f["extent"]["distance"].as_str())
         .expect("the extrude has a distance");
-    assert!(find(extrude).is_some(), "{extrude} is a parameter");
+    if decoder_binds_distance {
+        assert_eq!(extrude, "d5");
+    } else {
+        assert_eq!(extrude, "30 mm");
+    }
 }
 
 #[test]
@@ -18601,6 +18692,7 @@ fn design_cube(features: Vec<Value>, sketches: &[(u32, u32)], rollback: Option<u
         source_file: Some("cube.par".to_owned()),
         source_step: None,
         assembly: None,
+        merge_bodies: false,
     }
 }
 
@@ -20129,6 +20221,75 @@ fn intermediate_coincident_join() -> Model {
         .push(later);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
+}
+
+/// A source join of one body among two, with a later independent extrusion so the join is
+/// an intermediate state. The source stores `before` bodies after the second cube and
+/// `after` after the join.
+fn counted_intermediate_join(before: &str, after: &str) -> Model {
+    let mut model = scoped_extrude("join");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][2]["source_properties"] = json!({"body_centers": before});
+    wire["model"]["features"][3]["source_properties"] = json!({"body_centers": after});
+    let mut later = wire["model"]["features"][2].clone();
+    later["id"] = json!("synthetic:later:feature#1");
+    later["ordinal"] = json!(4);
+    later["name"] = json!("Later extrusion");
+    later["outputs"] = json!(["synthetic:other:body#0"]);
+    later["source_properties"] = json!({});
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(later);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_join_that_merges_no_body_targets_its_output_body() {
+    let (document, report) = convert(
+        &counted_intermediate_join("1:5,5,5;2:5,5,5", "1:5,5,10;2:5,5,5"),
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some("0.44.0".parse().unwrap())),
+    );
+    let join = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|feature| feature["name"] == "Scoped extrusion")
+        .unwrap();
+    assert_eq!(join["targets"], json!(["unit cube"]), "{report:?}");
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("history/body-scope-confirmed")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn a_join_that_loses_a_body_keeps_its_untargeted_mapping() {
+    {
+        let (before, after) = ("1:5,5,5;2:5,5,5", "1:5,5,5");
+        let (document, report) = convert(
+            &counted_intermediate_join(before, after),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some("0.44.0".parse().unwrap())),
+        );
+        let join = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|feature| feature["name"] == "Scoped extrusion")
+            .unwrap();
+        assert!(
+            join.get("targets").is_none(),
+            "{before} -> {after}: {report:?}"
+        );
+    }
 }
 
 /// Recorded cube evaluations preserve the count difference that the anonymous

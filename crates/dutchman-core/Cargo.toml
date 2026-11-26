@@ -9,6 +9,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+dutchman-launcher.workspace = true
+icu_normalizer = { version = "2", default-features = false, features = ["compiled_data"] }
 cadmpeg-core.workspace = true
 cadmpeg-codec-f3d.workspace = true
 cadmpeg-ir.workspace = true

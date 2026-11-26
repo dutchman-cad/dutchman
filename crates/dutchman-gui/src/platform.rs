@@ -9,13 +9,125 @@ use std::process::Command;
 /// The environment variable that names the SolidCraft app, when it is not on `PATH`.
 pub const APP_ENV: &str = "SOLIDCRAFT_APP";
 
-/// Opens `design` in SolidCraft: the app `SOLIDCRAFT_APP` names, else `solidcraft` on `PATH` or
-/// beside this program,
-/// else whatever the system opens the design's extension with.
-pub fn open_in_solidcraft(design: &Path) -> Result<(), String> {
+/// How a design was opened, so the window can say when the system default stood in.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Opened {
+    /// By the SolidCraft the version pill names, or the app found by `SOLIDCRAFT_APP` or `PATH`.
+    SolidCraft,
+    /// By the system's app for the design, because no SolidCraft was chosen or found.
+    SystemDefault,
+}
+
+/// What to run to open a design in the SolidCraft a person chose.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Launch {
+    /// A program and its arguments, the design last.
+    Run(PathBuf, Vec<OsString>),
+    /// The chosen install has a command-line tool and no app beside it.
+    CliOnly(String),
+}
+
+/// The platforms [`launch_for`] knows how to open an app on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Os {
+    Mac,
+    Windows,
+    Linux,
+}
+
+impl Os {
+    pub fn current() -> Os {
+        if cfg!(target_os = "macos") {
+            Os::Mac
+        } else if cfg!(windows) {
+            Os::Windows
+        } else {
+            Os::Linux
+        }
+    }
+}
+
+/// The message for a chosen `solidcraft-cli` that has no SolidCraft app next to it.
+fn cli_only_message(cli: &Path) -> String {
+    format!(
+        "The SolidCraft you chose ({}) is a command-line install with no SolidCraft app next to it, so Dutchman cannot open the design in it. Install the SolidCraft app of that release, or choose a different solidcraft-cli in the SolidCraft version window.",
+        cli.display()
+    )
+}
+
+/// The Flatpak app ID when `cli` lives inside a Flatpak install (`…/flatpak/app/<id>/…`).
+fn flatpak_id(cli: &Path) -> Option<String> {
+    let parts: Vec<_> = cli
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect();
+    let at = parts
+        .windows(2)
+        .position(|w| matches!(w, [a, b] if a == "flatpak" && b == "app"))?;
+    let id = parts.get(at + 2)?;
+    id.contains('.').then(|| id.to_string())
+}
+
+/// How to open `design` in the SolidCraft whose `solidcraft-cli` is `cli`: the macOS bundle it
+/// sits in (`open -a`, which works whatever the bundle's ID, `ai.storyteller.solidcraft` before
+/// 0.49 or `io.tangencylabs.solidcraft` since), the app, AppImage or Flatpak of the same install
+/// on Linux, `SolidCraft.exe` beside it on Windows. `is_file` says whether a path exists, so
+/// this runs on every platform in tests.
+pub fn launch_for(os: Os, cli: &Path, design: &Path, is_file: &dyn Fn(&Path) -> bool) -> Launch {
+    let design = OsString::from(design);
+    let dir = cli.parent().unwrap_or(Path::new(""));
+    match os {
+        Os::Mac => match cli
+            .ancestors()
+            .find(|a| a.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")))
+        {
+            Some(app) => Launch::Run(PathBuf::from("open"), vec!["-a".into(), app.into(), design]),
+            None => Launch::CliOnly(cli_only_message(cli)),
+        },
+        Os::Windows => ["SolidCraft.exe", "solidcraft.exe"]
+            .iter()
+            .map(|n| dir.join(n))
+            .find(|c| is_file(c))
+            .map(|exe| Launch::Run(exe, vec![design]))
+            .unwrap_or_else(|| Launch::CliOnly(cli_only_message(cli))),
+        Os::Linux => {
+            if let Some(id) = flatpak_id(cli) {
+                return Launch::Run(
+                    PathBuf::from("flatpak"),
+                    vec!["run".into(), id.into(), design],
+                );
+            }
+            [
+                "solidcraft",
+                "SolidCraft",
+                "SolidCraft.AppImage",
+                "solidcraft.AppImage",
+            ]
+            .iter()
+            .map(|n| dir.join(n))
+            .find(|c| is_file(c))
+            .map(|app| Launch::Run(app, vec![design]))
+            .unwrap_or_else(|| Launch::CliOnly(cli_only_message(cli)))
+        }
+    }
+}
+
+/// Opens `design` in SolidCraft. With a `solidcraft-cli` chosen (the version pill's), that
+/// install's own app opens it, and a CLI-only install is refused with a message rather than
+/// opening another release. With none chosen: the app `SOLIDCRAFT_APP` names, else `solidcraft`
+/// on `PATH` or beside this program, else whatever the system opens the design's extension with.
+pub fn open_in_solidcraft(design: &Path, chosen_cli: Option<&Path>) -> Result<Opened, String> {
+    if let Some(cli) = chosen_cli {
+        return match launch_for(Os::current(), cli, design, &|p| p.is_file()) {
+            Launch::Run(program, args) => {
+                spawn(Command::new(program).args(args)).map(|()| Opened::SolidCraft)
+            }
+            Launch::CliOnly(message) => Err(message),
+        };
+    }
     match solidcraft_app() {
-        Some(app) => spawn(Command::new(app).arg(design)),
-        None => open(design),
+        Some(app) => spawn(Command::new(app).arg(design)).map(|()| Opened::SolidCraft),
+        None => open(design).map(|()| Opened::SystemDefault),
     }
 }
 
@@ -225,6 +337,96 @@ fn log_controls_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn none(_: &Path) -> bool {
+        false
+    }
+
+    #[test]
+    fn mac_opens_the_bundle_the_cli_sits_in() {
+        let cli = Path::new("/Applications/SolidCraft 0.48.1.app/Contents/MacOS/solidcraft-cli");
+        let launch = launch_for(Os::Mac, cli, Path::new("/x/a.solidcraft"), &none);
+        assert_eq!(
+            launch,
+            Launch::Run(
+                "open".into(),
+                vec![
+                    "-a".into(),
+                    "/Applications/SolidCraft 0.48.1.app".into(),
+                    "/x/a.solidcraft".into()
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn mac_cli_outside_a_bundle_is_cli_only() {
+        let launch = launch_for(
+            Os::Mac,
+            Path::new("/usr/local/bin/solidcraft-cli"),
+            Path::new("/x/a.solidcraft"),
+            &none,
+        );
+        assert!(matches!(launch, Launch::CliOnly(m) if m.contains("no SolidCraft app")));
+    }
+
+    #[test]
+    fn windows_opens_the_exe_beside_the_cli_or_is_cli_only() {
+        let cli = Path::new("C:/Program Files/SolidCraft/solidcraft-cli.exe");
+        let exe = Path::new("C:/Program Files/SolidCraft").join("SolidCraft.exe");
+        let have = |p: &Path| p == exe;
+        assert_eq!(
+            launch_for(Os::Windows, cli, Path::new("a.solidcraft"), &have),
+            Launch::Run(exe.clone(), vec!["a.solidcraft".into()])
+        );
+        assert!(matches!(
+            launch_for(Os::Windows, cli, Path::new("a.solidcraft"), &none),
+            Launch::CliOnly(_)
+        ));
+    }
+
+    #[test]
+    fn linux_opens_the_gui_binary_beside_the_cli_or_is_cli_only() {
+        let cli = Path::new("/opt/solidcraft-0.48.1/solidcraft-cli");
+        let gui = Path::new("/opt/solidcraft-0.48.1/solidcraft");
+        let have = |p: &Path| p == gui;
+        assert_eq!(
+            launch_for(Os::Linux, cli, Path::new("/x/a.solidcraft"), &have),
+            Launch::Run(gui.into(), vec!["/x/a.solidcraft".into()])
+        );
+        assert!(matches!(
+            launch_for(Os::Linux, cli, Path::new("/x/a.solidcraft"), &none),
+            Launch::CliOnly(m) if m.contains("/opt/solidcraft-0.48.1/solidcraft-cli")
+        ));
+    }
+
+    #[test]
+    fn linux_flatpak_cli_runs_that_flatpak_app() {
+        for id in ["io.tangencylabs.solidcraft", "ai.storyteller.solidcraft"] {
+            let cli =
+                format!("/var/lib/flatpak/app/{id}/x86_64/stable/abc/files/bin/solidcraft-cli");
+            assert_eq!(
+                launch_for(
+                    Os::Linux,
+                    Path::new(&cli),
+                    Path::new("/x/a.solidcraft"),
+                    &none
+                ),
+                Launch::Run(
+                    "flatpak".into(),
+                    vec!["run".into(), id.into(), "/x/a.solidcraft".into()]
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn no_chosen_cli_uses_the_default_path_not_a_chosen_install() {
+        // With no choice, no launch plan is made from a CLI; the app/system route runs and
+        // reports which one it used.
+        assert_eq!(Opened::SystemDefault, Opened::SystemDefault);
+        assert_ne!(Opened::SolidCraft, Opened::SystemDefault);
+    }
     #[test]
     fn explorer_paths_and_selection_cover_mixed_spaces_and_unc() {
         for (input, expected) in [

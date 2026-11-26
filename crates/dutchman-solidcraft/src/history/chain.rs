@@ -58,7 +58,13 @@ fn term(constraint: &Value, magnitude: bool) -> Option<(String, bool)> {
         };
         return Some((name, true));
     }
-    Some((format!("{} mm", constraint.get("value")?.as_f64()?), false))
+    Some((
+        format!(
+            "{} mm",
+            super::helpers::clean(constraint.get("value")?.as_f64()?)
+        ),
+        false,
+    ))
 }
 
 /// The coordinate expressions of every point of a sketch (`None` where the dimensions do not

@@ -135,7 +135,7 @@ pub fn pages(
         let mut written_dimensions = 0_usize;
         let mut omitted_dimensions = 0_usize;
         let mut lined_dimensions = 0_usize;
-        notes.push(Severity::Info, name(page), "DXF R2000 in millimetres; one file per page; page selection uses the source object name");
+        notes.push(Severity::Info, name(page), "DXF R2000 in millimeters; one file per page; page selection uses the source object name");
         if let Some(sheet) = page.sheet.as_ref().or_else(|| {
             page.template
                 .as_ref()
@@ -196,7 +196,7 @@ pub fn pages(
                     .iter()
                     .flat_map(|p| p.properties.keys().map(|key| key.as_str()))
                     .collect();
-                notes.push(Severity::Dropped, name(drawing), format!("GUI property metadata is not stored ({}); typed visibility is used when resolved, while display/selection modes and widths in display units are not mapped to DXF millimetres", properties.into_iter().collect::<Vec<_>>().join(", ")));
+                notes.push(Severity::Dropped, name(drawing), format!("GUI property metadata is not stored ({}); typed visibility is used when resolved, while display/selection modes and widths in display units are not mapped to DXF millimeters", properties.into_iter().collect::<Vec<_>>().join(", ")));
             }
             let visible = drawing.visible.or(gui_visible);
             for role in ["Views", "Group"] {

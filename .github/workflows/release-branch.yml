@@ -1,0 +1,61 @@
+name: Release branch
+
+# Moves the `latest-release` branch to the commit of each published final release (vX.Y.Z), so a
+# package manager that follows a branch (a Nix flake input such as
+# github:dutchman-cad/dutchman/latest-release, or a git dependency) always gets the newest release.
+# Release candidates and drafts never move it. Runs on demand for a published tag too.
+#
+# The branch only ever moves forward: if the release is older than what the branch already
+# holds (a fix release for an older line), the branch stays where it is and the run says so.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to point the latest-release branch at (vX.Y.Z)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  move:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Point the latest-release branch at the release
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$TAG is not a final release tag (vX.Y.Z); the latest-release branch is unchanged."
+            exit 0
+          fi
+          if [ "$(gh release view "$TAG" --json isDraft,isPrerelease --jq '.isDraft or .isPrerelease')" = true ]; then
+            echo "$TAG is a draft or a prerelease; the latest-release branch is unchanged."
+            exit 0
+          fi
+          commit=$(git rev-list -n 1 "refs/tags/$TAG")
+          if git ls-remote --exit-code origin refs/heads/latest-release >/dev/null; then
+            git fetch -q origin latest-release
+            current=$(git rev-parse FETCH_HEAD)
+            if ! git merge-base --is-ancestor "$current" "$commit"; then
+              echo "The latest-release branch is at $current, which $TAG does not contain; it is unchanged."
+              exit 0
+            fi
+          fi
+          git push origin "$commit:refs/heads/latest-release"
+          echo "The latest-release branch now points at $TAG ($commit)."

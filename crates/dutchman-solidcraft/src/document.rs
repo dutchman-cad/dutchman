@@ -609,6 +609,7 @@ mod tests {
             source_file: None,
             assembly: None,
             source_step: None,
+            merge_bodies: false,
         }
     }
 
@@ -811,7 +812,7 @@ mod history_tests {
         let model = crate::testing::cube();
         for target in [
             "0.29.0", "0.30.0", "0.31.0", "0.40.0", "0.41.0", "0.42.0", "0.43.0", "0.44.0",
-            "0.45.0", "0.46.0", "0.47.0", "0.48.0",
+            "0.45.0", "0.46.0", "0.47.0", "0.48.0", "0.49.0",
         ] {
             let version = target.parse().unwrap();
             for live in [
@@ -835,6 +836,7 @@ mod history_tests {
                         | "0.46.0"
                         | "0.47.0"
                         | "0.48.0"
+                        | "0.49.0"
                 ) {
                     assert_eq!(
                         doc,

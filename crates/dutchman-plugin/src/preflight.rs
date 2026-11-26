@@ -11,9 +11,19 @@ use std::io::{Read, Seek};
 /// the Dutchman app instead.
 pub(crate) const PLUGIN_FUEL: u64 = 100_000_000_000;
 
-/// Retain the existing conservative memory/time gate alongside the explicit fuel gate.
+/// The guest's linear memory: `runtime.limits.memory_mib` in the manifest, which SolidCraft grants
+/// when its Max plugin memory preference allows it. The plugin cannot read that preference, so
+/// the declared figure is the budget; a test keeps the two equal.
+#[cfg(test)]
+pub(crate) const GUEST_MEMORY_MIB: u64 = 2048;
+
+/// What the memory estimate may spend of the guest's memory. The rest is the stack, the output
+/// design being written, and the allocator's slack.
+pub(crate) const PEAK_BYTES: u64 = 1_700_000_000;
+
+/// Memory, then time, then fuel: the existing estimate gates against this budget.
 pub(crate) const PLUGIN_BUDGET: Budget = Budget {
-    peak_bytes: 520_000_000,
+    peak_bytes: PEAK_BYTES,
     seconds: 300,
     fuel: PLUGIN_FUEL,
 };
@@ -150,15 +160,105 @@ fn check_with<R: Read + Seek>(
 
 fn check_sizes(sizes: Sizes, parts: u64, history: bool, budget: Budget) -> Result<(), Error> {
     let choices = Choices { history };
-    if estimated_fuel(sizes, parts).is_some_and(|fuel| fuel > budget.fuel)
-        || sizes.calculate(&choices).is_some_and(|estimate| {
-            estimate.peak_bytes > budget.peak_bytes || estimate.seconds > budget.seconds
-        })
-    {
-        return Err(Error::MemoryBudget(format!(
-                "This design is too large to open inside SolidCraft (about {parts} {}). Open it in the Dutchman app, which converts it to a .sc you can open here. Download the app: {DOWNLOAD}", if parts == 1 { "part" } else { "parts" })));
+    // An assembly's own file is a list of parts, not the design: its memory is judged part by
+    // part as they are read (`PartsLoad`), so only time and fuel are judged here.
+    let assembly = matches!(
+        sizes.format,
+        Format::InventorAssembly | Format::SolidWorksAssembly
+    );
+    if let Some(fuel) = estimated_fuel(sizes, parts).filter(|fuel| *fuel > budget.fuel) {
+        // `parts` counts the archive's design files (documents), not its components: a
+        // 50-component design can sit in a handful of documents, so say what is counted.
+        return Err(too_large(format!(
+            "about {} of work for the {} design file{} in the archive, and the plugin's limit is {}",
+            billions(fuel),
+            parts,
+            if parts == 1 { "" } else { "s" },
+            billions(budget.fuel)
+        )));
+    }
+    if let Some(estimate) = sizes.calculate(&choices) {
+        if !assembly && estimate.peak_bytes > budget.peak_bytes {
+            return Err(too_large(format!(
+                "about {} of memory and the plugin has {}",
+                megabytes(estimate.peak_bytes),
+                megabytes(budget.peak_bytes)
+            )));
+        }
+        if estimate.seconds > budget.seconds {
+            return Err(too_large(format!(
+                "about {} and the plugin stops a conversion after {}",
+                minutes(estimate.seconds),
+                minutes(budget.seconds)
+            )));
+        }
     }
     Ok(())
+}
+
+/// One plain line: which limit, what the design needs, what the plugin has, and where to go.
+fn too_large(reason: String) -> Error {
+    Error::MemoryBudget(format!(
+        "This design is too large to open inside SolidCraft: it needs {reason}. Open it in the Dutchman app, which converts it to a .sc you can open here. Download the app: {DOWNLOAD}"
+    ))
+}
+fn megabytes(bytes: u64) -> String {
+    format!("{} MB", bytes.div_ceil(1_000_000))
+}
+fn minutes(seconds: u64) -> String {
+    if seconds < 120 {
+        format!("{seconds} seconds")
+    } else {
+        format!("{} minutes", seconds.div_ceil(60))
+    }
+}
+fn billions(fuel: u64) -> String {
+    format!("{} billion steps", fuel.div_ceil(1_000_000_000))
+}
+
+/// Memory for the files an assembly reads, judged before each one is read. The core reads one
+/// part at a time and frees its bytes once it is decoded; what stays is the decoded design,
+/// which grows with the sizes of the files read so far. A part is refused before its bytes are
+/// requested, when the total so far plus this part would not fit.
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) struct PartsLoad {
+    read: std::cell::Cell<u64>,
+    peak_bytes: u64,
+}
+/// Memory held before any file is read: the module's own data, the stack and the writer.
+#[cfg(any(test, target_arch = "wasm32"))]
+const BASE_BYTES: u64 = 100_000_000;
+/// Peak guest bytes per byte of CAD file read, measured on public Inventor assemblies
+/// (docs/plugin.md, Measurements).
+#[cfg(any(test, target_arch = "wasm32"))]
+const BYTES_PER_FILE_BYTE: u64 = 60;
+#[cfg(any(test, target_arch = "wasm32"))]
+impl PartsLoad {
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn new(main_bytes: u64) -> Self {
+        Self::with_peak(main_bytes, PEAK_BYTES)
+    }
+    pub(crate) fn with_peak(main_bytes: u64, peak_bytes: u64) -> Self {
+        Self {
+            read: std::cell::Cell::new(main_bytes),
+            peak_bytes,
+        }
+    }
+    /// Count a part of `bytes` that is about to be read.
+    pub(crate) fn add(&self, bytes: u64) -> Result<(), Error> {
+        let total = self.read.get().saturating_add(bytes);
+        let needed = BASE_BYTES.saturating_add(total.saturating_mul(BYTES_PER_FILE_BYTE));
+        if needed > self.peak_bytes {
+            return Err(too_large(format!(
+                "about {} of memory for the {} of files it reads, and the plugin has {}",
+                megabytes(needed),
+                megabytes(total),
+                megabytes(self.peak_bytes)
+            )));
+        }
+        self.read.set(total);
+        Ok(())
+    }
 }
 
 /// Fusion work envelope: 3 * (500M + 16K * expanded bytes + 100M * outer
@@ -518,6 +618,138 @@ mod tests {
         )
         .is_err());
     }
+    #[test]
+    fn memory_budget_is_the_manifest_memory_less_headroom() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../plugin.json")).unwrap();
+        let declared = manifest["runtime"]["limits"]["memory_mib"]
+            .as_u64()
+            .unwrap();
+        assert_eq!(declared, GUEST_MEMORY_MIB);
+        let memory = GUEST_MEMORY_MIB << 20;
+        assert!(PEAK_BYTES < memory && PEAK_BYTES * 100 >= memory * 75);
+    }
+
+    #[test]
+    fn refusals_say_which_limit_with_needed_and_available_in_one_line() {
+        let sizes = |format, bytes| Sizes {
+            format,
+            bytes,
+            members: 0,
+        };
+        // Memory: a part far above what the guest can hold.
+        let message = check_sizes(
+            sizes(Format::InventorPart, 50_000_000),
+            1,
+            true,
+            PLUGIN_BUDGET,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            message.contains("it needs about ")
+                && message.contains(" MB of memory and the plugin has 1700 MB"),
+            "{message}"
+        );
+        // Time: the host stops a conversion at the manifest's deadline.
+        let budget = Budget {
+            peak_bytes: u64::MAX,
+            seconds: 300,
+            ..PLUGIN_BUDGET
+        };
+        let message = check_sizes(sizes(Format::InventorPart, 150_000_000), 1, true, budget)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            message.contains("minutes and the plugin stops a conversion after 5 minutes"),
+            "{message}"
+        );
+        // Fuel.
+        let message = check_sizes(
+            sizes(Format::FusionArchive, 1_000_000),
+            40,
+            true,
+            PLUGIN_BUDGET,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            message.contains("billion steps of work for the 40 design files in the archive, and the plugin's limit is 100 billion steps"),
+            "{message}"
+        );
+        assert_eq!(message.lines().count(), 1, "one line: {message}");
+        assert!(
+            message.starts_with("This design is too large to open inside SolidCraft: it needs ")
+        );
+        assert!(message.contains("Open it in the Dutchman app") && message.contains(DOWNLOAD));
+    }
+
+    #[test]
+    fn a_many_component_f3z_with_few_documents_is_refused_by_work_and_says_so() {
+        // 4 indexed design files holding many components: the count in the message is the
+        // design files the estimate uses, labelled as such, never "parts".
+        let sizes = Sizes {
+            format: Format::FusionMultiDocument,
+            bytes: 400_000_000,
+            members: 120,
+        };
+        let message = check_sizes(sizes, 4, true, PLUGIN_BUDGET)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            message.contains("billion steps of work for the 4 design files in the archive, and the plugin's limit is 100 billion steps"),
+            "{message}"
+        );
+        assert!(!message.contains("parts"), "{message}");
+        assert!(!message.contains("about 4"), "{message}");
+        assert_eq!(message.lines().count(), 1, "{message}");
+        // One design file is singular.
+        let message = check_sizes(sizes, 1, true, PLUGIN_BUDGET)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            message.contains("for the 1 design file in the archive"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn an_assembly_file_is_not_judged_by_its_own_size() {
+        // The 5.3 MB top-level Inventor assembly of a public 67-part design: its own bytes said
+        // 577 MB of memory under the part-sized model, over the old 520 MB gate.
+        let sizes = Sizes {
+            format: Format::InventorAssembly,
+            bytes: 5_342_208,
+            members: 0,
+        };
+        assert!(check_sizes(sizes, 1, true, PLUGIN_BUDGET).is_ok());
+        // A part of the same size is still judged by its own memory.
+        let part = Sizes {
+            format: Format::InventorPart,
+            bytes: 50_000_000,
+            members: 0,
+        };
+        assert!(check_sizes(part, 1, true, PLUGIN_BUDGET).is_err());
+    }
+
+    #[test]
+    fn parts_are_counted_before_they_are_read_and_a_refusal_names_both_amounts() {
+        let load = PartsLoad::with_peak(5_000_000, 1_000_000_000);
+        // 5 MB assembly + 4 MB parts: 100 MB + 60 * 9 MB = 640 MB, within 1 GB.
+        assert!(load.add(2_000_000).is_ok());
+        assert!(load.add(2_000_000).is_ok());
+        let message = load.add(8_000_000).unwrap_err().to_string();
+        assert!(
+            message.contains("needs about 1000 MB of memory for the 17 MB of files it reads, and the plugin has 1000 MB")
+                || message.contains("MB of memory for the 17 MB of files it reads, and the plugin has 1000 MB"),
+            "{message}"
+        );
+        assert_eq!(message.lines().count(), 1, "{message}");
+        assert!(message.contains("Open it in the Dutchman app"), "{message}");
+        // The refused part was not counted: a smaller one still fits.
+        assert!(load.add(1_000_000).is_ok());
+    }
+
     #[test]
     fn compressed_inner_archive_work_is_bounded_before_inflation() {
         use std::io::{Cursor, Write};

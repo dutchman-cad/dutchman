@@ -1494,11 +1494,11 @@ fn stored_thin_controls_replay_the_directed_source_circle() {
                     json!({"parameterId":"thickness2","expression":"0 mm"}),
                 ]);
             });
-            // The design scope retains the sketch's native timeline row beside the
-            // typed thin extrusion; the model history supplies its decoded sketch.
+            // The design scope mirrors the model history: the sketch row is the typed
+            // sketch operation the reader writes, beside the typed thin extrusion.
             assert_eq!(model.ir.design.features.len(), 2, "{:?}", report.losses());
             let design = serde_json::to_value(&model.ir.design.features).unwrap();
-            assert_eq!(design[0]["definition"]["operation"]["kind"], "native");
+            assert_eq!(design[0]["definition"]["operation"]["kind"], "sketch");
             assert_eq!(design[1]["definition"]["operation"]["kind"], "extrude");
             assert_eq!(
                 model
