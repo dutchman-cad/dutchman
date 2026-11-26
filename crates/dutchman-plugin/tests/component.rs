@@ -1070,13 +1070,18 @@ fn hidden_repeated_bodies(
         "hidden-visibility",
     )?;
     let bodies = inspected[0]["bodies"].as_array().unwrap();
-    // document.inspect lists the shared component's local definition once;
-    // eval above supplies the two occurrence-qualified world names.
-    assert_eq!(bodies.len(), 1, "{inspected:?}");
-    assert_eq!(
-        bodies[0]["visible"], false,
-        "hidden definition was displayed: {inspected:?}"
+    // SolidCraft up to 0.49 lists the shared component's local definition once; 0.50 lists each
+    // occurrence-qualified body. Either way, nothing hidden may be displayed.
+    assert!(
+        (1..=2).contains(&bodies.len()),
+        "document.inspect lists the definition or both occurrences: {inspected:?}"
     );
+    for body in bodies {
+        assert_eq!(
+            body["visible"], false,
+            "hidden definition was displayed: {inspected:?}"
+        );
+    }
     eprintln!(
         "stand_up_hidden_bodies: first and repeated placement names and visibility match SolidCraft evaluation"
     );
