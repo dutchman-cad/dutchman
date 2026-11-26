@@ -24,15 +24,15 @@ The **Designs** input row shows only the plain reader status.
 | ACIS | `.sat`, `.sab`, `.smt`, `.smb` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Onshape bundle | `.onshape-bundle` | Reads geometry | – | One offline Part Studio; geometry and editable history where features map |
-| IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
+| IGES | `.igs`, `.iges` | Recognized, not converted | – | Import it in SolidCraft directly (File > Import) |
 | Circuit board | `.PcbDoc` | Reads geometry with the electronics module | – | Placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately) |
 | Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
-| Inventor drawing | `.idw` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
-| SolidWorks drawing | `.slddrw` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
-| Fusion drawing | `.f2d` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
-| DWG drawing | `.dwg` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
-| DXF drawing | `.dxf` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
-| Solid Edge drawing | `.dft` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Inventor drawing | `.idw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| SolidWorks drawing | `.slddrw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Fusion drawing | `.f2d` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| DWG drawing | `.dwg` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| DXF drawing | `.dxf` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Solid Edge drawing | `.dft` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
 
 FreeCAD TechDraw pages are written into the converted SolidCraft design as a drawing (sheets and views), and also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
 
@@ -41,12 +41,12 @@ Fusion tool libraries (`.tools`, `.json`) also convert to CamCraft's `.camtools`
 Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
-## How formats are recognised
+## How formats are recognized
 
 - Formats with geometry readers convert through STEP; Fusion, Inventor, and FreeCAD also
   keep feature history where it maps (see [Feature history](history.md)).
 - Creo and NX share `.prt` and are told apart by their contents; numbered saves (`.prt.N`)
-  are recognised too. A folder conversion keeps only the highest `.prt.N` of each part and
+  are recognized too. A folder conversion keeps only the highest `.prt.N` of each part and
   reports the older ones as skipped; `bracket.prt.7` writes `bracket.sc`, and an existing
   output for a numbered save is kept unless you choose another path (or `--force` for one
   file).
@@ -55,9 +55,9 @@ Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro
   IGES yet: open it in SolidCraft directly (File > Import)."
 - Circuit boards are read by the optional electronics module, a separate program,
   `dutchman-electronics`. The module lists the extensions it reads (`.PcbDoc` today); Dutchman
-  recognises `.PcbDoc` even without it and then says to install the module. See
+  recognizes `.PcbDoc` even without it and then says to install the module. See
   [Optional modules](modules.md#how-dutchman-finds-and-runs-a-module).
-- A recognised format whose geometry has no solids or surfaces SolidCraft can import says so.
+- A recognized format whose geometry has no solids or surfaces SolidCraft can import says so.
 
 ## Drawings
 

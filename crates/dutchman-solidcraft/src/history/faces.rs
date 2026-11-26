@@ -288,7 +288,7 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
                     report.push_appearance(
                         AppearanceLoss::FacePickMissed,
                         format!(
-                            "Face {} has no resolved interior point; its colour is left out",
+                            "Face {} has no resolved interior point; its color is left out",
                             face.get("id").unwrap_or(&Value::Null)
                         ),
                     );
@@ -357,7 +357,7 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
             {
                 (
                     AppearanceLoss::Other,
-                    "its appearance has no resolved base colour",
+                    "its appearance has no resolved base color",
                 )
             } else if target.and_then(|id| bound.get(id)).is_some_and(|bindings| {
                 bindings

@@ -9,7 +9,7 @@ code are ignored. A maintainer can also assign an issue to you; that counts as c
 Comment `/unclaim` to give it up. Bot comments, locked issues, closed
 issues and pull requests are ignored as command targets.
 
-Issues labelled `master` track a whole program of work, so they cannot be claimed. Claim
+Issues labeled `master` track a whole program of work, so they cannot be claimed. Claim
 one of their sub-issues instead; comment `/claim` on the master issue and the bot points
 you at the parts that are still open.
 
@@ -68,7 +68,7 @@ For `/claim` and linked PRs, the latest `claimed` label event supplies the claim
 For a manual assignment by someone with write, maintain or admin permission, the bot adds
 `claimed` and uses the matching `assigned` event’s `created_at` from the issue events API
 (`/issues/{number}/events`), recorded in its claim reply. Bot assignments and bot assignees
-do not start claims. Owner and maintainer assignments are labelled consistently with `/claim`
+do not start claims. Owner and maintainer assignments are labeled consistently with `/claim`
 and never lapse. Removing the claimant’s assignment with nobody else assigned quietly
 removes `claimed`; the bot’s own removals do not produce another reply. Removing and reapplying the
 label starts a new claim. Claims without a known date are left for maintainers to resolve.
@@ -81,7 +81,7 @@ and lapse checks work for these claims too. Only the bot's latest claim record i
 current label interval is trusted; release or later assignment changes supersede it.
 A failure while recording a new claim rolls back its assignment and newly added label.
 
-The sweep reads only open issues labelled `claimed`, then fetches details for those
+The sweep reads only open issues labeled `claimed`, then fetches details for those
 issues. Linked PR candidates come from each issue's timeline; the bot verifies their
 current title, body, repository and author. Activity comes only from API reads: PR
 creation, author and committer dates of commits whose author login matches the claimant,

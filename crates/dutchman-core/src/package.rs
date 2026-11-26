@@ -429,7 +429,7 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
             None => index,
             Some(text) => {
                 let colored = parse_color(text)
-                    .ok_or_else(|| format!("its colour `{}` is not #rrggbb", clip(text, 16)));
+                    .ok_or_else(|| format!("its color `{}` is not #rrggbb", clip(text, 16)));
                 let key = (
                     entry.model.clone(),
                     text.to_ascii_lowercase(),
@@ -733,7 +733,7 @@ fn colour_variant(
             Severity::Degraded,
             format!("model \"{}\"", clip(model, 64)),
             format!(
-                "its colour `{}` is not applied: the model has no solid body to colour",
+                "its color `{}` is not applied: the model has no solid body to color",
                 clip(text, 16)
             ),
         );
@@ -741,7 +741,7 @@ fn colour_variant(
     }
     if assembly.parts.len() >= MAX_PARTS {
         return Err(format!(
-            "the package would pass {MAX_PARTS} parts with its colours"
+            "the package would pass {MAX_PARTS} parts with its colors"
         ));
     }
     let mut copy = source.clone();
@@ -806,7 +806,7 @@ fn bind_body_colour(
         }));
         match made {
             Ok(made) => part.ir.model.appearances.push(made),
-            Err(err) => return Err(format!("its colour cannot be recorded: {err}")),
+            Err(err) => return Err(format!("its color cannot be recorded: {err}")),
         }
     }
     let ids: Vec<Value> = part
@@ -825,7 +825,7 @@ fn bind_body_colour(
         }));
         match binding {
             Ok(binding) => part.ir.model.appearance_bindings.push(binding),
-            Err(err) => return Err(format!("its colour cannot be recorded: {err}")),
+            Err(err) => return Err(format!("its color cannot be recorded: {err}")),
         }
     }
     // The binding is the one source of the look. A colour left on a face would be written as a
@@ -1155,7 +1155,7 @@ fn overlays(
                     dropped(
                         report,
                         format!(
-                            "its colour `{}` is not #rrggbb; it is left out",
+                            "its color `{}` is not #rrggbb; it is left out",
                             clip(text, 16)
                         ),
                     );
@@ -2610,7 +2610,7 @@ mod tests {
     fn default_colours_by_kind_and_finish() {
         let green = sheet_step("a", 0.0, &[], MASKED_COPPER, None);
         assert!(green.contains("0.05,0.45,0.22"));
-        let dir = package("colours");
+        let dir = package("colors");
         write_models(&dir);
         let mut bare = overlay("Bare", json!([{"outer": square(2.0), "holes": []}]));
         bare["finish"] = json!("bare");
@@ -3379,7 +3379,7 @@ mod tests {
 
     #[test]
     fn a_colour_that_is_not_rrggbb_refuses_that_overlay_or_part_by_name() {
-        let dir = package("colours2");
+        let dir = package("colors2");
         write_models(&dir);
         let mut m = manifest(json!({"overlays": [
             {"name": "Silk", "kind": "silkscreen", "part": "Board", "z": 1.6, "color": "yellow",
@@ -3404,7 +3404,7 @@ mod tests {
         assert_eq!(
             part.ir.model.appearance_bindings.len(),
             part.ir.geometry.bodies.len(),
-            "each body of the part carries its colour"
+            "each body of the part carries its color"
         );
         assert!(assembly.parts[board.part]
             .ir

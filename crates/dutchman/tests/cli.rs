@@ -958,7 +958,7 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     let stdout = String::from_utf8_lossy(&text.stdout);
     // The notes are in plain words, so the report ends by saying `--verbose` prints them in full.
     assert!(
-        stdout.ends_with("1 converted, 0 failed\n(notes are summarised in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)\n"),
+        stdout.ends_with("1 converted, 0 failed\n(notes are summarized in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)\n"),
         "{stdout}"
     );
     // Each converted file's losses are listed beneath it, as `convert` prints them, after the
@@ -2845,7 +2845,7 @@ fn part_threads_keep_assembly_json_and_design_bytes_identical() {
 fn without_notes_hint(stdout: &str) -> String {
     stdout
         .lines()
-        .filter(|line| !(line.starts_with("(notes are summarised in plain words")))
+        .filter(|line| !(line.starts_with("(notes are summarized in plain words")))
         .map(|line| format!("{line}\n"))
         .collect()
 }
