@@ -100,8 +100,8 @@ Release notes get a "Breaking changes" section whenever there is a breaking chan
    a draft never reaches the registry. To republish a release's image, run it on demand with
    that tag (`gh workflow run release-image.yml -f tag=vX.Y.Z`). Candidate, merge-queue and manual full
    runs build both image architectures without logging in or pushing.
-   Publishing also moves the `release` branch to the release's commit (`release-branch.yml`), so
-   a Nix flake or git dependency that follows `release` gets the newest release. Candidates and
+   Publishing also moves the `latest-release` branch to the release's commit (`release-branch.yml`), so
+   a Nix flake or git dependency that follows `latest-release` gets the newest release. Candidates and
    drafts never move it, and it only moves forward. To point it at a published tag by hand:
    `gh workflow run release-branch.yml -f tag=vX.Y.Z`.
    The same run then builds the Arch Linux package: the `arch-package` job turns the draft's
