@@ -91,12 +91,12 @@ mapping reads `target.entity.kind` and `target.entity.value`. Hidden-geometry
 filtering and saved-display-mesh removal inspect the typed `target.entity`.
 
 A path selects one placed instance; a state selects an evaluation's geometry.
-Dutchman currently stores colours on shared component geometry and has no
+Dutchman currently stores colors on shared component geometry and has no
 per-occurrence appearance or attribute override. It therefore leaves scoped
 bindings out and reports whether the unsupported scope is a placed instance or
 an evaluation state. Scoped appearances never enter the reverse binding index
 used to build shared component slices. Unscoped bindings retain their previous
-colour mapping and loss classification. Source attributes have no SolidCraft
+color mapping and loss classification. Source attributes have no SolidCraft
 mapping; scoped attributes now receive a specific dropped loss during planning
 and writing, without changing unscoped attribute handling.
 
@@ -145,12 +145,12 @@ mapping reads `target.entity.kind` and `target.entity.value`. Hidden-geometry
 filtering and saved-display-mesh removal inspect the typed `target.entity`.
 
 A path selects one placed instance; a state selects an evaluation's geometry.
-Dutchman currently stores colours on shared component geometry and has no
+Dutchman currently stores colors on shared component geometry and has no
 per-occurrence appearance or attribute override. It therefore leaves scoped
 bindings out and reports whether the unsupported scope is a placed instance or
 an evaluation state. Scoped appearances never enter the reverse binding index
 used to build shared component slices. Unscoped bindings retain their previous
-colour mapping and loss classification. Source attributes have no SolidCraft
+color mapping and loss classification. Source attributes have no SolidCraft
 mapping; scoped attributes now receive a specific dropped loss during planning
 and writing, without changing unscoped attribute handling.
 

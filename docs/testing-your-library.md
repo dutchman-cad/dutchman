@@ -246,7 +246,7 @@ If it does not reproduce, say so and keep working locally or stop.
 
 Export a STEP of the synthetic design from the source program. After review, share only
 the matching synthetic native file, its STEP export, the anonymous report, and a public
-licence statement such as "I dedicate this synthetic design and its STEP export to the
+license statement such as "I dedicate this synthetic design and its STEP export to the
 public domain under CC0-1.0." Add them to the Dutchman issue. Your own files and
 `local-key.json` never leave your machine; a body copied out for local investigation is
 still private.
@@ -394,7 +394,7 @@ If exact builds are unknown, give the program, desktop or web, and years the fil
      --report-key <RESULTS FOLDER>/report-key.json
    (or the dutchman-mcp convert_all tool with the same options). If it stops, run it again;
    the journal carries on. Do not show me the salt or the key's contents in your summary.
-2. Read report-anon.json only (not the key, not the journal, not dutchman.log). Summarise totals, formats,
+2. Read report-anon.json only (not the key, not the journal, not dutchman.log). Summarize totals, formats,
    stages and the slowest files in a few lines.
 3. Group the causes in errors, losses (Degraded and Dropped only) and blocked_features into
    distinct issues, most files first. Merge entries that are clearly one cause.
@@ -452,7 +452,7 @@ If exact builds are unknown, give the program, desktop or web, and years the fil
    collected above. If no rebuilt design reproduces, say so. Exclude private names, paths, ids,
    geometry and parameter values, including the MCP response envelope's local paths.
 6. Tell me to attach anonymous.json and the small rebuilt file only if it reproduces
-   and I am free to share it, with its STEP export and a public licence such as CC0.
+   and I am free to share it, with its STEP export and a public license such as CC0.
    Never the original file. Never local-key.json. Upload nothing.
 7. End by showing the remaining tiers from this guide's "Want to go further?" and asking once:
    "How far do you want me to go? (stop here / Tier 2 / Tier 3 / all the way)"; then do every tier up to my answer without asking again, and stop early only if a tier fails or needs something from me (such as my GitHub login or a small design rebuilt by hand).

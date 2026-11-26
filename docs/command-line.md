@@ -89,10 +89,10 @@ Targets before SolidCraft 0.25.1 get `.solidcraft` by default.
 [TechDraw drawing output](freecad.md#techdraw-to-dxf). If a model default exists, Dutchman
 writes the next free name (`part (2).sc`) and leaves it as it is. A default
 that is the input itself is always refused. An existing file is never replaced unless you pass
-`--replace` (`--force` means the same); the old `--no-clobber` is accepted and does nothing,
+`--replace` (`--force` means the same). A name that differs from an existing one only in capitals or in how an accented letter is stored counts as that file, because macOS and Windows keep one file for both; the old `--no-clobber` is accepted and does nothing,
 and `--force` conflicts with it. The report names the file actually written. Built-in commands win
 over files with the same name; use `dutchman convert pilot` for a file named `pilot`.
-Installed tools take precedence over bare files; otherwise an existing file or a recognised
+Installed tools take precedence over bare files; otherwise an existing file or a recognized
 CAD extension selects conversion.
 
 ## Options
@@ -123,7 +123,7 @@ CAD extension selects conversion.
 | `--diagnostics`, `--diagnostics-default` | Write an anonymous diagnostic log while converting (see [Diagnostic logs](troubleshooting.md#diagnostic-logs-for-unfinished-runs)). |
 | `--json` | One final JSON report on stdout, with progress JSON lines on stderr. |
 | `--quiet` | Hide conversion progress and the volunteer invitation. |
-| `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarised by component (below), repeated notes of the same kind are grouped with a count, and long notes are cut to their first sentence. The JSON report always has them all in full. |
+| `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarized by component (below), repeated notes of the same kind are grouped with a count, and long notes are cut to their first sentence. The JSON report always has them all in full. |
 | `--part N`, `--with-children` | Convert only part N, as `dutchman diagnose` numbers it (with the parts inside it, for a sub-assembly). See [Find what breaks in a large private file](diagnose.md). |
 | `--log FILE` | Also write the whole text report, every loss in full, grouped by component, to `FILE`. |
 
@@ -157,7 +157,7 @@ dutchman diagnose --make-report small.f3d --out findings
 ```
 
 `--narrow` runs the rest by itself: it ranks the parts, isolates a failing part, alone and then
-with its neighbours, bisects its history to the first failing feature, and records the failure's
+with its neighbors, bisects its history to the first failing feature, and records the failure's
 signature, printing `step 3 of 5: narrowing part 17 (feature 41 of 80)` as it goes. Each step has
 its own limits. Run it again with the same `--out` to resume after a stop.
 `--same-failure` converts a small rebuilt file and compares its signature; it exits 0 only for
@@ -377,7 +377,7 @@ converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.sc (ge
 Want to help Dutchman read Fusion, Inventor better? If you have Fusion, Inventor, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
-Each converted file's loss report is listed beneath it, summarised by component when it has
+Each converted file's loss report is listed beneath it, summarized by component when it has
 more than 12 losses. The whole report, every loss in full, is written to `dutchman.log` in the
 output folder (`--log FILE` puts it elsewhere). This log, ordinary JSON, and the journal hold
 file names and paths; keep them private. For an issue, request `--report-anon FILE`, review
@@ -601,7 +601,7 @@ poses, which may be stale. Smart keeps first
 placements when a check cannot be established. Joints work from the selected placements.
 `--stored-placements` is an alias of `--part-positions first-placed` and restores the old
 placement choice. JSON reports record `choices.part_positions` and per-rule `part_positions`
-counts; an Info note summarises them.
+counts; an Info note summarizes them.
 
 ## Batch report
 

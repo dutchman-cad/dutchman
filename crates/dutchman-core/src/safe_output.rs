@@ -15,9 +15,44 @@ use std::path::{Path, PathBuf};
 /// The side files kept beside a design, by the suffix that replaces its extension.
 pub const SIDE_SUFFIXES: [&str; 3] = ["report.json", "failed.json", "replay.json"];
 
-/// Whether something is already at `path`. A path that cannot be checked counts as taken.
-fn present(path: &Path) -> bool {
-    path.try_exists().unwrap_or(true)
+/// A name folded the way the strictest filesystem folds it: Unicode-normalised (the accented
+/// `e` as one character or as `e` plus a combining accent is one name on macOS) and
+/// case-folded (macOS and Windows keep one file for `Part.sc` and `part.sc`). Two names with
+/// the same key must never be two output files, so the output is the same on every system.
+pub fn portable_key(name: &str) -> String {
+    let nfd = icu_normalizer::DecomposingNormalizer::new_nfd();
+    nfd.normalize(&nfd.normalize(name).to_lowercase())
+        .into_owned()
+}
+
+/// [`portable_key`] of a whole path, folder names included.
+pub fn portable_path_key(path: &Path) -> String {
+    portable_key(&path.to_string_lossy())
+}
+
+/// Whether something is already at `path`, by the filesystem's own answer, or a file in that
+/// folder has a name that is `path`'s apart from normalisation and case (the same file on
+/// macOS and Windows). A path that cannot be checked counts as taken.
+pub fn present(path: &Path) -> bool {
+    match path.try_exists() {
+        Ok(true) | Err(_) => return true,
+        Ok(false) => {}
+    }
+    let Some(name) = path.file_name() else {
+        return false;
+    };
+    let wanted = portable_key(&name.to_string_lossy());
+    let folder = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    match std::fs::read_dir(folder) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .any(|entry| portable_key(&entry.file_name().to_string_lossy()) == wanted),
+        // A folder that is not there holds nothing; one that cannot be listed might.
+        Err(err) => err.kind() != std::io::ErrorKind::NotFound,
+    }
 }
 
 /// Whether the design at `path`, or any side file beside it, already exists.
@@ -66,13 +101,18 @@ pub fn free_slot(path: &Path) -> PathBuf {
 /// Whether `candidate` is `base`, or `base` numbered, in the same folder: the places one
 /// input's output can have landed in an earlier run.
 pub fn is_variant_of(candidate: &Path, base: &Path) -> bool {
-    if candidate.parent() != base.parent() || candidate.extension() != base.extension() {
+    let key = |p: Option<&Path>| p.map(portable_path_key);
+    let ext = |p: &Path| p.extension().map(|e| portable_key(&e.to_string_lossy()));
+    if key(candidate.parent()) != key(base.parent()) || ext(candidate) != ext(base) {
         return false;
     }
     let (Some(name), Some(stem)) = (candidate.file_stem(), base.file_stem()) else {
         return false;
     };
-    let (name, stem) = (name.to_string_lossy(), stem.to_string_lossy());
+    let (name, stem) = (
+        portable_key(&name.to_string_lossy()),
+        portable_key(&stem.to_string_lossy()),
+    );
     name == stem
         || name
             .strip_prefix(&*stem)
@@ -96,6 +136,18 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
         return false;
     };
     if first == second {
+        return true;
+    }
+    // Names that differ only in normalisation or case in one folder are one file on macOS and
+    // Windows, so they count as one here too (the safe side for "never write over the input").
+    if first.parent() == second.parent()
+        && first
+            .file_name()
+            .zip(second.file_name())
+            .is_some_and(|(x, y)| {
+                portable_key(&x.to_string_lossy()) == portable_key(&y.to_string_lossy())
+            })
+    {
         return true;
     }
     #[cfg(unix)]
@@ -190,6 +242,11 @@ pub fn write_new(path: &Path, bytes: &[u8], replace: bool) -> std::io::Result<Pa
     let mut candidate = path.to_path_buf();
     let mut n = 2_u32;
     loop {
+        if n < u32::MAX && present(&candidate) {
+            candidate = numbered(path, n);
+            n += 1;
+            continue;
+        }
         match write(&candidate, bytes, false) {
             Ok(()) => return Ok(candidate),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists && n < u32::MAX => {
@@ -313,6 +370,73 @@ mod tests {
         write(&path, b"second", true).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"second");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    const NFC: &str = "caf\u{e9}";
+    const NFD: &str = "cafe\u{301}";
+
+    #[test]
+    fn portable_keys_fold_normalisation_and_case() {
+        assert_eq!(portable_key(NFC), portable_key(NFD));
+        assert_eq!(portable_key("Part.SC"), portable_key("part.sc"));
+        assert_eq!(portable_key("CAF\u{c9}"), portable_key(NFD));
+        assert_ne!(portable_key("part.sc"), portable_key("part2.sc"));
+    }
+
+    #[test]
+    fn a_name_that_differs_by_normalisation_or_case_takes_the_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(format!("{NFC}.sc")), b"mine").unwrap();
+        std::fs::write(dir.path().join("Part.sc"), b"mine").unwrap();
+        // NFD asks for the NFC file's slot; a lower-case name asks for the capitalised one's.
+        assert_eq!(
+            free_slot(&dir.path().join(format!("{NFD}.sc"))),
+            dir.path().join(format!("{NFD} (2).sc"))
+        );
+        assert_eq!(
+            free_slot(&dir.path().join("part.sc")),
+            dir.path().join("part (2).sc")
+        );
+        // A side file with a variant name takes the slot too.
+        std::fs::write(dir.path().join("Other.REPORT.json"), b"mine").unwrap();
+        assert!(slot_taken(&dir.path().join("other.sc")));
+        assert!(!slot_taken(&dir.path().join("another.sc")));
+    }
+
+    #[test]
+    fn write_new_never_lands_on_a_variant_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = write_new(&dir.path().join(format!("{NFC}.txt")), b"one", false).unwrap();
+        let second = write_new(&dir.path().join(format!("{NFD}.txt")), b"two", false).unwrap();
+        let third = write_new(
+            &dir.path().join(format!("{}.TXT", NFC.to_uppercase())),
+            b"x",
+            false,
+        )
+        .unwrap();
+        assert_eq!(first, dir.path().join(format!("{NFC}.txt")));
+        assert_eq!(second, dir.path().join(format!("{NFD} (2).txt")));
+        assert_ne!(third, first);
+        assert_ne!(third, second);
+        assert_eq!(std::fs::read(&first).unwrap(), b"one");
+        assert_eq!(std::fs::read(&second).unwrap(), b"two");
+    }
+
+    #[test]
+    fn variants_and_same_file_ignore_normalisation_and_case() {
+        let base = PathBuf::from(format!("o/{NFC}.sc"));
+        assert!(is_variant_of(Path::new(&format!("o/{NFD}.sc")), &base));
+        assert!(is_variant_of(Path::new(&format!("o/{NFD} (3).SC")), &base));
+        assert!(!is_variant_of(Path::new(&format!("o/{NFD}2.sc")), &base));
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join(format!("{NFC}.f3d"));
+        std::fs::write(&a, b"x").unwrap();
+        assert!(same_file(&a, &dir.path().join(format!("{NFD}.f3d"))));
+        assert!(same_file(
+            &a,
+            &dir.path().join(format!("{}.F3D", NFC.to_uppercase()))
+        ));
+        assert!(!same_file(&a, &dir.path().join(format!("{NFD}x.f3d"))));
     }
 
     #[test]

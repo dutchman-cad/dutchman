@@ -127,7 +127,7 @@ with their parts resolved inside the project; unused parts convert afterwards. A
 a native file is kept as a fallback if the native conversion fails.
 
 The Inventor project folder setting appears only for inputs containing Inventor files.
-Available memory is labelled as memory and hidden when unknown. Automatic SolidCraft
+Available memory is labeled as memory and hidden when unknown. Automatic SolidCraft
 selection compares the versions found on PATH, beside Dutchman and in installed applications, choosing
 the newest; `SOLIDCRAFT_CLI` remains an explicit override.
 
@@ -185,7 +185,7 @@ and times below 60 seconds show **under a minute**, just as in the CLI. **M GB o
 once when the machine's free memory can be read. On a Mac this counts memory the system can give back
 (not in use by apps, system or compression), not only the few pages it keeps empty. These are estimates, not limits or promises; an unavailable estimate
 leaves no label. An estimate of five minutes or more, or of more than half the free memory
-(8 GB when that is unknown), is shown in the warning colour. Planning and estimation run in the
+(8 GB when that is unknown), is shown in the warning color. Planning and estimation run in the
 background.
 
 Pressing Convert starts the conversion at once; there is no memory dialog. The estimate in the
@@ -284,7 +284,7 @@ Small imports avoid extra preparation workers.
 The window opens where and at the size it was last closed. A saved size smaller than the
 app's minimum, 520 by 420 points, is ignored, and the window opens at its default size instead.
 
-With no saved size, the window opens centred at 1180 by 800 points, or 90% of the screen where
+With no saved size, the window opens centerd at 1180 by 800 points, or 90% of the screen where
 that is smaller, which fits the whole main screen with the **Advanced** choices open and nothing
 scrolled. From 1100 points wide, **Designs** and **Output folder** stand in a left column, with
 **Is there a problem? Is something missing?** in the room under them, and **Results** in a right

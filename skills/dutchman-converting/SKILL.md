@@ -173,7 +173,7 @@ selecting among several input bodies is not supported yet. The original geometry
 Older targets keep the previous point-only representation.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and
-resolved sketches are kept live in the part's own timeline, followed by a **Remove** feature that takes away the bodies they make and one **Import** named "Rest of the design (from <first feature not converted>)" that holds the source's final shape. The visible result is exactly the original shape, with one body per source body. Roll the timeline marker back before **Remove** to see and edit the body the converted features build; to keep modelling from them, delete or suppress the last two features. SolidCraft needs the CLI to name the bodies the features make; without it the kept features stay in a hidden **Editable history (partial)** component beside the visible Import, as before, with their body-building features suppressed so an export holds each part once. The report names the blocker and counts
+resolved sketches are kept live in the part's own timeline, followed by a **Remove** feature that takes away the bodies they make and one **Import** named "Rest of the design (from <first feature not converted>)" that holds the source's final shape. The visible result is exactly the original shape, with one body per source body. Roll the timeline marker back before **Remove** to see and edit the body the converted features build; to keep modeling from them, delete or suppress the last two features. SolidCraft needs the CLI to name the bodies the features make; without it the kept features stay in a hidden **Editable history (partial)** component beside the visible Import, as before, with their body-building features suppressed so an export holds each part once. The report names the blocker and counts
 retained source features; `mode: partial_history` and verification `partial` distinguish
 this from full verified history. The reason says whether retained features replayed or
 remain unverified. Later sketches with unresolved planes or external geometry are
@@ -224,7 +224,7 @@ evaluations; late results keep the refusal.
 For SolidCraft 0.44 and newer, extrude joins, cuts and intersections can keep a
 selected body scope at the final body-building feature when the reader names
 modified bodies and replay matches the final source geometry. The Info note `history/body-scope-confirmed`
-records this confirmation. Intermediate body centres cannot confirm body scope,
+records this confirmation. Intermediate body centers cannot confirm body scope,
 so intermediate features keep the previous mapping. Without confirmation the
 previous mapping applies; older targets keep their existing output.
 
@@ -232,7 +232,7 @@ On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
 keeps a name only when its identity is proved: the source retains exactly one
 history body with `produced_by` matching its single-output producer, or the
 complete replay matches the final source geometry. Replay candidates keep
-their names only after that check passes; intermediate body centres cannot
+their names only after that check passes; intermediate body centers cannot
 confirm them. An output ID alone is not proof. Without proof, selecting the
 tool stops editable history with "it selects a body that an earlier feature
 has not named". Older targets keep the previous mapping.
@@ -262,7 +262,7 @@ never drops history to fit memory. Standard drops history when its
 estimate exceeds free memory and the history-free estimate fits, with one Info line
 under `history` explaining the choice. `history: false` (also `import_only: true`),
 `sketches: false`, and `joints: false` narrow any preset. Sketches needed by retained
-history stay; with joints off, the selected placements stay. FreeCAD output honours history
+history stay; with joints off, the selected placements stay. FreeCAD output honors history
 only, not the sketch or joint choices.
 
 Before a costly conversion, call `convert` with `dry_run: true`; omit `output` if desired.
@@ -340,7 +340,7 @@ published; reader status still determines whether conversion can be attempted.
 Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, NX, Creo View, Rhino, ACIS, STEP and offline Onshape bundles
 can convert geometry. Creo and NX parts are identified by contents
 (they share `.prt`); both convert their geometry, without feature history. SolidWorks
-assemblies are recognised without a reader. `input.words` appears on
+assemblies are recognized without a reader. `input.words` appears on
 conversion successes and failures. Reader status describes capability; the actual
 history and verification report says what the file kept. CLI `--quiet` hides the volunteer
 invitation; JSON and MCP reports never include it.
@@ -357,7 +357,7 @@ list when unsure.
 For anything else, don't try workarounds such as renaming the file. Tell the user plainly:
 
 - **STEP (`.step`, `.stp`)**: converts through the geometry path; SolidCraft also opens STEP directly.
-- **IGES (`.igs`, `.iges`)**: recognised with `input.words: "open it in SolidCraft directly"`
+- **IGES (`.igs`, `.iges`)**: recognized with `input.words: "open it in SolidCraft directly"`
   and refused before decoding: "Dutchman doesn't convert IGES yet: open it in SolidCraft
   directly (File > Import)." Use SolidCraft's own importer. Batch results retain the same
   refusal; do not invite the user to make IGES test files.
@@ -583,10 +583,10 @@ Never remove or change the quarantine attribute.
 - `verification.status` `verified`: SolidCraft replayed the history and it matches the
   original in body position, box, area, and volume (area and volume alone when a box is
   unavailable). Position and box checks allow the larger of 0.01 mm and 0.02% of
-  the larger box diagonal for the centre distance and each minimum/maximum coordinate;
+  the larger box diagonal for the center distance and each minimum/maximum coordinate;
   area and volume retain their measuring mesh tolerances. `verification_tolerances` in the
   report states every number the check used; final history checks also compare available
-  kernel counts and centre of mass against the source.
+  kernel counts and center of mass against the source.
   `unverified`: written
   without that check (the reason says why, usually no `solidcraft-cli` was found); mention
   that the history has not been checked. `partial`: an editable prefix and resolved
@@ -658,7 +658,7 @@ default material: the decoded model does not establish that no source appearance
 
 Appearance or attribute bindings for one placed instance or an evaluation state are
 left out with a specific loss: Dutchman has no per-occurrence override for them.
-Definition-level appearance bindings still colour every placement of that definition.
+Definition-level appearance bindings still color every placement of that definition.
 
 A Dropped definition-level appearance binding names its body or face target.
 “Its target is absent from the decoded model” means no decoded geometry can receive it; “its target exists in the decoded
@@ -673,7 +673,7 @@ The raw messages are technical. Group them by level and translate:
   SolidCraft doesn't use were left out."
 - **Degraded**: carried across in a weaker form. Name the thing affected:
   `f3d/material.not-transferred` says "Materials and appearances were not carried over."
-  Ask the user to check the colours and set any missing materials in SolidCraft; the IR
+  Ask the user to check the colors and set any missing materials in SolidCraft; the IR
   cannot rule out a default-only material. A sketch dimension "retaining native
   operands" means "the sketch is the right size, but that dimension may not drive it."
 - **Dropped**: left out. Always mention these, with the part or feature named.
@@ -694,7 +694,7 @@ Body moves require SolidCraft 0.45 or newer. This requirement applies only to de
 with a body move; it does not trigger a general history-loss notice for older targets.
 Dutchman keeps resolved translations
 and axis-angle rotations, including explicit pivots, when every selected body has
-a proven earlier name. CADIR supplies millimetres and radians; the writer never
+a proven earlier name. CADIR supplies millimeters and radians; the writer never
 infers a transform from final geometry. Unresolved body selections, unresolved
 point-to-point motion, and copied body result identities remain blockers. Bodies
 available only as final geometry also require a captured pre-move body. Older
@@ -757,10 +757,10 @@ references require decoded label identities. Check geometry after editing parame
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
 targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
-stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
+stored circle with center, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
 only that body supplies replay candidates, even when another body has a coincident rim.
 Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
-refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's center, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
 A missing source carrier reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
@@ -807,7 +807,7 @@ features and resolved sketches remain hidden beside the imported final shape whe
 `--no-verify` cannot prove blends.
 
 Whole-sketch hole placements exclude construction entities; explicit entity selections
-can still use construction points or circle centres.
+can still use construction points or circle centers.
 
 For mirror-containing composite patterns and repeated full-turn endpoints, an attempted
 replay that cannot finish keeps the original geometry and reports why. Turning verification
@@ -901,7 +901,7 @@ FreeCAD TechDraw drawing output is available from the CLI:
 (an exact file path with `--page`). An existing page file is never replaced:
 the page takes the next free name (`part-Page (2).dxf`) unless `--replace` is set. Page names are FreeCAD
 object names. Pages keep neutral view curves, dimension labels, annotations, template frames, and
-resolved title-block text in millimetre page space. Unsupported content is reported
+resolved title-block text in millimeter page space. Unsupported content is reported
 in per-page JSON `pages` results. No page is an error. See [FreeCAD coverage](../../docs/freecad.md#techdraw-to-dxf).
 DXF conversion is not supported yet by convert-all, the MCP convert tool, desktop,
 or web. The MCP formats report includes the additive `drawings` capability list.
@@ -977,7 +977,7 @@ Use this when a conversion fails and the original file must stay private.
    narrowing path. Remove source names, paths, entity ids and geometry/parameter values.
    If rebuilding has not reproduced, draft an issue containing only the report facts and state that limit.
 6. List anonymous.json and the synthetic rebuilt file with its STEP export and a public
-   licence such as CC0 as proposed attachments. Include the design only if it reproduces
+   license such as CC0 as proposed attachments. Include the design only if it reproduces
    and the user is free to share it. Never attach the original file or local-key.json.
    Do not post, attach or upload anything yourself.
 7. End by showing the remaining tiers of the
@@ -1068,7 +1068,7 @@ partial-history outputs with intentionally extra hidden bodies. Private whole-de
 snapshot pairs may accompany flags when SolidCraft supports them; never attach these
 to an anonymous public report. A file check's Target part buttons save a local target.
 
-For a converted result with missing features, wrong placement or missing colours, use a
+For a converted result with missing features, wrong placement or missing colors, use a
 fresh report folder with `report_preview`, the diagnostic file id, source format and
 `signature: "converted-with-problem"`. Review its `metadata`; submit only summary after
 explicit consent. CLI users can preview with `dutchman report --folder FOLDER --report-id ID

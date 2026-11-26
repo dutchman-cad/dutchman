@@ -83,8 +83,8 @@ result with the original body, both measured by the same SolidCraft. The numbers
 - **Bodies:** the same count.
 - **Volume:** within 0.01% (1e-4) of the larger volume, or the most SolidCraft's measuring mesh can miss, whichever is more.
 - **Area:** within 0.1% (1e-3) of the larger area.
-- **Position and bounding box:** the box centre and each box corner within the larger of 0.01 mm and 0.02% (2e-4) of the larger box diagonal.
-- **Face count and centre of mass:** not compared. SolidCraft merges faces that share a surface, and the centre used is the box centre.
+- **Position and bounding box:** the box center and each box corner within the larger of 0.01 mm and 0.02% (2e-4) of the larger box diagonal.
+- **Face count and center of mass:** not compared. SolidCraft merges faces that share a surface, and the center used is the box center.
 - **Edges, faces and extrude caps the source names:** an input edge must sit within 1e-6 mm of exactly one rebuilt edge; a profile face within 1e-5 mm, with area within 0.01% (2% when an edge is curved).
 
 Every conversion report states the numbers its check used in `verification_tolerances`. The full
@@ -134,15 +134,15 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 | ACIS | `.sat`, `.sab`, `.smt`, `.smb` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Onshape bundle | `.onshape-bundle` | Reads geometry | – | One offline Part Studio; geometry and editable history where features map |
-| IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
+| IGES | `.igs`, `.iges` | Recognized, not converted | – | Import it in SolidCraft directly (File > Import) |
 | Circuit board | `.PcbDoc` | Reads geometry with the electronics module | – | Placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately) |
 | Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
-| Inventor drawing | `.idw` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
-| SolidWorks drawing | `.slddrw` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
-| Fusion drawing | `.f2d` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
-| DWG drawing | `.dwg` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
-| DXF drawing | `.dxf` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
-| Solid Edge drawing | `.dft` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Inventor drawing | `.idw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| SolidWorks drawing | `.slddrw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Fusion drawing | `.f2d` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| DWG drawing | `.dwg` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| DXF drawing | `.dxf` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Solid Edge drawing | `.dft` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
 
 FreeCAD TechDraw pages are written into the converted SolidCraft design as a drawing (sheets and views), and also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
 
@@ -231,7 +231,7 @@ For other clients:
 
 **Formats and results**
 
-- [Formats](docs/formats.md): how each format is recognised and what converts.
+- [Formats](docs/formats.md): how each format is recognized and what converts.
 - [Fusion tool libraries to CamCraft](docs/camcraft-tools.md): `.tools` and `.json` libraries to `.camtools`, field by field.
 - [Fusion](docs/fusion.md), [Inventor](docs/inventor.md), [SolidWorks](docs/sldprt.md), and [FreeCAD](docs/freecad.md): what converts from each program today, and what stands in the way.
 - [Feature history](docs/history.md): what maps onto SolidCraft, how it is checked, and partial history.
@@ -252,7 +252,7 @@ For other clients:
 
 - **Where to start:** [pick a CAD program](CONTRIBUTING.md#pick-a-cad-program) and paste its block
   into your AI agent: [SolidWorks](https://github.com/dutchman-cad/dutchman/issues/866),
-  [Solid Edge](https://github.com/dutchman-cad/dutchman/issues/840), or any issue labelled
+  [Solid Edge](https://github.com/dutchman-cad/dutchman/issues/840), or any issue labeled
   [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
   or [good first issue](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
   Each one says what is known, what isn't, and how to verify it with public files.
@@ -260,7 +260,7 @@ For other clients:
 - [Architecture](docs/ARCHITECTURE.md), [Releasing](docs/releasing.md), and [Triage](docs/triage.md).
 - Report a file that didn't convert on the [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml) form, with no design file. See [reporting versions and optional steps from report to fix](docs/testing-your-library.md#5-report-what-you-found). Questions: the [Discord](https://discord.gg/yTcseBEdeu).
 
-## Licence
+## License
 
 Dutchman is pure Rust, licensed under the [Apache License, Version 2.0](LICENSE). Native files are read by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps them onto [SolidCraft](https://github.com/tangency-labs/solidcraft).
 

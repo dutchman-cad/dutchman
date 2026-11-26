@@ -794,7 +794,7 @@ fn convert_once(
     // Design events always: they time each design for the stuck-design limit. Names stay in
     // this process; only a diagnostics log, when asked for, records them (hashed).
     command.env("DUTCHMAN_MEMBER_PROGRESS", "1");
-    let child = command
+    command
         .arg(WORKER_ARG)
         .arg(&job.input)
         .arg(&job.output)
@@ -803,8 +803,8 @@ fn convert_once(
         // Kept open while this process lives: the child stops when it closes.
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+        .stderr(Stdio::piped());
+    let child = spawn_retrying(&mut command);
     let mut child = match child {
         Ok(child) => child,
         Err(err) => {
@@ -1472,6 +1472,37 @@ pub(crate) fn resident_tree_bytes(pid: u32) -> Option<u64> {
     resident_bytes(pid)
 }
 
+/// Starts `command`, trying again a few times when the system says the program file is still
+/// open for writing ("text file busy"). Another thread forking at the wrong moment can hold a
+/// just-written program's write handle for an instant; the file is ready a moment later.
+pub(crate) fn spawn_retrying(command: &mut Command) -> std::io::Result<Child> {
+    const TRIES: u32 = 5;
+    let mut attempt = 1;
+    loop {
+        match command.spawn() {
+            Err(err) if attempt < TRIES && is_text_file_busy(&err) => {
+                std::thread::sleep(Duration::from_millis(10 * u64::from(attempt)));
+                attempt += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
+/// ETXTBSY: the program file is open for writing somewhere.
+fn is_text_file_busy(err: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        // 26 on Linux and macOS alike.
+        err.raw_os_error() == Some(26)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = err;
+        false
+    }
+}
+
 /// The memory process `pid` holds, in bytes, when it can be measured.
 #[cfg(target_os = "linux")]
 pub(crate) fn resident_bytes(pid: u32) -> Option<u64> {
@@ -1806,5 +1837,181 @@ mod left_out_tests {
                 assert_eq!(reading.stuck(limit), Some(Some("Heavy.f3d".into())));
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+pub(crate) mod spawn_retry_tests {
+    use super::*;
+
+    /// Test helper: writes an executable script so its write handle is closed before any exec.
+    #[allow(clippy::unwrap_used)]
+    pub(crate) fn write_script(path: &Path, contents: &str) {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// A program still open for writing cannot start; it starts once the writer lets go.
+    #[test]
+    fn a_program_busy_for_an_instant_still_starts() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("busy-worker");
+        write_script(&program, "#!/bin/sh\nexit 0\n");
+        let mut writer = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&program)
+            .unwrap();
+        writer.write_all(b"# more\n").unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(15));
+            drop(writer);
+        });
+        let mut child = spawn_retrying(&mut Command::new(&program)).unwrap();
+        assert!(child.wait().unwrap().success());
+        release.join().unwrap();
+    }
+
+    /// Any other failure is reported at once, without retrying.
+    #[test]
+    fn a_missing_program_fails_at_once() {
+        let err = spawn_retrying(&mut Command::new("/nonexistent/dutchman-worker")).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod output_kept_tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+    use std::io::Write as _;
+
+    /// A child that runs `body` (a shell script; `$2` is the input, `$3` the output).
+    fn fake_child(dir: &Path, body: &str) -> PathBuf {
+        let path = dir.join("fake-child.sh");
+        super::spawn_retry_tests::write_script(&path, &format!("#!/bin/sh\n{body}\n"));
+        path
+    }
+
+    fn job(input: &Path, output: &Path) -> Job {
+        Job {
+            project_files: None,
+            fallback: None,
+            input: input.to_path_buf(),
+            output: output.to_path_buf(),
+            replace: false,
+            search: PartSearch::default(),
+        }
+    }
+
+    fn limits(timeout_ms: u64, design_ms: Option<u64>) -> Limits {
+        Limits {
+            timeout: Duration::from_millis(timeout_ms),
+            max_memory: None,
+            design: design_ms.map(Duration::from_millis),
+        }
+    }
+
+    fn run(program: &Path, job: &Job, limits: &Limits) -> Value {
+        let options = ConvertOptions {
+            no_memory_check: true,
+            ..ConvertOptions::default()
+        };
+        convert_isolated(program, job, &options, limits)
+    }
+
+    #[test]
+    fn a_child_stopped_after_a_complete_write_leaves_the_design() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in.step");
+        let output = dir.path().join("out.sc");
+        std::fs::write(&input, "x").unwrap();
+        let program = fake_child(
+            dir.path(),
+            "printf finished > \"$3\"\necho 'dutchman-stage: write' >&2\n\
+             sleep 30",
+        );
+        let report = run(&program, &job(&input, &output), &limits(1500, None));
+        assert_eq!(report["ok"], false);
+        assert_eq!(report["error"]["stage"], "write");
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), "finished");
+    }
+
+    #[test]
+    fn a_child_stopped_before_writing_leaves_a_file_already_at_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in.step");
+        let output = dir.path().join("out.sc");
+        std::fs::write(&input, "x").unwrap();
+        std::fs::write(&output, "someone else's").unwrap();
+        let program = fake_child(dir.path(), "echo 'dutchman-stage: write' >&2\nsleep 30");
+        let report = run(&program, &job(&input, &output), &limits(1500, None));
+        assert_eq!(report["error"]["stage"], "write");
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), "someone else's");
+    }
+
+    #[test]
+    fn the_retry_after_a_stuck_design_leaves_a_file_already_at_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in.f3z");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&input).unwrap());
+        for name in ["a.f3d", "b.f3d"] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"design").unwrap();
+        }
+        zip.finish().unwrap();
+        let output = dir.path().join("out.sc");
+        std::fs::write(&output, "someone else's").unwrap();
+        let count = dir.path().join("runs");
+        // First run: stuck reading design a. Second run: stopped in the write stage.
+        let program = fake_child(
+            dir.path(),
+            &format!(
+                "if [ ! -e '{count}' ]; then\n touch '{count}'\n \
+                 echo 'dutchman-stage: decode' >&2\n \
+                 echo '{{\"dutchman_member\":\"a.f3d\",\"event\":\"start\"}}' >&2\n \
+                 sleep 30\nfi\necho 'dutchman-stage: write' >&2\nsleep 30",
+                count = count.display()
+            ),
+        );
+        let report = run(&program, &job(&input, &output), &limits(8000, Some(300)));
+        assert_eq!(report["error"]["stage"], "write");
+        assert!(count.exists());
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), "someone else's");
+    }
+
+    #[test]
+    fn a_retry_that_finished_its_write_before_it_was_stopped_leaves_the_design() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in.f3z");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&input).unwrap());
+        for name in ["a.f3d", "b.f3d"] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"design").unwrap();
+        }
+        zip.finish().unwrap();
+        let output = dir.path().join("out.sc");
+        let count = dir.path().join("runs");
+        let program = fake_child(
+            dir.path(),
+            &format!(
+                "if [ ! -e '{count}' ]; then\n touch '{count}'\n \
+                 echo 'dutchman-stage: decode' >&2\n \
+                 echo '{{\"dutchman_member\":\"a.f3d\",\"event\":\"start\"}}' >&2\n \
+                 sleep 30\nfi\nprintf finished > \"$3\"\n\
+                 echo 'dutchman-stage: write' >&2\nsleep 30",
+                count = count.display()
+            ),
+        );
+        let report = run(&program, &job(&input, &output), &limits(8000, Some(300)));
+        assert_eq!(report["error"]["stage"], "write");
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), "finished");
     }
 }

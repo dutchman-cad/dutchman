@@ -371,7 +371,7 @@ Explicit output paths keep their given extension. The container format stays `so
 | `source_version` | The version of the program that saved the input file, as `major.minor.revision` numbers, read from the file's own numeric record. Recorded for Inventor files only (the `RSeDb` database's saving-application version; the newest when a file holds several; Inventor's major number is its release year minus 1996, so `25` is 2021). Omitted for every other format and when the file states none. Only the input file's own version is recorded, never a part's or component's. This is not preflight's `scan.source_version`, which is always `null` today and is read before conversion. |
 | `threads` | `{requested, used}` records the per-part worker limit (`0`: automatic, `1`: serial) and the bounded maximum used across component slicing and SolidCraft preparation. Counts are limited by part count and available memory, and never below `1`. Present on SolidCraft writes and on assembly reads that reach component slicing, including inspection and other output formats; omitted for pre-read estimates and reads/writers with no part-worker stage. Batch entries and watch reports carry it within each conversion report. Native decoding stays serial. |
 | `solidcraft` | SolidCraft output only: `target` is the selected `x.y` minor; `found` is the discovered CLI release as `x.y.z`, or null when unavailable or not checked. `known_newest` is the newest known minor (`0.42`). `status` is `newer`, `too_old`, `older_loses_history`, `current`, or `none_found`. The history status requires an older installed release and a selected target whose writer gates retain less history than newest; `current` includes older releases with no gated history loss. Included even with verification off. When `found` is null, `search` says why: `outcome` (`not_found`, or `found_no_answer` when a CLI was found but did not report its version in time) and `places`, each `{"place", "outcome"}` for `SOLIDCRAFT_CLI`, `PATH`, `beside Dutchman` and the platform's install folders (`Program Files`, `Program Files (x86)`, `per-user install folder`, `Windows registry`, `Applications`, `user Applications`), with `outcome` `unset`, `set_but_missing`, `not_found`, `found` or `used`. This local report adds each `path` and the `cli` chosen; the [anonymous report](report-anon.md) does not. An explicit target wins; otherwise the supported found version capped at known newest, else built-in newest (0.42), is targeted. |
-| `choices` | `part_positions` is `smart` (default), `last-shown`, or `first-placed`. Smart admits current poses after checking touching joints, assembly bounds, and repeated inserted designs; last-shown uses available current poses; first-placed ignores later moves. Compatibility `stored_placements` is true only for first-placed. Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
+| `choices` | `part_positions` is `smart` (default), `last-shown`, or `first-placed`. Smart admits current poses after checking touching joints, assembly bounds, and repeated inserted designs; last-shown uses available current poses; first-placed ignores later moves. Compatibility `stored_placements` is true only for first-placed. Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honors history only. |
 | `part_positions` | Per-conversion placement summary: `mode`, `total`, and disjoint rule counts `displayed`, `current`, `first_placed` whose sum equals `total`. `displayed` counts saved-scene poses, directly bound or derived from agreeing displayed children, which take precedence without the current-pose guards. `bound_displayed` and `derived_holders` partition `displayed`. Only bound rows are used; an absent arena supplies none. `derived_holders` counts world poses inferred bottom-up from displayed children whose estimates agree within 0.001 mm and 1e-6 rotation entries; `holder_conflicts` counts disagreements; the holder keeps its first placement. In Smart a displayed holder whose subtree would leave the grown bounds is counted under `bounds` and reverts with everything inside it, so `derived_holders` counts only holders still displayed. `fallbacks` counts `no_current_pose`, `ambiguous`, `unsupported`, `joints`, `bounds`, and `instances`. Fallback reasons can overlap for ambiguous carriers and are not a partition. Counts describe source occurrences including holders, excluding extra history representations. Smart keeps first placements for unsupported checks; bounds use conservative geometry envelopes. The matching Info note has subject `part positions`. `assumed` lists each part (not holders) whose position nothing confirms, as `{"part", "reason"}`, with `part` naming what holds it, outermost first: `identity` (the placement could not be read and the part sits at its design's origin; a Degraded loss names these), `later_pose_unused` (the file holds a later pose that was not used), or `only_stored_pose` (the stored pose is all the file holds and no joint holds the part). The last two are usually right, so an Info note names the first 20. With `first-placed`, only `identity` is listed, since that mode ignores later poses by choice. The anonymous report leaves part names out. A non-assembly read has zero counts; decode refusals may have no summary. |
 | `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `catia_part`, `creo_part`, `nx_part`, `creo_view`, `rhino`, `acis`, `step`, `iges`, `onshape_bundle`, `unclassified_part`, `inventor_drawing`, `solidworks_drawing`, `fusion_drawing`, `dwg_drawing`, `dxf_drawing`, `solid_edge_drawing`, or `null` for an unknown extension. `format_name` is the same for people. Creo and NX share `.prt` and are distinguished by contents; inconclusive contents give `unclassified_part`. |
 | `input.words` | Reader status: `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`, or `open it in SolidCraft directly` (IGES); `null` for an unknown format. Present on successes and failures, including batch results and MCP reports. The conversion's history and verification describe what this file kept. |
@@ -379,17 +379,17 @@ Explicit output paths keep their given extension. The container format stays `so
 | `output.format` | The SolidCraft design format written. |
 | `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `partial_history`: the retained editable features, a Remove of the bodies they make, then one Import of the rest of the design (the history object's `rest_imported_from` names the first feature not converted). `import`: geometry, possibly with reference sketches. |
 | `retried_after_low_memory` | Present and `true` when a batch file stopped for low memory alongside other files and was converted again alone at the end of the batch. The report is of that second try: if it converted, an Info line under `memory` says so; if not, `error` holds the memory stop. |
-| `verification_tolerances` | Present when a SolidCraft history check ran: the history verified, partly kept (`partial`), or rebuilt and found to differ (`flattened` with a reason beginning `replay differs`). Absent when the check did not run (`unverified`, `not_applicable`, `--no-verify`), for geometry-only output, and for other output formats. The same object in the CLI's `--json`, the MCP tools and batch results. `version` is `1`. `replay`: `volume_relative` (1e-4), `area_relative` (1e-3), `position_min_mm` (0.01) and `position_diagonal_relative` (2e-4) for the box centre and corners, `mesh_chord_relative` (5e-5) and `mesh_chord_floor_mm` (1e-4) for the measuring mesh's allowance in volume, and the text fields `bodies`, `face_count` and `centre` saying what is and is not compared. `stored_bodies`: `exact_box_min_mm` (0.5), `exact_box_diagonal_relative` (0.01), `sampled_box_min_mm` (1.0), `sampled_box_diagonal_relative` (0.02). `import`: `no_volume_mm3` (1e-6). `edge_proof`: `position_mm` (1e-6), `direction` (1e-6), `blame_distance_mm` (0.01). `face_proof`: `position_mm` (1e-5), `direction` (1e-5), `area_relative_straight` (1e-4), `area_relative_curved` (0.02), `plane_mm` (1e-4), `line_cover_relative` (1e-4), `arc_radius_relative` (1e-3), `turn_rad` (2e-3). `cap_proof`: `area_min_mm2` (1.0), `area_relative` (0.03), `plane_mm` (1e-4). What each compares is in [How a history is checked](history.md#verification-tolerances). Fields are only added within `version`. |
+| `verification_tolerances` | Present when a SolidCraft history check ran: the history verified, partly kept (`partial`), or rebuilt and found to differ (`flattened` with a reason beginning `replay differs`). Absent when the check did not run (`unverified`, `not_applicable`, `--no-verify`), for geometry-only output, and for other output formats. The same object in the CLI's `--json`, the MCP tools and batch results. `version` is `1`. `replay`: `volume_relative` (1e-4), `area_relative` (1e-3), `position_min_mm` (0.01) and `position_diagonal_relative` (2e-4) for the box center and corners, `mesh_chord_relative` (5e-5) and `mesh_chord_floor_mm` (1e-4) for the measuring mesh's allowance in volume, and the text fields `bodies`, `face_count` and `center` saying what is and is not compared. `stored_bodies`: `exact_box_min_mm` (0.5), `exact_box_diagonal_relative` (0.01), `sampled_box_min_mm` (1.0), `sampled_box_diagonal_relative` (0.02). `import`: `no_volume_mm3` (1e-6). `edge_proof`: `position_mm` (1e-6), `direction` (1e-6), `blame_distance_mm` (0.01). `face_proof`: `position_mm` (1e-5), `direction` (1e-5), `area_relative_straight` (1e-4), `area_relative_curved` (0.02), `plane_mm` (1e-4), `line_cover_relative` (1e-4), `arc_radius_relative` (1e-3), `turn_rad` (2e-3). `cap_proof`: `area_min_mm2` (1.0), `area_relative` (0.03), `plane_mm` (1e-4). What each compares is in [How a history is checked](history.md#verification-tolerances). Fields are only added within `version`. |
 | `history_check_skipped` | Present only when a requested SolidCraft history/geometry check was skipped for memory. Object with `needed_bytes` (estimated extra memory), `available_bytes` (free memory at the decision), and `reason`: `History check skipped: needs about N GB, M GB free`. The conversion can still have `ok: true`; retained history stays unverified or partial and the original shape remains usable. Absent when checking is explicitly off, forced, or not skipped. Applies to batch result objects and MCP as well. |
 | `source_errors` | Present only when a FreeCAD file already had features that failed in FreeCAD itself before Dutchman read it: FreeCAD saves a failed feature as `Invalid` with its error message. Object with `program` (`FreeCAD`), `count` (all such features), `features` (up to 200 of `{name, label, error}`: the internal name, the label FreeCAD shows, and FreeCAD's own message or null) and `message`, the sentence shown to people: `This file already had errors in FreeCAD before converting: Pad001, Fillet (fix them in FreeCAD for a full conversion).` These are not Dutchman's own `losses`, are never counted in them, and a feature only pending a recompute (`Touched`) is not listed. In an assembly, labels start with the part's file name. The [anonymous report](report-anon.md) leaves this out. |
 | `verification.status` | `verified`: the history was replayed in SolidCraft, or the FreeCAD output was measured, and matches the original. `differs`: a FreeCAD rebuild differs or restored STEP (`reason` names the part). `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `partial`: only partial history is retained; `reason` names the blocker, gives kept/total source feature counts, and states whether retained features replayed or remain unverified. This never claims the full history matches the original. `flattened`: no body-building prefix was retained (`reason`: the blocker or replay failure). `not_applicable`: there was no history to write (none in the source, or none cadmpeg decodes: every feature is kept in its native form), or `--import-only` (the SolidCraft plugin's report says `Keep editable history is turned off` instead). |
-| `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane or an unused construction helper), `left_out` (suppressed in the source, changes no geometry in the source, or a reference sketch omitted by choice), `blocked` (does not map; `reason` says why). Each feature also has `ordinal` (its position number in the design's timeline, as the source model numbers it; null when it has none) and `variant` (a short form such as `extrude, to a plane`, or null for kinds without one). `profile_unverified: true` appears on a `mapped` extrude whose profile region could not be checked by the source end-cap area proof: it is kept, but that proof did not establish the region it swept. An extrude whose profile region does not match the source is `blocked` with a `reason` of `its profile region doesn't match the source (swept A mm², the source B mm²)` and a loss with code `history/profile-region-mismatch`. `inferred` appears on a `mapped` feature whose profile region or blend edges the source does not record and Dutchman inferred by measuring candidates in SolidCraft; it is never an exact reading of the source: `selection` (`profile_region` or `edges`), `candidates` (how many were measured), `matches` (how many matched the source's measures; above 1 when the face count alone chose one), `measured_against` (`original_shape`: the source's final solid; `stored_bodies`: the centres of the bodies the source stores right after the feature) and `deviation_mm` (the largest distance between the kept candidate's surface and the source's, when the two solids were compared directly, else null). Absent on every other feature. |
+| `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane or an unused construction helper), `left_out` (suppressed in the source, changes no geometry in the source, or a reference sketch omitted by choice), `blocked` (does not map; `reason` says why). Each feature also has `ordinal` (its position number in the design's timeline, as the source model numbers it; null when it has none) and `variant` (a short form such as `extrude, to a plane`, or null for kinds without one). `profile_unverified: true` appears on a `mapped` extrude whose profile region could not be checked by the source end-cap area proof: it is kept, but that proof did not establish the region it swept. An extrude whose profile region does not match the source is `blocked` with a `reason` of `its profile region doesn't match the source (swept A mm², the source B mm²)` and a loss with code `history/profile-region-mismatch`. `inferred` appears on a `mapped` feature whose profile region or blend edges the source does not record and Dutchman inferred by measuring candidates in SolidCraft; it is never an exact reading of the source: `selection` (`profile_region` or `edges`), `candidates` (how many were measured), `matches` (how many matched the source's measures; above 1 when the face count alone chose one), `measured_against` (`original_shape`: the source's final solid; `stored_bodies`: the centers of the bodies the source stores right after the feature) and `deviation_mm` (the largest distance between the kept candidate's surface and the source's, when the two solids were compared directly, else null). Absent on every other feature. |
 | `history.rebuilt`, `history.needing` | Features that became SolidCraft features, out of those that need one: all but left-out and not-needed ones. These are the counts to quote. |
 | `history.reapplied` | Kept features that re-apply to a base body Fusion stores only as the design ends (a join, cut or intersection after it), so editing them may not change the shape. They are mapped, but not counted in `history.rebuilt`. |
 | `history.rest_imported_from` | With `mode: partial_history`: the name of the first source feature that is not converted. The converted features before it are live in the part's timeline; from it on, the part is one imported body. Absent otherwise. |
 | `history.features[].reapplied`, `final_body` | `true` on such a kept feature, and on the base feature written with its final body. Absent otherwise. |
 | `history.mapped`, `history.total` | Mapped or not-needed features, out of all but left-out ones. `mapped` counts features that needed nothing, such as component inserts and joints, so it isn't a count of editable features. |
-| `history.features[].source`, `category`, `upstream`, `reason_raw` | Present only on a feature SolidCraft itself refused when it replayed the history. `source` is `solidcraft`; `reason` then reads `SolidCraft refused feature "X": ...` without SolidCraft's internal site number, and `reason_raw` keeps the original text. `category` is `solidcraft-refused` for a refusal not yet recognised, or a specific name such as `fillet-overflows-neighbouring-face` (the blend is larger than the neighbouring faces). `upstream` is the link to the SolidCraft issue that tracks a known category, else `null`. Absent for Dutchman's own mapping limits. |
+| `history.features[].source`, `category`, `upstream`, `reason_raw` | Present only on a feature SolidCraft itself refused when it replayed the history. `source` is `solidcraft`; `reason` then reads `SolidCraft refused feature "X": ...` without SolidCraft's internal site number, and `reason_raw` keeps the original text. `category` is `solidcraft-refused` for a refusal not yet recognized, or a specific name such as `fillet-overflows-neighbouring-face` (the blend is larger than the neighbouring faces). `upstream` is the link to the SolidCraft issue that tracks a known category, else `null`. Absent for Dutchman's own mapping limits. |
 | `history.parts` | For an assembly written as SolidCraft components: each part's history, in the order written. `name`; `status` and `reason` as in `verification` (`not_applicable` when the part has no source features, else `flattened` with its first blocker, `partial`, `unverified` or `verified`); `mapped`, `total`, `rebuilt`, `needing` and `reapplied` as in `history`. A part placed several times is listed once. Absent for a single part. |
 | `completeness` | For an assembly or a single design with unreadable local occurrence positions: `placed` counts placements with geometry and assembly holders of children; `placed_empty` counts placements of leaf parts with no bodies. Empty leaves no longer inflate `placed`. `unplaced` maps part names to occurrence counts whose positions were assumed or could not be decoded, including children that depend on such a parent. These do not count in `placed` or `placed_empty`. `placements` is `placed + placed_empty + sum(unplaced values) + sum(left_out.count)`. Such conversions use `verification.status: "partial"` with a plain explanation; `ok` is `false` when parts are unplaced, even though output was written. Counts include every recorded placement through placed sub-assemblies, each as often as placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part without unreadable local occurrences. For a flattened single design, overlapping reader counts use the largest count under `Local components with unreadable positions`; this is a conservative count because the reader cannot bind those carriers to distinct occurrences. Decoded bodies absent from every written component occurrence appear in `left_out` at stage `map`, counted once per body, with loss code `dutchman/assembly.bodies-without-occurrences`. |
 | `joints` | For an assembly whose joints were written: how many of each kind, `{"revolute": 5, "rigid": 1}` (kinds `revolute`, `slider`, `rigid`). Grounded joints count as `rigid`, fixing their occurrence to the design at its stored placement. Absent when none were. |
@@ -428,13 +428,13 @@ prefix bodies; use `document.inspect` body `visible` flags for final-shape compa
 
 A partial history that replays but whose bodies differ from what the source stores at the same
 point adds a `Degraded` loss with code `history/body-mismatch`, and `verification.reason` says
-so: fewer bodies, or a body the source has with no replayed body whose box centre is near
+so: fewer bodies, or a body the source has with no replayed body whose box center is near
 enough. The mismatching edited body is removed; only earlier source imports and
 independent sketches are retained when no earlier edited state can be proved.
 When the source marks a body's box as the solid's own (Fusion's `body_centers_exact`),
-its centre must be within the larger of 0.5 mm and 1% of the replayed body's box diagonal.
+its center must be within the larger of 0.5 mm and 1% of the replayed body's box diagonal.
 Other boxes are taken over edge vertices, interior samples and proven arc extremes; their
-centres must be within the larger of 1 mm and 2% of the replayed body's box diagonal.
+centers must be within the larger of 1 mm and 2% of the replayed body's box diagonal.
 The source's list can leave bodies out, so more
 replayed bodies than it lists don't count. It is compared when the last retained feature that isn't a
 sketch carries the source's bodies, which Fusion files can. In a design with components, a list
@@ -455,8 +455,8 @@ geometry or nonplanar tool in `history.features[].reason`. No report fields or c
 added for the generated Import. Targets below SolidCraft 0.40 receive a named version reason
 for the new Split history body imports and input-face tools, and the existing
 `older_loses_history` notice. Existing Base Feature imports retain their version support.
-A state whose source marks any body centre as based on incomplete edge evidence
-(`body_centers_incomplete`) is not compared, even if every body has a centre entry, so the
+A state whose source marks any body center as based on incomplete edge evidence
+(`body_centers_incomplete`) is not compared, even if every body has a center entry, so the
 history stays unverified there.
 
 A feature whose source profile is the whole of a sketch with more than one profile is kept only
@@ -483,7 +483,7 @@ the final geometry. No report fields or schema versions change.
 `history/body-scope-confirmed` has level `Info`, names the extrude in `subject`,
 and says that the source body check confirmed its selected target bodies. It is
 emitted only for SolidCraft targets from 0.44, at the final body-building feature
-when replay matches the final source geometry. Intermediate body centres do not
+when replay matches the final source geometry. Intermediate body centers do not
 establish body scope and never produce this note. Report fields and schema
 versions are unchanged.
 
@@ -491,7 +491,7 @@ On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
 keeps a name only when its identity is proved: the source retains exactly one
 history body with `produced_by` matching its single-output producer, or the
 complete replay matches the final source geometry. Replay candidates keep
-their names only after that check passes; intermediate body centres cannot
+their names only after that check passes; intermediate body centers cannot
 confirm them. An output ID alone is not proof. Without proof, selecting the
 tool stops editable history with "it selects a body that an earlier feature
 has not named". Older targets keep the previous mapping.
@@ -534,7 +534,7 @@ Body moves require SolidCraft 0.45 or newer. This requirement applies only to de
 with a body move; it does not trigger a general history-loss notice for older targets.
 Dutchman keeps resolved translations
 and axis-angle rotations, including explicit pivots, when every selected body has
-a proven earlier name. CADIR supplies millimetres and radians; the writer never
+a proven earlier name. CADIR supplies millimeters and radians; the writer never
 infers a transform from final geometry. Unresolved body selections, unresolved
 point-to-point motion, and copied body result identities remain blockers. Bodies
 available only as final geometry also require a captured pre-move body. Older
@@ -572,8 +572,8 @@ version discovery only.
 
 SolidCraft history verification compares body count and each body's position, box, area,
 and volume. Position and box checks allow the larger of 0.01 mm and 0.02% of the
-larger box diagonal, for the centre distance and each minimum/maximum coordinate. Volume and
-area retain their measuring mesh tolerances. Bodies are paired by nearest box centre,
+larger box diagonal, for the center distance and each minimum/maximum coordinate. Volume and
+area retain their measuring mesh tolerances. Bodies are paired by nearest box center,
 with volume breaking ties. A position mismatch gives a reason such as `a body sits 6.000 mm
 from the original's position`; a box mismatch gives `a body's box differs from the
 original's by 2.500 mm`. When SolidCraft gives no box for a pair, only area and volume are
@@ -596,7 +596,7 @@ Sheets remain exempt from volume and closed-shell checks. The GUI, CLI, web app,
 present these same losses; `verification.status` continues to describe history, and the
 schema is unchanged.
 
-IGES (`.igs`, `.iges`) is recognised as `input.format: "iges"` and refused before decoding
+IGES (`.igs`, `.iges`) is recognized as `input.format: "iges"` and refused before decoding
 in conversion, inspection, batch results and MCP reports. Its `error.message` is
 `Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).`,
 with `error.stage: "decode"` and `error.upstream: null`. Batch results count it as a refused
@@ -626,10 +626,10 @@ loss notes while stored placements are retained. No report schema fields are add
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
 targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
-stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
+stored circle with center, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
 only that body supplies replay candidates, even when another body has a coincident rim.
 Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
-refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's center, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
 A missing source carrier reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
@@ -805,7 +805,7 @@ The CLI and desktop display small estimates as “under 0.1 GB” and “under a
 JSON `estimate.peak_bytes` and `estimate.seconds` remain numeric and unrounded.
 
 Appearance bindings that cannot reach written component geometry, resolve an appearance, or
-select a mixed-colour face are recorded in `losses` with subject `appearance` (possibly
+select a mixed-color face are recorded in `losses` with subject `appearance` (possibly
 prefixed with a part name) and level `Dropped`. Their messages identify the binding.
 Unplaced definition-level body and face bindings also identify
 the target and distinguish “its target is absent from the decoded model” from “its target
@@ -814,7 +814,7 @@ loss fields and schema. Targets deliberately filtered as consumed or removed Fus
 geometry have a separate message. Face-pick failures distinguish an unnamed written body
 from a face without a resolved interior point. A decoded body proven to have no writable
 STEP shape says “its body has no geometry the STEP writer can write”. Uniform face
-appearances carried as a body colour are preserved and do not produce a loss.
+appearances carried as a body color are preserved and do not produce a loss.
 
 ### Counts-only anonymous report: `dutchman.report-counts/1`
 
@@ -951,10 +951,10 @@ unavailable per-body checks; body count still fails. If evaluation cannot comple
 has `status: not_checked` and `reason`, with an empty `parameters` array.
 
 Volume, area and box checks use the existing measured replay tolerances above.
-The box difference is the larger of the distance between box centres and the largest
+The box difference is the larger of the distance between box centers and the largest
 absolute difference of a minimum or maximum coordinate, preserving both existing criteria. Centroid
-compares the actual centre of mass in source coordinates with the existing position allowance;
-a box centre is never substituted. Raw kernel face, edge and shell counts are informational;
+compares the actual center of mass in source coordinates with the existing position allowance;
+a box center is never substituted. Raw kernel face, edge and shell counts are informational;
 merged face counts are required to match for analytic bodies when available;
 analytic surface-kind counts are compared for bodies with free-form faces too.
 The existing descriptive `replay.face_count` and `replay.centre` tolerance fields describe
@@ -971,8 +971,8 @@ empty for scalars, or null), declared replay `written_unit` (or null), and a `ch
 Both numeric values use the canonical `unit`, even when the declared replay unit differs.
 Replay parameter lists above 100,000 rows are not checked and carry a limit reason.
 Quantity kinds must match: lengths, angles and scalars cannot substitute for one another;
-an unavailable or unrecognised replay unit is `not_checked`. Values come directly
-from the source model and the replay's evaluated named parameters, in millimetres, degrees,
+an unavailable or unrecognized replay unit is `not_checked`. Values come directly
+from the source model and the replay's evaluated named parameters, in millimeters, degrees,
 or scalar units. Serialization roundoff allows 5e-12 times the larger of one and the source magnitude.
 `verification_tolerances.source_comparison` records `parameter_relative` (5e-12),
 `parameter_scale_floor` (1), `centroid_min_mm` (0.01),
@@ -1045,7 +1045,7 @@ of a particular file. This additive field retains `dutchman.formats/1`.
 `extensions` lists all accepted suffixes without dots (`prt.N` denotes a numbered save);
 the existing `extension` remains the preferred suffix.
 Dutchman attempts conversion when the format reads geometry and its codec is available in
-this build. SolidWorks assemblies and unclassified `.prt` files are recognised
+this build. SolidWorks assemblies and unclassified `.prt` files are recognized
 without readers. Reader status does not promise
 that a particular file will convert or that every feature will map.
 `--quiet` suppresses only the text volunteer invitation after a conversion run; JSON
@@ -1111,7 +1111,7 @@ loss. Relations in virtual sketch space are counted separately because SolidCraf
 separate virtual solver space.
 
 Whole-sketch hole placements exclude construction entities; explicit entity selections
-can still use construction points or circle centres.
+can still use construction points or circle centers.
 
 For mirror-containing composite patterns and repeated full-turn endpoints, an attempted
 replay that cannot finish keeps the original geometry and reports why. Turning verification
@@ -1229,7 +1229,7 @@ not run.
 | Field | Meaning |
 |---|---|
 | `solidcraft_version` | The SolidCraft release the verdicts are for: the newest Dutchman knows at build time. An installed CLI is not discovered or launched. |
-| `parts` | One row per part listed: `name` is the part file inside an assembly (the component's name for a part held in the assembly's own file), `null` for a single part; counts of its bodies, features and parameters; `history_reason` says why none of its history maps, when none does (for example "the design carries no feature history"), else `null`. A part an assembly repeats is listed once. Assembly containers with their own features or parameters also have rows, labelled `assembly: /Root/Child[1]` (one-based child indices disambiguate names); their records use that label in `part`. Records already held in same-file child slices and aggregate container bodies are excluded to avoid double counting. |
+| `parts` | One row per part listed: `name` is the part file inside an assembly (the component's name for a part held in the assembly's own file), `null` for a single part; counts of its bodies, features and parameters; `history_reason` says why none of its history maps, when none does (for example "the design carries no feature history"), else `null`. A part an assembly repeats is listed once. Assembly containers with their own features or parameters also have rows, labeled `assembly: /Root/Child[1]` (one-based child indices disambiguate names); their records use that label in `part`. Records already held in same-file child slices and aggregate container bodies are excluded to avoid double counting. |
 | `bodies.items` | Each body: `part`, `name` (`null` when the source has none), `kind` (`solid`, `sheet`, `wire`, or `general` for mixed topology), and `hidden` when the source hides it. |
 | `features.items` | The timeline in order: `part`, `ordinal` (the source's timeline number), `kind` (cadmpeg's operation name), `name`, `variant` (its form, as in `history.features` of `dutchman.convert/1`), `suppressed`, `verdict` and `reason`. |
 | `features.verdicts` | How many features have each verdict; every verdict word is present. |
@@ -1321,7 +1321,7 @@ touching mirrored components. Non-finite, scaled, or sheared placements outside 
 orthogonality/determinant tolerance produce Dropped `placements` losses with a zero-based
 occurrence index local to the containing assembly, name, and kind. They are excluded from
 `completeness.placed` and counted in `completeness.left_out` at stage `write`. Tiny numeric
-drift is re-orthonormalised before writing.
+drift is re-orthonormalized before writing.
 
 ### Drawings (additive to `dutchman.convert/1`)
 
@@ -1766,7 +1766,7 @@ are null), `differences` (`volume_relative`, `area_relative`, `bbox_max_mm`,
 `placement_mm`, `faces`), `status` (`measured`, `incomplete` or `unmatched`), `looks_wrong`, and
 `findings`. Codes are `step_volume`, `step_area`, `step_bbox`, `step_placement`, and
 `step_unmatched`. Face differences are informational. Placement is the Euclidean
-distance between bbox centres. Matching is one-to-one, by geometry with placement and
+distance between bbox centers. Matching is one-to-one, by geometry with placement and
 order breaking ties; it is a heuristic, not proof of identical topology. Evaluated
 body numbers differ from diagnose part numbers in assemblies. No names, paths,
 CLI messages or geometry bytes are returned. Missing kernel support gives a fixed
@@ -1804,7 +1804,7 @@ Failure returns `sent: false`, `summary`, `local_folder`, optional `bundle`,
 The request includes `dutchman_version` (the build version), `source_format`, and
 `source_app`, derived from the native format family (Fusion, Inventor, SolidWorks,
 FreeCAD, CATIA, Creo, NX, Creo View or Rhino). Exchange formats (STEP, IGES, ACIS),
-unclassified `.prt` and unrecognised formats use `unknown`: the authoring app cannot
+unclassified `.prt` and unrecognized formats use `unknown`: the authoring app cannot
 be inferred from those formats. No file is opened to derive this field.
 `signature` may be `converted-with-problem` for a converted result reported as wrong.
 There is no free-text description field in this envelope. The CLI `dutchman report`
@@ -1863,7 +1863,7 @@ edge), `dutchman/appearance.face-pick-missed` (face geometry has no resolved out
 `dutchman/appearance.target-absent` (target absent from the decoded model),
 `dutchman/appearance.unwritable-body` (body cannot be written), or
 `dutchman/appearance.other` (other mapping gaps). `dutchman/appearance.redundant-face`
-is reserved for face colours equal to their body colour; these are retained and have no
+is reserved for face colors equal to their body color; these are retained and have no
 loss count. Kept assignments never produce dropped appearance losses.
 
 These fixed categories reach both `dutchman.report-anon/1` loss counts and
@@ -1924,7 +1924,7 @@ index file), `sketches` (the raw sketch-information response at
 `partstudios/<element>/sketches.json`), optional `configuration` and `variables`, and
 `step`. The optional additive `sketches` role keeps bundle schema v1; older bundles
 retain their existing reading behavior. Each sketch entry binds its `featureId`
-to a sixteen-value row-major `sketchMatrix` (sketch-to-world, translation in metres).
+to a sixteen-value row-major `sketchMatrix` (sketch-to-world, translation in meters).
 Missing or contradictory face-attachment frames keep `onshape/history.not-supported`
 with final STEP geometry; no report fields or loss codes change. The request adds
 one HTTP attempt per uncached Part Studio to the existing `calls` count.
@@ -2119,7 +2119,7 @@ as the existing history blocker reason. The report schema and field names are un
 
 `dutchman batch-report <output-folder>` reads existing `dutchman.convert/1`
 `<stem>.report.json` and `<stem>.failed.json` reports recursively, without opening
-source designs. `convert-all --batch-report` summarises that invocation's results.
+source designs. `convert-all --batch-report` summarizes that invocation's results.
 The desktop app offers **Batch report** in the bottom bar after a folder run
 finishes, beside the converted and failed counts. After writing, its status
 says `<converted> converted, <failed> failed · Report saved to <output folder name>/`. JSON schemas are unchanged.
@@ -2142,7 +2142,7 @@ First reason uses the failure message, otherwise the first `blocked` or
 first” and “follows … blocker”), then the verification reason or first loss.
 When both success and failure sidecars name the same input, the newest sidecar
 wins; equal timestamps choose the last report in path order. Other duplicate
-input paths follow the same rule. Unreadable or unrecognised reports stop the
+input paths follow the same rule. Unreadable or unrecognized reports stop the
 export with an error. Reads skip symbolic links and are bounded to 32 directory
 levels, 100,000 entries, 10,000 reports, 64 MiB per report, and 256 MiB in total.
 Each output file is replaced atomically. These are local reports containing

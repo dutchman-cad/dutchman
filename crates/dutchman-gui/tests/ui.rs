@@ -2059,7 +2059,7 @@ mod consent_e2e {
             // Parts unplaced.
             json!({"ok": true, "mode": "import", "completeness": {"placed": 2, "placed_empty": 1, "placements": 3, "left_out": []}}),
             // Colours dropped.
-            json!({"ok": true, "mode": "import", "losses": [{"level": "Dropped", "subject": "appearance", "message": "Colour omitted"}]}),
+            json!({"ok": true, "mode": "import", "losses": [{"level": "Dropped", "subject": "appearance", "message": "Color omitted"}]}),
         ];
         for report in cases {
             let sent = send_converted(report.clone());
@@ -6190,7 +6190,7 @@ fn import_notes_screenshots() {
                  "message": "SolidCraft could not rebuild the feature"},
                 {"level": "Info", "code": "dutchman/appearance.redundant-face",
                  "subject": part, "stage": "map",
-                 "message": "A face colour equal to its body colour was not written"},
+                 "message": "A face color equal to its body color was not written"},
                 {"level": "Info", "code": "history/body-scope-confirmed",
                  "subject": format!("{part}: Extrude 3"), "stage": "map",
                  "message": "The bodies this feature acts on were confirmed"},
@@ -6559,7 +6559,7 @@ fn a_drawing_that_is_not_read_yet_is_not_supported_yet_not_failed() {
         assert_eq!(
             harness
                 .query_all_by_label_contains(
-                    "recognised, but reading its sheets isn't supported yet"
+                    "recognized, but reading its sheets isn't supported yet"
                 )
                 .count(),
             2,

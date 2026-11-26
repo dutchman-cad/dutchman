@@ -277,7 +277,7 @@ impl Format {
         } else if self == Self::Iges {
             "open it in SolidCraft directly"
         } else if self.is_drawing() {
-            "recognised, but reading its sheets isn't supported yet. The report lists what was found."
+            "recognized, but reading its sheets isn't supported yet. The report lists what was found."
         } else if self.reads_geometry() {
             "reads geometry"
         } else if self.codec_id().is_some() {
@@ -390,7 +390,7 @@ mod drawing_words_tests {
             let words = format.words();
             assert_eq!(
                 words,
-                "recognised, but reading its sheets isn't supported yet. The report lists what was found."
+                "recognized, but reading its sheets isn't supported yet. The report lists what was found."
             );
             let message = crate::drawing::not_decoded_message(format);
             assert!(message.starts_with(&format!("{}: no drawing was written", format.name())));

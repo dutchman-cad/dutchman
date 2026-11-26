@@ -11,7 +11,7 @@ lantern at the masthead is the one warm light.
 |---|---|
 | `dutchman-mark.svg` | The mark on light grounds. |
 | `dutchman-mark-night.svg` | The mark on dark grounds. |
-| `dutchman-mark-mono.svg` | The mark in one ink, where colour is not available. |
+| `dutchman-mark-mono.svg` | The mark in one ink, where color is not available. |
 | `dutchman-lockup.svg` | Mark and name on light grounds. |
 | `dutchman-lockup-night.svg` | Mark and name on dark grounds. |
 | `dutchman-app-icon.svg` | The macOS app icon: the mark on a white rounded square (824 px, corner radius 185) on Apple's 1024 grid, with a hairline edge and a soft shadow below. It is the app bundle's icon and, on macOS, the Dock icon while the app runs. `cargo run -p dutchman-gui --example icns -- crates/dutchman-gui/assets/Dutchman.icns` renders it into the app's icon file. The app keeps its own copy in `crates/dutchman-gui/assets/`, with the marks; a test checks the copies match. |
@@ -22,7 +22,7 @@ The lockup's name is set in [Spectral](https://github.com/productiontype/Spectra
 from them with Spectral installed.
 
 Keep clear space of one hull height (a sixth of the mark's height) on every side. Use the mark at
-16 px or larger and the lockup at 120 px wide or larger. Don't recolour, rotate, outline or shadow
+16 px or larger and the lockup at 120 px wide or larger. Don't recolor, rotate, outline or shadow
 the mark, separate the lantern, or place the mark on a photograph.
 
 The Windows installer renders the same app SVG into a multi-size ICO at build time with

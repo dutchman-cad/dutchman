@@ -634,8 +634,7 @@ impl State {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
-        let mut child = command
-            .spawn()
+        let mut child = worker::spawn_retrying(&mut command)
             .map_err(|err| format!("cannot start the converter: {err}"))?;
         let stderr = child.stderr.take();
         let (send, receive) = mpsc::channel::<Message>();

@@ -285,7 +285,7 @@ default features. The nightly keeps its own Rust cache per target (`macos-releas
 release candidate builds use no cache and build from scratch.
 
 Regular releases build with the `release` profile: thin LTO and 16 codegen units. A major or
-stable release, starting with 0.3.0, builds with a slower, fully optimised profile instead
+stable release, starting with 0.3.0, builds with a slower, fully optimized profile instead
 (one codegen unit and fat LTO).
 
 All cadmpeg crates, including cadmpeg-registry, come directly from the pinned git revision.
@@ -306,7 +306,7 @@ nightly. Remove an entry once its fix is released; an empty list publishes an em
 The Linux archive builds run in Debian bookworm so their glibc requirements fit the
 `debian:bookworm-slim` runtime. `docker/release.Dockerfile` installs the CLI and MCP
 server, plus `dutchman-web` whenever it is included in the archives, and retains the
-licence files. Image licence metadata comes from `Cargo.toml`. Only the image publishing
+license files. Image license metadata comes from `Cargo.toml`. Only the image publishing
 jobs receive `packages: write`. The nightly image job waits for the nightly pre-release
 publication to succeed, then publishes `ghcr.io/dutchman-cad/dutchman:nightly` from the
 same run's Linux artifacts.
@@ -327,8 +327,8 @@ pulls work. See [Docker](docker.md) for conversion, MCP and Compose examples.
 The **Public corpus sweep** workflow (`.github/workflows/corpus-sweep.yml`) converts the CAD
 files of public repositories on GitHub's free runners, so a sweep over a real-world corpus does
 not need anyone's machine. `corpus/public.toml` lists the sources: only public repositories under
-an open licence, each with its SPDX licence. The workflow reads the licence from the GitHub API
-and skips a source whose licence no longer matches. A repository with no open licence is not
+an open license, each with its SPDX license. The workflow reads the license from the GitHub API
+and skips a source whose license no longer matches. A repository with no open license is not
 listed (the file says which were left out). It fetches only the CAD files, never the whole
 repository, and publishes nothing: the results are workflow artifacts and the run summary.
 

@@ -92,7 +92,7 @@ fn run(
             folder.join(format!("{stem}-{base}.dxf"))
         };
         let mut suffix = 2_u32;
-        while !paths.insert(path.to_string_lossy().to_lowercase()) {
+        while !paths.insert(safe_output::portable_path_key(&path)) {
             path = folder.join(format!("{stem}-{base}-{suffix}.dxf"));
             suffix = suffix.saturating_add(1);
         }
@@ -110,11 +110,11 @@ fn run(
             // A page never replaces a file already there: it takes the next free number.
             let own = path.clone();
             path = safe_output::next_free(&path, &|candidate| {
-                candidate.try_exists().unwrap_or(true)
+                safe_output::present(candidate)
                     || (candidate != own.as_path()
-                        && paths.contains(&candidate.to_string_lossy().to_lowercase()))
+                        && paths.contains(&safe_output::portable_path_key(candidate)))
             });
-            paths.insert(path.to_string_lossy().to_lowercase());
+            paths.insert(safe_output::portable_path_key(&path));
         }
         planned.push((path, page));
     }
