@@ -160,6 +160,11 @@ pub const PLAIN_NOTES: &[PlainNote] = &[
         Shown::No,
     ),
     coded(
+        "export/native.",
+        "Some of the file's internal records have no STEP equivalent and were not written to the STEP copy; the shape is not affected.",
+        Shown::No,
+    ),
+    coded(
         "step/attribute.",
         "Some of the file's internal attributes have no STEP equivalent and were not written to the STEP copy; the shape is not affected.",
         Shown::No,
@@ -328,6 +333,7 @@ mod tests {
             "inventor/rse.segment-pair-untyped",
             "step/attribute.source-record-not-written",
             "step/native.source-record-omitted",
+            "export/native.records-omitted",
             "f3d/source.unindexed-records-retained",
             "history/body-scope-confirmed",
             "step/decode.opaque-record-preserved",

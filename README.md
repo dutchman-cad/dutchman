@@ -133,7 +133,7 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 | Rhino | `.3dm` | Reads geometry | L2 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | ACIS | `.sat`, `.sab`, `.smt`, `.smb` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
-| Onshape bundle | `.onshape-bundle` | Reads geometry | L4 | One offline Part Studio; geometry and editable history where features map |
+| Onshape bundle | `.onshape-bundle` | Reads geometry | L0 | One offline Part Studio; geometry and editable history where features map |
 | IGES | `.igs`, `.iges` | Recognized, not converted | – | Import it in SolidCraft directly (File > Import) |
 | Circuit board | `.PcbDoc` | Reads geometry with the electronics module | – | Placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately) |
 | Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
