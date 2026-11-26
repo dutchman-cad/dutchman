@@ -133,7 +133,7 @@ fn finish_recovered(
     }
 }
 
-/// The note, capitalised for the start of a sentence.
+/// The note, capitalized for the start of a sentence.
 fn incomplete_sentence(note: &str) -> String {
     let mut chars = note.chars();
     chars
