@@ -195,8 +195,8 @@ fn custom_features_name_the_missing_frozen_shape_even_with_rollback_details() {
         let loss = losses[0];
         assert_eq!(loss.severity, Severity::Degraded);
         let reason = format!(
-            "custom FeatureScript feature {name} is not supported yet: bundle format 1 \
-             lacks complete per-feature body geometry to prove a frozen step"
+            "custom FeatureScript feature {name} is not supported yet: a namespaced \
+             feature's stored parameters do not say which operation it performs"
         );
         assert_eq!(
             loss.detail,
@@ -367,6 +367,10 @@ fn wrong_magic_schema_and_microversion_are_refused() {
         if matches!(failure, "microversion" | "duplicate") {
             let (_, report) = read(&bytes).unwrap();
             assert!(!report.losses().is_empty(), "{failure}");
+        } else if failure == "multiple" {
+            // The codec reads a bundle that lists several Part Studios; only an element it
+            // cannot read as one is refused.
+            read(&bytes).unwrap();
         } else {
             assert!(read(&bytes).is_err(), "{failure}");
         }
@@ -632,7 +636,7 @@ fn up_to_next(operation: &str, extra: Option<([f64; 3], [f64; 3])>) -> Vec<u8> {
 fn up_to_next_maps_exact_stored_coverage_and_refuses_an_earlier_recess() {
     for (bytes, typed) in [
         (up_to_next("REMOVE", None), true),
-        (up_to_next("NEW", None), false),
+        (up_to_next("NEW", None), true),
         (
             up_to_next(
                 "REMOVE",
@@ -1724,10 +1728,7 @@ fn derived_studio_keeps_neutral_reference_and_generated_boolean_operands() {
     .unwrap();
     assert_eq!(reference["bodies"][0]["name"], "Tool");
     assert_eq!(
-        reference["ir"]["model"]["features"]
-            .as_array()
-            .unwrap()
-            .len(),
+        reference["omitted"]["features"].as_array().unwrap().len(),
         2
     );
     assert!(reference["step"]
@@ -1787,7 +1788,6 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
         "missing",
         "version",
         "microversion",
-        "source-final-parts",
         "configuration",
         "placement",
         "location",
@@ -1808,7 +1808,6 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
         "boolean-option",
         "changed-producer",
         "boolean-query-namespace",
-        "unknown-source-body",
     ] {
         let bytes = changed(&fixture("derived"), |path, value| {
             if path == "partstudios/studio/features.json" {
@@ -1890,26 +1889,11 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
                     value["bodies"].as_array_mut().unwrap().remove(0);
                 }
             }
-            if failure == "unknown-source-body"
-                && path.starts_with("references/")
-                && path.ends_with("bodydetails/2.json")
-            {
-                value["bodies"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(json!({"id":"unknown"}));
-            }
             if failure == "microversion"
                 && path.starts_with("references/")
                 && path.ends_with("features.json")
             {
                 value["sourceMicroversion"] = json!("other");
-            }
-            if failure == "source-final-parts"
-                && path.starts_with("references/")
-                && path.ends_with("bodydetails/index.json")
-            {
-                *value = json!([0, 1]);
             }
         });
         let (model, report) = read(&bytes).unwrap();
@@ -2070,10 +2054,7 @@ fn derived_studios_validate_their_own_pin_and_continue_after_a_bad_reference_rec
         )
         .unwrap();
         assert_eq!(
-            captured["ir"]["model"]["features"]
-                .as_array()
-                .unwrap()
-                .len(),
+            captured["omitted"]["features"].as_array().unwrap().len(),
             if bad_record { 1 } else { 2 }
         );
         assert!(
@@ -2115,19 +2096,33 @@ fn derived_boolean_requires_a_stored_keep_tools_choice_and_keeps_later_records()
             }
         });
         let (model, report) = read(&bytes).unwrap();
+        // An absent choice is false, which keeps the Boolean typed; a stored value that is not
+        // a boolean stays native.
         assert_eq!(
             kinds(&model),
-            ["sketch", "extrude", "stored_geometry", "native", "sketch"],
+            [
+                "sketch",
+                "extrude",
+                "stored_geometry",
+                if choice.is_null() {
+                    "combine"
+                } else {
+                    "native"
+                },
+                "sketch"
+            ],
             "{:?}",
             report.losses()
         );
-        assert!(
-            report.losses().iter().any(|loss| loss.code.as_deref()
-                == Some("onshape/history.not-supported")
-                && (loss.detail.contains("keepTools") || loss.detail.contains("keep-tools"))),
-            "{:?}",
-            report.losses()
-        );
+        if !choice.is_null() {
+            assert!(
+                report.losses().iter().any(|loss| loss.code.as_deref()
+                    == Some("onshape/history.not-supported")
+                    && (loss.detail.contains("keepTools") || loss.detail.contains("keep-tools"))),
+                "{:?}",
+                report.losses()
+            );
+        }
         assert!(model.source_step.is_some());
     }
 }

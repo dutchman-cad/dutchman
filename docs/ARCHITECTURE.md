@@ -692,7 +692,7 @@ SolidCraft container fields.
 The Onshape reader keeps a captured Derived source as neutral CADIR and STEP in a
 feature's `source_properties.design_reference`, with body identity/name bindings.
 CADIR source properties are strings: this value contains versioned
-`dutchman.design-reference/1` JSON; `historical_bodies` contains a JSON body list.
+`dutchman.design-reference/2` JSON (the CADIR wire in `ir`, the arenas the wire omits in `omitted`, the STEP text, the name and the body bindings); `historical_bodies` contains a JSON body list.
 Earlier local creators use `source_properties.historical_bodies` for names of bodies
 that a later Boolean may consume. Their local identities belong to CADIR
 `feature_result_topologies`; Boolean operands use generated body selections tied to

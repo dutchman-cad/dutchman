@@ -534,14 +534,14 @@ fn metallic_and_roughness_reach_the_design_look_as_pbr() {
         found[0]["pbr"].clone()
     };
     assert_eq!(
-        pbr_of("Body (Copper)"),
+        pbr_of("Copper"),
         json!({"metallic": 0.0, "roughness": 0.45, "dielectric_ior": 1.5})
     );
     assert_eq!(
-        pbr_of("Body"),
+        pbr_of("unit cube"),
         json!({"metallic": 0.0, "roughness": 0.5, "dielectric_ior": 1.5})
     );
-    assert!(pbr_of("Body (Silk)").is_null(), "no values, no pbr");
+    assert!(pbr_of("Silk").is_null(), "no values, no pbr");
     if let Some(cli) = cli() {
         assert_eq!(evaluate(&cli, &bytes).len(), 3);
     }

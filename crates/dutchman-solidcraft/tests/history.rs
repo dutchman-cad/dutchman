@@ -4225,7 +4225,7 @@ fn historical_hole(round: bool, placement: Value) -> Model {
             .unwrap();
     });
     let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
-    wire["model"]["feature_input_topologies"] = json!([{"id": HOLE_INPUT, "input_of": "f3d:model:feature#4", "edges": [], "faces": [HOLE_FACE], "edge_geometry": input["edge_geometry"], "bodies": [], "face_owners": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": HOLE_INPUT, "input_of": "f3d:model:feature#4", "edges": [], "faces": [HOLE_FACE], "edge_geometry": input["edge_geometry"], "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": []}]);
     Model {
         ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
@@ -9634,7 +9634,7 @@ fn input_edge_flange(back: bool, position: &str, angle: f64, radius: f64) -> Mod
             "supports": [], "tangent": point(1.0, 0.0, 0.0), "faces": faces,
         })
     });
-    wire["model"]["feature_input_topologies"] = json!([{"id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "face_owners": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": []}]);
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -9974,7 +9974,7 @@ fn attached_plate_on(near: f64, radius: f64, extra: bool, attached: usize) -> Mo
             "supports": [], "tangent": point(1.0, 0.0, 0.0), "faces": faces,
         })
     });
-    let state = |name: &str, owner: &str| json!({"id": format!("test:sheet:feature-input#{name}"), "input_of": owner, "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "face_owners": [], "vertices": []});
+    let state = |name: &str, owner: &str| json!({"id": format!("test:sheet:feature-input#{name}"), "input_of": owner, "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": []});
     m["feature_input_topologies"] = json!([
         state("plate", "f3d:model:feature#4"),
         state("bend", "f3d:model:feature#5"),
@@ -12564,7 +12564,7 @@ fn split_by_face(lift: f64, selection: Option<Value>) -> Model {
     faces.push(face.to_owned());
     wire["model"]["feature_input_topologies"] = json!([{
         "id": state, "input_of": "f3d:model:feature#4", "edges": edges, "faces": faces,
-        "edge_geometry": geometry, "bodies": [], "face_owners": [], "vertices": [],
+        "edge_geometry": geometry, "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": [],
     }]);
     let selection = selection.unwrap_or_else(|| {
         json!({"kind": "historical", "value": {
@@ -12628,7 +12628,7 @@ fn split_by_two_faces(second: f64) -> Model {
     }
     wire["model"]["feature_input_topologies"] = json!([{
         "id": state, "input_of": "f3d:model:feature#4", "edges": edges, "faces": faces,
-        "edge_geometry": geometry, "bodies": [], "face_owners": [], "vertices": [],
+        "edge_geometry": geometry, "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": [],
     }]);
     let features = wire["model"]["features"].as_array_mut().unwrap();
     let split = features.iter_mut().find(|f| f["name"] == "Split").unwrap();
@@ -13101,7 +13101,7 @@ fn blend_on(base: Model, kind: &str, dimension: Value, opposite: bool, z0: f64) 
             "faces": if edge == "near" { json!(["front", "left"]) } else { json!(["back", "right"]) },
         })
     };
-    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["near", "opposite"], "faces": ["front", "left", "back", "right"], "edge_geometry": [sample("near", 0.0), sample("opposite", 10.0)], "bodies": [], "face_owners": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["near", "opposite"], "faces": ["front", "left", "back", "right"], "edge_geometry": [sample("near", 0.0), sample("opposite", 10.0)], "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": []}]);
     Model {
         ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
@@ -13173,7 +13173,7 @@ fn closed_circle_blend_from(hole: bool, seam: f64, sketch_based: bool) -> Model 
     let point = |a: f64| json!({"x": c + r * a.cos(), "y": c + r * a.sin(), "z": 10.0});
     m["feature_input_topologies"] = json!([{
         "id": "synthetic:closed:feature-input-topology#0", "input_of": "synthetic:closed:feature#0",
-        "edges": ["synthetic:closed:edge#0"], "faces": [], "bodies": [], "face_owners": [], "vertices": [],
+        "edges": ["synthetic:closed:edge#0"], "faces": [], "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": [],
         "edge_geometry": [{"edge": "synthetic:closed:edge#0", "start": point(seam), "end": point(seam),
             "interior": point(seam + std::f64::consts::PI),
             "supports": [], "tangent": {"x": seam.sin(), "y": -seam.cos(), "z": 0.0}, "faces": [],
@@ -14289,7 +14289,7 @@ fn chamfered_cube(spec: Value, cut: Option<(f64, f64)>) -> Model {
         "supports": [], "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
         "start": {"x": 0.0, "y": 0.0, "z": 10.0}, "end": {"x": 10.0, "y": 0.0, "z": 10.0},
         "faces": ["front", "top"]});
-    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front"], "faces": ["front", "top"], "edge_geometry": [sample], "bodies": [], "face_owners": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front"], "faces": ["front", "top"], "edge_geometry": [sample], "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": []}]);
     let model = Model {
         ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
@@ -14442,7 +14442,7 @@ fn chamfered_stack() -> Model {
             "start": {"x": 0.0, "y": 0.0, "z": z}, "end": {"x": 10.0, "y": 0.0, "z": z},
             "faces": faces})
     };
-    m["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front", "bottom-front"], "faces": ["front", "top", "lower-front", "bottom"], "edge_geometry": [sample("top-front", 10.0, ["front", "top"]), sample("bottom-front", -10.0, ["lower-front", "bottom"])], "bodies": [], "face_owners": [], "vertices": []}]);
+    m["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front", "bottom-front"], "faces": ["front", "top", "lower-front", "bottom"], "edge_geometry": [sample("top-front", 10.0, ["front", "top"]), sample("bottom-front", -10.0, ["lower-front", "bottom"])], "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": []}]);
     let model = Model {
         ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..base
@@ -14562,7 +14562,7 @@ fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
         "carrier": {"range": [0.0, std::f64::consts::TAU], "curve": {"kind": "circle",
             "center": xyz(5.0, 5.0, 10.0), "axis": xyz(0.0, 0.0, 1.0),
             "ref_direction": xyz(0.0, 1.0, 0.0), "radius": BORE}}});
-    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#5", "edges": ["synthetic:rim:edge#hole-top"], "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"], "edge_geometry": [sample], "bodies": [], "face_owners": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#5", "edges": ["synthetic:rim:edge#hole-top"], "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"], "edge_geometry": [sample], "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": []}]);
     // Exact input carrier belongs to an earlier hidden result, independently of final edges.
     let source = "synthetic:rim:body#0";
     for feature in wire["model"]["features"].as_array_mut().unwrap() {
@@ -16626,7 +16626,7 @@ fn face_extrude(up: bool, change: impl FnOnce(&mut Value)) -> Model {
         .collect();
     let mut faces: Vec<String> = (0..4).map(side).collect();
     faces.push(face.to_owned());
-    wire["model"]["feature_input_topologies"] = json!([{"id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "face_owners": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": []}]);
     let mut definition = json!({"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {"kind": "historical_faces", "value": {
             "state": state, "faces": [face], "native": ["synthetic profile group"],
         }}}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 5.0}}}, "op": "join"}});
@@ -17199,7 +17199,7 @@ fn face_extrude_then_chamfer(up: bool) -> Model {
                 "supports": [], "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
                 "start": {"x": 0.0, "y": 0.0, "z": z}, "end": {"x": 10.0, "y": 0.0, "z": z},
                 "faces": ["front", "end"],
-            }], "bodies": [], "face_owners": [], "vertices": []}));
+            }], "bodies": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": []}));
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -20233,7 +20233,7 @@ fn intermediate_coincident_join() -> Model {
 /// `after` after the join.
 fn counted_intermediate_join(before: &str, after: &str) -> Model {
     let mut model = scoped_extrude("join");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][2]["source_properties"] = json!({"body_centers": before});
     wire["model"]["features"][3]["source_properties"] = json!({"body_centers": after});
     let mut later = wire["model"]["features"][2].clone();
@@ -20246,7 +20246,7 @@ fn counted_intermediate_join(before: &str, after: &str) -> Model {
         .as_array_mut()
         .unwrap()
         .push(later);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_value(wire).unwrap();
     model
 }
 
@@ -21390,7 +21390,7 @@ fn unresolved_revolve_before_trimmed_cuts(explicit_all: bool) -> Model {
             "edges":{"kind":"historical","value":{"state":"synthetic:shared:input#0",
             "edges":["synthetic:shared:edge#0"],"native":"synthetic corner"}}}]}}}}));
     m["feature_input_topologies"] = json!([{"id":"synthetic:shared:input#0",
-        "input_of":"synthetic:shared:feature#fillet", "bodies":[],"faces":[],"face_owners":[],"vertices":[],
+        "input_of":"synthetic:shared:feature#fillet", "bodies":[],"faces":[],"face_owners": [], "face_geometry": [], "body_writers": [],"vertices":[],
         "edges":["synthetic:shared:edge#0"], "edge_geometry":[{"edge":"synthetic:shared:edge#0",
             "start":{"x":10,"y":8,"z":0},"end":{"x":10,"y":8,"z":26},
             "interior":{"x":10,"y":8,"z":13},"supports": [], "tangent":{"x":0,"y":0,"z":1},"faces":[]}]}]);
@@ -22070,7 +22070,7 @@ fn body_moves_rebuild_from_a_captured_base_with_two_identity_aliases() {
         let body = format!("synthetic:history-input:body#{id}");
         let owner = format!("f3d:model:feature#{id}");
         inputs.push(json!({"id": state, "input_of": owner, "bodies": [body],
-            "faces": [], "face_owners": [], "edges": [], "vertices": [], "edge_geometry": []}));
+            "faces": [], "face_owners": [], "face_geometry": [], "body_writers": [], "edges": [], "vertices": [], "edge_geometry": []}));
         let mut feature = wire["model"]["features"][1].clone();
         feature["id"] = json!(owner);
         feature["ordinal"] = json!(id);

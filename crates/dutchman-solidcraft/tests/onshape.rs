@@ -338,7 +338,7 @@ fn custom_feature_without_a_proven_shape_blocks_later_topology_features() {
         .contains("custom FeatureScript feature Custom shape"));
     assert!(loss
         .detail
-        .contains("lacks complete per-feature body geometry"));
+        .contains("do not say which operation it performs"));
     assert_eq!(loss.severity, dutchman_core::Severity::Degraded);
     // With no proven input edge the reader keeps the fillet as a native step.
     assert_eq!(outcome.features[3].kind, "native");
@@ -1240,7 +1240,7 @@ fn derived_companion_conversion_losses_are_reported_under_the_insert() {
             .unwrap(),
     )
     .unwrap();
-    reference["ir"]["model"]["features"][1]["definition"] = json!({
+    reference["omitted"]["features"][1]["definition"] = json!({
         "kind":"operation", "value":{"kind":"native", "value":{
             "kind":"Synthetic unsupported source operation", "parameters":{}
         }}

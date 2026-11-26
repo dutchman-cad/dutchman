@@ -6,16 +6,33 @@ use sha2::{Digest, Sha256};
 use super::{name, Context};
 use crate::{SolidCraftWriter, Verification, VersionGate};
 
-/// The referenced neutral design, parsed from its JSON.
+/// The schema of the reference payload: the neutral design as the CADIR wire states it (`ir`),
+/// the arenas the wire omits (`omitted`, the object `Model::omitted_arenas_value` writes),
+/// the STEP text, the name and the body identities. The Onshape reader writes no other
+/// schema, so an earlier one, which carried only the wire, is not read.
+const REFERENCE_SCHEMA: &str = "dutchman.design-reference/2";
+
+/// The referenced neutral design: the wire document with every arena of `omitted` restored
+/// into its `model`, read through `ir_wire`, which types them again.
 #[cfg(any(test, feature = "onshape"))]
 fn neutral_design(reference: &Value) -> Result<cadmpeg_ir::CadIr, String> {
-    dutchman_core::ir_wire::from_value(
-        reference
-            .get("ir")
-            .cloned()
-            .ok_or("the referenced neutral design is missing")?,
-    )
-    .map_err(|e| format!("the referenced neutral design cannot be read: {e}"))
+    let mut document = reference
+        .get("ir")
+        .cloned()
+        .ok_or("the referenced neutral design is missing")?;
+    let omitted = reference
+        .get("omitted")
+        .and_then(Value::as_object)
+        .ok_or("the arenas of the referenced neutral design are missing")?;
+    let model = document
+        .get_mut("model")
+        .and_then(Value::as_object_mut)
+        .ok_or("the referenced neutral design has no model")?;
+    for (arena, rows) in omitted {
+        model.insert(arena.clone(), rows.clone());
+    }
+    dutchman_core::ir_wire::from_value(document)
+        .map_err(|e| format!("the referenced neutral design cannot be read: {e}"))
 }
 
 /// Only Onshape input writes a design reference, and a build without it (the SolidCraft
@@ -131,7 +148,7 @@ fn payload(value: &Value) -> Result<Value, String> {
         .ok_or("the neutral design reference is missing or exceeds its size limit")?;
     let value: Value = serde_json::from_str(text)
         .map_err(|error| format!("the neutral design reference cannot be read: {error}"))?;
-    if value.get("schema").and_then(Value::as_str) != Some("dutchman.design-reference/1") {
+    if value.get("schema").and_then(Value::as_str) != Some(REFERENCE_SCHEMA) {
         return Err("the neutral design reference schema is not supported yet".into());
     }
     Ok(value)
@@ -177,4 +194,97 @@ pub(super) fn body_bindings(feature: &Value) -> Result<Option<Vec<(String, Strin
         bindings.push((id.to_owned(), name.to_owned()));
     }
     Ok(Some(bindings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dutchman_core::Format;
+
+    /// The payload the Onshape reader writes for `ir`: the CADIR wire beside the arenas it omits.
+    fn payload_of(ir: &cadmpeg_ir::CadIr) -> Value {
+        json!({
+            "schema": REFERENCE_SCHEMA,
+            "ir": serde_json::to_value(ir).unwrap(),
+            "omitted": ir.model.omitted_arenas_value().unwrap(),
+            "step": "ISO-10303-21;",
+            "name": "Studio",
+            "bodies": [{"id": "body", "name": "Tool"}],
+        })
+    }
+
+    fn rows<T: serde::Serialize>(rows: &[T]) -> Value {
+        serde_json::to_value(rows).unwrap()
+    }
+
+    /// A payload that states features, sketches and parameters beside the wire gives back the
+    /// design the history writer reads, with every omitted arena as it was.
+    #[test]
+    fn omitted_arenas_of_a_reference_restore_into_the_design() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures");
+        let (mut features, mut sketches, mut parameters) = (0, 0, 0);
+        for name in [
+            "design_sketch_constraints.f3d",
+            "design_copy_paste.f3d",
+            "generated_unit_cube.f3d",
+        ] {
+            let model = dutchman_core::read(
+                Format::FusionArchive,
+                &root.join(name),
+                &mut Report::default(),
+            )
+            .unwrap();
+            let reference = payload_of(&model.ir);
+            assert!(
+                reference["ir"]["model"].get("features").is_none(),
+                "{name}: the wire carries the omitted arenas itself"
+            );
+            let text = serde_json::to_string(&reference).unwrap();
+            let read = payload(&Value::String(text)).unwrap();
+            let design = neutral_design(&read).unwrap();
+            let (want, got) = (&model.ir.model, &design.model);
+            assert_eq!(rows(&got.features), rows(&want.features), "{name}");
+            assert_eq!(rows(&got.sketches), rows(&want.sketches), "{name}");
+            assert_eq!(
+                rows(&got.sketch_entities),
+                rows(&want.sketch_entities),
+                "{name}"
+            );
+            assert_eq!(rows(&got.parameters), rows(&want.parameters), "{name}");
+            assert_eq!(
+                rows(&got.configurations),
+                rows(&want.configurations),
+                "{name}"
+            );
+            assert_eq!(
+                rows(&got.assembly_joints),
+                rows(&want.assembly_joints),
+                "{name}"
+            );
+            features += want.features.len();
+            sketches += want.sketches.len();
+            parameters += want.parameters.len();
+        }
+        assert!(features > 0 && sketches > 0 && parameters > 0);
+    }
+
+    #[test]
+    fn a_reference_without_its_omitted_arenas_is_refused() {
+        let model = crate::testing::cube();
+        let mut reference = payload_of(&model.ir);
+        reference.as_object_mut().unwrap().remove("omitted");
+        let error = neutral_design(&reference).unwrap_err();
+        assert!(error.contains("arenas"), "{error}");
+    }
+
+    #[test]
+    fn only_the_current_reference_schema_is_read() {
+        let model = crate::testing::cube();
+        let mut reference = payload_of(&model.ir);
+        assert!(payload(&Value::String(reference.to_string())).is_ok());
+        reference["schema"] = json!("dutchman.design-reference/1");
+        let error = payload(&Value::String(reference.to_string())).unwrap_err();
+        assert!(error.contains("not supported yet"), "{error}");
+    }
 }
