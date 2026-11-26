@@ -22,8 +22,29 @@ use cadmpeg_ir::sketches::{
 };
 use cadmpeg_ir::spreadsheets::Spreadsheet;
 use cadmpeg_ir::CadIr;
-use serde::Deserialize;
+use serde::ser::{SerializeMap, Serializer};
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
+
+/// Each product definition's `sketches`, which the wire omits, stated on the rows of
+/// `product_definitions`.
+fn state_definition_sketches(ir: &CadIr, rows: &mut [Value]) -> Result<(), serde_json::Error> {
+    for row in rows {
+        let id = row.get("id").and_then(Value::as_str);
+        let sketches = ir
+            .model
+            .product_definitions
+            .iter()
+            .find(|definition| Some(definition.id.as_str()) == id)
+            .map_or_else(Vec::new, |definition| definition.sketches.clone());
+        if let Some(row) = row.as_object_mut() {
+            row.insert("sketches".to_owned(), serde_json::to_value(&sketches)?);
+        }
+    }
+    Ok(())
+}
 
 /// `ir` as a JSON document that also states what the CADIR wire omits: the omitted arenas under
 /// `model`, each feature's `regeneration_parent`, and each product definition's `sketches`.
@@ -42,25 +63,81 @@ pub fn to_value(ir: &CadIr) -> Result<Value, serde_json::Error> {
         .get_mut("product_definitions")
         .and_then(Value::as_array_mut)
     {
-        for row in definitions {
-            let id = row.get("id").and_then(Value::as_str);
-            let sketches = ir
-                .model
-                .product_definitions
-                .iter()
-                .find(|definition| Some(definition.id.as_str()) == id)
-                .map_or_else(Vec::new, |definition| definition.sketches.clone());
-            if let Some(row) = row.as_object_mut() {
-                row.insert("sketches".to_owned(), serde_json::to_value(&sketches)?);
-            }
-        }
+        state_definition_sketches(ir, definitions)?;
     }
     Ok(document)
 }
 
-/// [`to_value`], as text.
+/// A JSON object written member by member: the members of `kept` as they stand, except those
+/// `stated` replaces, then `stated`.
+struct Merged<'a> {
+    kept: &'a BTreeMap<&'a str, &'a RawValue>,
+    stated: &'a [(String, Box<RawValue>)],
+}
+
+impl Serialize for Merged<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let replaced = |name: &str| self.stated.iter().any(|(stated, _)| stated == name);
+        let mut map = serializer.serialize_map(None)?;
+        for (name, rows) in self.kept.iter().filter(|(name, _)| !replaced(name)) {
+            map.serialize_entry(name, rows)?;
+        }
+        for (name, rows) in self.stated {
+            map.serialize_entry(name, rows)?;
+        }
+        map.end()
+    }
+}
+
+/// [`to_value`], as text. The document is written once as the CADIR wire states it and the
+/// members the wire omits are spliced into its `model`, so a design with a large geometry never
+/// stands as a JSON tree beside its text.
 pub fn to_string(ir: &CadIr) -> Result<String, serde_json::Error> {
-    to_value(ir).map(|document| document.to_string())
+    let bare = serde_json::to_string(ir)?;
+    let mut top: BTreeMap<&str, &RawValue> = serde_json::from_str(&bare)?;
+    let Some(model_text) = top.get("model").copied() else {
+        return Ok(bare);
+    };
+    let model: BTreeMap<&str, &RawValue> = serde_json::from_str(model_text.get())?;
+    let mut stated: Vec<(String, Box<RawValue>)> = Vec::new();
+    if let Value::Object(arenas) = ir.model.omitted_arenas_value()? {
+        for (name, rows) in arenas {
+            stated.push((name, serde_json::value::to_raw_value(&rows)?));
+        }
+    }
+    if let Some(rows) = model.get("product_definitions") {
+        let mut definitions: Vec<Value> = serde_json::from_str(rows.get())?;
+        state_definition_sketches(ir, &mut definitions)?;
+        stated.push((
+            "product_definitions".to_owned(),
+            serde_json::value::to_raw_value(&definitions)?,
+        ));
+    }
+    top.remove("model");
+    serde_json::to_string(&Document {
+        top: &top,
+        model: Merged {
+            kept: &model,
+            stated: &stated,
+        },
+    })
+}
+
+/// The document of [`to_string`]: its members as the wire wrote them, and the `model` merged.
+struct Document<'a> {
+    top: &'a BTreeMap<&'a str, &'a RawValue>,
+    model: Merged<'a>,
+}
+
+impl Serialize for Document<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(None)?;
+        for (name, member) in self.top {
+            map.serialize_entry(name, member)?;
+        }
+        map.serialize_entry("model", &self.model)?;
+        map.end()
+    }
 }
 
 /// The arenas the wire omits, as a document states them.
@@ -299,6 +376,12 @@ mod tests {
             assert_eq!(
                 arenas(&from_str(&to_string(ir).unwrap()).unwrap()),
                 arenas(ir),
+                "{name}"
+            );
+            // The text is the same document, written without a JSON tree beside it.
+            assert_eq!(
+                serde_json::from_str::<Value>(&to_string(ir).unwrap()).unwrap(),
+                to_value(ir).unwrap(),
                 "{name}"
             );
             // The bare wire is what loses them.
