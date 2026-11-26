@@ -309,7 +309,7 @@ fn manifest_tells_people_where_to_open_files() {
     let manifest: Value = serde_json::from_str(include_str!("../plugin.json")).unwrap();
     assert_eq!(
         manifest["description"],
-        "Open Fusion, Inventor, SolidWorks or FreeCAD files with File > Open."
+        "Open Fusion, Inventor, SolidWorks or FreeCAD files with File > Open. Dutchman is in active development and provided as is. Keep a copy of your designs somewhere else, just in case."
     );
 }
 

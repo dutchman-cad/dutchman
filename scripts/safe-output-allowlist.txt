@@ -29,6 +29,7 @@ crates/dutchman-serve/src/upload.rs	2	upload staging in a job folder Dutchman ma
 crates/dutchman-solidcraft/src/compare.rs	1	SolidCraft check scratch and version cache Dutchman owns
 crates/dutchman-solidcraft/src/evaluator.rs	1	SolidCraft check scratch and version cache Dutchman owns
 crates/dutchman-solidcraft/src/version_cache.rs	1	SolidCraft check scratch and version cache Dutchman owns
+crates/dutchman-solidcraft/src/verify.rs	3	SolidCraft check scratch files staged in a temporary folder Dutchman made (the count was hidden by an early test-only module)
 crates/dutchman-web/src/lib.rs	5	web job folders (fresh) and the numbered save into the output folder (audit: move onto safe_output)
 crates/dutchman-web/src/save.rs	2	web job folders (fresh) and the numbered save into the output folder (audit: move onto safe_output)
 crates/dutchman-gui/src/fusion_export/job.rs	5	Fusion exporter job folder Dutchman owns (its own atomic job, status and cancel files)
