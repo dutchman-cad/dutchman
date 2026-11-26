@@ -77,9 +77,26 @@ fn member_lookup_stays_relative_and_handles_stored_windows_names() {
             == Path::new("parts/Pin.ipt")),
         Some(std::path::PathBuf::from("parts/Pin.ipt"))
     );
+    // SolidCraft refuses any hidden name in a folder read, and a refusal ends the import, so
+    // a stored path that goes through one (a synced drive's `.shortcut-targets-by-id`) is never
+    // asked for: the shorter tails are, and the part beside the assembly is found.
+    let asked = std::cell::RefCell::new(Vec::new());
+    let found = resolve(
+        r"C:\Drive\.shortcut-targets-by-id\abc\Parts\Swerve\Gear.iam",
+        Path::new(""),
+        &|p| {
+            asked.borrow_mut().push(p.to_path_buf());
+            p == Path::new("Gear.iam")
+        },
+    );
+    assert_eq!(found, Some(std::path::PathBuf::from("Gear.iam")));
+    assert!(asked
+        .borrow()
+        .iter()
+        .all(|p| !p.to_string_lossy().contains("shortcut")));
     assert_eq!(
         resolve(".part.ipt", Path::new(""), &|p| p == Path::new(".part.ipt")),
-        Some(std::path::PathBuf::from(".part.ipt"))
+        None
     );
     for name in ["../secret", "/etc/passwd", ".", "..", "C:secret"] {
         let found = resolve(name, Path::new(""), &|p| p == Path::new(name));

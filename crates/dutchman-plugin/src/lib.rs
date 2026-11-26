@@ -86,7 +86,7 @@ pub fn resolve(stored: &str, folder: &Path, exists: &dyn Fn(&Path) -> bool) -> O
             && name.split('/').count() <= MAX_COMPONENTS
             && name
                 .split('/')
-                .all(|p| !p.is_empty() && !matches!(p, "." | "..") && !p.contains([':', '\0']))
+                .all(|p| !p.is_empty() && !p.starts_with('.') && !p.contains([':', '\0']))
     };
     let normalized = stored.replace('\\', "/");
     let mut components: Vec<_> = normalized.rsplit('/').take(MAX_COMPONENTS).collect();

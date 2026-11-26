@@ -153,7 +153,7 @@ does not offer leaves the manifest's defaults. The parts folder is never stored.
 only its own settings, runs no conversion and gets no folder grant. Scripts and MCP pass options
 directly and never run the hook, but an accepted scripted import still saves the options it
 used. There is no network or clock permission and no write grant. The plugin resolves relative part paths and relocates stored absolute paths by their
-longest safe suffix, trying folders nearest the referring assembly first, within the
+longest safe suffix (a suffix through a hidden name such as `.shortcut-targets-by-id` is skipped, because SolidCraft refuses hidden names in a folder read), trying folders nearest the referring assembly first, within the
 granted input folder. SolidWorks and FreeCAD prefer a copy beside the referring assembly.
 It never searches outside the granted folder, Inventor project libraries or the saving
 machine's absolute paths. The host must enforce the folder capability and symlink rules;
