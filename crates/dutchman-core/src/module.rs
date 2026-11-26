@@ -495,6 +495,16 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    /// Held by every test here: each writes a module script and runs it. A script still open
+    /// for writing when another test forks is inherited by that child, and running it then
+    /// fails with "text file busy".
+    fn scripts() -> std::sync::MutexGuard<'static, ()> {
+        static SCRIPTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        SCRIPTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// A module script: `read` body is the shell text run for `read`.
     fn fake(dir: &Path, interface: u64, read: &str) -> PathBuf {
         let path = dir.join("dutchman-electronics");
@@ -535,6 +545,7 @@ cat "$out/manifest.json""#
 
     #[test]
     fn a_failing_module_is_a_named_error_with_its_message() {
+        let _scripts = scripts();
         let error = run_read(
             "echo 'layer table is truncated' >&2; exit 3",
             &Limits::default(),
@@ -548,6 +559,7 @@ cat "$out/manifest.json""#
 
     #[test]
     fn a_module_saying_not_ok_shows_its_message() {
+        let _scripts = scripts();
         let error = run_read(
             r#"echo '{"ok":false,"message":"unsupported board version"}'; exit 1"#,
             &Limits::default(),
@@ -561,6 +573,7 @@ cat "$out/manifest.json""#
 
     #[test]
     fn a_module_that_never_finishes_is_stopped() {
+        let _scripts = scripts();
         let limits = Limits {
             timeout: Duration::from_millis(300),
             ..Limits::default()
@@ -573,12 +586,14 @@ cat "$out/manifest.json""#
 
     #[test]
     fn a_module_without_a_manifest_is_a_named_error() {
+        let _scripts = scripts();
         let error = run_read("exit 0", &Limits::default()).unwrap_err();
         assert!(error.to_string().contains("no manifest.json"), "{error}");
     }
 
     #[test]
     fn a_module_with_another_interface_is_refused() {
+        let _scripts = scripts();
         let dir = tempfile::tempdir().unwrap();
         let program = fake(dir.path(), 2, &ok_read());
         let error = read_with(
@@ -593,16 +608,21 @@ cat "$out/manifest.json""#
 
     #[test]
     fn too_much_output_is_refused() {
+        let _scripts = scripts();
         let limits = Limits {
             output_bytes: 10,
             ..Limits::default()
         };
         let error = run_read(&ok_read(), &limits).unwrap_err();
-        assert!(error.to_string().contains("more than Dutchman accepts"));
+        assert!(
+            error.to_string().contains("more than Dutchman accepts"),
+            "{error}"
+        );
     }
 
     #[test]
     fn a_failed_info_is_retried_and_an_upgraded_module_is_read_again() {
+        let _scripts = scripts();
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("dutchman-electronics");
         let write = |body: &str| {
@@ -628,6 +648,7 @@ cat "$out/manifest.json""#
 
     #[test]
     fn a_module_that_cannot_be_run_is_named() {
+        let _scripts = scripts();
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("dutchman-electronics");
         std::fs::write(&program, "#!/bin/sh\necho broken install >&2\nexit 1\n").unwrap();
@@ -649,6 +670,7 @@ cat "$out/manifest.json""#
 
     #[test]
     fn a_detect_no_means_not_a_board() {
+        let _scripts = scripts();
         let dir = tempfile::tempdir().unwrap();
         let program = fake(dir.path(), 1, &ok_read());
         let script = std::fs::read_to_string(&program)

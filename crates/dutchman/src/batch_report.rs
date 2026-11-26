@@ -1,7 +1,6 @@
 //! Local, deterministic folder summaries. No CAD files are opened or sent anywhere.
 
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -235,11 +234,9 @@ pub fn write_reports(reports: &[Value], folder: &Path) -> Result<usize, String> 
         ("dutchman-batch-report.md", md),
         ("dutchman-batch-report.csv", csv),
     ] {
-        let save = || -> Result<(), Box<dyn std::error::Error>> {
-            let mut file = tempfile::NamedTempFile::new_in(folder)?;
-            file.write_all(content.as_bytes())?;
-            file.persist(folder.join(name))?;
-            Ok(())
+        let save = || -> std::io::Result<()> {
+            // The summary names are Dutchman's own, rewritten whole by every run.
+            dutchman_core::safe_output::write(&folder.join(name), content.as_bytes(), true)
         };
         save().map_err(|err| format!("Could not write {name}: {err}. Check the output folder's permissions and free space."))?;
     }

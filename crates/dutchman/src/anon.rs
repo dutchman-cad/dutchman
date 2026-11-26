@@ -132,6 +132,8 @@ pub struct Run {
     pub verify: bool,
     /// Whether only geometry was asked for.
     pub import_only: bool,
+    /// Whether an existing report at the path may be replaced (`--replace`).
+    pub replace: bool,
     /// How many files converted at once.
     pub jobs: usize,
     /// One file's time limit, in seconds.
@@ -307,6 +309,7 @@ impl Run {
             solidcraft_search,
             solidcraft,
             import_only: options.import_only,
+            replace: options.replace,
             jobs: 1,
             timeout_s: None,
             max_memory_mb: None,
@@ -331,6 +334,7 @@ impl Run {
             solidcraft_search,
             solidcraft,
             import_only: options.import_only,
+            replace: options.replace,
             jobs: settings.map_or(1, |settings| crate::batch::workers(settings.jobs)),
             timeout_s: settings
                 .filter(|settings| settings.worker.is_some())
@@ -371,7 +375,9 @@ fn write_run(
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent).map_err(error)?;
         }
-        std::fs::write(path, text + "\n").map_err(error)
+        // The path was made free when the request was made, unless `--replace` asked for it.
+        dutchman_core::safe_output::write(path, (text + "\n").as_bytes(), run.replace)
+            .map_err(error)
     };
     save(&request.path, &anon)?;
     if let Some(path) = &request.key {

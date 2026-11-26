@@ -190,7 +190,7 @@ Links named `dutchman-mcp` and `dutchman-web` work the same way.
 Each [release](https://github.com/dutchman-cad/dutchman/releases) has archives for the
 platforms below. Each archive holds `dutchman` (the command), `dutchman-mcp` (the
 [MCP server](mcp.md)), `dutchman-gui` (the desktop app, from 0.1.1 on), `LICENSE`, `NOTICE`,
-`README.md` and the font licences, with a `.sha256` file beside it.
+`README.md` and the font licenses, with a `.sha256` file beside it.
 
 | Platform | Archive |
 |---|---|

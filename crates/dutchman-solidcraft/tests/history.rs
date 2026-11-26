@@ -978,7 +978,7 @@ fn lofts_solidcraft_would_build_differently_flatten_the_history() {
         ),
         (
             json!({"guidance": {"kind": "centerline", "value": {"kind": "native", "value": "n"}}}),
-            "lofts along a centreline are not mapped yet",
+            "lofts along a centerline are not mapped yet",
         ),
         (
             json!({"sections": [first_profile(), {"kind": "native_point", "value": "native:apex"}]}),
