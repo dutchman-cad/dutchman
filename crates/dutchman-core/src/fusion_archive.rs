@@ -145,6 +145,7 @@ pub(crate) fn recover(bytes: &[u8]) -> Option<Recovered> {
     let kept = zip::ZipArchive::new(Cursor::new(out.as_slice()))
         .ok()?
         .file_names()
+        .filter_map(Result::ok)
         .filter(|name| !name.ends_with('/'))
         .count();
     Some(Recovered {
@@ -167,7 +168,14 @@ pub(crate) fn recovered_note(recovered: &Recovered) -> String {
 /// Reads the member names of an archive that opens.
 fn names(bytes: &[u8]) -> Option<Vec<String>> {
     let archive = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
-    Some(archive.file_names().map(str::to_owned).collect())
+    // A name that cannot be read is not a part the diagnosis can count on.
+    Some(
+        archive
+            .file_names()
+            .filter_map(Result::ok)
+            .map(std::borrow::Cow::into_owned)
+            .collect(),
+    )
 }
 
 /// The distinct `.f3d` / `.f3z` file names the archive's root manifest links to: the designs
