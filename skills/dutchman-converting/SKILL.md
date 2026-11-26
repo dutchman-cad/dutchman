@@ -423,8 +423,9 @@ the tip extends beyond it. An unproven target still blocks body-building history
 
 Cosmetic thread contradictions name both the designation's nominal size and secondary
 numeric values. Metric labels tolerate decimal rounding and unit-conversion noise.
-Matching UNC/UNF values still report that SolidCraft's separate cosmetic Thread feature
-is not supported yet; tapped-hole support does not imply separate Thread support.
+Matching UNC/UNF values are written as a Unified Thread only on a SolidCraft release with
+Unified thread support (none yet), and are reported otherwise; tapped-hole support does not
+imply separate Thread support.
 
 Separate modeled Thread features keep their helical shape in the imported final geometry
 and stop editable history. When reached in the timeline, a Degraded `history/modeled-thread-retained` loss
@@ -1324,9 +1325,9 @@ Library planning outcomes used by preflight keep empty output ids with
 
 ### Y-up orientation
 
-Use `--stand-up` with `convert` or `convert-all` to rotate a Y-up design +90°
-about +X, so its +Y axis becomes SolidCraft's +Z axis. Source axes are preserved
-by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
+A design is stood up by default when its source states Y-up; `--keep-axes` never
+rotates. Use `--stand-up` with `convert` or `convert-all` to always rotate a design +90°
+about +X, so its +Y axis becomes SolidCraft's +Z axis. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.

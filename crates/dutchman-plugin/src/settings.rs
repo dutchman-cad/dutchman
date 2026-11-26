@@ -13,6 +13,7 @@ pub fn encode(options: &Options) -> String {
     json!({
         "editable_history": options.editable_history,
         "up_axis": match options.up_axis {
+            UpAxis::Auto => "auto",
             UpAxis::AsIs => "as_is",
             UpAxis::StandUp => "stand_up",
         },
@@ -36,7 +37,7 @@ pub fn field_defaults(stored: Option<&str>) -> String {
     }
     if let Some(value) = saved
         .get("up_axis")
-        .filter(|value| matches!(value.as_str(), Some("as_is" | "stand_up")))
+        .filter(|value| matches!(value.as_str(), Some("auto" | "as_is" | "stand_up")))
     {
         fields.insert("up_axis".into(), json!({ "default": value }));
     }

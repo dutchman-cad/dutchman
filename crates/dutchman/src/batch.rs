@@ -257,7 +257,14 @@ fn convert_all_prepared(
             *slot = report;
         }
     }
-    let results: Vec<Value> = results.into_iter().flatten().collect();
+    let results: Vec<Value> = results
+        .into_iter()
+        .flatten()
+        .map(|mut report| {
+            report::ensure_reason(&mut report);
+            report
+        })
+        .collect();
 
     let failed = results
         .iter()
@@ -510,8 +517,9 @@ pub fn line(result: &Value) -> String {
     } else {
         let message = result
             .pointer("/error/message")
+            .or_else(|| result.pointer("/reason/message"))
             .and_then(Value::as_str)
-            .unwrap_or("failed");
+            .unwrap_or("the conversion failed and its report gave no reason");
         format!("failed     {input}: {message}")
     }
 }
@@ -1182,7 +1190,7 @@ pub(crate) fn run_scheduled(
         }
     };
     // Frees a file's place when its worker is done, also while a panic unwinds, so the
-    // others never wait on a file that is gone; the panic still ends the batch as before.
+    // others never wait on a file that is gone.
     struct Release<'a>(&'a dyn Fn());
     impl Drop for Release<'_> {
         fn drop(&mut self) {
@@ -1191,7 +1199,30 @@ pub(crate) fn run_scheduled(
     }
     let run = |job: &Job, index: usize| {
         let started = Instant::now();
-        let mut report = convert(job, index);
+        // A panic in one file's conversion is that file's failure, with its message, and the
+        // batch carries on.
+        let mut report =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| convert(job, index)))
+                .unwrap_or_else(|payload| {
+                    let said = payload
+                        .downcast_ref::<&str>()
+                        .map(|s| (*s).to_owned())
+                        .or_else(|| payload.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "no message".to_owned());
+                    let mut failed = report::failure(
+                        report::CONVERT,
+                        report::input(&job.input),
+                        &format!(
+                    "the converter stopped unexpectedly (a bug in Dutchman: it panicked: {said})"
+                ),
+                    );
+                    if let Some(error) = failed.get_mut("error").and_then(Value::as_object_mut) {
+                        error.insert("kind".into(), json!("panic"));
+                        error.insert("code".into(), json!("panic"));
+                    }
+                    failed
+                });
+        report::ensure_reason(&mut report);
         if let Some(fields) = report.as_object_mut() {
             let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             fields.insert("elapsed_ms".to_owned(), json!(elapsed));
@@ -1557,7 +1588,8 @@ mod tests {
         const GIB: u64 = 1 << 30;
         // The panic comes first; the big file waits because nothing fits beside it.
         let jobs = [named_job("a9"), named_job("b1")];
-        let outcome = std::panic::catch_unwind(|| {
+        let finished = Mutex::new(Vec::new());
+        {
             run_scheduled(
                 &jobs,
                 2,
@@ -1569,7 +1601,11 @@ mod tests {
                     }
                     json!({"ok": true})
                 },
-                |_| {},
+                |event| {
+                    if let Event::Finished(index, report) = event {
+                        finished.lock().unwrap().push((index, report));
+                    }
+                },
                 &Policy {
                     cost: &|job| {
                         let (work, peak) = if job.input.to_string_lossy() == "a9" {
@@ -1588,8 +1624,17 @@ mod tests {
                     poll: Duration::from_millis(5),
                 },
             );
-        });
-        assert!(outcome.is_err(), "the panic still surfaces");
+        }
+        let mut finished = finished.into_inner().unwrap();
+        finished.sort_by_key(|(index, _)| *index);
+        assert_eq!(finished.len(), 2);
+        let message = finished[0].1["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("panicked: forced conversion panic"),
+            "{message}"
+        );
+        assert_eq!(finished[0].1["error"]["code"], "panic");
+        assert_eq!(finished[1].1["ok"], true);
     }
 
     #[test]
@@ -1704,6 +1749,131 @@ mod tests {
             finished[0].1
         );
         assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+    }
+
+    /// Runs one isolated conversion with a fake worker script and returns its report.
+    #[cfg(unix)]
+    fn isolated_with_script(script: &str) -> Value {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("fake-worker");
+        std::fs::write(&program, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let input = dir.path().join("synthetic.f3z");
+        std::fs::write(&input, []).unwrap();
+        let job = Job {
+            project_files: None,
+            fallback: None,
+            input,
+            output: dir.path().join("synthetic.sc"),
+            replace: true,
+            search: PartSearch::default(),
+        };
+        let limits = Limits {
+            timeout: Duration::from_secs(60),
+            max_memory: None,
+            design: None,
+        };
+        let options = ConvertOptions {
+            no_verify: true,
+            ..Default::default()
+        };
+        let mut report = convert_isolated_job(&program, &job, &options, &limits, None);
+        report::ensure_reason(&mut report);
+        report
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_converter_killed_by_a_signal_is_named() {
+        let report = isolated_with_script("kill -9 $$");
+        let message = report["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("signal 9 SIGKILL: likely out of memory"),
+            "{message}"
+        );
+        assert_eq!(report["error"]["code"], "signal_9");
+        assert_eq!(report["error"]["kind"], "worker_exit");
+        assert!(report["error"]["stage"].is_string());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_converter_that_panics_says_the_panic() {
+        let report = isolated_with_script(
+            "echo \"thread 'main' panicked at src/x.rs:1:1:\" >&2\necho 'boom in the reader' >&2\nexit 101",
+        );
+        let message = report["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("panicked: boom in the reader"),
+            "{message}"
+        );
+        assert_eq!(report["error"]["code"], "panic");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_converter_that_exits_without_output_says_its_exit_code() {
+        let report = isolated_with_script("exit 3");
+        let message = report["error"]["message"].as_str().unwrap();
+        assert!(message.contains("exit code 3, no report"), "{message}");
+        assert_eq!(report["error"]["code"], "exit_3");
+        let report = isolated_with_script("exit 0");
+        assert!(report["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("exited without writing a report"));
+        assert_eq!(report["error"]["code"], "no_report");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_archive_member_that_failed_is_named_when_the_decoder_gave_no_message() {
+        let report = isolated_with_script(
+            "echo '{\"dutchman_member\":\"Part 7\",\"event\":\"fail\"}' >&2\nexit 1",
+        );
+        let message = report["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("a design inside the archive could not be read: Part 7"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_failed_report_without_a_reason_gets_one() {
+        let mut empty = json!({"ok": false, "error": {"message": "cannot read this design: ",
+            "stage": "decode", "kind": "decode"}});
+        report::ensure_reason(&mut empty);
+        let message = empty["error"]["message"].as_str().unwrap();
+        assert!(message.contains("gave no reason") && message.contains("a design inside it"));
+        assert_eq!(empty["error"]["code"], "decode");
+        let mut blank = json!({"ok": false, "error": {"message": "  "}});
+        report::ensure_reason(&mut blank);
+        assert_eq!(blank["error"]["stage"], "input");
+        assert!(!blank["error"]["message"]
+            .as_str()
+            .unwrap()
+            .trim()
+            .is_empty());
+        let mut none = json!({"ok": false, "input": {"path": "a.f3z"}});
+        report::ensure_reason(&mut none);
+        assert!(none["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no reason"));
+        assert_eq!(none["error"]["kind"], "unknown");
+        let mut unplaced = json!({"ok": false, "completeness": {"placed": 47, "placements": 49,
+            "unplaced": {"x": 2}}});
+        report::ensure_reason(&mut unplaced);
+        assert!(unplaced.get("error").is_none());
+        assert_eq!(unplaced["reason"]["code"], "unplaced_parts");
+        assert!(unplaced["reason"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("47 of 49 parts placed: 2 parts couldn't be placed"));
+        let mut fine = json!({"ok": true});
+        report::ensure_reason(&mut fine);
+        assert_eq!(fine, json!({"ok": true}));
     }
 
     fn project_zip(path: &Path, entries: &[(&str, &[u8])]) {

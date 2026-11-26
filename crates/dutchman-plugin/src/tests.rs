@@ -26,7 +26,20 @@ fn native_options_and_structured_report() {
     let details = &report["details"];
     assert_eq!(details["schema"], "dutchman.plugin.report/2");
     assert!(details["shape_check"]["result"] != "Checked against the original shape");
-    let (stood, _) = run(r#"{"up_axis":"stand_up"}"#);
+    // The default is automatic, and a design whose source states no up axis keeps its axes.
+    assert!(matches!(Options::default().up_axis, crate::UpAxis::Auto));
+    assert!(matches!(
+        serde_json::from_str::<Options>("{}").unwrap().up_axis,
+        crate::UpAxis::Auto
+    ));
+    let (kept, kept_report) = run(r#"{"up_axis":"as_is"}"#);
+    assert_eq!(document(&kept), document(&design));
+    let kept_report: Value = serde_json::from_str(&kept_report).unwrap();
+    assert!(kept_report
+        .to_string()
+        .contains("Kept the file's axes as asked"));
+    let (stood, stood_report) = run(r#"{"up_axis":"stand_up"}"#);
+    assert!(stood_report.contains("Stood up as asked"));
     let original = document(&design);
     let stood = document(&stood);
     assert_eq!(
@@ -542,6 +555,13 @@ fn only_the_three_dialog_options_are_saved_and_offered() {
     assert!(
         serde_json::from_str::<Options>(&saved).is_ok(),
         "stored options are valid options"
+    );
+    // The automatic axis, the default, is saved and offered like the others.
+    let automatic = encode(&Options::default());
+    assert_eq!(
+        serde_json::from_str::<Value>(&field_defaults(Some(&automatic))).unwrap()["fields"]
+            ["up_axis"]["default"],
+        "auto"
     );
     // Nothing, damage or unknown values change nothing; one valid value still applies.
     for stored in [

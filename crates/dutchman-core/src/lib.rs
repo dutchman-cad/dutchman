@@ -39,11 +39,13 @@ pub mod source;
 mod source_errors;
 mod source_version;
 pub mod time;
+mod up_axis;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
     classify as classify_refusal, clean as clean_refusal, Refusal,
     GENERIC_CATEGORY as GENERIC_REFUSAL,
 };
+pub use up_axis::{Orientation, SourceUpAxis, UpAxisFinding, UpAxisOrigin, UpAxisReport};
 mod report;
 pub mod repro;
 
@@ -467,7 +469,49 @@ pub fn read_with_progress(
         report,
     );
     report.note_part_positions(search.part_positions);
+    if matches!(format, Format::FusionArchive | Format::FusionMultiDocument) {
+        record_up_axis(&model, input, search, report);
+    }
     Ok(model)
+}
+
+/// Records the up axis the export folder states for the Fusion design at `input`. An assembly
+/// is one frame: its root design's axis counts, and a design it inserts that states another
+/// is named.
+fn record_up_axis(model: &Model, input: &Path, search: &PartSearch, report: &mut Report) {
+    let top = search.project.as_deref();
+    let root = up_axis::resolve(
+        up_axis::from_file(model),
+        export_folder::up_axis(input, top),
+    );
+    let mut differing: Vec<String> = Vec::new();
+    if let Some(Ok(listing)) = export_folder::inserted(input, top) {
+        for reference in &listing.references {
+            let part = export_folder::up_axis(&reference.file, top);
+            if part.axis != SourceUpAxis::Unknown && part.axis != root.axis {
+                let name = reference
+                    .file
+                    .file_name()
+                    .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+                differing.push(format!("{name} is {}-up", part.axis.name().to_uppercase()));
+            }
+        }
+    }
+    let disagreement = (!differing.is_empty()).then(|| {
+        let shown: Vec<&str> = differing.iter().take(5).map(String::as_str).collect();
+        format!(
+            "inserted designs state another up axis than the root design ({}{}); the root's \
+             axis ({}) applies to the whole assembly",
+            shown.join("; "),
+            if differing.len() > shown.len() {
+                "; ..."
+            } else {
+                ""
+            },
+            root.axis.name()
+        )
+    });
+    report.record_up_axis(root, disagreement);
 }
 
 /// Gathers the components a single file places itself into `model.assembly`, and records the

@@ -4089,3 +4089,92 @@ fn stand_up_cli_flags_control_occurrence_transform() {
         ])
     );
 }
+
+/// Converts the unit cube from an export folder whose manifest says `up_axis`, with `flags`,
+/// and gives the written transform with the JSON report.
+fn export_orientation(
+    up_axis: serde_json::Value,
+    flags: &[&str],
+) -> (serde_json::Value, serde_json::Value) {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("Cube v1.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let mut entry = serde_json::json!({
+        "id": "urn:x:cube", "name": "Cube", "version": 1,
+        "files": [{"path": "Cube v1.f3d"}], "references": [],
+    });
+    if !up_axis.is_null() {
+        entry["up_axis"] = up_axis;
+    }
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "cad-export-manifest/1", "entries": [entry]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = dir.path().join("cube.sc");
+    let mut args = vec!["convert", "--json"];
+    args.extend_from_slice(flags);
+    args.push(input.to_str().unwrap());
+    args.push(output.to_str().unwrap());
+    let res = dutchman(&args);
+    assert!(res.status.success());
+    let report = json_of(&res);
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&output).unwrap()).unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+    (doc["occurrences"][0]["transform"].clone(), report)
+}
+
+#[test]
+fn up_axis_is_automatic_and_the_flags_override_it() {
+    let identity = serde_json::json!([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let stood = serde_json::json!([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let (transform, report) = export_orientation(serde_json::json!("y"), &[]);
+    assert_eq!(transform, stood);
+    assert_eq!(report["up_axis"]["found"], "y");
+    assert_eq!(report["up_axis"]["origin"], "export_manifest");
+    assert_eq!(report["up_axis"]["applied"], "stood_up");
+    assert_eq!(
+        report["up_axis"]["summary"],
+        "Stood up: the export says this design is Y-up"
+    );
+    let (transform, report) = export_orientation(serde_json::json!("z"), &[]);
+    assert_eq!(transform, identity);
+    assert_eq!(report["up_axis"]["applied"], "kept_axes");
+    let (transform, report) = export_orientation(serde_json::Value::Null, &[]);
+    assert_eq!(transform, identity);
+    assert_eq!(report["up_axis"]["found"], "unknown");
+    assert!(report["up_axis"]["summary"]
+        .as_str()
+        .unwrap()
+        .starts_with("Kept the file's axes: up axis unknown"));
+    // The flags win over what the export says.
+    assert_eq!(
+        export_orientation(serde_json::json!("z"), &["--stand-up"]).0,
+        stood
+    );
+    assert_eq!(
+        export_orientation(serde_json::json!("y"), &["--keep-axes"]).0,
+        identity
+    );
+    assert_eq!(
+        export_orientation(serde_json::json!("y"), &["--no-stand-up"]).0,
+        identity
+    );
+    // Both at once are refused.
+    let both = dutchman(&["convert", "--stand-up", "--keep-axes", "a.f3d", "b.sc"]);
+    assert_eq!(both.status.code(), Some(2));
+}

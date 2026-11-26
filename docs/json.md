@@ -194,8 +194,8 @@ faces without input surface geometry. Unspecified modeled construction, when an 
 can be placed, adds a Degraded loss explaining that only the cosmetic annotation is kept.
 Cosmetic thread contradictions name the designation’s nominal dimensions and secondary numeric
 values. Decimal rounding and floating-point conversion noise are accepted for metric labels.
-A matching UNC/UNF designation reports the separate SolidCraft cosmetic Thread limitation
-instead of a numeric conflict. These use the existing loss fields; no report schema or field changes.
+A matching UNC/UNF designation is written as a Unified Thread on a SolidCraft release with
+Unified thread support, and reports that missing support instead of a numeric conflict until then. These use the existing loss fields; no report schema or field changes.
 When reached in the timeline, a `cosmetic_thread` feature with `modeled: true` adds a
 Degraded loss with code `history/modeled-thread-retained`.
 Its `detail` includes the source designation when available and explains that hand,
@@ -749,6 +749,13 @@ source expression was decoded or that edits reproduce the source design's depend
 SolidWorks assembly reports use `input.format: "solidworks_assembly"` and
 `input.words: "reads geometry"`. The existing assembly completeness and loss fields report
 external occurrences left out and configuration fallbacks.
+
+A failed file always names what stopped it: `error.message`, `error.stage`, `error.kind` and a
+reason code in `error.code`. A converter that stopped without a report says how: for example
+`kind: "worker_exit"`, `code: "signal_9"` and a message ending “signal 9 SIGKILL: likely out of
+memory”, `code: "panic"` with the panic message, or `code: "exit_3"` for exit code 3. An error
+that came back with no text gets a message saying the reader gave no reason. A panic in one file
+of a batch is that file's failure.
 
 A failure carries `"ok": false`, `input` and `error`, and exits 1:
 
@@ -2095,9 +2102,11 @@ human-readable; use reason codes in programs.
 
 ## Output orientation
 
-The CLI options `--stand-up` and `--no-stand-up` (MCP `stand_up` and
-`no_stand_up`) control the saved design orientation. Reports retain the existing
-schemas and source coordinates; these options add no report fields. See
+The CLI options `--stand-up` and `--keep-axes` (alias `--no-stand-up`; MCP `stand_up` and
+`no_stand_up`) control the saved design orientation. When a source states or fails to state
+its up axis, or an option overrides it, the report has an `up_axis` object with `found`,
+`origin`, optionally `reason` and `disagreement`, `mode`, `applied` and `summary`. Source
+coordinates in reports are unchanged. See
 [the command reference](command-line.md) for the rotation and default.
 
 Spatial hole arrays with complete parallel, coplanar directed entries can map as one

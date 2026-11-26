@@ -435,6 +435,12 @@ fn a_thick_overlay_is_a_closed_solid_of_the_expected_volume() {
     assert_eq!(joins.len(), 1, "{joins:?}");
     assert_eq!(joins[0]["operation"], json!("join"));
     assert_eq!(joins[0]["tools"].as_array().unwrap().len(), 1);
+    // The piece joined away keeps no look of its own; the body it joined keeps its look.
+    let looks = &document(&bytes)["appearances"]["bodies"];
+    let tool = joins[0]["tools"][0].as_str().unwrap();
+    let target = joins[0]["target"].as_str().unwrap();
+    assert!(looks.get(tool).is_none(), "{looks}");
+    assert!(looks.get(target).is_some(), "{looks}");
     let Some(cli) = cli() else {
         eprintln!("skipped: set SOLIDCRAFT_CLI to check the solids");
         return;

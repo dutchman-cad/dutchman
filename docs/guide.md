@@ -641,8 +641,8 @@ targets keep the original final geometry with a named version refusal.
 
 Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
 secondary numeric values. ISO metric table designations tolerate decimal rounding and
-floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
-separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
+floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, and a Unified thread is written once a
+SolidCraft release supports Unified Thread designations; until then it is reported. See
 [cosmetic threads](history.md) for details.
 
 Separate modeled Thread features keep their helical shape in the imported final geometry
@@ -1003,7 +1003,9 @@ in the JSON report and do not count as placed. The CLI, app and plugin say
 “N parts couldn't be placed (their position in the archive couldn't be read).”
 The result is incomplete, with `verification.status` set to `partial`. Output is
 still written; JSON `ok` is `false` and the CLI returns exit status 1
-when parts are unplaced. This also covers single designs whose local components
+when parts are unplaced. That report has no `error`; its `reason` object (`stage`, `kind`,
+`code: "unplaced_parts"`, `message`, such as “47 of 49 parts placed: 2 parts couldn't be
+placed …”) says why, in batch results and in `failed.json`. This also covers single designs whose local components
 remain flattened because their occurrence positions could not be read. A replay
 against the same flattened source cannot prove their positions. Geometry and
 fallback transforms are unchanged. Decoded bodies without a written component
@@ -1140,9 +1142,10 @@ Library planning outcomes used by preflight keep empty output ids with
 
 ## Orient a Y-up design
 
-Use `--stand-up` with `convert` or `convert-all` to rotate a Y-up design +90°
-about +X, so its +Y axis becomes SolidCraft's +Z axis. Source axes are preserved
-by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
+A design is stood up (+90° about +X, so +Y becomes SolidCraft's +Z) by default when
+its source states that it is Y-up, as a Fusion export's manifest does; Z-up designs and
+designs of unknown up axis keep their axes. Use `--stand-up` with `convert` or
+`convert-all` to always rotate; `--keep-axes` (or `--no-stand-up`) never rotates. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.

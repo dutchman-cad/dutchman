@@ -217,7 +217,7 @@ mod guest {
                 }
             }
             // Parts are counted by size before they are read, so a design the guest cannot hold
-            // is refused in one plain line instead of by a memory trap.
+            // is refused in one plain line instead of by a memory or fuel trap.
             let load = crate::preflight::PartsLoad::new(file.size);
             let progress = std::sync::Arc::new(crate::progress::Progress::default());
             let budget = Cell::new(0u64);
