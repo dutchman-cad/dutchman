@@ -23,6 +23,59 @@ pub(crate) fn folder_access(file_name: &str, host: &str) -> String {
     )
 }
 
+/// The `dutchman.convert/1` report of a failed conversion, the shape the Dutchman app writes to
+/// `<name>.failed.json`: the input, and the error with its kind, stage and reason codes. Archive
+/// paths are left out of the message as everywhere else in the plugin.
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn failure_report(file_name: &str, error: &Error) -> serde_json::Value {
+    let path = std::path::Path::new(file_name);
+    let format = dutchman_core::Format::from_path(path);
+    let mut fields = serde_json::json!({
+        "message": plain(&error.to_string()).chars().take(1500).collect::<String>(),
+        "stage": error.stage().id(),
+        "upstream": error.upstream(),
+        "kind": error.kind(),
+    });
+    if let (Some(cause), Some(object)) = (error.cause(), fields.as_object_mut()) {
+        object.insert("cause".into(), serde_json::json!(cause));
+    }
+    serde_json::json!({
+        "schema": "dutchman.convert/1",
+        "ok": false,
+        "input": {
+            "path": file_name,
+            "format": format.map(dutchman_core::Format::id),
+            "format_name": format.map(dutchman_core::Format::name),
+            "program": format.map(dutchman_core::Format::family),
+            "extension": dutchman_core::Format::source_extension(path),
+            "words": format.map(dutchman_core::Format::words),
+        },
+        "error": fields,
+    })
+}
+
+/// What a person sees when `file_name` fails: the plain reason and the help links, then the full
+/// failure report in the text itself. The host gives a plugin no clipboard and no file to write,
+/// so the message is the only place the report can travel; it says how to get the same report
+/// as a file from the Dutchman app.
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn failure_in(file_name: &str, error: &Error) -> String {
+    let base = failure(error);
+    // A size refusal is one plain line that points to the app; the report adds nothing to it.
+    if matches!(error, Error::MemoryBudget(_) | Error::EmptyExport(_)) {
+        return base;
+    }
+    let stem = std::path::Path::new(file_name).file_stem().map_or_else(
+        || file_name.to_owned(),
+        |s| s.to_string_lossy().into_owned(),
+    );
+    let report = failure_report(file_name, error);
+    format!(
+        "{base}\n\nFull report ({stem}.failed.json, the dutchman.convert/1 report with its reason codes; the Dutchman app writes the same file when you open {file_name} in it: {DOWNLOAD}):\n{report}",
+        DOWNLOAD = crate::preflight::DOWNLOAD
+    )
+}
+
 pub(crate) const QUESTION: &str = "Is there a problem? Is something missing?";
 pub(crate) fn help() -> String {
     let policy: serde_json::Value =
@@ -80,6 +133,8 @@ pub(crate) fn failure(error: &Error) -> String {
         | Error::Restate(reason) => plain(reason),
         _ => plain(&error.to_string()),
     };
+    // A reason can quote a whole record; the person needs the start of it.
+    let reason: String = reason.chars().take(2000).collect();
     let intro = if matches!(error, Error::MemoryBudget(_) | Error::EmptyExport(_)) {
         ""
     } else {

@@ -1,6 +1,6 @@
 //! Local conversion reports saved beside a design. Reading never opens CAD files.
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -19,16 +19,15 @@ pub fn path(output: &Path, success: bool) -> PathBuf {
 /// Publish a complete report, keeping the previous report if writing fails.
 pub fn save(output: &Path, report: &Value) -> Result<(), String> {
     let target = path(output, report.get("ok") == Some(&Value::Bool(true)));
-    let parent = target
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
     let write = || -> Result<(), Box<dyn std::error::Error>> {
-        std::fs::create_dir_all(parent)?;
-        let mut file = tempfile::NamedTempFile::new_in(parent)?;
-        serde_json::to_writer_pretty(&mut file, report)?;
-        file.write_all(b"\n")?;
-        file.persist(&target)?;
+        if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut bytes = serde_json::to_vec_pretty(report)?;
+        bytes.push(b'\n');
+        // This report belongs to the design just written in its own slot, so it replaces the
+        // one an earlier attempt left there.
+        dutchman_core::safe_output::write(&target, &bytes, true)?;
         Ok(())
     };
     write().map_err(|err| format!("Could not save the local report at {}: {err}. Check the folder's permissions and free space.", target.display()))

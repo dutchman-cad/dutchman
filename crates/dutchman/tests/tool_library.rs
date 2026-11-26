@@ -99,15 +99,19 @@ fn a_tools_archive_converts_with_a_json_report() {
 }
 
 #[test]
-fn an_existing_default_output_is_kept_without_force() {
+fn an_existing_default_output_is_kept_unless_replaced() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("shop.json");
     std::fs::write(&input, library().to_string()).unwrap();
     let existing = dir.path().join("shop.camtools");
     std::fs::write(&existing, "mine").unwrap();
     let out = dutchman(&["convert", path(&input)]);
-    assert_eq!(out.status.code(), Some(2));
+    assert!(out.status.success());
     assert_eq!(std::fs::read_to_string(&existing).unwrap(), "mine");
+    assert_eq!(
+        camtools(&dir.path().join("shop (2).camtools"))["format"],
+        "camcraft-tools"
+    );
     let out = dutchman(&["convert", path(&input), "--force"]);
     assert!(out.status.success());
     assert_eq!(camtools(&existing)["format"], "camcraft-tools");

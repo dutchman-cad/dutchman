@@ -76,7 +76,7 @@ fn not_decoded(format: Format, input: &Path) -> Value {
                             "dwg" => "a DWG drawing",
                             "dxf" => "a DXF drawing",
                             "text" => "a text file",
-                            _ => "an unrecognised file",
+                            _ => "an unrecognized file",
                         },
                         format.name()
                     ),
@@ -92,7 +92,7 @@ fn not_decoded(format: Format, input: &Path) -> Value {
                 "file",
                 code::FORMAT_NOT_DECODED,
                 format!(
-                    "{} is identified{detail}, but its sheets and views are not decoded yet",
+                    "{} is recognized{detail}, but reading its sheets and views isn't supported yet",
                     format.name()
                 ),
             );
@@ -211,7 +211,7 @@ fn fusion_section(input: &Path) -> Option<Value> {
         Severity::Dropped,
         "archive",
         code::FORMAT_NOT_DECODED,
-        format!("the archive holds {drawings} Fusion drawings (.f2d); their sheets and views are not decoded yet"),
+        format!("the archive holds {drawings} Fusion drawings (.f2d); reading their sheets and views isn't supported yet"),
     );
     let plan = Plan::default();
     Some(section(
