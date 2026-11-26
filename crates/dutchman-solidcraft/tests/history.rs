@@ -6782,6 +6782,88 @@ fn body_patterns_use_names_assigned_by_earlier_features() {
     }
 }
 
+/// A body seed named by its producer, or as the one body of the pattern's input state,
+/// resolves to the name that producer gave it; a state holding another body is refused.
+#[test]
+fn body_patterns_resolve_generated_and_input_state_seeds() {
+    let linear = json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3, "omitted_instances": [], "symmetric": false});
+    let generated = json!({"kind": "generated", "value": {
+        "bodies": [{"feature": "f3d:model:feature#2", "local_id": "cube"}], "native": "selection"}});
+    let historical = json!({"kind": "historical", "value": {
+        "state": "synthetic:history-input:state#0", "bodies": ["synthetic:history-input:body#0"],
+        "native": "selection"}});
+    for (selection, state_bodies, mapped) in [
+        (
+            generated.clone(),
+            json!(["synthetic:history-input:body#0"]),
+            true,
+        ),
+        (
+            historical.clone(),
+            json!(["synthetic:history-input:body#0"]),
+            true,
+        ),
+        (
+            historical,
+            json!([
+                "synthetic:history-input:body#0",
+                "synthetic:history-input:body#1"
+            ]),
+            false,
+        ),
+    ] {
+        let input_state = selection["kind"] == "historical";
+        let mut model = pattern_seeds(
+            patterned(linear.clone()),
+            json!([{"kind": "bodies", "value": selection}]),
+        );
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["feature_result_topologies"] = json!([{
+            "id": "synthetic:history-result:state#0", "output_of": "f3d:model:feature#2",
+            "members": [{"kind": "body", "id": "cube"}]}]);
+        wire["model"]["feature_input_topologies"] = json!([{
+            "id": "synthetic:history-input:state#0", "input_of": "f3d:model:feature#3",
+            "bodies": state_bodies, "faces": [], "edges": [], "vertices": [],
+            "edge_geometry": [], "face_owners": []}]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some("0.44.0".parse().unwrap())),
+        );
+        if mapped {
+            assert!(
+                history_line(&report).starts_with("3 of 3 features rebuilt"),
+                "{}",
+                history_line(&report)
+            );
+            assert_eq!(document["features"][2]["bodies"], json!(["unit cube"]));
+            // The replay writes for the CLI's own version: before SolidCraft 0.44 a generated
+            // seed keeps the final geometry.
+            let replayable = |cli: &PathBuf| {
+                input_state
+                    || dutchman_solidcraft::VersionGate::ScopedBodies.supported(
+                        dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(
+                            cli.clone(),
+                        )),
+                    )
+            };
+            if let Some(cli) = solidcraft().filter(replayable) {
+                assert!(
+                    (volumes(&cli, &written(&model).0).iter().sum::<f64>() - 3000.0).abs() < 1e-6
+                );
+            }
+        } else {
+            assert!(
+                history_line(&report).contains("when that state holds several bodies"),
+                "{}",
+                history_line(&report)
+            );
+        }
+    }
+}
+
 #[test]
 fn regular_explicit_pattern_locations_map_to_spacing_and_span() {
     let direction = json!({"x": 1.0, "y": 0.0, "z": 0.0});
