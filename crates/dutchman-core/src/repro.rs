@@ -35,7 +35,7 @@ pub fn subset(model: &Model, arena: &str, ordinal: usize) -> Result<Model, Strin
 }
 
 fn subset_guarded(model: &Model, arena: &str, ordinal: usize) -> Result<Model, String> {
-    let mut document = serde_json::to_value(&model.ir).map_err(|e| e.to_string())?;
+    let mut document = crate::ir_wire::to_value(&model.ir).map_err(|e| e.to_string())?;
     let homes = ["geometry", "model"];
     let arenas = || {
         homes
@@ -116,7 +116,7 @@ fn subset_guarded(model: &Model, arena: &str, ordinal: usize) -> Result<Model, S
         }
     }
     let mut subset = model.clone();
-    subset.ir = serde_json::from_value(document).map_err(|e| e.to_string())?;
+    subset.ir = crate::ir_wire::from_value(document).map_err(|e| e.to_string())?;
     // Dependency closure need not retain the enclosing document root.
     subset.ir.fragment = true;
     subset.fidelity = None;
@@ -306,7 +306,8 @@ pub fn bundle(
             document
                 .source
                 .as_ref()
-                .map_or("cadir", |source| source.format()),
+                .and_then(|source| cadmpeg_core::text::CodecId::new(source.format()))
+                .unwrap_or_else(|| cadmpeg_core::text::CodecId::new("cadir").unwrap()),
             cadmpeg_registry::repro::Stage::Check,
         );
         let initial = cadmpeg_registry::repro::cut(document, finding, options).ok();

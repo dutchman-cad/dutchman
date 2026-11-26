@@ -35,7 +35,7 @@ fn model(kind: &str) -> Model {
         arena["features"].as_array_mut().unwrap().push(json!({"id": "synthetic:test:feature#3", "ordinal": 2, "name": "Copies", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {"seeds": [{"kind": "feature", "value": "synthetic:test:feature#2"}], "pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3, "omitted_instances": [], "symmetric": false}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     }
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         fidelity: None,
         name: "Synthetic".to_owned(),
         source_file: None,
@@ -81,7 +81,7 @@ fn two_bodies(second: &str) -> Model {
     bodies.push(other);
     wire["geometry"]["bodies"] = json!(bodies);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         fidelity: None,
         name: "Synthetic".to_owned(),
         source_file: None,
@@ -130,12 +130,12 @@ fn synthetic_histories_match_macro_goldens() {
 }
 
 fn with_unmapped_suffix(mut model: Model) -> Model {
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
         .push(json!({"id": "synthetic:test:feature#3", "ordinal": 2, "name": "Unmapped", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Synthetic unsupported feature", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -184,7 +184,7 @@ fn partial_history_keeps_pad_and_sketch_beside_the_final_step() {
 #[test]
 fn freecad_refusals_stop_the_prefix_and_keep_later_sketches() {
     let mut model = model("pad");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let mut sketch = wire["model"]["features"][0].clone();
     sketch["id"] = json!("synthetic:test:feature#4");
     sketch["ordinal"] = json!(3);
@@ -200,7 +200,7 @@ fn freecad_refusals_stop_the_prefix_and_keep_later_sketches() {
         .as_array_mut()
         .unwrap()
         .extend([tapered, sketch]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (script, report) = written(&model, FreeCadWriter::new());
     let features = &report.outcome().unwrap().features;
     assert_eq!(features[1].status, FeatureStatus::Mapped);
@@ -232,7 +232,7 @@ fn import_only_does_not_keep_a_partial_prefix() {
 #[test]
 fn shared_mapping_failure_keeps_later_sketches_but_no_later_solids() {
     let mut model = model("partial");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let mut sketch = wire["model"]["features"][0].clone();
     sketch["id"] = json!("synthetic:test:feature#4");
     sketch["ordinal"] = json!(3);
@@ -245,7 +245,7 @@ fn shared_mapping_failure_keeps_later_sketches_but_no_later_solids() {
         .as_array_mut()
         .unwrap()
         .extend([sketch, pad]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (script, report) = written(&model, FreeCadWriter::new());
     let features = &report.outcome().unwrap().features;
     assert_eq!(features[1].status, FeatureStatus::Mapped);
@@ -259,7 +259,7 @@ fn shared_mapping_failure_keeps_later_sketches_but_no_later_solids() {
 #[test]
 fn partial_prefix_uses_timeline_order_and_excludes_suppressed_features() {
     let mut model = model("partial");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let mut suppressed = wire["model"]["features"][2].clone();
     suppressed["id"] = json!("synthetic:test:feature#4");
     suppressed["ordinal"] = json!(0);
@@ -270,7 +270,7 @@ fn partial_prefix_uses_timeline_order_and_excludes_suppressed_features() {
     rows[2]["ordinal"] = json!(3);
     rows.push(suppressed);
     rows.reverse();
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = written(&model, FreeCadWriter::new());
     assert_eq!(
         report.outcome().unwrap().features[0].status,
@@ -344,9 +344,9 @@ fn import_only_and_unmapped_features_keep_step_and_report_each_feature() {
     assert!(!script.contains("tip = rebuild(json.loads("));
 
     let mut model = model;
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][1]["definition"] = json!({"kind":"operation", "value": {"kind": "native", "value": {"kind": "Synthetic unsupported feature", "parameters": {}}}});
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = written(&model, FreeCadWriter::new());
     assert_eq!(report.outcome().unwrap().features.len(), 2);
     assert!(report
@@ -385,13 +385,13 @@ fn huge_pattern_counts_are_reported_before_macro_execution() {
 #[test]
 fn sketch_constraints_keep_their_evaluated_dimensions() {
     let mut model = model("pad");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["parameters"] = json!([{"id": "synthetic:test:parameter#1", "name": "Radius", "expression": "2 mm", "owner": "synthetic:test:feature#1", "value": {"kind": "length", "value": 2.0}, "ordinal": 0, "dependencies": [], "properties": {}}]);
     wire["model"]["sketch_constraints"] = json!([{
         "id": "synthetic:test:sketch-constraint#1", "sketch": "synthetic:test:sketch#1",
         "definition": {"kind": "radius", "entity": "synthetic:test:sketch-entity#1", "parameter": "synthetic:test:parameter#1"}
     }]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let mapped = dutchman_solidcraft::mapped_history(&model, &mut Report::default());
     let rows = mapped.features.unwrap();
     assert_eq!(rows[0]["sketch"]["constraints"][0]["type"], "radius");
@@ -404,9 +404,9 @@ fn sketch_constraints_keep_their_evaluated_dimensions() {
 #[test]
 fn a_dimension_named_by_a_parameter_gets_the_parameters_value() {
     let mut model = model("pad");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["parameters"] = json!([{"id": "synthetic:test:parameter#1", "name": "Radius", "expression": "2 mm", "owner": "synthetic:test:feature#1", "value": {"kind": "length", "value": 2.0}, "ordinal": 0, "dependencies": [], "properties": {}}]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let mapped = dutchman_solidcraft::mapped_history(&model, &mut Report::default());
     assert_eq!(
         mapped.parameter_values.get("Radius").map(String::as_str),
@@ -552,7 +552,7 @@ fn joint_model() -> Model {
 fn raw_joint_model(definition: Value) -> Model {
     let family = definition["kind"].as_str().unwrap_or_default().to_owned();
     let mut model = joint_model();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let identity = dutchman_core::placement::IDENTITY;
     wire["model"]["product_definitions"] = json!([
         {"id": "synthetic:test:product#part", "kind": "part", "bom_properties": {}, "bodies": [], "sketches": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]},
@@ -590,7 +590,7 @@ fn raw_joint_model(definition: Value) -> Model {
             connector("synthetic:test:occurrence#base", frame_a),
             connector("synthetic:test:occurrence#arm", joint.frame_b)
         ]}}, "drives": []}]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     // The core converts only these families; the others reach the writer through CADIR.
     let motion = match family.as_str() {
         "fixed" => Some(dutchman_core::Motion::Rigid),
@@ -864,12 +864,12 @@ App.Console.PrintMessage('DUTCHMAN_JOINT_OK\n')
 fn joint_attachment_offsets_grounding_and_operand_refusals_are_explicit() {
     use dutchman_core::placement::IDENTITY;
     let mut model = raw_joint_model(json!({"kind": "cylindrical"}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let mut offset = IDENTITY;
     offset[0][3] = 5.0;
     wire["model"]["assembly_joints"][0]["operands"]["value"]["offset_frames"] =
         json!([offset, IDENTITY]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (script, _) = written(&model, FreeCadWriter::new());
     assert_eq!(assembly_data(&script)["joints"][0]["frame_a"][0][3], 5.0);
     assert_eq!(assembly_data(&script)["joints"][0]["frame_a"][2][3], 10.0);
@@ -906,10 +906,10 @@ fn joint_attachment_offsets_grounding_and_operand_refusals_are_explicit() {
         .any(|loss| loss.detail.contains("suppressed grounding")));
 
     let mut model = raw_joint_model(json!({"kind": "ball"}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["assembly_joints"][0]["operands"]["value"]["connectors"][0]["operand"]
         ["container"]["occurrence_path"] = json!(["NestedPart"]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (script, report) = written(&model, FreeCadWriter::new());
     assert!(assembly_data(&script)["joints"]
         .as_array()
@@ -992,7 +992,7 @@ fn off_axis_model(definition: Value, ground: Option<usize>) -> Model {
     assembly.joints[0].frame_a = axis;
     assembly.joints[0].frame_b = frame_b;
     assembly.held = ground.map(|part| vec![vec![part]]).unwrap_or_default();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let connectors = &mut wire["model"]["assembly_joints"][0]["operands"]["value"]["connectors"];
     connectors[0]["frame"] = json!(axis);
     connectors[1]["frame"] = json!(frame_b);
@@ -1005,7 +1005,7 @@ fn off_axis_model(definition: Value, ground: Option<usize>) -> Model {
                     "operand": {"container": {"kind": "occurrence", "occurrence": format!("synthetic:test:occurrence#{name}"), "occurrence_path": []}, "object": "Body", "subelements": []},
                     "frame": IDENTITY, "detached": false}}}, "drives": []}));
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
@@ -1243,7 +1243,7 @@ fn native_document_rebuilds_a_synthetic_pad_when_freecad_is_configured() {
     }
     // A square pad with exactly the same shape as cadmpeg's synthetic 10 mm cube.
     let mut source = model("pad");
-    let mut wire = serde_json::to_value(&source.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&source.ir).unwrap();
     let entities = (0..4)
         .map(|i| {
             let points = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
@@ -1259,7 +1259,7 @@ fn native_document_rebuilds_a_synthetic_pad_when_freecad_is_configured() {
     wire["model"]["sketches"][0]["profiles"] = json!([profile]);
     wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["side"]["termination"]
         ["length"] = json!(10.0);
-    source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    source.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let runner = super::run::FreeCadRunner::new(
         FreeCadWriter::new(),
         true,

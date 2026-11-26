@@ -380,7 +380,11 @@ fn decode_unguarded(
     }
     let reading_name = path.file_name().map(|name| name.to_string_lossy());
     let reading = progress.map(|p| p.stage_step(crate::StepKind::Reading, reading_name.as_deref()));
-    let options = DecodeOptions { depth, policy };
+    let options = DecodeOptions {
+        depth,
+        policy,
+        strictness: cadmpeg_ir::report::strictness::Strictness::default(),
+    };
     let decode = || codec.decode(&mut Cursor::new(bytes), &options);
     let members = progress.and_then(|p| p.members.clone()).map(|sink| {
         std::rc::Rc::new(Members {
@@ -1419,6 +1423,7 @@ mod tests {
         let options = DecodeOptions {
             depth: DecodeDepth::Design,
             policy,
+            strictness: cadmpeg_ir::report::strictness::Strictness::default(),
         };
         let decoded = codec.decode(&mut Cursor::new(&bytes), &options).unwrap();
         let (_, report, _) = decoded.into_parts();
@@ -2003,6 +2008,7 @@ mod tests {
         );
         let findings = vec![Finding {
             check: Check::ParameterDomain,
+            rule: cadmpeg_ir::report::check::RuleName::from_static("eval.parameter-domain"),
             severity: CadmpegSeverity::Error,
             entity: Some(model.ir.geometry.coedges[0].id.to_string()),
             related: Vec::new(),

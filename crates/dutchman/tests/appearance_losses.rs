@@ -26,7 +26,7 @@ fn appearance_causes_are_counted_without_design_identifiers() {
             &mut Report::default(),
         )
         .unwrap();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let m = &mut wire["model"];
         m["features"] = json!([]);
         m["appearances"] = json!([
@@ -61,7 +61,7 @@ fn appearance_causes_are_counted_without_design_identifiers() {
             {"id": "synthetic:private:binding#target", "target": {"entity": target}, "appearance": colour, "channels": {}},
             {"id": "synthetic:private:binding#repeat", "target": {"entity": target}, "appearance": colour, "channels": {}}
         ]);
-        model.ir = serde_json::from_value(wire).unwrap();
+        model.ir = dutchman_core::ir_wire::from_value(wire).unwrap();
         let mut report = Report::default();
         SolidCraftWriter::new()
             .verification(Verification::Off)

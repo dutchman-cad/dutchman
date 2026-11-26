@@ -30,10 +30,10 @@ pub(crate) fn cube() -> Model {
 
 /// `model` with its feature and parameter arenas replaced.
 pub(crate) fn with(model: Model, features: Value, parameters: Value) -> Model {
-    let mut ir = serde_json::to_value(&model.ir).unwrap();
+    let mut ir = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     ir["model"]["features"] = features;
     ir["model"]["parameters"] = parameters;
-    let ir = cadmpeg_ir::CadIr::from_json(&ir.to_string()).unwrap();
+    let ir = dutchman_core::ir_wire::from_str(&ir.to_string()).unwrap();
     Model { ir, ..model }
 }
 

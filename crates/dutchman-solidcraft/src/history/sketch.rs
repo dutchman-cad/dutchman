@@ -2393,7 +2393,7 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap();
-        let wire = serde_json::to_value(&model.ir.model).unwrap();
+        let wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap()["model"].clone();
         let mut ctx = Context::testing(&wire);
         ctx.params = super::super::params::map(&model, &mut Report::default()).1;
         let feature = ctx.arena("features").first().unwrap();

@@ -50,7 +50,7 @@ fn changed(bytes: &[u8], mut edit: impl FnMut(&str, &mut Value)) -> Vec<u8> {
 }
 
 fn timeline(model: &Model) -> Value {
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -85,7 +85,7 @@ fn synthetic_bundles_retain_the_expected_cadir_rows_and_final_step() {
         assert_eq!(model.ir.geometry.bodies.len(), 1);
         let wire = timeline(&model);
         let roundtrip: cadmpeg_ir::CadIr =
-            serde_json::from_value(serde_json::to_value(&model.ir).unwrap()).unwrap();
+            serde_json::from_value(dutchman_core::ir_wire::to_value(&model.ir).unwrap()).unwrap();
         assert_eq!(roundtrip, model.ir);
         assert!(wire["model"].get("bodies").is_none());
         assert!(!wire["geometry"]["edges"].as_array().unwrap().is_empty());

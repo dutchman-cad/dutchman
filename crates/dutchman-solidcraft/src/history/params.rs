@@ -1219,7 +1219,7 @@ mod map_tests {
             ),
         ]);
         let model = with(cube(), features, parameters);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let cells: Vec<_> = model
             .ir
             .model
@@ -1234,7 +1234,7 @@ mod map_tests {
             "column_widths": [], "row_heights": [], "merged_ranges": [],
         }]);
         dutchman_core::Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..model
         }
     }

@@ -33,8 +33,8 @@ fn reading_a_files_bytes_gives_the_model_reading_its_path_does() {
     assert_eq!(from_bytes.name, from_path.name);
     assert_eq!(from_bytes.source_file, from_path.source_file);
     assert_eq!(
-        serde_json::to_value(&from_bytes.ir).unwrap(),
-        serde_json::to_value(&from_path.ir).unwrap()
+        dutchman_core::ir_wire::to_value(&from_bytes.ir).unwrap(),
+        dutchman_core::ir_wire::to_value(&from_path.ir).unwrap()
     );
 
     // A file whose extension names no format Dutchman reads is refused.

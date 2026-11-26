@@ -360,7 +360,7 @@ pub(crate) fn imported_restated(
     if !name_all && model.ir.model.appearance_bindings.is_empty() {
         return Ok(History::default());
     }
-    let wire = serde_json::to_value(&model.ir)
+    let wire = dutchman_core::ir_wire::to_value(&model.ir)
         .map_err(|err| dutchman_core::Error::Encode(format!("cannot map appearances: {err}")))?;
     let mut ctx = Context::new(wire.get("model").unwrap_or(&Value::Null))
         .with_geometry(wire.get("geometry").unwrap_or(&Value::Null));
@@ -1424,8 +1424,8 @@ fn map_into(
             "CADIR v11 design-only history is not mapped: the design layer's history was not projected into model history (the design-history entries of the report say why)".to_owned(),
         );
     }
-    let mut document =
-        serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
+    let mut document = dutchman_core::ir_wire::to_value(&model.ir)
+        .map_err(|err| format!("cannot read the model: {err}"))?;
     check_version(&document)?;
     if let Some(model) = document.get_mut("model") {
         profile::resolve_sketch_features(model, target_version);
@@ -1852,7 +1852,7 @@ pub(crate) fn sketches_where(
     if count == 0 {
         return (kept, 0);
     }
-    if model.ir.check_scope().is_err() || !IR_VERSIONS.contains(&model.ir.ir_version()) {
+    if !model.ir.scope_violations().is_empty() || !IR_VERSIONS.contains(&model.ir.ir_version()) {
         return (kept, count);
     }
     // Reference sketches read only the neutral arenas in `wire::SKETCH_ARENAS`. Keep those
@@ -3002,7 +3002,9 @@ mod tests {
             };
             let whole = SketchWire::new();
             whole
-                .set(Some(serde_json::to_value(&model.ir.model).unwrap()))
+                .set(Some(
+                    dutchman_core::ir_wire::to_value(&model.ir).unwrap()["model"].clone(),
+                ))
                 .unwrap();
             let subset = SketchWire::new();
             let (mut a_notes, mut b_notes) = (Report::default(), Report::default());
@@ -3693,7 +3695,7 @@ mod tests {
         let mut source = cube();
         source.ir = cadmpeg_ir::examples::unit_cube().unwrap();
         source.fidelity = None;
-        let mut wire = serde_json::to_value(&source.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&source.ir).unwrap();
         let template = wire["geometry"].clone();
         for (prefix, label) in [("skin", "Skin"), ("other", "Other")] {
             let text = serde_json::to_string(&template)
@@ -3713,7 +3715,7 @@ mod tests {
             }
         }
         wire["geometry"]["bodies"][0]["name"] = json!("Solid");
-        source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        source.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let model = &wire["model"];
         let mut ctx = Context::new(model).with_geometry(&wire["geometry"]);
         ctx.source = Some(&source);
