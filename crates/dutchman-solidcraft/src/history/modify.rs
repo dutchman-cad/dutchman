@@ -63,11 +63,7 @@ fn bodies(
             .iter()
             .find(|(known, _)| known == id)
             .ok_or("it selects a body that an earlier feature has not named")?;
-        if ctx
-            .named_bodies
-            .iter()
-            .any(|(other, n)| other != id && n == name)
-        {
+        if ctx.body_name_shared(id, name) {
             return Err("its body name is not unique".to_owned());
         }
         names.push((Some(id.to_owned()), name.clone()));
@@ -125,12 +121,7 @@ fn captured_names(
         let [(_, name)] = matches.as_slice() else {
             return Err("its generated body has no unique earlier name".into());
         };
-        if ctx
-            .named_bodies
-            .iter()
-            .any(|(id, n)| id != local && n == name)
-            || names.iter().any(|(_, known)| known == name)
-        {
+        if ctx.body_name_shared(local, name) || names.iter().any(|(_, known)| known == name) {
             return Err("its generated body name is not unique".into());
         }
         names.push((Some(local.to_owned()), name.clone()));

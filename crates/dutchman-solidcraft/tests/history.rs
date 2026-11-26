@@ -22051,6 +22051,37 @@ fn body_moves_keep_resolved_transforms_and_selected_bodies() {
     }
 }
 
+/// A captured base body is registered under its final id and its history-body id. A later
+/// feature that selects it by its final id finds one body, not an ambiguous name.
+#[test]
+fn a_resolved_selection_of_a_captured_base_body_is_not_ambiguous() {
+    let mut model = based_cube_changed_later(true);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    let last = features.len() - 1;
+    features[last]["name"] = json!("Move");
+    features[last]["definition"]["value"] = body_move([5.0, 0.0, 0.0], None);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0)),
+    );
+    let moved = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|feature| feature["type"] == "move");
+    assert!(moved.is_some(), "{}", history_line(&report));
+    assert_eq!(
+        moved.unwrap()["bodies"],
+        document["features"][0]["body_names"],
+        "{}",
+        history_line(&report)
+    );
+}
+
 #[test]
 fn body_moves_rebuild_from_a_captured_base_with_two_identity_aliases() {
     let base = based_cube_changed_later(true);

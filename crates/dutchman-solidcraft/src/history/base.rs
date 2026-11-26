@@ -339,8 +339,10 @@ fn import_history_body(
         .map_err(|err| format!("base feature \"{name}\": {err}"))?;
     let names = super::faces::import_names(ctx, &[body], Some(&text));
     if let [name] = names.as_slice() {
-        ctx.named_bodies
-            .push((nest.topology.body.id.as_str().to_owned(), name.clone()));
+        // The nest's id is a second id for the body `import_names` just named.
+        let alias = nest.topology.body.id.as_str().to_owned();
+        ctx.body_aliases.insert(alias.clone());
+        ctx.named_bodies.push((alias, name.clone()));
     }
     let mut mapped = json!({
         "id": id,
