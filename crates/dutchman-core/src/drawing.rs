@@ -174,12 +174,12 @@ fn dwg_version(version: &str) -> Option<&'static str> {
     })
 }
 
-/// What to tell a user whose drawing is accepted but not decoded yet.
+/// What to tell a user whose drawing is recognised but whose sheets are not read yet. The
+/// result card shows it under the line that says the sheets are not supported yet, and above
+/// the help steps that ask for a PDF or DXF export, so it says only what was not done.
 pub fn not_decoded_message(format: Format) -> String {
     format!(
-        "{} files are accepted, but their sheets and views cannot be read yet, so no drawing was \
-         written. The report says what was identified; please send it with the file so the \
-         reader can be built.",
+        "{}: no drawing was written. Please send the file so the reader can be built.",
         format.name()
     )
 }

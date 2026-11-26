@@ -15,9 +15,22 @@ test this component.
 
 Open Fusion, Inventor, SolidWorks or FreeCAD files with **File > Open**. Before reading
 native geometry, the plugin checks bounded archive indexes and the desktop app's measured
-memory/time estimate. It retains a conservative 520 MB peak-memory estimate ceiling and
-a five-minute time estimate ceiling, and links to the [Dutchman app download](https://github.com/dutchman-cad/dutchman/releases/latest).
-The guest's actual memory limit is 2048 MiB; the lower estimate ceiling also bounds conversion work.
+memory/time estimate. The memory ceiling is 1,700 MB (`preflight::PEAK_BYTES`, which a test
+keeps below the manifest's 2048 MiB guest memory) and the time ceiling five minutes. A refusal
+is one line that names the limit that fired, what the design needs and what the plugin has
+(`preflight::too_large`), then points to the [Dutchman app download](https://github.com/dutchman-cad/dutchman/releases/latest).
+There is no cap on the number of parts or components: the only counts are the archive's
+design files (documents) in the Fusion work estimate below, which the message labels as such, and
+the host's 4096 file reads per import.
+
+An Inventor or SolidWorks assembly's own file only lists its parts, so its size does not stand
+for the design: the old estimate multiplied the 5 MB top-level `.iam` of a 67-part public
+design as if it were one 577 MB part and refused it. The plugin now judges time and work from the
+assembly file, and its memory as the parts are read: `preflight::PartsLoad` adds each part's size
+(the host reports it before any byte is read) to what has been read so far, and refuses before
+reading a part when the projected memory (100 MB plus 60 bytes per file byte, an upper bound) does
+not fit. The core reads one part at a time and frees its bytes once it is decoded, so only
+the decoded design grows. The guest's memory limit is 2048 MiB.
 The module itself declares that 2048 MiB maximum and reserves a 16 MiB stack, so hosts that cannot impose a limit, such as web browsers, enforce the same ceiling.
 The app can convert larger designs and save a `.sc` to open in SolidCraft. Compressed inner archive checks are bounded to 16 MiB in total; larger checks also
 direct you to the app. The estimate is
@@ -347,6 +360,13 @@ One-run observations on a shared builder.
 | Harness process peak RSS after first compilation | 4,804,720 KiB (4.58 GiB) |
 | Guest peak linear memory, public fixtures (`peak_guest_memory` lines) | 3.3 to 15.2 MiB per file (inputs of 0.6 to 15 KB) |
 | Native peak RSS, one 68 MB Fusion archive, `dutchman convert --threads 1 --no-verify` | 3.8 GiB (3,894,656 KiB), 2 min 51 s |
+
+A public 94-placement Inventor assembly (an FRC swerve module, `SDS MK4i Swerve Module, NEOs.0002.iam`,
+4.4 MB, with its part files) converts natively in 7.9 s at 572 MB peak RSS, but in the plugin it
+used all of the manifest's 100,000,000,000 fuel after 12.4 s, with the guest's linear memory at
+179 MiB at that point. For assemblies of this size the work budget, not memory, is the limit that
+fires on released SolidCraft; the plugin cannot ask for more fuel there (see the manifest
+notes above), so the host reports the exhausted fuel and the Dutchman app converts the design.
 
 The manifest asks for 2048 MiB: the public fixtures need under 16 MiB, and the native run of
 a very large archive shows memory growing to about 57 times the input. These observations

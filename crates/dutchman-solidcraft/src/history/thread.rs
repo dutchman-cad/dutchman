@@ -81,7 +81,7 @@ pub(super) fn map(
         }
         format!("M{diameter}x{pitch}")
     };
-    let (face, radius, axis) = cylinder_point(
+    let (face, radius, axis, radial) = cylinder_point(
         ctx,
         definition.get("face").ok_or("its thread face is missing")?,
     )?;
@@ -91,11 +91,25 @@ pub(super) fn map(
         .and_then(|source| designation_size(source).ok())
         .map_or(diameter, |(major, _, _)| major);
     if let Some(sketched) = resized_by_thread(ctx, axis, radius, nominal) {
-        return Err(format!(
-            "its face is stored at diameter {} mm, but the sketch that made it is {} mm; the source thread changed the size, which a SolidCraft cosmetic thread cannot do, so the thread is not rebuilt and the stored shape is kept",
-            radius * 2.0,
-            sketched * 2.0
-        ));
+        // Fusion sizes the face to the thread class's diameter (the middle of its
+        // tolerance range), where the sketch kept the nominal size. A SolidCraft cosmetic
+        // thread changes nothing, so the same resize is written as its own offset-face
+        // feature on the sketched cylinder, just before the annotation.
+        let offset = ((radius - sketched) * 1e9).round() / 1e9;
+        let nominal_point = [
+            face[0] + radial[0] * (-offset),
+            face[1] + radial[1] * (-offset),
+            face[2] + radial[2] * (-offset),
+        ];
+        let body = single_live_body(ctx);
+        let id = ctx.id();
+        let mut resize = json!({"id": id, "type": "offset_face", "suppressed": false,
+            "name": format!("{} size", name(feature).unwrap_or("Thread")),
+            "faces": [nominal_point], "distance": format!("{offset} mm")});
+        if let (Some(body), Some(fields)) = (body, resize.as_object_mut()) {
+            fields.insert("body".to_owned(), json!(body));
+        }
+        ctx.extra.push(resize);
     }
     let length = match definition.pointer("/extent/kind").and_then(Value::as_str) {
         Some("through") => None,
@@ -254,7 +268,7 @@ fn numbered_size(text: &str) -> Option<f64> {
 /// A cosmetic annotation does not change topology. Its final face can therefore supply a
 /// pick, unlike a cut or blend. Require a complete cylindrical band between two circular
 /// rims, so the midpoint is proven inside the selected face, away from its boundaries.
-fn cylinder_point(ctx: &Context, selection: &Value) -> Result<(V3, f64, V3), String> {
+fn cylinder_point(ctx: &Context, selection: &Value) -> Result<(V3, f64, V3, V3), String> {
     if selection.get("kind").and_then(Value::as_str) == Some("historical") {
         return Err(
             "its historical thread face has no resolved input surface geometry yet".to_owned(),
@@ -287,7 +301,7 @@ fn cylinder_point(ctx: &Context, selection: &Value) -> Result<(V3, f64, V3), Str
     })
 }
 
-fn band_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<(V3, f64, V3)> {
+fn band_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<(V3, f64, V3, V3)> {
     let origin = v3(geometry.get("origin"))?;
     let axis = unit(v3(geometry.get("axis"))?)?;
     let radial = unit(v3(geometry.get("ref_direction"))?)?;
@@ -350,12 +364,32 @@ fn band_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<(V3, f64,
     for (i, coordinate) in point.iter_mut().enumerate() {
         *coordinate = origin.get(i)? + axis.get(i)? * ((a + b) * 0.5) + radial.get(i)? * radius;
     }
-    Some((point, radius, axis))
+    Some((point, radius, axis, radial))
+}
+
+/// The one earlier body a pick can be scoped to (SolidCraft 0.45 and later); none when
+/// there are several or the target does not scope picks.
+fn single_live_body(ctx: &Context) -> Option<String> {
+    if ctx.target_version < crate::SolidCraftVersion::V0_45_0 {
+        return None;
+    }
+    let live: std::collections::BTreeSet<_> = ctx
+        .named_bodies
+        .iter()
+        .map(|(_, name)| name)
+        .chain(ctx.generated_bodies.iter().map(|(_, name)| name))
+        .collect();
+    let mut live = live.into_iter();
+    match (live.next(), live.next()) {
+        (Some(name), None) => Some(name.clone()),
+        _ => None,
+    }
 }
 
 /// Fusion can store a cosmetic thread's face at the thread class's diameter (Ø9.85 for an M10
 /// thread) while the sketch that made the cylinder keeps the nominal size (Ø10). A SolidCraft
-/// cosmetic thread changes nothing, so the sketch, not the stored face, would be rebuilt.
+/// cosmetic thread changes nothing, so the sketch's size, not the stored face's, would be rebuilt
+/// unless the resize is written too.
 /// The sketch's radius when an earlier mapped sketch along the thread's axis has a circle of
 /// the nominal size and the stored face is slightly smaller (within a class allowance of 3 %).
 fn resized_by_thread(ctx: &Context, axis: V3, radius: f64, nominal: f64) -> Option<f64> {
@@ -639,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_whose_face_is_smaller_than_the_nominal_sketch_is_not_rebuilt() {
+    fn a_thread_whose_face_is_smaller_than_the_nominal_sketch_resizes_the_face_first() {
         // An M10 thread: the sketch is the nominal 10 mm, Fusion's stored face the class's 9.85 mm.
         let mut d = definition();
         d["designation"] = json!("M10x1.5");
@@ -648,27 +682,29 @@ mod tests {
         let model = class_sized_model(4.925, 5.0);
         let mut ctx = Context::testing(&model);
         ctx.sketches.insert("s".to_owned(), flat_sketch());
-        let reason = map(&json!({}), &d, &mut ctx, &mut Report::default()).unwrap_err();
-        assert!(reason.contains("stored at diameter 9.85 mm"), "{reason}");
-        assert!(reason.contains("sketch that made it is 10 mm"), "{reason}");
-        // The same thread on a face that matches the sketch, or with no such sketch, is kept.
-        let model = class_sized_model(5.0, 5.0);
-        let mut ctx = Context::testing(&model);
-        ctx.sketches.insert("s".to_owned(), flat_sketch());
-        assert!(map(&json!({}), &d, &mut ctx, &mut Report::default()).is_ok());
-        let model = class_sized_model(4.925, 5.0);
-        assert!(map(
-            &json!({}),
-            &d,
-            &mut Context::testing(&model),
-            &mut Report::default()
-        )
-        .is_ok());
-        // A tapped hole's much smaller face is not a class allowance.
-        let model = class_sized_model(4.2, 5.0);
-        let mut ctx = Context::testing(&model);
-        ctx.sketches.insert("s".to_owned(), flat_sketch());
-        assert!(map(&json!({}), &d, &mut ctx, &mut Report::default()).is_ok());
+        let out = map(&json!({}), &d, &mut ctx, &mut Report::default()).unwrap();
+        assert_eq!(out["type"], "thread");
+        assert_eq!(out["designation"], "M10x1.5");
+        assert_eq!(ctx.extra.len(), 1);
+        let resize = &ctx.extra[0];
+        assert_eq!(resize["type"], "offset_face");
+        // The pick lies on the sketched 10 mm cylinder; the move is inward to the stored size.
+        let pick = resize["faces"][0][0].as_f64().unwrap();
+        assert!((pick - 5.0).abs() < 1e-9, "{pick}");
+        assert_eq!(resize["faces"][0][2], 4.0);
+        assert_eq!(resize["distance"], "-0.075 mm");
+        // A face that matches the sketch, no such sketch, or a tapped hole's much smaller
+        // face (not a class allowance) needs no resize.
+        for (face, sketch, with_sketch) in [(5.0, 5.0, true), (4.925, 5.0, false), (4.2, 5.0, true)]
+        {
+            let model = class_sized_model(face, sketch);
+            let mut ctx = Context::testing(&model);
+            if with_sketch {
+                ctx.sketches.insert("s".to_owned(), flat_sketch());
+            }
+            assert!(map(&json!({}), &d, &mut ctx, &mut Report::default()).is_ok());
+            assert!(ctx.extra.is_empty());
+        }
     }
 
     #[test]

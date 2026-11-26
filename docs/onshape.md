@@ -46,10 +46,10 @@ name its root with `root_element`; conversion starts with that studio.
 A Part Studio with several parts converts as one design holding every part as a
 body, with one shared history, as in Onshape. Its STEP export lists each part as a
 product of its own; when every part sits once in the Part Studio's own frame, those
-products are not written as an assembly. Each part keeps its name and colour when
+products are not written as an assembly. Each part keeps its name and color when
 the bundle proves which feature made it: exactly one named part appears across that
 feature, and exactly one body in the STEP export has that name. Otherwise SolidCraft
-names the part, its colour is left out, and the conversion says how many parts were
+names the part, its color is left out, and the conversion says how many parts were
 not matched. Bundles fetched before this check lack the states it needs; fetch them
 again.
 
@@ -61,7 +61,7 @@ continue to apply. A present consistency flag must be a JSON boolean.
 
 Face-attached sketches use their stored `sketches.json` record, matched by
 `featureId`. Onshape's sixteen-value, row-major `sketchMatrix` supplies the sketch's
-origin (metres), x direction and normal as a sketch-to-world transform. The reader
+origin (meters), x direction and normal as a sketch-to-world transform. The reader
 checks finite, rigid axes and agreement with the selected planar rollback face;
 it never substitutes that face's origin or chooses an in-plane direction. An
 absent member in an older bundle, missing sketch entry or contradictory frame
@@ -107,7 +107,7 @@ and pinned microversion, and the shared source-body comparison before history co
 Assigned variables remain design parameters even if no sketch can be mapped and
 conversion falls back to the STEP body. Sketch dimensions and blind extrude depths
 that use `#name` retain the parameter dependency, including symmetric extrudes.
-The reader evaluates lengths in millimetres while keeping literal units in the
+The reader evaluates lengths in millimeters while keeping literal units in the
 written expression and a compatible display unit on design parameters. Neutral
 parameter properties explicitly request retention without sketches, and feature
 properties identify symmetric parameters measured over the total span. Readers
@@ -211,7 +211,7 @@ The reader emits CADIR v11: final STEP topology and solved carriers belong to
 `model`. Parameter ordinals start at zero within each owning feature. The wire
 schema changes do not change the reader's selections, units or history limits.
 
-Lengths from REST geometry are converted from metres to millimetres; angles use
+Lengths from REST geometry are converted from meters to millimeters; angles use
 radians. The source axes, origin and scale are preserved. Unsupported constructions
 stop body-building history rather than guessing a selection.
 
@@ -459,7 +459,7 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
   included when their endpoints return data. A Part Studio containing only sketches
   and assigned variables skips the export request and has no `export.step`. For
   other Part Studios, final `export.step` is fetched through
-  an asynchronous AP242 STEP export, grouped into one file, in metres with the
+  an asynchronous AP242 STEP export, grouped into one file, in meters with the
   source orientation. The export does not store a blob in the source document,
   email anyone, or trigger a browser download.
 - An assembly has `assemblies/<element>/definition.json` and `features.json`, with

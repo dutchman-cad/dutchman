@@ -211,9 +211,7 @@ fn large_synthetic_design_is_refused_before_native_decoding() {
     );
     let message = crate::notice::failure(&error);
     assert!(
-        message.starts_with(
-            "This design is too large to open inside SolidCraft (about 1 part). Open it in the Dutchman app"
-        ),
+        message.starts_with("This design is too large to open inside SolidCraft: it needs about "),
         "{message}"
     );
     assert!(message
@@ -362,4 +360,72 @@ fn folder_refusal_names_the_grant_and_its_purpose() {
     ] {
         assert!(text.contains(needle), "{needle}: {text}");
     }
+}
+
+#[test]
+fn assembly_parts_are_read_once_each_and_only_after_the_assembly() {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/freecad-1.1.4-A01");
+    let asked: RefCell<Vec<PathBuf>> = RefCell::new(Vec::new());
+    // The reader hands out one file's bytes per call and keeps none: the plugin holds a part's
+    // bytes only while the core decodes that part, so no two parts' bytes are held together.
+    let reader = |path: &Path, limit: u64| {
+        asked.borrow_mut().push(path.into());
+        let bytes = std::fs::read(dir.join(path))
+            .map_err(|e| dutchman_core::Error::Decode(e.to_string()))?;
+        assert!(bytes.len() as u64 <= limit);
+        Ok(bytes)
+    };
+    let resolve = |stored: &str, folder: &Path| resolve(stored, folder, &|c| dir.join(c).is_file());
+    let (design, _) = convert("A01a.FCStd", Options::default(), &reader, &resolve, None).unwrap();
+    assert!(!design.is_empty());
+    let asked = asked.into_inner();
+    assert_eq!(
+        asked[0],
+        Path::new("A01a.FCStd"),
+        "the assembly comes first"
+    );
+    assert!(asked.len() >= 2, "{asked:?}");
+    let mut unique = asked.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), asked.len(), "a file is read once: {asked:?}");
+}
+
+#[test]
+fn a_failure_carries_the_full_convert_report_with_its_reason_codes() {
+    use dutchman_core::Error;
+    let error = Error::Decode("Parts/bracket.ipt: feature Fillet1 is not supported yet".into());
+    let report = crate::notice::failure_report("bracket.ipt", &error);
+    assert_eq!(report["schema"], "dutchman.convert/1");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["input"]["path"], "bracket.ipt");
+    assert_eq!(report["input"]["extension"], "ipt");
+    assert!(report["input"]["format_name"].is_string());
+    assert_eq!(report["error"]["kind"], "decode");
+    assert!(report["error"]["stage"].is_string());
+    assert!(report["error"].get("upstream").is_some());
+    assert!(!report.to_string().contains("Parts/"), "{report}");
+    // The message holds the same report, after the plain reason and the help links.
+    let text = crate::notice::failure_in("bracket.ipt", &error);
+    assert!(text.starts_with("feature Fillet1 is not supported yet") || text.contains("Fillet1"));
+    assert!(text.contains("bracket.failed.json"), "{text}");
+    assert!(
+        text.contains("dutchman.convert/1") && text.contains("Dutchman app"),
+        "{text}"
+    );
+    assert!(text.contains(crate::preflight::DOWNLOAD), "{text}");
+    let last = text.lines().last().unwrap();
+    assert_eq!(serde_json::from_str::<Value>(last).unwrap(), report);
+    // A size refusal stays one plain line that points to the app.
+    let big = Error::MemoryBudget("This design is too large".into());
+    assert_eq!(
+        crate::notice::failure_in("big.iam", &big),
+        crate::notice::failure(&big)
+    );
+    // A very long reason never makes the report unbounded.
+    let long = Error::Decode("x ".repeat(50_000));
+    assert!(crate::notice::failure_in("a.ipt", &long).len() < 6_000);
 }

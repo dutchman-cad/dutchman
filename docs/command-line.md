@@ -10,7 +10,7 @@ no server to connect. Optional follow-up commands
 use `--json` and a fresh scratch folder next to the converted design. `inspect INPUT --json`
 reads without converting; `diagnose INPUT --out SCRATCH --time-limit 30s --json` tries
 parts separately. For a specific trial use
-`convert INPUT -o SCRATCH/trial.sc --part P --stop-at-feature N --no-clobber --json`.
+`convert INPUT -o SCRATCH/trial.sc --part P --stop-at-feature N --json`.
 `--stop-at-feature` requires `--part`; feature numbers count active timeline features,
 and 0 tries stored shape only. Once diagnosis has identified a failing part,
 `repro INPUT --out FRESH_SCRATCH --from-diagnose DIAGNOSIS --json` reuses that diagnosis.
@@ -87,11 +87,12 @@ Omit the output to write beside the input, using its stem and the extension chos
 Targets before SolidCraft 0.25.1 get `.solidcraft` by default.
 `--to dxf` writes one `part-PageName.dxf` per TechDraw page; see
 [TechDraw drawing output](freecad.md#techdraw-to-dxf). If a model default exists, Dutchman
-exits 2 without changing it: choose `-o PATH` or pass `--force` to replace it. A default
-that is the input itself is always refused. `--force` conflicts with `--no-clobber`.
-Explicit output paths are replaced unless `--no-clobber` is given. Built-in commands win
+writes the next free name (`part (2).sc`) and leaves it as it is. A default
+that is the input itself is always refused. An existing file is never replaced unless you pass
+`--replace` (`--force` means the same). A name that differs from an existing one only in capitals or in how an accented letter is stored counts as that file, because macOS and Windows keep one file for both; the old `--no-clobber` is accepted and does nothing,
+and `--force` conflicts with it. The report names the file actually written. Built-in commands win
 over files with the same name; use `dutchman convert pilot` for a file named `pilot`.
-Installed tools take precedence over bare files; otherwise an existing file or a recognised
+Installed tools take precedence over bare files; otherwise an existing file or a recognized
 CAD extension selects conversion.
 
 ## Options
@@ -112,16 +113,17 @@ CAD extension selects conversion.
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--write-replay` | For a `.sc` design, also write `<design>.replay.json` beside it (the design's name with `.replay.json` in place of `.sc`): the command script that rebuilds the history step by step. See [Replay a history by hand](troubleshooting.md#replay-a-history-by-hand). Works with `convert` and `convert-all`; the JSON report names it as `replay_script`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
-| `--no-clobber` | Do not replace an existing `.sc` file: that file's conversion fails instead. By default it is replaced. |
+| `--replace` | Replace an existing design at the output. Without it nothing already there is replaced: a taken name gets the next free one (`part (2).sc`, `part (3).sc`), and the `.report.json`, `.failed.json` and `.replay.json` beside it, the logs and the anonymous report follow the same rule. The report states the path written. |
+| `--no-clobber` | Does nothing: not replacing is the default. Kept so existing scripts work. |
 | `--project DIR` | The project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an `.ipj`, else two folders up. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `--search DIR` | Another folder to search for part files the project folder does not hold, such as a shared library. May be given more than once. |
-| `-o PATH`, `--force` | Write to `PATH`; `--force` replaces an existing default output (see [Output files](#output-files)). |
+| `-o PATH`, `--force` | Write to `PATH`; `--force` is the same as `--replace` (see [Output files](#output-files)). |
 | `--to freecad`, `--to fcstd`, `--to dxf` | Write a FreeCAD macro or document, or TechDraw pages as DXF (see [FreeCAD](freecad.md)). |
 | `--threads N` | Bound the assembly part workers; `1` is serial (see [Assembly workers](#assembly-workers)). |
 | `--diagnostics`, `--diagnostics-default` | Write an anonymous diagnostic log while converting (see [Diagnostic logs](troubleshooting.md#diagnostic-logs-for-unfinished-runs)). |
 | `--json` | One final JSON report on stdout, with progress JSON lines on stderr. |
 | `--quiet` | Hide conversion progress and the volunteer invitation. |
-| `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarised by component (below), repeated notes of the same kind are grouped with a count, and long notes are cut to their first sentence. The JSON report always has them all in full. |
+| `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarized by component (below), repeated notes of the same kind are grouped with a count, and long notes are cut to their first sentence. The JSON report always has them all in full. |
 | `--part N`, `--with-children` | Convert only part N, as `dutchman diagnose` numbers it (with the parts inside it, for a sub-assembly). See [Find what breaks in a large private file](diagnose.md). |
 | `--log FILE` | Also write the whole text report, every loss in full, grouped by component, to `FILE`. |
 
@@ -155,7 +157,7 @@ dutchman diagnose --make-report small.f3d --out findings
 ```
 
 `--narrow` runs the rest by itself: it ranks the parts, isolates a failing part, alone and then
-with its neighbours, bisects its history to the first failing feature, and records the failure's
+with its neighbors, bisects its history to the first failing feature, and records the failure's
 signature, printing `step 3 of 5: narrowing part 17 (feature 41 of 80)` as it goes. Each step has
 its own limits. Run it again with the same `--out` to resume after a stop.
 `--same-failure` converts a small rebuilt file and compares its signature; it exits 0 only for
@@ -375,7 +377,7 @@ converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.sc (ge
 Want to help Dutchman read Fusion, Inventor better? If you have Fusion, Inventor, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
-Each converted file's loss report is listed beneath it, summarised by component when it has
+Each converted file's loss report is listed beneath it, summarized by component when it has
 more than 12 losses. The whole report, every loss in full, is written to `dutchman.log` in the
 output folder (`--log FILE` puts it elsewhere). This log, ordinary JSON, and the journal hold
 file names and paths; keep them private. For an issue, request `--report-anon FILE`, review
@@ -397,8 +399,9 @@ Folder paths are relative to each input folder: `in/ProjectA/part.f3d` writes
 `out/ProjectA/part.sc`. Linked design companions are written beside that design.
 Same-named files in different subfolders keep their own paths. Output names that
 would collide, including names differing only in case, receive a numeric suffix.
-An explicit output folder is reused on a rerun: designs at the same paths are
-replaced unless `--no-clobber` is set. Identical linked companions are reused;
+A rerun into the same output folder never replaces a design that is there: each new design gets
+the next free name (`part (2).sc`), unless `--replace` is set. A run stopped and carried on with
+`--journal` still skips the files it already converted. Identical linked companions are reused;
 edited companions are kept and the conversion reports the conflict.
 
 Large batches:
@@ -469,7 +472,7 @@ For `parts/cube.f3d`, the default results are `parts/cube.sc` and
 there, with the ordinary `dutchman.convert/1` error report. A failed update keeps the
 previous design. Successful updates replace the design and report; obsolete report sidecars
 are removed only when they still contain the watcher's bytes. Unrelated or externally
-edited outputs and sidecars are skipped, as are destinations assigned to another input. `--no-clobber` also keeps existing watcher outputs.
+edited outputs and sidecars are skipped, as are destinations assigned to another input. A changed upload refreshes the watcher's own earlier output; an output it did not write is skipped and reported, never replaced and never numbered.
 
 The output folder's `.dutchman-watch.json` records SHA-256 input hashes and outcomes,
 plus hashes proving which outputs the watcher owns. It is saved by temporary file and
@@ -598,7 +601,7 @@ poses, which may be stale. Smart keeps first
 placements when a check cannot be established. Joints work from the selected placements.
 `--stored-placements` is an alias of `--part-positions first-placed` and restores the old
 placement choice. JSON reports record `choices.part_positions` and per-rule `part_positions`
-counts; an Info note summarises them.
+counts; an Info note summarizes them.
 
 ## Batch report
 

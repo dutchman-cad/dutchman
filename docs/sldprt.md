@@ -44,7 +44,7 @@ seam.
 Stored base features name only regions that STEP can emit: a region with no shells
 contributes no shape and consumes no appearance target. Empty exterior or void regions
 therefore do not discard the editable history. Other shape-count mismatches leave the explicit appearance targets unbound while
-keeping the base geometry and history; colours must never shift onto different bodies.
+keeping the base geometry and history; colors must never shift onto different bodies.
 
 Offset datum planes retain their resolved reference frame and signed distance for later
 plane consumers. A missing support does not block history when every consumer is a sketch
@@ -112,8 +112,8 @@ configuration share one read across the whole assembly tree, including sibling s
 Saved display tessellations are released before building that tree; exact geometry and feature
 history are kept.
 
-Assemblies with many coloured faces retain their body and face colours without long pauses
-while mapping those colours, including with the fast preset.
+Assemblies with many colored faces retain their body and face colors without long pauses
+while mapping those colors, including with the fast preset.
 
 Parts that cannot be found or read are left out and reported for every affected occurrence;
 the remaining parts still convert. Virtual components without readable geometry are reported.
