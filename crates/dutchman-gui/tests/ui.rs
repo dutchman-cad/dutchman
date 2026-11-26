@@ -6559,7 +6559,7 @@ fn a_drawing_that_is_not_read_yet_is_not_supported_yet_not_failed() {
         assert_eq!(
             harness
                 .query_all_by_label_contains(
-                    "recognised, but reading its sheets isn't supported yet"
+                    "recognized, but reading its sheets isn't supported yet"
                 )
                 .count(),
             2,
