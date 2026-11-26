@@ -441,6 +441,11 @@ fn decode_unguarded(
     {
         return Err(error);
     }
+    if let Some(error) = linked_components_error(format, &ir, &decode_report.losses)
+        .filter(|_| !drawings && !decode_report.geometry_transferred())
+    {
+        return Err(error);
+    }
     // An assembly's geometry is in its parts' files, read afterwards.
     if !drawings
         && !decode_report.geometry_transferred()
@@ -695,6 +700,28 @@ fn undecoded_mesh_only_error(
             )
         })
 }
+
+/// cadmpeg's loss for a Fusion design whose components live in other files.
+const COMPONENTS_EXTERNAL: (&str, &str) = ("f3d", "assembly.components-external");
+
+/// Name a single Fusion .f3d whose bodies are all in linked components that are not inside the
+/// file. The .f3z archive carries them.
+fn linked_components_error(
+    format: Format,
+    ir: &cadmpeg_ir::CadIr,
+    losses: &[cadmpeg_ir::report::loss::LossNote],
+) -> Option<Error> {
+    if format != Format::FusionArchive || !ir.geometry.bodies.is_empty() {
+        return None;
+    }
+    let (namespace, code) = COMPONENTS_EXTERNAL;
+    losses
+        .iter()
+        .any(|note| note.code.namespace() == namespace && note.code.local_code() == code)
+        .then(|| Error::Assembly(LINKED_COMPONENTS_MESSAGE.to_owned()))
+}
+
+const LINKED_COMPONENTS_MESSAGE: &str = "this Fusion design links its components from other files, and they aren't inside this .f3d. Export it from Fusion as .f3z (File > Export > Fusion Archive), which carries the linked components";
 
 /// Visit independent F3Z members through cadmpeg's bounded session API. Models are released
 /// after the callback; the caller may retain the first matching member. This is local only.
@@ -1472,6 +1499,33 @@ mod tests {
             .unwrap(),
             "mesh-only design: the Design asset stores no BREP entry, and 1 of its mesh geometry container(s) transferred no mesh body",
         )
+    }
+
+    #[test]
+    fn linked_components_only_fusion_design_is_named() {
+        let mut model = cube();
+        let losses = vec![mesh_only_untransferred(
+            "f3d",
+            "assembly.components-external",
+        )];
+        // A design with B-rep bodies keeps its conversion.
+        assert!(linked_components_error(Format::FusionArchive, &model.ir, &losses).is_none());
+        model.ir.geometry.bodies.clear();
+        let error = linked_components_error(Format::FusionArchive, &model.ir, &losses).unwrap();
+        assert_eq!(error.kind(), "assembly");
+        assert_eq!(error.stage(), Stage::Input);
+        assert_eq!(error.upstream(), None);
+        assert!(error
+            .to_string()
+            .starts_with("cannot read this design: this Fusion design links its components"));
+        assert!(error.to_string().contains("Export it from Fusion as .f3z"));
+        // An archive already is the .f3z, and other losses keep the generic message.
+        assert!(linked_components_error(Format::FusionMultiDocument, &model.ir, &losses).is_none());
+        let other = vec![mesh_only_untransferred(
+            "f3d",
+            "design.mesh-only-untransferred",
+        )];
+        assert!(linked_components_error(Format::FusionArchive, &model.ir, &other).is_none());
     }
 
     #[test]

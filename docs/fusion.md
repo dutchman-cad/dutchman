@@ -41,15 +41,15 @@ The reader also retains more box, Pipe, unequal-wall Shell, and UnStitch definit
 neutral history. These still need the operands and feature forms Dutchman supports;
 UnStitch remains a blocker, with the final shape preserved. A box maps when its frame lies along the model axes (cadmpeg places a box by its minimum corner); one turned off them stays a blocker, since SolidCraft's box is axis-aligned.
 
-Historical body centres use bounded samples along curved edges as well as vertices and
+Historical body centers use bounded samples along curved edges as well as vertices and
 proven circular extrema. cadmpeg identifies incomplete edge or topology evidence separately;
-only bodies certified as exact have exact bounding-box centres.
+only bodies certified as exact have exact bounding-box centers.
 
 For SolidCraft 0.44 and newer, an extrude join, cut or intersection can select the
 bodies it modifies. Dutchman tries the reader's modified-body outputs as targets
 when earlier features have named every one, and keeps that scope only at the final
 body-building feature when replay matches the final source geometry. Intermediate
-body centres do not establish all participants, even when exact; an intermediate
+body centers do not establish all participants, even when exact; an intermediate
 join with one output body is the exception when the source stores as many bodies
 right after it as right before it: it consumed none, so it targets its output body.
 Other intermediate features keep the previous mapping. Unknown or conflicting evidence also retains
@@ -61,7 +61,7 @@ On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
 keeps a name only when its identity is proved: the source retains exactly one
 history body with `produced_by` matching its single-output producer, or the
 complete replay matches the final source geometry. Replay candidates keep
-their names only after that check passes; intermediate body centres cannot
+their names only after that check passes; intermediate body centers cannot
 confirm them. An output ID alone is not proof. Without proof, selecting the
 tool stops editable history with "it selects a body that an earlier feature
 has not named". Older targets keep the previous mapping.
@@ -167,6 +167,14 @@ an `inventory` job into Dutchman's folder, then an `export` job with the picked 
 `.cancel` file, and after the job ends Dutchman deletes its three job files. Everything the
 exporter writes stays on your computer.
 
+## Linked components
+
+A single .f3d whose components are linked from other files, and are not inside it, has no
+bodies of its own. Dutchman says "this Fusion design links its components from other files,
+and they aren't inside this .f3d" and asks you to export it from Fusion as .f3z (File >
+Export > Fusion Archive), which carries the linked components. The JSON error has `kind`
+`assembly` and stage `input`.
+
 ## Mesh bodies
 
 When cadmpeg reports mesh bodies for a Fusion design with no decoded B-rep bodies or
@@ -179,7 +187,7 @@ supply a count, so the existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
 
-Cadmpeg projects decoded mesh containers as CADIR tessellations in model millimetres,
+Cadmpeg projects decoded mesh containers as CADIR tessellations in model millimeters,
 with placement applied, and links them from mesh-import features. When a container cannot
 be decoded, a mesh-import feature may instead retain native body members with the loss
 `f3d/feature.mesh-import-tessellations-unresolved`. Those references carry no triangles.
@@ -198,7 +206,7 @@ with a body move; it does not trigger a general history-loss notice for older ta
 Dutchman keeps resolved translations
 and axis-angle rotations, including explicit pivots, when every selected body has
 a proven earlier name; in a design state that holds several bodies, a moved body is the
-one earlier named body whose creating feature affected exactly its history slot. CADIR supplies millimetres and radians; the writer never
+one earlier named body whose creating feature affected exactly its history slot. CADIR supplies millimeters and radians; the writer never
 infers a transform from final geometry. Unresolved body selections, unresolved
 point-to-point motion, and copied body result identities remain blockers. Bodies
 available only as final geometry also require a captured pre-move body. Older
@@ -278,7 +286,7 @@ curve. The original final geometry and the editable prefix are retained.
 Holes on planar historical entry faces can keep their editable history when the boundary
 includes circular arcs or whole circles, including a rounded corner or an earlier through
 hole. The source's own input-edge ends, midpoints, and tangents establish the circular
-centres, radii, and common plane. SolidCraft must then rebuild exactly that bounded face
+centers, radii, and common plane. SolidCraft must then rebuild exactly that bounded face
 before the hole; matching the plane alone is insufficient. Placements must lie inside the
 filled face, clear of its curved boundary and existing holes, and drill inward. An unsigned
 axis takes its drilling side from the proven face. Non-planar faces other than the existing
@@ -290,7 +298,7 @@ original geometry with a named reason.
 
 When every active feature using a sketch selects explicit whole-loop regions, unused lines
 crossing selected whole circles are kept as construction geometry. This preserves
-layout lines through hole centres without splitting the circular holes during replay. If
+layout lines through hole centers without splitting the circular holes during replay. If
 another active consumer needs the whole sketch or a different selection form, those lines
 stay solid.
 
@@ -330,7 +338,7 @@ profile. The extrude runs along the face's outward normal, which only the body k
 SolidCraft has replayed the history before the extrude, Dutchman finds the face among the
 rebuilt faces (same plane, same area, every boundary edge on it and named for it; SolidCraft reports
 a curved edge from its mesh, so an arc counts as found when the pieces it reports, a single chord
-for a small rounded corner, span the arc's whole turn about its centre) and mirrors the
+for a small rounded corner, span the arc's whole turn about its center) and mirrors the
 sketch if it was written on the inner side; fillets and chamfers after a mirrored sketch are then
 proven on a fresh replay that has the extrude on its outward side. A face it cannot find exactly once, an edge that is
 not a line or circular arc, a boundary that does not close or is not flat, an input topology
@@ -368,12 +376,12 @@ geometry's looks. Complete xref and instance identities are kept distinct throug
 component index. Saved wire edges beside a solid do not consume its imported body name or
 discard its appearance. When STEP omits an unwritable sibling body, Dutchman checks each
 body separately, for groups of up to 32 bodies, before keeping the remaining body names
-and colours. These solids keep their existing STEP import names, including numbered
-siblings; matching their colours does not rename them or change other components' names.
+and colors. These solids keep their existing STEP import names, including numbered
+siblings; matching their colors does not rename them or change other components' names.
 A body binding supplies
-the body colour, and face bindings override it per face.
+the body color, and face bindings override it per face.
 When a body has no body binding and all its faces have the same resolved appearance,
-Dutchman writes one body colour, which SolidCraft shows in its body appearance controls.
+Dutchman writes one body color, which SolidCraft shows in its body appearance controls.
 Mixed appearances remain face looks, selected by interior points in the component's
 coordinates. Resolved analytic and NURBS faces use bounded trim-curve sampling in surface
 coordinates, with spatial edge evaluation when parameter-space curves are unavailable.
@@ -390,7 +398,7 @@ its own long arc and a planar appearance cannot pick through a hole in its outer
 Imported body names are made unique across the design so an unpainted namesake in another
 component cannot receive a painted body's appearance.
 When a partial or unverified editable history is hidden beside the final shape, the
-visible final-shape Import receives its own names and colours. Names remain distinct
+visible final-shape Import receives its own names and colors. Names remain distinct
 from those of the editable copy.
 When a partial history is kept hidden, appearance losses refer to the visible final
 shape rather than to final bodies absent from that partial copy.
@@ -401,7 +409,7 @@ part once. To edit the history, unsuppress its features in the timeline and supp
 hide the final-shape Import while you work. The conversion check in
 `scripts/written-design-compare.py` fails when any hidden editable-history copy holds a
 body, and names the part it would duplicate.
-The look keeps the resolved colour, opacity, and appearance name; it does not infer a
+The look keeps the resolved color, opacity, and appearance name; it does not infer a
 physical material from a visual preset.
 
 A binding whose target or appearance cannot be resolved is reported as Dropped under
@@ -412,15 +420,15 @@ matching an id suffix. Bindings to consumed or removed Fusion geometry are repor
 separately when that geometry is filtered out. Faces without a resolved interior point
 cannot receive SolidCraft's point-selected face looks yet; their bindings are also reported
 as Dropped. A decoded body without geometry that STEP can write retains a separate note;
-its writable siblings can still receive their colours.
-Uniformly painted curved bodies can still use a body colour. Conflicting assignments to
+its writable siblings can still receive their colors.
+Uniformly painted curved bodies can still use a body color. Conflicting assignments to
 one target are left out and reported. Textures and shader properties are not mapped by this
 look mapping.
 
 The pinned cadmpeg CADIR supports body and face appearance targets, but has no component or
 occurrence appearance target kind. cadmpeg must project those assignments onto body/face
 targets, or represent them through an IR extension, before Dutchman can map them. Source
-assignments absent from CADIR cannot be reconstructed; remaining grey bodies may therefore
+assignments absent from CADIR cannot be reconstructed; remaining gray bodies may therefore
 still need additional decoding in cadmpeg.
 
 ## Assembly memory
@@ -492,7 +500,7 @@ SolidCraft against the original final shape: body count, box, volume and area wi
 tolerances, both face counts, and the largest distance between the two surfaces from
 `inspect.compare` with the source loaded beside the replay, within the box allowance of 0.01 mm
 or 2e-4 of the body's diagonal. New measured regions are tried only at the last body-building
-feature; stored body centres alone cannot prove an earlier region's shape. Exactly one match is kept, with
+feature; stored body centers alone cannot prove an earlier region's shape. Exactly one match is kept, with
 `history/profile-region-measured`. Of several, the one alone with the source solid's face count is
 kept; otherwise it is a tie and the feature stays blocked, as it does when none matches or any
 candidate cannot be measured. New final-shape inferences require a one-body part and a successful
@@ -501,13 +509,13 @@ finite volume, area, complete bounds and derived placement; unavailable comparis
 measurements keep the refusal. The earlier two-reading comparison stays permissive. A final shape that later differs from the source cuts the timeline
 before the first measured feature, so it never keeps fewer features than without measuring.
 
-A profile region chosen without a final-shape comparison (inferred against the stored body centres
+A profile region chosen without a final-shape comparison (inferred against the stored body centers
 of an earlier feature, or the single region of a sketch with several loops) is checked once more
 when the history stops. If no source feature after the retained ones can build material (only
 fillets, chamfers, cuts and intersections follow), the rebuilt bodies' box must still reach
 the source's final shape, within the larger of 0.5 mm and 1% of its diagonal; when only cuts and
 intersections follow, they must hold at least 95% of its volume too. Otherwise the retained body is a
-different one (a 6.5 mm tube where the source has a 15 mm block, with the same centre), and the
+different one (a 6.5 mm tube where the source has a 15 mm block, with the same center), and the
 timeline is cut before its first body-building feature, as for any other final-shape difference,
 with a `history/body-mismatch` note. Later features stay in the imported final shape.
 
@@ -547,7 +555,7 @@ the subject `orientation`.
 **Part positions** defaults to **Smart**. For each occurrence, Smart prefers a displayed
 pose bound to it by the decoder's `native.f3d.display_poses` arena. Only rows with
 `binding.state: "bound"` select a pose; ambiguous and unbound rows are skipped. These
-root-design world matrices are already in millimetres and bypass the current-pose guards.
+root-design world matrices are already in millimeters and bypass the current-pose guards.
 Missing holder worlds are derived bottom-up as child displayed world × inverse of child
 local placement, only when all available children agree within 0.001 mm and 1e-6 rotation
 entries and reproduce each of them. A holder whose children conflict keeps its first
@@ -579,8 +587,8 @@ those positions are usually right: when one looks misplaced, it's the place to l
 **As Fusion last showed them** prefers the displayed-pose source, then uses current poses
 where available without Smart's checks, and first placements otherwise. Until displayed
 poses are bound by the decoder, this option relies on current poses, which can be stale.
-**As first placed** ignores later poses throughout. Native current-pose matrices use centimetres and are
-converted to millimetres. A pose in an inserted design is composed with that document's
+**As first placed** ignores later poses throughout. Native current-pose matrices use centimeters and are
+converted to millimeters. A pose in an inserted design is composed with that document's
 insertion. Definition-local operation poses are not used as world poses. First placements retain
 the decoder's existing path and component-operation placements; native current-pose records
 remain a separate selectable source.
@@ -685,7 +693,7 @@ transform, and each component as a product definition.
   moves a part. That component can still travel with an outer joint.
   A joint to a part inside an identity-placed component carries the component when child
   poses describe its relative layout, or all its children belong to the joined group, and
-  the joints reaching into it agree on its place. An unrelated internal joint is insufficient. If that outer component is only an organiser,
+  the joints reaching into it agree on its place. An unrelated internal joint is insufficient. If that outer component is only an organizer,
   Dutchman tries the deepest smaller holder whose children are connected, then the named part.
   A body's identity placement at a holder's origin can also identify the holder as the moving
   assembly, including a holder with a non-identity placement, provided every outside joint
@@ -913,7 +921,7 @@ A Fusion Thread whose record the decoder does not decode (no designation, nomina
 faces) arrives as an unresolved Thread. The history stops there with "threads whose
 construction is unresolved are not supported yet", now followed by what is missing: the
 source does not say whether the thread is cosmetic or modeled, so Dutchman cannot map it.
-The fix is in the decoder, which has to recognise that thread's record layout.
+The fix is in the decoder, which has to recognize that thread's record layout.
 
 Unreadable local and xref positions, including local stored-frame fallbacks and
 positions assumed to be the identity, count

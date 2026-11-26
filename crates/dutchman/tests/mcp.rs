@@ -173,18 +173,28 @@ fn an_mcp_client_converts_through_dutchman() {
     assert_eq!(failed["isError"], true);
     assert_eq!(failed["structuredContent"]["ok"], false);
 
-    // overwrite: false leaves an existing design alone, and says so.
+    // An existing design is left alone: the new one gets the next free name, and says so.
     std::fs::write(&output, b"SENTINEL").unwrap();
     let kept = client.call(
         "convert",
-        json!({"input": cube, "output": output, "verify": false, "overwrite": false}),
+        json!({"input": cube, "output": output, "verify": false}),
     );
-    assert_eq!(kept["isError"], true, "{kept}");
-    assert!(kept["structuredContent"]["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("already exists"));
+    assert_eq!(kept["isError"], false, "{kept}");
+    assert_eq!(
+        kept["structuredContent"]["output"]["path"],
+        output
+            .with_file_name("cube (2).solidcraft")
+            .to_str()
+            .unwrap()
+    );
     assert_eq!(std::fs::read(&output).unwrap(), b"SENTINEL");
+    // overwrite: true replaces it.
+    let replaced = client.call(
+        "convert",
+        json!({"input": cube, "output": output, "verify": false, "overwrite": true}),
+    );
+    assert_eq!(replaced["isError"], false, "{replaced}");
+    assert_ne!(std::fs::read(&output).unwrap(), b"SENTINEL");
     let schema = tools["result"]["tools"]
         .as_array()
         .unwrap()
@@ -195,7 +205,7 @@ fn an_mcp_client_converts_through_dutchman() {
     assert!(schema["output"]["description"]
         .as_str()
         .unwrap()
-        .contains("replaced, unless overwrite is false"));
+        .contains("never replaced unless overwrite is true"));
     assert_eq!(schema["overwrite"]["type"], "boolean");
 
     let out_dir = dir.path().join("all");

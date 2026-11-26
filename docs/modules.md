@@ -22,7 +22,7 @@ Dutchman talks to a module with three commands, each with `--json`:
 
 The conversion then goes on like any other: Results card, report, `--json`.
 
-- **Missing module.** A file with a known board extension (`.PcbDoc`) is recognised and the
+- **Missing module.** A file with a known board extension (`.PcbDoc`) is recognized and the
   message says to install the electronics module. It is never reported as an unknown file.
 - **Module cannot run.** If the module is found but `info` fails, a board file gets "the electronics module is installed but could not be run: <reason>".
 - **Failure.** A non-zero exit, or `{"ok": false, "message": ...}`, is an error that shows the
@@ -91,17 +91,17 @@ geometry and hands over finished areas.
 - Dutchman caps the faces of all thick overlays in a package at 250,000 (each extruded area costs 2 plus its edge count,
   holes included). An overlay that would pass the cap is drawn as a sheet, with a `Degraded` note naming it.
 - `metallic` and `roughness` are optional on every overlay and every part, each a number from 0 to 1. When given, they
-  are written into the body's appearance beside the colour (SolidCraft's PBR look: `metallic`, `roughness` clamped to
+  are written into the body's appearance beside the color (SolidCraft's PBR look: `metallic`, `roughness` clamped to
   at least 0.045, and a fixed dielectric IOR of 1.5; a missing one of the pair is 0 for `metallic` and 0.5 for
   `roughness`). A value out of range refuses that overlay or part by name. When both are missing nothing extra is
-  written. They go with a colour: on a part without `color`, and on an overlay with an `opacity` below 1, SolidCraft's
+  written. They go with a color: on a part without `color`, and on an overlay with an `opacity` below 1, SolidCraft's
   look cannot hold them and they are left out with a `Degraded` note.
 - `color` is optional, `#rrggbb` in sRGB. Without it: masked copper and mask are solder mask green, bare copper gold,
   silkscreen white. A value that is not `#rrggbb` refuses that overlay or part by name, and the rest converts.
 - `opacity` is optional and appears on `mask` only: a number from 0 to 1 (1 = opaque). Dutchman passes it through to
   the design's surface style (written as transparency, 1 - `opacity`), it does not ignore it. A value outside 0 to 1
   refuses that overlay by name.
-- A part may carry `color` too, `#rrggbb`, used for that part's bodies. The board part's colour is its substrate (the
+- A part may carry `color` too, `#rrggbb`, used for that part's bodies. The board part's color is its substrate (the
   edge you see). A part named `Plating`, when present, is the copper or finish inside plated holes: thin tubes, one
   model, placed like any other part.
 - Each area is `outer` (counter-clockwise, at least 3 points) and `holes` (clockwise, each inside `outer`). An area
@@ -112,7 +112,7 @@ Loops of one area may touch at a single point (a hole touching the outer loop, o
 than 1e-6 mm are one point.
 
 Each overlay becomes one body named after it: a sheet with one planar face per area, or, with a `thickness`, a solid for each area, all in the one body (SolidCraft keeps the separate pieces together, so a board with hundreds of areas opens with one body per overlay). The `Plating` part's tubes are one body the same way. `dutchman contents` on a board lists the solids the module drew (one per area and tube), before they are joined; the converted design holds one body per overlay.
-Colour and opacity apply to every face of either.
+Color and opacity apply to every face of either.
 
 ### Limits and safety
 

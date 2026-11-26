@@ -90,10 +90,17 @@ impl Settings {
     }
 }
 
-/// Sets planned `jobs` to replace designs and look for part files as `options` say: in the
-/// options' project folder when they name one, else in the folder given that holds each file,
-/// then in the options' other folders. Numbered saves keep existing output files.
+/// Sets planned `jobs` to look for part files as `options` say, and gives each a free output
+/// name (see [`assign_free_names`]). Part files are looked for in the options' project folder
+/// when they name one, else in the folder given that holds each file, then in the options'
+/// other folders. Numbered saves never replace existing output files.
 pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
+    prepare_options(jobs, options);
+    assign_free_names(jobs, &[]);
+}
+
+/// [`prepare`], leaving each job's output name as planned.
+pub(crate) fn prepare_options(jobs: &mut [Job], options: &ConvertOptions) {
     let extension = options.output_extension();
     for job in jobs {
         let _ = job
@@ -103,7 +110,7 @@ pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
             } else {
                 extension
             });
-        job.replace = !options.no_clobber && Format::part_revision(&job.input).is_none();
+        job.replace = options.replace && Format::part_revision(&job.input).is_none();
         if options.project.is_some() {
             job.search.project.clone_from(&options.project);
         }
@@ -113,9 +120,31 @@ pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
     }
 }
 
+/// Gives every job that does not replace (and is not in `skip`, by index) an output slot
+/// nothing is in: when its design or a report beside it exists, or another job writes there,
+/// the next free `name (2).sc`, `name (3).sc`. A job never takes a file Dutchman did not write
+/// in this same slot.
+fn assign_free_names(jobs: &mut [Job], skip: &[usize]) {
+    let key = dutchman_core::safe_output::portable_path_key;
+    let mut claimed: BTreeSet<String> = jobs.iter().map(|job| key(&job.output)).collect();
+    for (index, job) in jobs.iter_mut().enumerate() {
+        if job.replace || skip.contains(&index) {
+            continue;
+        }
+        let planned = job.output.clone();
+        let taken = |path: &Path| {
+            dutchman_core::safe_output::slot_taken(path)
+                || (path != planned.as_path() && claimed.contains(&key(path)))
+        };
+        let free = dutchman_core::safe_output::next_free(&planned, &taken);
+        claimed.insert(key(&free));
+        job.output = free;
+    }
+}
+
 /// Converts every file `inputs` names or holds into `out_dir` as `settings` say, writing
-/// nothing outside `out_dir` (and the journal) and replacing designs already there unless
-/// `options` turn that off, and returns the `dutchman.convert-all/1` report. `Err` when the
+/// nothing outside `out_dir` (and the journal) and never replacing a design already there
+/// unless `options` ask for it (a new design gets the next free name), and returns the `dutchman.convert-all/1` report. `Err` when the
 /// journal cannot be read or written.
 pub fn convert_all(
     inputs: &[PathBuf],
@@ -177,7 +206,7 @@ fn convert_all_prepared(
         skipped_revisions,
         description: project_plan,
     } = plan(inputs, out_dir);
-    prepare(&mut work, options);
+    prepare_options(&mut work, options);
     let mut journal = match &settings.journal {
         Some(path) => Some(Journal::open(path)?),
         None => None,
@@ -204,6 +233,10 @@ fn convert_all_prepared(
         })
         .collect();
     let resumed = results.iter().flatten().count();
+    let skip: Vec<usize> = (0..work.len())
+        .filter(|&i| results.get(i).is_some_and(Option::is_some))
+        .collect();
+    assign_free_names(&mut work, &skip);
     let todo: Vec<usize> = (0..work.len())
         .filter(|&i| results.get(i).is_some_and(Option::is_none))
         .collect();
@@ -675,7 +708,7 @@ fn plan_with_limit(
                     }),
                 &mut outputs,
             );
-            let replace = Format::part_revision(&path).is_none();
+            let replace = false;
             jobs.push(Job {
                 project_files: project_files.clone(),
                 fallback: fallbacks
@@ -1036,8 +1069,9 @@ fn unique(path: PathBuf, taken: &mut BTreeSet<String>) -> PathBuf {
     let mut candidate = path.clone();
     let mut n = 2;
     // Reserve portable names even on a case-sensitive source filesystem: outputs
-    // may be written to a case-insensitive volume on the same machine.
-    while taken.contains(&candidate.to_string_lossy().to_lowercase()) {
+    // may be written to a case-insensitive volume on the same machine; names that differ only
+    // in Unicode normalisation are one name on macOS.
+    while taken.contains(&dutchman_core::safe_output::portable_path_key(&candidate)) {
         let stem = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -1050,7 +1084,7 @@ fn unique(path: PathBuf, taken: &mut BTreeSet<String>) -> PathBuf {
         candidate = path.with_file_name(name);
         n += 1;
     }
-    taken.insert(candidate.to_string_lossy().to_lowercase());
+    taken.insert(dutchman_core::safe_output::portable_path_key(&candidate));
     candidate
 }
 
@@ -1325,11 +1359,15 @@ impl Journal {
     /// design, if it converted, is still where the journal says.
     fn recorded(&self, job: &Job) -> Option<Value> {
         let report = self.known.get(&identity(job)?)?;
-        let output = job.output.display().to_string();
         let converted = report.get("ok") == Some(&json!(true));
-        let still_there = report.pointer("/output/path").and_then(Value::as_str)
-            == Some(output.as_str())
-            && job.output.is_file();
+        // The design may have been given a numbered name when its own was taken.
+        let still_there = report
+            .pointer("/output/path")
+            .and_then(Value::as_str)
+            .map(Path::new)
+            .is_some_and(|path| {
+                dutchman_core::safe_output::is_variant_of(path, &job.output) && path.is_file()
+            });
         (!converted || still_there).then(|| report.clone())
     }
 
@@ -1679,11 +1717,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn stopping_an_isolated_batch_ends_the_current_file_promptly() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("slow-worker");
-        std::fs::write(&program, "#!/bin/sh\nexec sleep 120\n").unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::worker::spawn_retry_tests::write_script(&program, "#!/bin/sh\nexec sleep 120\n");
         let input = dir.path().join("synthetic.f3d");
         std::fs::write(&input, []).unwrap();
         let fallback = input.with_extension("step");
@@ -1754,11 +1790,9 @@ mod tests {
     /// Runs one isolated conversion with a fake worker script and returns its report.
     #[cfg(unix)]
     fn isolated_with_script(script: &str) -> Value {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("fake-worker");
-        std::fs::write(&program, format!("#!/bin/sh\n{script}\n")).unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::worker::spawn_retry_tests::write_script(&program, &format!("#!/bin/sh\n{script}\n"));
         let input = dir.path().join("synthetic.f3z");
         std::fs::write(&input, []).unwrap();
         let job = Job {
@@ -2349,6 +2383,40 @@ mod tests {
     }
 
     #[test]
+    fn a_taken_slot_gives_the_next_free_name_and_jobs_never_share_one() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.sc"), b"mine").unwrap();
+        std::fs::write(dir.path().join("b.report.json"), b"mine").unwrap();
+        let job = |name: &str| Job {
+            project_files: None,
+            fallback: None,
+            input: PathBuf::from(name),
+            output: dir.path().join(name).with_extension("sc"),
+            replace: false,
+            search: PartSearch::default(),
+        };
+        let mut jobs = vec![job("a.f3d"), job("b.f3d"), job("c.f3d"), job("a (2).f3d")];
+        assign_free_names(&mut jobs, &[]);
+        let names: Vec<_> = jobs
+            .iter()
+            .map(|job| {
+                job.output
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(names, ["a (3).sc", "b (2).sc", "c.sc", "a (2).sc"]);
+        // A job that replaces, or one a resumed run already has, keeps its name.
+        let mut jobs = vec![job("a.f3d"), job("b.f3d")];
+        jobs[0].replace = true;
+        assign_free_names(&mut jobs, &[1]);
+        assert_eq!(jobs[0].output, dir.path().join("a.sc"));
+        assert_eq!(jobs[1].output, dir.path().join("b.sc"));
+    }
+
+    #[test]
     fn a_file_recorded_by_another_version_or_journal_format_is_converted_again() {
         // An older report lacks what this version records (the names an anonymous report
         // takes out, among others), so it is never reused, even under the same version number.
@@ -2417,15 +2485,23 @@ mod tests {
             .iter()
             .find(|job| job.input.ends_with("bracket.prt.7"))
             .unwrap();
-        assert_eq!(bracket.output, existing);
+        // The design already there is kept: the numbered save is written beside it.
+        assert_eq!(bracket.output, out.join("bracket (2).sc"));
         assert!(!bracket.replace);
-        let report = convert_job(bracket, &ConvertOptions::default().writer());
+        assert_eq!(std::fs::read(existing).unwrap(), b"keep this design");
+        // A job that is not allowed to replace still refuses a name that is taken.
+        let mut taken = bracket.clone();
+        taken.output = out.join("bracket.sc");
+        let report = convert_job(&taken, &ConvertOptions::default().writer());
         assert_eq!(report["ok"], false);
         assert!(report["error"]["message"]
             .as_str()
             .unwrap()
             .contains("already exists"));
-        assert_eq!(std::fs::read(existing).unwrap(), b"keep this design");
+        assert_eq!(
+            std::fs::read(out.join("bracket.sc")).unwrap(),
+            b"keep this design"
+        );
     }
 
     #[test]

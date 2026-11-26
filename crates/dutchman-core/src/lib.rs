@@ -35,6 +35,7 @@ pub mod preflight;
 mod progress;
 pub mod progress_words;
 mod refusal;
+pub mod safe_output;
 pub mod source;
 mod source_errors;
 mod source_version;
@@ -842,6 +843,12 @@ fn convert_impl(
     };
     stage(Stage::Input);
     check_output(output, writer)?;
+    if safe_output::same_file(input, output) {
+        return Err(Error::Encode(format!(
+            "{}: the output is the input file; choose another output",
+            output.display()
+        )));
+    }
     if !replace && output.exists() {
         return Err(Error::OutputExists {
             path: output.to_path_buf(),
@@ -954,25 +961,21 @@ fn companion_conflict(path: &Path) -> Error {
 
 /// Writes `bytes` to `output`; when `replace` is not set, only if no file is there.
 fn write_output(output: &Path, bytes: &[u8], replace: bool) -> Result<(), Error> {
-    use std::io::Write as _;
-    let io = |source| Error::Io {
-        path: output.to_path_buf(),
-        source,
-    };
-    if replace {
-        return std::fs::write(output, bytes).map_err(io);
+    // Lets a test stop a conversion in its write stage: a write no longer waits on a named pipe.
+    if std::env::var_os("DUTCHMAN_TEST_STALL_WRITE").is_some() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
     }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(output)
-        .map_err(|source| match source.kind() {
-            std::io::ErrorKind::AlreadyExists => Error::OutputExists {
-                path: output.to_path_buf(),
-            },
-            _ => io(source),
-        })?;
-    file.write_all(bytes).map_err(io)
+    safe_output::write(output, bytes, replace).map_err(|source| match source.kind() {
+        std::io::ErrorKind::AlreadyExists => Error::OutputExists {
+            path: output.to_path_buf(),
+        },
+        _ => Error::Io {
+            path: output.to_path_buf(),
+            source,
+        },
+    })
 }
 
 fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {

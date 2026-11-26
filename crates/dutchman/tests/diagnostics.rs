@@ -430,14 +430,9 @@ fn supervised_timeout_finishes_the_log_at_the_last_stage() {
     let dir = tempfile::tempdir().unwrap();
     let out_dir = dir.path().join("out");
     std::fs::create_dir(&out_dir).unwrap();
-    let output = out_dir.join("generated_unit_cube.sc");
-    assert!(Command::new("mkfifo")
-        .arg(output)
-        .status()
-        .unwrap()
-        .success());
     let log = dir.path().join("timeout.jsonl");
     let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .env("DUTCHMAN_TEST_STALL_WRITE", "1")
         .args([
             "convert-all",
             "--no-verify",

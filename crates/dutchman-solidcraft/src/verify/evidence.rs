@@ -83,8 +83,8 @@ fn body_check(want: &Measured, got: &Measured, source: &Value, written: &Value) 
         "volume": numeric(source.get("volume_mm3").and_then(Value::as_f64), written.get("volume_mm3").and_then(Value::as_f64), volume_tolerance),
         "surface_area": numeric(want.area.filter(|v| *v >= 0.0), got.area.filter(|v| *v >= 0.0),
             AREA_TOLERANCE * want.area.unwrap_or(0.0).abs().max(got.area.unwrap_or(0.0).abs())),
-        "bounding_box": skipped("Source or replay bounds or box centre is unavailable"),
-        "centroid": skipped("Source or replay centre of mass or box size is unavailable"),
+        "bounding_box": skipped("Source or replay bounds or box center is unavailable"),
+        "centroid": skipped("Source or replay center of mass or box size is unavailable"),
         "closed_shell": skipped("Source or replay closure is unavailable"),
         "manifold": skipped("The evaluator does not expose a manifold check")
     }).as_object().cloned().unwrap_or_default();
