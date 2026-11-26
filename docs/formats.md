@@ -27,12 +27,12 @@ The **Designs** input row shows only the plain reader status.
 | IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
 | Circuit board | `.PcbDoc` | Reads geometry with the electronics module | – | Placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately) |
 | Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
-| Inventor drawing | `.idw` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
-| SolidWorks drawing | `.slddrw` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
-| Fusion drawing | `.f2d` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
-| DWG drawing | `.dwg` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
-| DXF drawing | `.dxf` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
-| Solid Edge drawing | `.dft` | Accepted; the report says which sheets and views were read | – | A report of what was identified; the sheets and views are not decoded yet, so no drawing is written |
+| Inventor drawing | `.idw` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| SolidWorks drawing | `.slddrw` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Fusion drawing | `.f2d` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| DWG drawing | `.dwg` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| DXF drawing | `.dxf` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Solid Edge drawing | `.dft` | Recognised, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
 
 FreeCAD TechDraw pages are written into the converted SolidCraft design as a drawing (sheets and views), and also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
 
