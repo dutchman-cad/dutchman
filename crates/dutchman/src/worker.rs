@@ -794,7 +794,7 @@ fn convert_once(
     // Design events always: they time each design for the stuck-design limit. Names stay in
     // this process; only a diagnostics log, when asked for, records them (hashed).
     command.env("DUTCHMAN_MEMBER_PROGRESS", "1");
-    let child = command
+    command
         .arg(WORKER_ARG)
         .arg(&job.input)
         .arg(&job.output)
@@ -803,8 +803,8 @@ fn convert_once(
         // Kept open while this process lives: the child stops when it closes.
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+        .stderr(Stdio::piped());
+    let child = spawn_retrying(&mut command);
     let mut child = match child {
         Ok(child) => child,
         Err(err) => {
@@ -1472,6 +1472,37 @@ pub(crate) fn resident_tree_bytes(pid: u32) -> Option<u64> {
     resident_bytes(pid)
 }
 
+/// Starts `command`, trying again a few times when the system says the program file is still
+/// open for writing ("text file busy"). Another thread forking at the wrong moment can hold a
+/// just-written program's write handle for an instant; the file is ready a moment later.
+pub(crate) fn spawn_retrying(command: &mut Command) -> std::io::Result<Child> {
+    const TRIES: u32 = 5;
+    let mut attempt = 1;
+    loop {
+        match command.spawn() {
+            Err(err) if attempt < TRIES && is_text_file_busy(&err) => {
+                std::thread::sleep(Duration::from_millis(10 * u64::from(attempt)));
+                attempt += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
+/// ETXTBSY: the program file is open for writing somewhere.
+fn is_text_file_busy(err: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        // 26 on Linux and macOS alike.
+        err.raw_os_error() == Some(26)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = err;
+        false
+    }
+}
+
 /// The memory process `pid` holds, in bytes, when it can be measured.
 #[cfg(target_os = "linux")]
 pub(crate) fn resident_bytes(pid: u32) -> Option<u64> {
@@ -1810,17 +1841,60 @@ mod left_out_tests {
 }
 
 #[cfg(all(test, unix))]
+pub(crate) mod spawn_retry_tests {
+    use super::*;
+
+    /// Test helper: writes an executable script so its write handle is closed before any exec.
+    #[allow(clippy::unwrap_used)]
+    pub(crate) fn write_script(path: &Path, contents: &str) {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// A program still open for writing cannot start; it starts once the writer lets go.
+    #[test]
+    fn a_program_busy_for_an_instant_still_starts() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("busy-worker");
+        write_script(&program, "#!/bin/sh\nexit 0\n");
+        let mut writer = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&program)
+            .unwrap();
+        writer.write_all(b"# more\n").unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(15));
+            drop(writer);
+        });
+        let mut child = spawn_retrying(&mut Command::new(&program)).unwrap();
+        assert!(child.wait().unwrap().success());
+        release.join().unwrap();
+    }
+
+    /// Any other failure is reported at once, without retrying.
+    #[test]
+    fn a_missing_program_fails_at_once() {
+        let err = spawn_retrying(&mut Command::new("/nonexistent/dutchman-worker")).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+}
+
+#[cfg(all(test, unix))]
 mod output_kept_tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
     use std::io::Write as _;
-    use std::os::unix::fs::PermissionsExt;
 
     /// A child that runs `body` (a shell script; `$2` is the input, `$3` the output).
     fn fake_child(dir: &Path, body: &str) -> PathBuf {
         let path = dir.join("fake-child.sh");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        super::spawn_retry_tests::write_script(&path, &format!("#!/bin/sh\n{body}\n"));
         path
     }
 

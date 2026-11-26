@@ -1723,15 +1723,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn explicit_unverified_target_does_not_spawn_for_writer_or_reports() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let cli = dir.path().join("solidcraft-cli");
-        std::fs::write(
+        crate::worker::spawn_retry_tests::write_script(
             &cli,
             "#!/bin/sh\ntouch \"$0.spawned\"\necho 'solidcraft-cli 0.26.0'\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let target = "0.25.1".parse().unwrap();
         let options = crate::ConvertOptions {
             no_verify: true,

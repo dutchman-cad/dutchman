@@ -118,8 +118,15 @@ impl FakeAddin {
     }
 
     pub fn job(&self, id: &str) -> Value {
-        serde_json::from_slice(&std::fs::read(self.jobs_dir().join(format!("{id}.json"))).unwrap())
-            .unwrap()
+        self.try_job(id).unwrap()
+    }
+
+    /// The job file, or `None` when it is gone. The requester deletes a finished job's files
+    /// (the request first, then the status), so a listing taken a moment earlier can still
+    /// name a job whose request has vanished; the real add-in meets the same and skips it.
+    pub fn try_job(&self, id: &str) -> Option<Value> {
+        let bytes = std::fs::read(self.jobs_dir().join(format!("{id}.json"))).ok()?;
+        Some(serde_json::from_slice(&bytes).unwrap())
     }
 
     /// Writes a complete status file.
@@ -149,7 +156,10 @@ impl FakeAddin {
             "result": null,
             "exit_code": if finished { json!(0) } else { Value::Null },
         });
-        if self.job(id).get("action") == Some(&json!("inventory")) {
+        if self
+            .try_job(id)
+            .is_some_and(|job| job.get("action") == Some(&json!("inventory")))
+        {
             status["inventory"] = if state == "done" {
                 json!(output.join("inventory.json").to_string_lossy())
             } else {
@@ -167,13 +177,17 @@ impl FakeAddin {
     /// Claims a job as the add-in does: an invalid one fails at once with `invalid_job`,
     /// naming the problem; a valid one is `queued`. Returns whether it was valid.
     pub fn claim(&self, id: &str) -> bool {
-        let job = self.job(id);
+        self.try_job(id).is_some_and(|job| self.claim_job(id, &job))
+    }
+
+    /// As `claim`, for a job already read.
+    pub fn claim_job(&self, id: &str, job: &Value) -> bool {
         let output = job
             .get("output_dir")
             .and_then(Value::as_str)
             .map(PathBuf::from)
             .unwrap_or_default();
-        match validate(&job) {
+        match validate(job) {
             Ok(()) => {
                 self.status(
                     id,
@@ -257,10 +271,12 @@ impl Service {
         std::thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 for id in addin.unclaimed() {
-                    if !addin.claim(&id) {
+                    let Some(job) = addin.try_job(&id) else {
+                        continue;
+                    };
+                    if !addin.claim_job(&id, &job) {
                         continue;
                     }
-                    let job = addin.job(&id);
                     let output = PathBuf::from(job["output_dir"].as_str().unwrap());
                     if job["action"] == "inventory" {
                         addin.finish_inventory(&id, &inventory);
