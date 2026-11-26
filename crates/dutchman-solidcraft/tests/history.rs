@@ -18692,6 +18692,7 @@ fn design_cube(features: Vec<Value>, sketches: &[(u32, u32)], rollback: Option<u
         source_file: Some("cube.par".to_owned()),
         source_step: None,
         assembly: None,
+        merge_bodies: false,
     }
 }
 
