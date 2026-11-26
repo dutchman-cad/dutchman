@@ -645,11 +645,20 @@ fn plan_with_limit(
                 ));
                 continue;
             }
+            // A drawing next to its model would take the model's name: it is named apart.
+            let is_drawing = Format::from_path(&path).is_some_and(Format::is_drawing);
+            let relative_named = if is_drawing {
+                let mut name = relative.with_extension("").into_os_string();
+                name.push(".drawing");
+                PathBuf::from(name)
+            } else {
+                relative.clone()
+            };
             let output = unique(
                 out_dir
                     .join(
-                        Format::part_revision(&relative)
-                            .map_or_else(|| relative.clone(), |(part, _)| part),
+                        Format::part_revision(&relative_named)
+                            .map_or_else(|| relative_named.clone(), |(part, _)| part),
                     )
                     .with_extension(if crate::tool_library::is_library(&path) {
                         dutchman_core::camtools::EXTENSION
@@ -863,10 +872,15 @@ pub fn summary(jobs: &[Job]) -> String {
     let mut parts = 0;
     let mut steps = 0;
     let mut libraries = 0;
+    let mut drawings = 0;
     let fallbacks = jobs.iter().filter(|job| job.fallback.is_some()).count();
     for job in jobs {
         if crate::tool_library::is_library(&job.input) {
             libraries += 1;
+            continue;
+        }
+        if Format::from_path(&job.input).is_some_and(Format::is_drawing) {
+            drawings += 1;
             continue;
         }
         match extension_of(&job.input).as_str() {
@@ -895,6 +909,12 @@ pub fn summary(jobs: &[Job]) -> String {
         format!("{assemblies} {assembly_word}, {parts} {part_word}, {steps} STEP {file_word}");
     if libraries > 0 {
         text.push_str(&format!(", {libraries} {library_word}"));
+    }
+    if drawings > 0 {
+        text.push_str(&format!(
+            ", {drawings} {}",
+            if drawings == 1 { "drawing" } else { "drawings" }
+        ));
     }
     if assemblies > 0 {
         text.push_str("; converting assemblies with their parts");

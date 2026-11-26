@@ -164,6 +164,26 @@ pub const PLAIN_NOTES: &[PlainNote] = &[
         "Some of the file's internal attributes have no STEP equivalent and were not written to the STEP copy; the shape is not affected.",
         Shown::No,
     ),
+    // STEP records that sit in every STEP file (the protocol definition, the product category,
+    // the presentation of a representation) are kept as they are, and an edge tolerance has no
+    // place in STEP. None of this changes what the person sees.
+    coded(
+        "step/decode.opaque-record-preserved",
+        "Some of the file's standard STEP records were kept but not interpreted; the shape is not affected.",
+        Shown::No,
+    ),
+    coded(
+        "step/topology.metadata-not-represented",
+        "Some edge tolerances have no STEP equivalent and were not written to the STEP copy; the shape is not affected.",
+        Shown::No,
+    ),
+    // Folders in the timeline: a way the converted design is laid out, not something lost.
+    uncoded(
+        "timeline folders",
+        "feature(s) grouped",
+        "The features of each part were grouped into a folder in the timeline.",
+        Shown::No,
+    ),
     // Assembly placement.
     uncoded(
         "part positions",
@@ -310,10 +330,30 @@ mod tests {
             "step/native.source-record-omitted",
             "f3d/source.unindexed-records-retained",
             "history/body-scope-confirmed",
+            "step/decode.opaque-record-preserved",
+            "step/topology.metadata-not-represented",
         ] {
             let note = view(Some(code), code, "7 record(s)");
             assert!(note.rewritten && !note.shown, "{code}");
         }
+    }
+
+    #[test]
+    fn timeline_folder_notes_are_left_out() {
+        let folder = view(
+            None,
+            "timeline folders",
+            "\"model-1\": 1 feature(s) grouped",
+        );
+        assert!(folder.rewritten && !folder.shown);
+        // A dropped note is never hidden, whatever its row says.
+        let dropped = plain_view(
+            Severity::Dropped,
+            Some("step/decode.opaque-record-preserved"),
+            "x",
+            "preserved 1 FOO instance(s) as named opaque STEP records",
+        );
+        assert!(dropped.shown);
     }
 
     #[test]

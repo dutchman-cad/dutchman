@@ -19,6 +19,7 @@ pub mod counts;
 pub mod diagnose;
 pub mod diagnostics;
 pub mod doctor;
+pub mod drawings;
 pub mod dxf;
 pub mod formats;
 pub mod investigate;
@@ -618,6 +619,10 @@ pub(crate) fn convert_options_with_observer(
     if tool_library::is_library(input) {
         return tool_library::convert(input, output, replace);
     }
+    // Every drawing file gets a report, even when nothing in it can be read yet.
+    if dutchman_core::Format::from_path(input).is_some_and(dutchman_core::Format::is_drawing) {
+        return drawings::convert_unread(input);
+    }
     if options.diagnostics.as_ref().is_some_and(|path| {
         path == output
             || std::fs::canonicalize(path)
@@ -673,6 +678,7 @@ fn convert_prepared(
         fields.insert("solidcraft".to_owned(), solidcraft);
     }
     json::conversion_choices(&mut report, input, options);
+    drawings::attach(input, options, &mut report);
     report
 }
 
@@ -712,6 +718,9 @@ pub fn convert(
     replace: bool,
     search: &PartSearch,
 ) -> Value {
+    if dutchman_core::Format::from_path(input).is_some_and(dutchman_core::Format::is_drawing) {
+        return drawings::convert_unread(input);
+    }
     match dutchman_core::convert_traced(input, output, writer, replace, search, &mut |_| {}) {
         Ok(report) => convert_success(input, output, &report),
         Err(err) => json::error(json::CONVERT, json::input(input), &err),
@@ -728,6 +737,9 @@ pub fn convert_with_progress(
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
     let progress = dutchman_core::Progress::new(on_progress);
+    if dutchman_core::Format::from_path(input).is_some_and(dutchman_core::Format::is_drawing) {
+        return drawings::convert_unread(input);
+    }
     match dutchman_core::convert_with_progress(input, output, writer, replace, search, &progress) {
         Ok(report) => convert_success(input, output, &report),
         Err(err) => json::error(json::CONVERT, json::input(input), &err),

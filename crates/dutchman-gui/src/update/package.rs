@@ -194,7 +194,11 @@ impl Install {
         }
         #[cfg(target_os = "linux")]
         if install == Self::Direct {
-            return appimage::detect(std::env::var_os("APPIMAGE").as_deref());
+            return appimage::detect(
+                std::env::var_os("APPIMAGE").as_deref(),
+                std::env::var_os("APPDIR").as_deref(),
+                &exe,
+            );
         }
         install
     }
