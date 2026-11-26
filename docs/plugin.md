@@ -146,7 +146,7 @@ that instead (`notice::folder_access`).
 Per-user settings (`user-storage@0.1`) keep the three dialog options. After an import,
 `adapter.rs` sets the key `options` to `{"editable_history", "up_axis", "include_hidden_bodies"}`
 (`settings::encode`); SolidCraft publishes it only when it accepts the design, so a failed or
-cancelled import saves nothing. The dialog hook (`dialog@0.1`, `dialog-provider.update-fields`) reads
+canceled import saves nothing. The dialog hook (`dialog@0.1`, `dialog-provider.update-fields`) reads
 that key when a file is chosen and replies with a `default` for each option the stored value
 holds validly (`settings::field_defaults`); nothing stored, a damaged value or a value the form
 does not offer leaves the manifest's defaults. The parts folder is never stored. The hook reads

@@ -128,7 +128,7 @@ The dialog shows three options, and a folder field:
 
 Dutchman remembers your last three options in your SolidCraft user settings, saved when
 SolidCraft accepts an import, and offers them as the defaults for the next file. A conversion
-that fails or is cancelled saves nothing. The parts folder is never remembered. Removing the
+that fails or is canceled saves nothing. The parts folder is never remembered. Removing the
 plugin asks whether to keep these settings (it keeps them by default).
 ## Limits
 
