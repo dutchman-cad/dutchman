@@ -31,6 +31,8 @@ pub enum Status {
     Flattened,
     Incomplete,
     Failed,
+    /// A drawing file that is recognised but whose sheets are not read yet: not a failure.
+    NotSupported,
     /// Stopped at a limit and resumable: not a failure.
     Stopped,
     NotStarted,
@@ -163,6 +165,10 @@ pub const SEND_DM_BUTTON: &str = "Copy and open DM";
 pub const SEND_STEP_TITLE: &str = "Please add a STEP export";
 pub const SEND_STEP_TEXT: &str = "Strongly recommended: a STEP export of the exact same design \
      (same version, part positions and state) lets us check every part. It really helps us fix it.";
+/// The third card for a drawing, which has no STEP export: the same drawing as a PDF or DXF.
+pub const SEND_DRAWING_TITLE: &str = "Please add a PDF or DXF export";
+pub const SEND_DRAWING_TEXT: &str = "Strongly recommended: a PDF or DXF export of the same \
+     drawing lets us check what the sheets should show. It really helps us fix it.";
 pub const SEND_SMALL_PRINT: &str = "Only the Dutchman team sees it. It's never published or \
      used in public tests, and we delete it on request.";
 pub const SEND_COPIED: &str = "The message is copied: paste it into the DM with Dutchy.";
@@ -223,12 +229,25 @@ impl SendSteps {
             step_card: !source_is_step(report),
             step_title: if crate::tool_library::is_report(report) {
                 crate::tool_library::other_export_title(report)
+            } else if not_supported_yet(report) {
+                SEND_DRAWING_TITLE.to_owned()
             } else {
                 SEND_STEP_TITLE.to_owned()
             },
-            step_note: crate::tool_library::is_report(report).then_some(SEND_TOOLS_STEP_NOTE),
+            step_note: if crate::tool_library::is_report(report) {
+                Some(SEND_TOOLS_STEP_NOTE)
+            } else if not_supported_yet(report) {
+                Some(SEND_DRAWING_TEXT)
+            } else {
+                None
+            },
         }
     }
+}
+
+/// Whether `report` is of a drawing file that is recognised but whose sheets are not read yet.
+pub fn not_supported_yet(report: &Value) -> bool {
+    report.pointer("/drawing/status").and_then(Value::as_str) == Some("not_decoded")
 }
 
 /// Whether the file of `report` is itself a STEP file.
@@ -343,6 +362,7 @@ impl FileView {
         let status = match progress {
             Progress::Waiting => Status::Waiting,
             Progress::Converting => Status::Converting,
+            Progress::Failed if report.is_some_and(not_supported_yet) => Status::NotSupported,
             Progress::Failed => Status::Failed,
             Progress::Stopped => Status::Stopped,
             Progress::NotStarted => Status::NotStarted,
@@ -354,6 +374,7 @@ impl FileView {
         };
         let (status_word, severity_rank) = match status {
             Status::Failed => ("Failed", 0),
+            Status::NotSupported => ("Not supported yet", 1),
             Status::Incomplete => ("Incomplete", 0),
             Status::Flattened => ("Converted, no history", 1),
             Status::Converted | Status::ConvertedWithLosses
@@ -483,6 +504,8 @@ pub struct Counts {
     pub converted: usize,
     pub incomplete: usize,
     pub failed: usize,
+    /// Drawing files that are recognised but not read yet.
+    pub not_supported: usize,
     pub stopped: usize,
     pub not_started: usize,
     pub skipped: usize,
@@ -517,6 +540,7 @@ impl RunView {
                 | Status::Flattened
                 | Status::Incomplete => counts.converted += 1,
                 Status::Failed => counts.failed += 1,
+                Status::NotSupported => counts.not_supported += 1,
                 Status::Stopped => counts.stopped += 1,
                 Status::NotStarted => counts.not_started += 1,
                 Status::Skipped => counts.skipped += 1,
@@ -526,24 +550,34 @@ impl RunView {
         }
         let first_to_show = files
             .iter()
-            .position(|f| matches!(f.status, Status::Failed | Status::Incomplete))
+            .position(|f| {
+                matches!(
+                    f.status,
+                    Status::Failed | Status::NotSupported | Status::Incomplete
+                )
+            })
             .unwrap_or(0);
         let summary = (!files.is_empty()).then(|| {
             if running {
                 return format!(
                     "{} of {} done",
-                    counts.converted + counts.failed + counts.stopped,
+                    counts.converted + counts.failed + counts.not_supported + counts.stopped,
                     files.len()
                 );
             }
-            // A stop is resumable, so it is not counted as a failure.
-            let failed_or_stopped = if counts.stopped > 0 && counts.failed == 0 {
-                format!("{} stopped", counts.stopped)
-            } else if counts.stopped > 0 {
-                format!("{} failed, {} stopped", counts.failed, counts.stopped)
-            } else {
-                format!("{} failed", counts.failed)
-            };
+            // A stop is resumable and a drawing not read yet is not a failure: neither is
+            // counted as one.
+            let mut tail = Vec::new();
+            if counts.failed > 0 || (counts.stopped == 0 && counts.not_supported == 0) {
+                tail.push(format!("{} failed", counts.failed));
+            }
+            if counts.not_supported > 0 {
+                tail.push(format!("{} not supported yet", counts.not_supported));
+            }
+            if counts.stopped > 0 {
+                tail.push(format!("{} stopped", counts.stopped));
+            }
+            let failed_or_stopped = tail.join(", ");
             let mut text = if counts.incomplete > 0 {
                 format!(
                     "{} converted ({} incomplete), {failed_or_stopped}",
@@ -979,6 +1013,58 @@ pub fn batch_outcome(report: &Value) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
+
+    fn drawing_report() -> Value {
+        json!({
+            "ok": false,
+            "error": {"kind": "not_supported_yet", "message": "Inventor drawing (.idw): no drawing was written"},
+            "drawing": {"status": "not_decoded"},
+        })
+    }
+
+    #[test]
+    fn a_drawing_not_read_yet_is_not_supported_not_failed() {
+        let report = drawing_report();
+        let view = FileView::from_report(&report);
+        assert_eq!(view.status, Status::NotSupported);
+        assert_eq!(view.status_word, "Not supported yet");
+        let failed = FileView::from_report(&json!({"ok": false, "error": {"message": "x"}}));
+        assert_eq!(failed.status, Status::Failed);
+        let run = RunView::new(vec![view.clone()], None, false);
+        assert_eq!(run.counts.not_supported, 1);
+        assert_eq!(run.counts.failed, 0);
+        assert_eq!(
+            run.summary.as_deref(),
+            Some("0 converted, 1 not supported yet")
+        );
+        let mixed = RunView::new(vec![view.clone(), failed], None, false);
+        assert_eq!(
+            mixed.summary.as_deref(),
+            Some("0 converted, 1 failed, 1 not supported yet")
+        );
+        let running = RunView::new(vec![view], None, true);
+        assert_eq!(running.summary.as_deref(), Some("1 of 1 done"));
+    }
+
+    #[test]
+    fn a_drawing_asks_for_a_pdf_or_dxf_export_not_a_step() {
+        let steps = SendSteps::new(
+            crate::report_policy::ReportPolicy::bundled(),
+            Some(1000),
+            &drawing_report(),
+            Surface::Desktop,
+        );
+        assert_eq!(steps.step_title, SEND_DRAWING_TITLE);
+        assert_eq!(steps.step_note, Some(SEND_DRAWING_TEXT));
+        assert!(!SEND_DRAWING_TITLE.contains("STEP") && !SEND_DRAWING_TEXT.contains("STEP"));
+        let model = SendSteps::new(
+            crate::report_policy::ReportPolicy::bundled(),
+            Some(1000),
+            &json!({"ok": false}),
+            Surface::Desktop,
+        );
+        assert_eq!(model.step_title, SEND_STEP_TITLE);
+    }
     use super::*;
 
     #[test]
@@ -1279,6 +1365,7 @@ mod tests {
                 converted: 3,
                 incomplete: 1,
                 failed: 2,
+                not_supported: 0,
                 stopped: 0,
                 skipped: 4,
                 not_started: 0

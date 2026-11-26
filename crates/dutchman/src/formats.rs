@@ -17,7 +17,7 @@ pub fn converts(format: Format) -> &'static str {
         return "placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately)";
     }
     if format.is_drawing() {
-        return "a report of what was identified; the sheets and views are not decoded yet, so no drawing is written";
+        return "a report of what was found; reading the sheets and views isn't supported yet, so no drawing is written";
     }
     if !format.can_convert() {
         return "nothing yet; reading geometry is not supported yet";

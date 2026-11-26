@@ -125,7 +125,7 @@ pub(crate) fn prepare_options(jobs: &mut [Job], options: &ConvertOptions) {
 /// the next free `name (2).sc`, `name (3).sc`. A job never takes a file Dutchman did not write
 /// in this same slot.
 fn assign_free_names(jobs: &mut [Job], skip: &[usize]) {
-    let key = |path: &Path| path.to_string_lossy().to_lowercase();
+    let key = dutchman_core::safe_output::portable_path_key;
     let mut claimed: BTreeSet<String> = jobs.iter().map(|job| key(&job.output)).collect();
     for (index, job) in jobs.iter_mut().enumerate() {
         if job.replace || skip.contains(&index) {
@@ -1069,8 +1069,9 @@ fn unique(path: PathBuf, taken: &mut BTreeSet<String>) -> PathBuf {
     let mut candidate = path.clone();
     let mut n = 2;
     // Reserve portable names even on a case-sensitive source filesystem: outputs
-    // may be written to a case-insensitive volume on the same machine.
-    while taken.contains(&candidate.to_string_lossy().to_lowercase()) {
+    // may be written to a case-insensitive volume on the same machine; names that differ only
+    // in Unicode normalisation are one name on macOS.
+    while taken.contains(&dutchman_core::safe_output::portable_path_key(&candidate)) {
         let stem = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -1083,7 +1084,7 @@ fn unique(path: PathBuf, taken: &mut BTreeSet<String>) -> PathBuf {
         candidate = path.with_file_name(name);
         n += 1;
     }
-    taken.insert(candidate.to_string_lossy().to_lowercase());
+    taken.insert(dutchman_core::safe_output::portable_path_key(&candidate));
     candidate
 }
 

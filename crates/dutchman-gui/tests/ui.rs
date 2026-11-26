@@ -6524,6 +6524,100 @@ fn report_buttons_screenshots() {
     std::fs::write(dir.join("report-buttons.md"), index).unwrap();
 }
 
+/// A drawing whose sheets are not read yet is "Not supported yet", not a failure, and its
+/// help asks for a PDF or DXF export, never a STEP.
+#[test]
+fn a_drawing_that_is_not_read_yet_is_not_supported_yet_not_failed() {
+    for name in [
+        "frame.idw",
+        "frame.slddrw",
+        "frame.f2d",
+        "frame.dft",
+        "frame.dwg",
+        "frame.dxf",
+    ] {
+        let (mut harness, _dir) = failed_card_for_drawing(name);
+        let view = &harness.state().rows()[0];
+        assert!(view.report.is_some(), "{name}");
+        assert!(
+            harness.query_by_label("Not supported yet").is_some(),
+            "{name}"
+        );
+        assert!(harness.query_by_label("Failed").is_none(), "{name}");
+        assert!(
+            harness
+                .query_by_label("0 converted, 1 not supported yet")
+                .is_some(),
+            "{name}"
+        );
+        assert!(
+            harness.query_by_label_contains("0 failed").is_none(),
+            "{name}"
+        );
+        // One statement: recognised, but not supported yet. Never "accepted" beside "cannot".
+        // The design list line and the card both say it, in the same words.
+        assert_eq!(
+            harness
+                .query_all_by_label_contains(
+                    "recognised, but reading its sheets isn't supported yet"
+                )
+                .count(),
+            2,
+            "{name}"
+        );
+        assert!(
+            harness.query_by_label_contains("cannot be read").is_none(),
+            "{name}"
+        );
+        assert!(
+            harness.query_by_label_contains("accepted").is_none(),
+            "{name}"
+        );
+        // No STEP anywhere: not the button, not the help step.
+        assert!(
+            harness.query_by_label("Add matching STEP").is_none(),
+            "{name}"
+        );
+        assert!(
+            harness.query_by_label("Please add a STEP export").is_none(),
+            "{name}"
+        );
+        assert!(
+            harness
+                .query_by_label("Please add a PDF or DXF export")
+                .is_some(),
+            "{name}"
+        );
+        assert!(
+            harness
+                .query_by_label_contains("a PDF or DXF export of the same drawing")
+                .is_some(),
+            "{name}"
+        );
+        harness.run_steps(2);
+    }
+}
+
+fn failed_card_for_drawing(name: &str) -> (Harness<'static, App>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join(name);
+    let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    if name.ends_with(".dwg") {
+        bytes = b"AC1032\0\0\0\0\0\0".to_vec();
+    }
+    bytes.extend([0_u8; 64]);
+    std::fs::write(&input, bytes).unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe(|cc| test_app(cc));
+    harness.state_mut().add_inputs([input]);
+    harness.state_mut().set_out_dir(dir.path().join("out"));
+    harness.state_mut().set_verify(false);
+    convert(&mut harness);
+    harness.run_steps(8);
+    (harness, dir)
+}
+
 /// A synthetic drawing file whose sheets are not decoded yet: the Results card reports it.
 #[test]
 #[ignore = "renders the drawing result cards with a GPU; set DUTCHMAN_GUI_SCREENSHOTS"]
@@ -6582,7 +6676,7 @@ fn drawing_screenshots() {
                 &mut index,
                 &format!("drawing-not-decoded-{language}"),
                 mode,
-                "A drawing file that is accepted and reported as not decoded yet.",
+                "A drawing file that is recognised and reported as not supported yet.",
             );
         }
     }

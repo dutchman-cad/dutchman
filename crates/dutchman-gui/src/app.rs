@@ -3861,7 +3861,7 @@ fn result_colour(p: &Palette, report: Option<&Value>, view: &FileView) -> egui::
             p.lantern_text
         }
         present::Status::Converted | present::Status::ConvertedWithLosses => p.spectre,
-        present::Status::Stopped => p.lantern_text,
+        present::Status::Stopped | present::Status::NotSupported => p.lantern_text,
         present::Status::Failed => p.danger,
         _ => p.tide,
     }
@@ -3904,8 +3904,9 @@ fn row_ui(
         .report
         .as_ref()
         .is_some_and(dutchman::tool_library::is_report);
-    // A tool library has no design to open and no STEP to match.
-    let step_button = !running && row.report.is_some() && !stopped && !tool_library;
+    // A tool library has no design to open and no STEP to match, and nor does a drawing.
+    let drawing = view.status == present::Status::NotSupported;
+    let step_button = !running && row.report.is_some() && !stopped && !tool_library && !drawing;
     let bundle =
         crate::onshape::is_bundle(&row.input) && row.input.is_file() && row.report.is_some();
     if output.is_some() || step_button || bundle {
@@ -4027,7 +4028,13 @@ fn row_ui(
         return action;
     }
     if let Some(message) = &view.error {
-        text_with_links(ui, message, p.danger);
+        // A drawing that is not read yet is not a failure: its note is in the warning colour.
+        let colour = if view.status == present::Status::NotSupported {
+            p.lantern_text
+        } else {
+            p.danger
+        };
+        text_with_links(ui, message, colour);
         if let Some((path, ready)) = log {
             if let Err(message) = platform::log_controls(ui, path, ready) {
                 action = Some(Action::Notice(message));
