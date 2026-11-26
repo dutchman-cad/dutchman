@@ -818,6 +818,13 @@ impl Report {
             None => self.part_positions = Some((mode, counts)),
         }
     }
+    /// Forgets how a part was placed and the notes about it, for a part read on its own whose
+    /// place something else states: a parts package says where each of its parts goes.
+    pub(crate) fn forget_part_positions(&mut self) {
+        self.part_positions = None;
+        self.placement_assumptions.clear();
+        self.losses.retain(|loss| loss.subject != "part positions");
+    }
     /// Records a part placed by an assumption, by the names the design gives it.
     pub(crate) fn assume_placement(&mut self, part: String, why: crate::PlacementAssumption) {
         self.placement_assumptions.push((part, why));
