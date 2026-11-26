@@ -113,9 +113,11 @@ receive a numbered alternative.
 Folder runs keep the input tree under the selected output folder. For example,
 `in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`, with linked design companions
 and its `.report.json` beside it. Same-named designs in different subfolders stay
-separate. Repeating a run into the same selected folder reuses the output paths;
-existing designs and reports are replaced, identical linked companions are reused,
-and edited companions are kept with a conflict report.
+separate. Repeating a run into the same selected folder never replaces a design that is
+there: each new design gets the next free name (`part (2).sc`), with its `.report.json`
+beside it, unless **Replace designs already in the output folder** is ticked (it is off by
+default). Identical linked companions are reused, and edited companions are kept with a
+conflict report.
 
 ZIP projects unpack into a private temporary folder, limited to 10,000 entries and 4 GiB
 of extracted data. Paths outside the project are refused and symbolic links are skipped.

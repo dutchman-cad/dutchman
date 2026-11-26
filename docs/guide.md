@@ -254,9 +254,10 @@ The exit code is 0, and the first line, on stdout, says what was written where: 
 geometry, as this file has no feature history (else `editable history, verified in SolidCraft`
 or `editable history, unverified`). After progress updates, the lines on stderr are the loss report, explained
 [below](#reading-the-loss-report). Long notes are cut to their first sentence, marked `…`;
-`--verbose` prints them whole. An explicitly named existing output file is
-replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
-when the conversion fails.
+`--verbose` prints them whole. An existing file at the output is never
+replaced: the design is written to the next free name (`part (2).sc`), and its reports
+beside it carry the same number. `--replace` replaces it. Nothing is written when the
+conversion fails.
 
 Inventor attached sheet-metal plates and their bends can keep editable history on an unchanged
 L-shaped or notched base. The plate must span one proven straight profile edge at 90 degrees;
@@ -608,7 +609,8 @@ Folder runs in the desktop app and CLI keep paths relative to the input folder:
 `in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`. Designs with the same name in
 other subfolders stay separate. Linked design companions and desktop reports stay
 beside their design. Repeating a run into an explicit output folder reuses those
-paths and replaces designs unless `--no-clobber` is set; edited linked companions
+paths, and a design already there is kept: the new one gets the next free name
+(`part (2).sc`) unless `--replace` is set; edited linked companions
 are kept and reported as a conflict. Single-file output paths are unchanged.
 
 [Convert a whole folder: convert-all](command-line.md#convert-a-whole-folder-convert-all)

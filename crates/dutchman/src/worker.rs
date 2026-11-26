@@ -281,7 +281,7 @@ pub fn run_if_worker() -> Option<ExitCode> {
         &parsed.input,
         &parsed.output,
         &parsed.options,
-        !parsed.options.no_clobber,
+        parsed.options.replace,
         &parsed.options.part_search(),
         &callback,
         members,
@@ -430,8 +430,8 @@ impl ConvertOptions {
         if self.no_verify {
             args.push("--no-verify".into());
         }
-        if self.no_clobber {
-            args.push("--no-clobber".into());
+        if self.replace {
+            args.push("--replace".into());
         }
         args.push("--verify-timeout".into());
         args.push(self.verify_timeout.to_string().into());
@@ -778,7 +778,7 @@ fn convert_once(
     log: Option<&crate::diagnostics::Log>,
 ) -> (Value, Option<Option<String>>) {
     let mut options = options.clone();
-    options.no_clobber = !job.replace;
+    options.replace = job.replace;
     let mut command = Command::new(program);
     #[cfg(unix)]
     if shutdown.is_some() {
@@ -856,10 +856,9 @@ fn convert_once(
         }
         let at = stage.lock().map_or(Stage::Input, |stage| *stage);
         let fail = |message: String| {
-            if at == Stage::Write {
-                // Stopped while writing: what is there is not a whole design.
-                let _ = std::fs::remove_file(&job.output);
-            }
+            // A design is written whole or not at all (a temporary file moved into place), so
+            // a child stopped while writing leaves nothing at the output to remove; a file
+            // there is never this run's to delete.
             json::failure_at(
                 CONVERT,
                 json::input(&job.input),

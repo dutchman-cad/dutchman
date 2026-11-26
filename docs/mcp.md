@@ -223,9 +223,9 @@ lists them. These external commands provide their own interfaces; the conversion
 and JSON reports described here retain their existing schemas.
 
 The full CLI also accepts `dutchman part.f3d` (or `dutchman convert part.f3d`) and derives
-the output beside the input from `--to`. An existing derived output is kept with exit 2;
-choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
-Explicit outputs retain their replacement behaviour. MCP output paths remain required except for `convert` with `dry_run: true`.
+the output beside the input from `--to`. An existing file is never replaced: the design is
+written to the next free name (`part (2).sc`), and `--replace` (or `--force`) replaces it.
+`--force` conflicts with `--no-clobber`, which does nothing now. MCP output paths remain required except for `convert` with `dry_run: true`.
 
 `dutchman-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server. It lets
 an AI assistant convert CAD files with Dutchman on your machine: it provides conversion and diagnosis
@@ -1014,8 +1014,8 @@ reports are unchanged.
 FreeCAD TechDraw drawing output is available from the CLI:
 `dutchman convert part.FCStd --to dxf [--page NAME]`. It writes one
 `part-PageName.dxf` per page; `-o` accepts an existing directory or a file base
-(an exact file path with `--page`). Defaults require `--force` to overwrite;
-explicit outputs replace unless `--no-clobber` is set. Page names are FreeCAD
+(an exact file path with `--page`). An existing page file is never replaced:
+the page takes the next free name (`part-Page (2).dxf`) unless `--replace` is set. Page names are FreeCAD
 object names. Pages keep neutral view curves, dimension labels, annotations, template frames, and
 resolved title-block text in millimetre page space. Unsupported content is reported
 in per-page JSON `pages` results. No page is an error. See [FreeCAD coverage](freecad.md#techdraw-to-dxf).

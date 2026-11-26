@@ -277,7 +277,7 @@ impl Format {
         } else if self == Self::Iges {
             "open it in SolidCraft directly"
         } else if self.is_drawing() {
-            "accepted; the report says which sheets and views were read"
+            "recognised, but reading its sheets isn't supported yet. The report lists what was found."
         } else if self.reads_geometry() {
             "reads geometry"
         } else if self.codec_id().is_some() {
@@ -377,5 +377,25 @@ impl Format {
                     .any(|suffix| ext.eq_ignore_ascii_case(suffix))
             })
             .or_else(|| crate::module::reads_extension(ext).then_some(Self::ModuleBoard))
+    }
+}
+
+#[cfg(test)]
+mod drawing_words_tests {
+    use super::Format;
+
+    #[test]
+    fn every_drawing_format_says_one_thing_about_what_it_reads() {
+        for format in Format::ALL.into_iter().filter(|f| f.is_drawing()) {
+            let words = format.words();
+            assert_eq!(
+                words,
+                "recognised, but reading its sheets isn't supported yet. The report lists what was found."
+            );
+            let message = crate::drawing::not_decoded_message(format);
+            assert!(message.starts_with(&format!("{}: no drawing was written", format.name())));
+            assert!(!message.contains("accepted") && !message.contains("cannot be read"));
+            assert!(format.status_for(std::path::Path::new("x")).contains(words));
+        }
     }
 }

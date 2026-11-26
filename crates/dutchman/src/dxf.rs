@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use dutchman_core::{Error, Format, Report};
+use dutchman_core::{safe_output, Error, Format, Report};
 use serde_json::Value;
 
 use crate::json;
@@ -106,32 +106,28 @@ fn run(
                 "DXF output would replace the input; choose another output path".into(),
             ));
         }
-        if !replace
-            && path.try_exists().map_err(|source| Error::Io {
-                path: path.clone(),
-                source,
-            })?
-        {
-            return Err(Error::OutputExists { path });
+        if !replace {
+            // A page never replaces a file already there: it takes the next free number.
+            let own = path.clone();
+            path = safe_output::next_free(&path, &|candidate| {
+                candidate.try_exists().unwrap_or(true)
+                    || (candidate != own.as_path()
+                        && paths.contains(&candidate.to_string_lossy().to_lowercase()))
+            });
+            paths.insert(path.to_string_lossy().to_lowercase());
         }
         planned.push((path, page));
     }
     stage(dutchman_core::Stage::Write);
     let mut results = Vec::new();
     for (path, page) in planned {
-        use std::io::Write;
-        let io = |source| Error::Io {
-            path: path.clone(),
-            source,
-        };
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(replace)
-            .truncate(replace)
-            .create_new(!replace)
-            .open(&path)
-            .map_err(io)?;
-        file.write_all(&page.bytes).map_err(io)?;
+        safe_output::write(&path, &page.bytes, replace).map_err(|source| match source.kind() {
+            std::io::ErrorKind::AlreadyExists => Error::OutputExists { path: path.clone() },
+            _ => Error::Io {
+                path: path.clone(),
+                source,
+            },
+        })?;
         results.push(json::drawing_page(
             &page.name,
             &path,

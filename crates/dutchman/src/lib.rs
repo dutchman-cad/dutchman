@@ -219,8 +219,12 @@ pub struct ConvertOptions {
     /// Seconds FreeCAD may run before it is killed.
     #[arg(long, value_name = "SECONDS", default_value_t = 300)]
     pub freecad_timeout: u64,
-    /// Refuse to replace existing output files (explicit outputs otherwise replace).
-    #[arg(long)]
+    /// Replace an existing output file. Without it a conversion never replaces a file: when the
+    /// name is taken, the design gets the next free one, `name (2).sc`.
+    #[arg(long, conflicts_with = "no_clobber")]
+    pub replace: bool,
+    /// Does nothing: not replacing existing files is the default (the old name for it).
+    #[arg(long, hide = true)]
     pub no_clobber: bool,
     /// Seconds each SolidCraft check may run before the history is written unverified.
     #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_TIMEOUT.as_secs())]
@@ -270,6 +274,7 @@ impl Default for ConvertOptions {
             write_replay: false,
             verify: false,
             freecad_timeout: 300,
+            replace: false,
             no_clobber: false,
             verify_timeout: DEFAULT_TIMEOUT.as_secs(),
             stand_up: false,
@@ -598,6 +603,36 @@ impl ConvertOptions {
     }
 }
 
+/// Where to write the design `output`: itself when `replace` is set or nothing is in its slot
+/// (the design and the reports beside it), else the next free `name (2).sc`. Nothing Dutchman
+/// did not write in the same slot is replaced.
+pub fn resolve_output(output: &Path, replace: bool) -> PathBuf {
+    if replace {
+        output.to_path_buf()
+    } else {
+        dutchman_core::safe_output::free_slot(output)
+    }
+}
+
+/// Where to write the log or report file `path`: itself when `replace` is set or nothing is
+/// there, else the next free numbered name.
+pub fn resolve_file(path: PathBuf, replace: bool) -> PathBuf {
+    if replace {
+        path
+    } else {
+        dutchman_core::safe_output::next_free(&path, &|p| p.try_exists().unwrap_or(true))
+    }
+}
+
+/// Writes a log or report file at `path`, making its folder, without replacing a file unless
+/// `replace` is set (a taken name gets the next free number); returns where it was written.
+pub fn write_file(path: &Path, bytes: &[u8], replace: bool) -> std::io::Result<PathBuf> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    dutchman_core::safe_output::write_new(path, bytes, replace)
+}
+
 /// Convert with the shared memory policy, prepared writer, and estimate/choice report fields.
 pub fn convert_options_with_progress(
     input: &Path,
@@ -675,7 +710,7 @@ fn convert_prepared(
         Err(err) => json::error(json::CONVERT, json::input(input), &err),
     };
     if options.write_replay && report.get("ok").and_then(Value::as_bool) == Some(true) {
-        write_replay_script(output, &mut report);
+        write_replay_script(output, replace, &mut report);
     }
     if let (Some(solidcraft), Some(fields)) = (writer.solidcraft, report.as_object_mut()) {
         fields.insert("solidcraft".to_owned(), solidcraft);
@@ -689,16 +724,15 @@ fn convert_prepared(
 /// `<output>.replay.json` (the file name with `.replay.json` in place of its suffix), and
 /// names it in `report` as `replay_script`; a script that cannot be written is reported as
 /// `replay_script_error`.
-fn write_replay_script(output: &Path, report: &mut Value) {
+fn write_replay_script(output: &Path, replace: bool, report: &mut Value) {
     let result = (|| {
         let design =
             std::fs::read(output).map_err(|err| format!("cannot read the design: {err}"))?;
         let script = dutchman_solidcraft::replay_script(&design)?;
         let text = serde_json::to_string_pretty(&script).map_err(|err| err.to_string())?;
         let path = output.with_extension("replay.json");
-        std::fs::write(&path, text)
-            .map_err(|err| format!("cannot write {}: {err}", path.display()))?;
-        Ok::<_, String>(path)
+        dutchman_core::safe_output::write_new(&path, text.as_bytes(), replace)
+            .map_err(|err| format!("cannot write {}: {err}", path.display()))
     })();
     if let Some(fields) = report.as_object_mut() {
         match result {
