@@ -8,9 +8,10 @@ Import report window, one line per kind of loss.
 
 It needs a SolidCraft release that includes plugin importer support (the file-first dialog,
 folder access, a plugin's minimum version, and per-user settings), on the desktop. SolidCraft's
-browser version does not run plugins yet. Older SolidCraft releases refuse to install it and
-say which capability or field they lack: the plugin asks for folder access and per-user settings,
-which they do not have.
+browser version does not run plugins yet. This plugin needs SolidCraft 0.50.0 or newer. SolidCraft 0.49.1 and older refuse to install it and
+say which capability or field they lack (0.49.1 says it needs `folders 0.1`): the plugin asks for
+folder access and per-user settings, which they do not have. Update SolidCraft to 0.50.0 or newer,
+or keep the plugin from an earlier Dutchman release, which those versions install.
 
 ## Install
 
