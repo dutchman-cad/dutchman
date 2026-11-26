@@ -1722,6 +1722,7 @@ dependencies = [
  "cadmpeg-registry",
  "dutchman-launcher",
  "flate2",
+ "icu_normalizer",
  "roxmltree 0.21.2",
  "serde",
  "serde_json",
