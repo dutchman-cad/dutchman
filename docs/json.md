@@ -750,6 +750,13 @@ SolidWorks assembly reports use `input.format: "solidworks_assembly"` and
 `input.words: "reads geometry"`. The existing assembly completeness and loss fields report
 external occurrences left out and configuration fallbacks.
 
+A failed file always names what stopped it: `error.message`, `error.stage`, `error.kind` and a
+reason code in `error.code`. A converter that stopped without a report says how: for example
+`kind: "worker_exit"`, `code: "signal_9"` and a message ending “signal 9 SIGKILL: likely out of
+memory”, `code: "panic"` with the panic message, or `code: "exit_3"` for exit code 3. An error
+that came back with no text gets a message saying the reader gave no reason. A panic in one file
+of a batch is that file's failure.
+
 A failure carries `"ok": false`, `input` and `error`, and exits 1:
 
 ```json

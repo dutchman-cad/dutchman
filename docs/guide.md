@@ -1003,7 +1003,9 @@ in the JSON report and do not count as placed. The CLI, app and plugin say
 “N parts couldn't be placed (their position in the archive couldn't be read).”
 The result is incomplete, with `verification.status` set to `partial`. Output is
 still written; JSON `ok` is `false` and the CLI returns exit status 1
-when parts are unplaced. This also covers single designs whose local components
+when parts are unplaced. That report has no `error`; its `reason` object (`stage`, `kind`,
+`code: "unplaced_parts"`, `message`, such as “47 of 49 parts placed: 2 parts couldn't be
+placed …”) says why, in batch results and in `failed.json`. This also covers single designs whose local components
 remain flattened because their occurrence positions could not be read. A replay
 against the same flattened source cannot prove their positions. Geometry and
 fallback transforms are unchanged. Decoded bodies without a written component
