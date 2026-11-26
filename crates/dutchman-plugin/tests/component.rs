@@ -313,7 +313,7 @@ impl Host {
         Ok(root.join(path))
     }
     /// SolidCraft publishes staged settings only when it accepts a successful import.
-    fn accept(&mut self) {
+    fn commit_staged(&mut self) {
         for (key, value) in std::mem::take(&mut self.staged_settings) {
             match value {
                 Some(value) => self.settings.insert(key, value),
@@ -1300,7 +1300,7 @@ fn settings_are_saved_and_offered(
     )?;
     result.map_err(|e| format!("{e:?}"))?;
     assert!(store.data().settings.is_empty(), "staged until accepted");
-    store.data_mut().accept();
+    store.data_mut().commit_staged();
     let saved = store.data().settings.get("options").cloned().unwrap();
     assert_eq!(
         serde_json::from_str::<Value>(&saved)?,
