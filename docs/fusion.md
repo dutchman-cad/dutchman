@@ -49,8 +49,10 @@ For SolidCraft 0.44 and newer, an extrude join, cut or intersection can select t
 bodies it modifies. Dutchman tries the reader's modified-body outputs as targets
 when earlier features have named every one, and keeps that scope only at the final
 body-building feature when replay matches the final source geometry. Intermediate
-body centres do not establish all participants, even when exact; intermediate
-features keep the previous mapping. Unknown or conflicting evidence also retains
+body centres do not establish all participants, even when exact; an intermediate
+join with one output body is the exception when the source stores as many bodies
+right after it as right before it: it consumed none, so it targets its output body.
+Other intermediate features keep the previous mapping. Unknown or conflicting evidence also retains
 the previous mapping. Native participant expressions are not interpreted. A join
 with several output bodies still uses the previous mapping because its surviving
 body identities are not established by those outputs.
@@ -191,7 +193,8 @@ Body moves require SolidCraft 0.45 or newer. This requirement applies only to de
 with a body move; it does not trigger a general history-loss notice for older targets.
 Dutchman keeps resolved translations
 and axis-angle rotations, including explicit pivots, when every selected body has
-a proven earlier name. CADIR supplies millimetres and radians; the writer never
+a proven earlier name; in a design state that holds several bodies, a moved body is the
+one earlier named body whose creating feature affected exactly its history slot. CADIR supplies millimetres and radians; the writer never
 infers a transform from final geometry. Unresolved body selections, unresolved
 point-to-point motion, and copied body result identities remain blockers. Bodies
 available only as final geometry also require a captured pre-move body. Older
@@ -517,10 +520,23 @@ candidate edges apart.
 Fusion 360 models in a right-handed coordinate system that defaults to Y-up in older versions
 (Autodesk made Z-up default for new installations around 2019). SolidCraft uses Z-up.
 
-By default, Dutchman preserves the source coordinates unchanged (`--no-stand-up`).
-For models created with Y-up orientation, `--stand-up` rotates the model +90° about +X
-(mapping source +Y to SolidCraft +Z and +Z to -Y). The rotation applies to imported geometry,
-assemblies, and rebuilt history.
+By default (automatic), Dutchman stands a design up when its source states that it is Y-up,
+and keeps the source coordinates when it is Z-up or when nothing states the up axis. It never
+guesses. The Fusion exporter writes each design's `up_axis` (`"y"` or `"z"`, or `null` with
+an `up_axis_error`) in the export folder's `manifest.json`; an export without the field, or a
+design outside an export folder, has an unknown up axis. Standing up rotates the model +90°
+about +X (mapping source +Y to SolidCraft +Z and +Z to -Y), for imported geometry, assemblies
+and rebuilt history.
+
+`--stand-up` always rotates, and `--keep-axes` (or `--no-stand-up`) never does, whatever the
+source says. In an assembly every design shares one frame: the root design's up axis applies,
+and the report names any inserted design that states another.
+
+The report's `up_axis` object gives `found` (`y`, `z` or `unknown`), `origin`
+(`export_manifest`, `file` or `none`), `reason` when unknown, `mode`, `applied` (`stood_up` or
+`kept_axes`) and a `summary` such as "Stood up: the export says this design is Y-up" or
+"Kept the file's axes: up axis unknown (...)". The same sentence is an information line under
+the subject `orientation`.
 
 ## Assembly placements
 

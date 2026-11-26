@@ -88,6 +88,21 @@ Designs above its conservative conversion budget are directed to the Dutchman ap
 can save a `.sc` to open in SolidCraft. See [the preflight limits](plugin.md) for the formula
 and its calibration.
 
+## When a file does not convert
+
+The message SolidCraft shows says why, in the app's plain words, and then carries the full
+failure report: the `dutchman.convert/1` report the Dutchman app writes to `<name>.failed.json`,
+with the error's kind, stage, and reason codes, as one line of JSON under "Full report". The
+Dutchman app writes the same file when you open the design in it, which also works when the
+message is cut short in SolidCraft's status area.
+
+SolidCraft gives a plugin no clipboard and no file to write (its importer interface can only
+read the file you open and the folder beside it, and answer with a design or an error), so the
+message text is the only place the plugin can put the report. SolidCraft's refusal dialog for
+importers is not in a release yet; the report is in the text it will show. A design that is only
+too large for the plugin gets one plain line instead, with no report: it says which limit,
+what the design needs, what the plugin has, and sends you to the Dutchman app.
+
 ## Options
 
 The dialog shows three options:

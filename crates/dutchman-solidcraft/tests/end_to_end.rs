@@ -308,3 +308,149 @@ fn a_step_input_is_stored_as_it_is() {
         .unwrap();
     assert_eq!(stored, text);
 }
+
+const IDENTITY: [[f64; 4]; 4] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+];
+const STOOD_UP: [[f64; 4]; 4] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, -1.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+];
+
+/// Converts the unit cube from an export folder whose manifest entry carries `extra`, and
+/// gives the written occurrence's transform and the report.
+fn from_export(
+    extra: Value,
+    writer: SolidCraftWriter,
+) -> (Value, dutchman_core::Report, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        fixture("generated_unit_cube.f3d"),
+        dir.path().join("Cube v1.f3d"),
+    )
+    .unwrap();
+    let mut entry = serde_json::json!({
+        "id": "urn:x:cube", "name": "Cube", "version": 1,
+        "files": [{"path": "Cube v1.f3d"}], "references": [],
+    });
+    entry
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "cad-export-manifest/1", "entries": [entry]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = dir.path().join("cube.solidcraft");
+    let report = convert(&dir.path().join("Cube v1.f3d"), &output, &writer).unwrap();
+    let bytes = std::fs::read(&output).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let (document, _) = entry_of(&mut archive);
+    (document["occurrences"][0]["transform"].clone(), report, dir)
+}
+
+fn entry_of(archive: &mut ZipArchive<Cursor<Vec<u8>>>) -> (Value, CompressionMethod) {
+    let (document, method) = entry(archive, "document.json");
+    (serde_json::from_slice(&document).unwrap(), method)
+}
+
+fn auto() -> SolidCraftWriter {
+    SolidCraftWriter::new().verification(Verification::Off)
+}
+
+fn sentence(report: &dutchman_core::Report) -> String {
+    report
+        .losses()
+        .iter()
+        .find(|loss| loss.subject == "orientation")
+        .map(ToString::to_string)
+        .unwrap_or_default()
+}
+
+#[test]
+fn auto_stands_up_a_design_the_manifest_says_is_y_up() {
+    let (transform, report, _dir) = from_export(serde_json::json!({"up_axis": "y"}), auto());
+    assert_eq!(transform, serde_json::json!(STOOD_UP));
+    let up = report.up_axis().unwrap().json();
+    assert_eq!(up["found"], "y");
+    assert_eq!(up["origin"], "export_manifest");
+    assert_eq!(up["applied"], "stood_up");
+    assert!(
+        sentence(&report).contains("Stood up: the export says this design is Y-up"),
+        "{}",
+        sentence(&report)
+    );
+}
+
+#[test]
+fn auto_keeps_the_axes_of_a_z_up_design() {
+    let (transform, report, _dir) = from_export(serde_json::json!({"up_axis": "z"}), auto());
+    assert_eq!(transform, serde_json::json!(IDENTITY));
+    let up = report.up_axis().unwrap().json();
+    assert_eq!(
+        (up["found"].as_str(), up["applied"].as_str()),
+        (Some("z"), Some("kept_axes"))
+    );
+    assert!(sentence(&report).contains("Kept the file's axes: the export says this design is Z-up"));
+}
+
+#[test]
+fn auto_keeps_the_axes_when_the_up_axis_is_unknown_and_says_why() {
+    let (transform, report, _dir) = from_export(
+        serde_json::json!({"up_axis": null, "up_axis_error": "no design settings"}),
+        auto(),
+    );
+    assert_eq!(transform, serde_json::json!(IDENTITY));
+    let up = report.up_axis().unwrap().json();
+    assert_eq!(up["found"], "unknown");
+    assert_eq!(up["reason"], "no design settings");
+    assert!(
+        sentence(&report).contains("Kept the file's axes: up axis unknown (no design settings)")
+    );
+    // An older export has no field at all.
+    let (transform, report, _dir) = from_export(serde_json::json!({}), auto());
+    assert_eq!(transform, serde_json::json!(IDENTITY));
+    assert_eq!(report.up_axis().unwrap().json()["found"], "unknown");
+    assert!(sentence(&report).contains("Kept the file's axes: up axis unknown"));
+}
+
+#[test]
+fn explicit_choices_win_over_what_the_export_says() {
+    let (transform, report, _dir) = from_export(
+        serde_json::json!({"up_axis": "z"}),
+        auto().stand_up(Some(true)),
+    );
+    assert_eq!(transform, serde_json::json!(STOOD_UP));
+    assert_eq!(report.up_axis().unwrap().json()["applied"], "stood_up");
+    let (transform, report, _dir) = from_export(
+        serde_json::json!({"up_axis": "y"}),
+        auto().stand_up(Some(false)),
+    );
+    assert_eq!(transform, serde_json::json!(IDENTITY));
+    assert_eq!(report.up_axis().unwrap().json()["applied"], "kept_axes");
+    assert_eq!(report.up_axis().unwrap().json()["found"], "y");
+}
+
+#[test]
+fn a_design_outside_an_export_keeps_its_axes() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("cube.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let output = dir.path().join("cube.solidcraft");
+    let report = convert(&input, &output, &auto()).unwrap();
+    let up = report.up_axis().unwrap().json();
+    assert_eq!(
+        (up["found"].as_str(), up["origin"].as_str()),
+        (Some("unknown"), Some("none"))
+    );
+    assert_eq!(up["applied"], "kept_axes");
+}

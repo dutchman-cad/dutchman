@@ -750,6 +750,13 @@ SolidWorks assembly reports use `input.format: "solidworks_assembly"` and
 `input.words: "reads geometry"`. The existing assembly completeness and loss fields report
 external occurrences left out and configuration fallbacks.
 
+A failed file always names what stopped it: `error.message`, `error.stage`, `error.kind` and a
+reason code in `error.code`. A converter that stopped without a report says how: for example
+`kind: "worker_exit"`, `code: "signal_9"` and a message ending “signal 9 SIGKILL: likely out of
+memory”, `code: "panic"` with the panic message, or `code: "exit_3"` for exit code 3. An error
+that came back with no text gets a message saying the reader gave no reason. A panic in one file
+of a batch is that file's failure.
+
 A failure carries `"ok": false`, `input` and `error`, and exits 1:
 
 ```json
@@ -2095,9 +2102,11 @@ human-readable; use reason codes in programs.
 
 ## Output orientation
 
-The CLI options `--stand-up` and `--no-stand-up` (MCP `stand_up` and
-`no_stand_up`) control the saved design orientation. Reports retain the existing
-schemas and source coordinates; these options add no report fields. See
+The CLI options `--stand-up` and `--keep-axes` (alias `--no-stand-up`; MCP `stand_up` and
+`no_stand_up`) control the saved design orientation. When a source states or fails to state
+its up axis, or an option overrides it, the report has an `up_axis` object with `found`,
+`origin`, optionally `reason` and `disagreement`, `mode`, `applied` and `summary`. Source
+coordinates in reports are unchanged. See
 [the command reference](command-line.md) for the rotation and default.
 
 Spatial hole arrays with complete parallel, coplanar directed entries can map as one

@@ -6588,3 +6588,77 @@ fn drawing_screenshots() {
     }
     std::fs::write(dir.join("drawings.md"), index).unwrap();
 }
+
+/// The Advanced "Up axis" choice, closed and open, with an English and a long German design
+/// name (the app has no translations yet), at 1280x800. Needs a GPU renderer.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the Up axis choice; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn up_axis_screenshots() {
+    // Isolate settings and paths so the image never shows the owner's home folder.
+    if std::env::var_os("DUTCHMAN_UP_AXIS_CHILD").is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "up_axis_screenshots"])
+            .env("DUTCHMAN_UP_AXIS_CHILD", "1")
+            .env("HOME", home.path())
+            .env("LOCALAPPDATA", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .env("XDG_DATA_HOME", home.path().join("data"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, name) in [
+        ("english", "synthetic-part.f3d"),
+        (
+            "german",
+            "Zusammengesetzte-Grundplatte-mit-Befestigungsschrauben.f3d",
+        ),
+    ] {
+        let work = tempfile::tempdir().unwrap();
+        let input = work.path().join(name);
+        std::fs::copy(fixture("container_metadata_only.f3d"), &input).unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        harness.ctx.set_theme(ThemePreference::Light);
+        harness.state_mut().add_inputs([input]);
+        // Neutral paths and checker, so the image shows nothing of this machine.
+        harness.state_mut().set_checker_for_test(true);
+        harness.state_mut().preview_solidcraft(Some("0.46.2"));
+        harness
+            .state_mut()
+            .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
+        wait_for_estimate(&mut harness);
+        harness.get_by_label("Advanced").click_accesskit();
+        harness.run_steps(8);
+        harness.get_by_value("Automatic");
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            &format!("up-axis-closed-{language}"),
+            "day",
+            "Advanced open; Up axis shows Automatic.",
+        );
+        harness.get_by_label("Up axis").click_accesskit();
+        harness.run_steps(8);
+        harness.get_by_label("Stand up (Y-up to Z-up)");
+        harness.get_by_label("Keep the file's axes");
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            &format!("up-axis-open-{language}"),
+            "day",
+            "Up axis choices listed: Automatic, Stand up, Keep the file's axes.",
+        );
+    }
+}
