@@ -293,6 +293,11 @@ With Rust 1.88 or newer:
 cargo install --git https://github.com/dutchman-cad/dutchman dutchman
 ```
 
+That builds the newest code on `main`. To build the newest published release instead, add
+`--branch release`: the `release` branch always points at the latest release. A Nix flake or
+other package manager that follows a branch can use the same branch
+(`github:dutchman-cad/dutchman/release`), or a tag such as `v0.3.0` to pin one release.
+
 This installs both `dutchman` and `dutchman-mcp`. Check the install:
 
 ```sh
