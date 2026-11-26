@@ -41,6 +41,7 @@ mod source_errors;
 mod source_version;
 pub mod time;
 mod up_axis;
+pub use module::CopperLayers;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
     classify as classify_refusal, clean as clean_refusal, Refusal,
@@ -261,7 +262,7 @@ pub fn assembly_references(
             return Ok(Vec::new());
         }
         let decode = |format: Format, path: &Path, report: &mut Report| {
-            decode_file(format, path, report, None)
+            decode_file(format, path, report, None, search.copper)
         };
         let Ok(model) = decode(Format::FusionArchive, input, &mut Report::default()) else {
             return Ok(Vec::new());
@@ -286,7 +287,7 @@ pub fn assembly_references(
     if !format.is_assembly() || !format.can_convert() {
         return Ok(Vec::new());
     }
-    let model = decode_file(format, input, &mut Report::default(), None)?;
+    let model = decode_file(format, input, &mut Report::default(), None, search.copper)?;
     let value = serde_json::to_value(&model.ir.model.occurrences)
         .map_err(|err| Error::Decode(format!("cannot read assembly references: {err}")))?;
     let finder = locate::Finder::new(search);
@@ -410,7 +411,7 @@ pub fn read_with_progress(
     let finder = locate::Finder::new(search);
     let decode_design =
         |format: Format, path: &Path, report: &mut Report| -> Result<Model, Error> {
-            let model = decode_file(format, path, report, progress)?;
+            let model = decode_file(format, path, report, progress, search.copper)?;
             source_version::record(report, path, input, &model.ir.native);
             // The codec owns Fusion archive members; do not count the whole archive as one.
             if format != Format::FusionMultiDocument {
@@ -684,6 +685,7 @@ fn decode_file(
     input: &Path,
     report: &mut Report,
     progress: Option<&Progress<'_>>,
+    copper: module::CopperLayers,
 ) -> Result<Model, Error> {
     if !format.can_convert() {
         return Err(Error::NotSupportedYet { format });
@@ -697,7 +699,7 @@ fn decode_file(
         if let Some(progress) = progress {
             progress.stage(Stage::Decode);
         }
-        let model = module::read(input, report)?;
+        let model = module::read(input, copper, report)?;
         return source::finish_decoded(format, model, false, report);
     }
     let input_name = input.file_name().map(|name| name.to_string_lossy());

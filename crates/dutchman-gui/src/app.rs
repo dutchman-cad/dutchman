@@ -347,6 +347,11 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
                 dutchman_core::PartPositions::Smart
             }
         });
+    options.copper = settings
+        .get("copper")
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_default();
     options.stored_placements = false;
     options.no_joints = settings
         .get("no_joints")
@@ -438,6 +443,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
         "no_verify": options.no_verify,
         "part_positions": options.effective_part_positions().name(),
+        "copper": options.copper.name(),
         "up_axis": orientation_of(options).name(),
     })
 }
@@ -2944,6 +2950,20 @@ impl App {
                     .response;
                 preset_help(&response, orientation_help(current));
             });
+            let mut inner = self.options.copper == dutchman_core::CopperLayers::All;
+            if ui
+                .checkbox(&mut inner, "Inner copper layers (circuit boards)")
+                .on_hover_text(
+                    "Also read each inner copper layer of a circuit board. Needs a recent electronics module; without it only the top and bottom copper is read.",
+                )
+                .changed()
+            {
+                self.options.copper = if inner {
+                    dutchman_core::CopperLayers::All
+                } else {
+                    dutchman_core::CopperLayers::Outer
+                };
+            }
             let choices = self.options.choices();
             let (mut history, mut sketches, mut joints) =
                 (choices.history, choices.sketches, choices.joints);

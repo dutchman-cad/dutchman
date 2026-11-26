@@ -187,12 +187,49 @@ pub fn reads_extension(ext: &str) -> bool {
     }
 }
 
+/// Which copper layers of a board the module is asked for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CopperLayers {
+    /// The two outer faces only (the default).
+    #[default]
+    Outer,
+    /// The outer faces and every inner copper layer (`read --copper all`).
+    All,
+}
+
+impl CopperLayers {
+    /// Stable command-line and JSON spelling.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Outer => "outer",
+            Self::All => "all",
+        }
+    }
+}
+
+impl std::fmt::Display for CopperLayers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl std::str::FromStr for CopperLayers {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "outer" => Ok(Self::Outer),
+            "all" => Ok(Self::All),
+            _ => Err("copper must be outer or all".to_owned()),
+        }
+    }
+}
+
 /// Reads `input` with the installed electronics module.
-pub fn read(input: &Path, report: &mut Report) -> Result<Model, Error> {
+pub fn read(input: &Path, copper: CopperLayers, report: &mut Report) -> Result<Model, Error> {
     let program = find().ok_or(Error::NotSupportedYet {
         format: Format::ModuleBoard,
     })?;
-    read_with(&program, input, &Limits::default(), report)
+    read_with(&program, input, copper, &Limits::default(), report)
 }
 
 /// Reads `input` with the module `program`: checks its interface and that it reads this file,
@@ -200,6 +237,7 @@ pub fn read(input: &Path, report: &mut Report) -> Result<Model, Error> {
 pub fn read_with(
     program: &Path,
     input: &Path,
+    copper: CopperLayers,
     limits: &Limits,
     report: &mut Report,
 ) -> Result<Model, Error> {
@@ -250,18 +288,39 @@ pub fn read_with(
             source,
         })?;
     let out = scratch.path();
-    let run = run(
-        program,
-        &[
+    let read_args = |all: bool| -> Vec<&OsStr> {
+        let mut args: Vec<&OsStr> = vec![
             "read".as_ref(),
             input.as_os_str(),
             "--out".as_ref(),
             out.as_os_str(),
             "--json".as_ref(),
-        ],
+        ];
+        if all {
+            args.extend(["--copper".as_ref(), "all".as_ref()]);
+        }
+        args
+    };
+    let mut run = run(
+        program,
+        &read_args(copper == CopperLayers::All),
         limits.timeout,
     )
     .map_err(|err| Error::Module(cannot_start(program, &err)))?;
+    let mut copper_unsupported = false;
+    if copper == CopperLayers::All && !run.timed_out && !run.status.is_some_and(|s| s.success()) {
+        // An older module rejects the unknown `--copper` option; read again for the outer faces.
+        let said = format!("{}{}", lossy(&run.stderr), lossy(&run.stdout)).to_ascii_lowercase();
+        if said.contains("--copper")
+            || said.contains("unexpected argument")
+            || said.contains("unrecognized")
+            || said.contains("unknown option")
+        {
+            copper_unsupported = true;
+            run = self::run(program, &read_args(false), limits.timeout)
+                .map_err(|err| Error::Module(cannot_start(program, &err)))?;
+        }
+    }
     let stderr = lossy(&run.stderr);
     let fail = |report: &mut Report, message: String| {
         if !stderr.trim().is_empty() {
@@ -338,6 +397,17 @@ pub fn read_with(
             )
         }
     };
+    if copper_unsupported {
+        report.push_at(
+            Stage::Decode,
+            Severity::Degraded,
+            "electronics module",
+            format!(
+                "the installed electronics module {} does not support `--copper all`, so only the top and bottom copper layers were read; install a newer module for inner layers: {ELECTRONICS_URL}",
+                info.version
+            ),
+        );
+    }
     read_package(out, &bytes, report)
 }
 
@@ -540,7 +610,13 @@ cat "$out/manifest.json""#
     fn run_read(read: &str, limits: &Limits) -> Result<Model, Error> {
         let dir = tempfile::tempdir().unwrap();
         let program = fake(dir.path(), 1, read);
-        read_with(&program, &board(dir.path()), limits, &mut Report::default())
+        read_with(
+            &program,
+            &board(dir.path()),
+            CopperLayers::Outer,
+            limits,
+            &mut Report::default(),
+        )
     }
 
     #[test]
@@ -591,6 +667,58 @@ cat "$out/manifest.json""#
         assert!(error.to_string().contains("no manifest.json"), "{error}");
     }
 
+    /// A module whose manifest name says which `--copper` setting it was given.
+    fn copper_echo() -> String {
+        r#"mode=outer
+case "$*" in *"--copper all"*) mode=all ;; esac
+echo step > "$out/b.step"
+printf '{"schema":"dutchman.parts/1","name":"copper-%s","models":[{"id":"m","file":"b.step"}],"parts":[{"name":"Board","model":"m"}]}' "$mode" > "$out/manifest.json"
+cat "$out/manifest.json""#
+            .to_owned()
+    }
+
+    fn read_copper(read: &str, copper: CopperLayers) -> (Result<Model, Error>, Report) {
+        let dir = tempfile::tempdir().unwrap();
+        let program = fake(dir.path(), 1, read);
+        let mut report = Report::default();
+        let model = read_with(
+            &program,
+            &board(dir.path()),
+            copper,
+            &Limits::default(),
+            &mut report,
+        );
+        (model, report)
+    }
+
+    #[test]
+    fn copper_all_is_passed_to_the_module_and_outer_is_not() {
+        let _scripts = scripts();
+        let (all, _) = read_copper(&copper_echo(), CopperLayers::All);
+        assert_eq!(all.unwrap().name, "copper-all");
+        let (outer, _) = read_copper(&copper_echo(), CopperLayers::Outer);
+        assert_eq!(outer.unwrap().name, "copper-outer");
+        assert_eq!("all".parse::<CopperLayers>(), Ok(CopperLayers::All));
+        assert!("inner".parse::<CopperLayers>().is_err());
+    }
+
+    #[test]
+    fn an_older_module_without_copper_falls_back_to_outer_with_a_note() {
+        let _scripts = scripts();
+        let older = format!(
+            "case \"$*\" in *--copper*) echo \"error: unexpected argument '--copper' found\" >&2; exit 2 ;; esac\n{}",
+            copper_echo()
+        );
+        let (model, report) = read_copper(&older, CopperLayers::All);
+        assert_eq!(model.unwrap().name, "copper-outer");
+        let note = report
+            .losses()
+            .iter()
+            .find(|l| l.message.contains("does not support `--copper all`"))
+            .expect("a note says the module cannot read inner copper");
+        assert_eq!(note.severity, Severity::Degraded);
+    }
+
     #[test]
     fn a_module_with_another_interface_is_refused() {
         let _scripts = scripts();
@@ -599,6 +727,7 @@ cat "$out/manifest.json""#
         let error = read_with(
             &program,
             &board(dir.path()),
+            CopperLayers::Outer,
             &Limits::default(),
             &mut Report::default(),
         )
@@ -656,6 +785,7 @@ cat "$out/manifest.json""#
         let error = read_with(
             &program,
             &board(dir.path()),
+            CopperLayers::Outer,
             &Limits::default(),
             &mut Report::default(),
         )
@@ -680,6 +810,7 @@ cat "$out/manifest.json""#
         let error = read_with(
             &program,
             &board(dir.path()),
+            CopperLayers::Outer,
             &Limits::default(),
             &mut Report::default(),
         )
