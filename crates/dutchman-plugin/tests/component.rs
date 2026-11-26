@@ -16,6 +16,9 @@ mod loss_report;
 #[path = "../src/notice.rs"]
 #[allow(dead_code)]
 mod notice;
+#[path = "../src/preflight.rs"]
+#[allow(dead_code)]
+mod preflight;
 #[path = "../src/stand_up.rs"]
 mod stand_up;
 use adapter::host::{
@@ -612,6 +615,7 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     folder_not_granted(&engine, &component, &linker, &root)?;
     picked_parts_folder(&engine, &component, &linker, &root)?;
     part_too_big_for_the_guest(&engine, &component, &linker, &root)?;
+    failures_carry_the_full_report(&engine, &component, &linker, &root)?;
     picked_folder_not_granted(&engine, &component, &linker, &root)?;
     settings_are_saved_and_offered(&engine, &component, &linker, &root)?;
     let mut fixtures = Vec::new();
@@ -1120,6 +1124,9 @@ fn folder_not_granted(
     Ok(())
 }
 
+/// A conversion's result and the store it ran in.
+type Converted = (Result<String, PluginError>, Store<Host>);
+
 /// One conversion in a fresh instance of the component.
 fn convert_in(
     engine: &Engine,
@@ -1129,7 +1136,7 @@ fn convert_in(
     name: &str,
     size: u64,
     options: &str,
-) -> Result<(Result<String, PluginError>, Store<Host>), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Converted, Box<dyn std::error::Error + Send + Sync>> {
     let mut store = Store::new(engine, host);
     store.limiter(|host| &mut host.limits);
     store.set_fuel(50_000_000_000)?;
@@ -1476,5 +1483,53 @@ fn part_too_big_for_the_guest(
     assert!(message.contains("Open it in the Dutchman app"), "{message}");
     assert_eq!(message.lines().count(), 1, "{message}");
     assert!(store.data().output.is_empty());
+    Ok(())
+}
+
+/// A failed conversion returns its full `dutchman.convert/1` report in the error text, which is
+/// the one path a plugin has (SolidCraft gives it no clipboard and no file to write); a format it
+/// does not convert is `unsupported`, the kind a refusal dialog shows.
+fn failures_carry_the_full_report(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let report_of = |message: &str| -> Value {
+        assert!(message.contains("Dutchman app"), "{message}");
+        serde_json::from_str(message.lines().last().unwrap()).unwrap()
+    };
+    let (broken, store) = convert_in(
+        engine,
+        component,
+        linker,
+        host(root, vec![0; 64]),
+        "broken.f3d",
+        64,
+        "{}",
+    )?;
+    let Err(PluginError::InvalidInput(FieldFailure { reason, .. })) = broken else {
+        return Err(format!("Expected invalid input, got {broken:?}").into());
+    };
+    let report = report_of(&reason);
+    assert_eq!(report["schema"], "dutchman.convert/1");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["input"]["path"], "broken.f3d");
+    assert!(report["error"]["kind"].is_string() && report["error"]["stage"].is_string());
+    assert!(reason.contains("broken.failed.json"), "{reason}");
+    assert!(store.data().output.is_empty());
+    let (unknown, _) = convert_in(
+        engine,
+        component,
+        linker,
+        host(root, vec![0; 4]),
+        "weird.xyz",
+        4,
+        "{}",
+    )?;
+    let Err(PluginError::Unsupported(message)) = unknown else {
+        return Err(format!("Expected unsupported, got {unknown:?}").into());
+    };
+    assert_eq!(report_of(&message)["error"]["kind"], "unknown_format");
     Ok(())
 }

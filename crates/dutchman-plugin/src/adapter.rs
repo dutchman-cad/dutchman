@@ -240,7 +240,7 @@ mod guest {
             if let Some(error) = index_error.into_inner() {
                 return Err(error);
             }
-            checked.map_err(error)?;
+            checked.map_err(|e| error(&file.name, e))?;
             let main_bytes = RefCell::new(Some(read(Parts::Input, "", file.size, &budget)?));
             report(progress.file_read());
             let files = Cell::new(1usize);
@@ -332,7 +332,7 @@ mod guest {
             if let Some(host) = host_error.take() {
                 return Err(host);
             }
-            let (design, report) = converted.map_err(error)?;
+            let (design, report) = converted.map_err(|e| error(&file.name, e))?;
             if control::cancelled() {
                 return Err(PluginError::Cancelled);
             }
@@ -366,17 +366,21 @@ mod guest {
         log::log(log::Level::Info, message);
     }
 
-    /// An unsupported or unreadable file is invalid input; a size budget is a limit.
-    fn error(e: dutchman_core::Error) -> PluginError {
+    /// A format the plugin does not convert is `unsupported`, which a SolidCraft with a refusal
+    /// dialog shows to the person; an unreadable file is invalid input; a size budget is a
+    /// limit. Every message carries the full failure report (`notice::failure_in`).
+    fn error(file_name: &str, e: dutchman_core::Error) -> PluginError {
         use dutchman_core::Error;
+        let text = crate::notice::failure_in(file_name, &e);
         match e {
-            Error::TooLarge { .. } | Error::MemoryBudget(_) => {
-                PluginError::LimitExceeded(crate::notice::failure(&e))
-            }
+            Error::TooLarge { .. } | Error::MemoryBudget(_) => PluginError::LimitExceeded(text),
             Error::Encode(ref reason) if reason.contains("exceeds") => {
-                PluginError::LimitExceeded(crate::notice::failure(&e))
+                PluginError::LimitExceeded(text)
             }
-            _ => invalid("file", crate::notice::failure(&e)),
+            Error::NotSupportedYet { .. } | Error::UnknownFormat { .. } => {
+                PluginError::Unsupported(text)
+            }
+            _ => invalid("file", text),
         }
     }
 

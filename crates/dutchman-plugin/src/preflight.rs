@@ -167,9 +167,13 @@ fn check_sizes(sizes: Sizes, parts: u64, history: bool, budget: Budget) -> Resul
         Format::InventorAssembly | Format::SolidWorksAssembly
     );
     if let Some(fuel) = estimated_fuel(sizes, parts).filter(|fuel| *fuel > budget.fuel) {
+        // `parts` counts the archive's design files (documents), not its components: a
+        // 50-component design can sit in a handful of documents, so say what is counted.
         return Err(too_large(format!(
-            "about {} of work and the plugin's limit is {}",
+            "about {} of work for the {} design file{} in the archive, and the plugin's limit is {}",
             billions(fuel),
+            parts,
+            if parts == 1 { "" } else { "s" },
             billions(budget.fuel)
         )));
     }
@@ -230,6 +234,7 @@ const BASE_BYTES: u64 = 100_000_000;
 const BYTES_PER_FILE_BYTE: u64 = 60;
 #[cfg(any(test, target_arch = "wasm32"))]
 impl PartsLoad {
+    #[cfg(target_arch = "wasm32")]
     pub(crate) fn new(main_bytes: u64) -> Self {
         Self::with_peak(main_bytes, PEAK_BYTES)
     }
@@ -652,7 +657,7 @@ mod tests {
             seconds: 300,
             ..PLUGIN_BUDGET
         };
-        let message = check_sizes(sizes(Format::InventorPart, 50_000_000), 1, true, budget)
+        let message = check_sizes(sizes(Format::InventorPart, 150_000_000), 1, true, budget)
             .unwrap_err()
             .to_string();
         assert!(
@@ -669,15 +674,43 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(
-            message.contains("billion steps of work and the plugin's limit is 100 billion steps"),
+            message.contains("billion steps of work for the 40 design files in the archive, and the plugin's limit is 100 billion steps"),
             "{message}"
         );
-        for message in [message] {
-            assert_eq!(message.lines().count(), 1, "one line: {message}");
-            assert!(message
-                .starts_with("This design is too large to open inside SolidCraft: it needs "));
-            assert!(message.contains("Open it in the Dutchman app") && message.contains(DOWNLOAD));
-        }
+        assert_eq!(message.lines().count(), 1, "one line: {message}");
+        assert!(
+            message.starts_with("This design is too large to open inside SolidCraft: it needs ")
+        );
+        assert!(message.contains("Open it in the Dutchman app") && message.contains(DOWNLOAD));
+    }
+
+    #[test]
+    fn a_many_component_f3z_with_few_documents_is_refused_by_work_and_says_so() {
+        // 4 indexed design files holding many components: the count in the message is the
+        // design files the estimate uses, labelled as such, never "parts".
+        let sizes = Sizes {
+            format: Format::FusionMultiDocument,
+            bytes: 400_000_000,
+            members: 120,
+        };
+        let message = check_sizes(sizes, 4, true, PLUGIN_BUDGET)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            message.contains("billion steps of work for the 4 design files in the archive, and the plugin's limit is 100 billion steps"),
+            "{message}"
+        );
+        assert!(!message.contains("parts"), "{message}");
+        assert!(!message.contains("about 4"), "{message}");
+        assert_eq!(message.lines().count(), 1, "{message}");
+        // One design file is singular.
+        let message = check_sizes(sizes, 1, true, PLUGIN_BUDGET)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            message.contains("for the 1 design file in the archive"),
+            "{message}"
+        );
     }
 
     #[test]
