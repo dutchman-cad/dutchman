@@ -245,6 +245,7 @@ fn selection(
         "input_of": feature,
         "bodies": [],
         "faces": [],
+        "face_owners": [],
         "edges": ids,
         "vertices": [],
         "edge_geometry": geometry,
