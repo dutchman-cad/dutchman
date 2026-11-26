@@ -538,11 +538,95 @@ fn metallic_and_roughness_reach_the_design_look_as_pbr() {
         json!({"metallic": 0.0, "roughness": 0.45, "dielectric_ior": 1.5})
     );
     assert_eq!(
-        pbr_of("unit cube"),
+        pbr_of("Board"),
         json!({"metallic": 0.0, "roughness": 0.5, "dielectric_ior": 1.5})
     );
     assert!(pbr_of("Silk").is_null(), "no values, no pbr");
     if let Some(cli) = cli() {
         assert_eq!(evaluate(&cli, &bytes).len(), 3);
     }
+}
+
+/// The step blob a feature of the design points at.
+fn blob_of(bytes: &[u8], feature_name: &str) -> Vec<u8> {
+    let doc = document(bytes);
+    let feature = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == feature_name)
+        .unwrap();
+    let blob = feature["step_blob"].as_str().unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut out = Vec::new();
+    std::io::Read::read_to_end(&mut archive.by_name(blob).unwrap(), &mut out).unwrap();
+    out
+}
+
+/// The body names an import feature of the design carries, by feature.
+fn import_body_names(bytes: &[u8]) -> Vec<Vec<String>> {
+    document(bytes)["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["type"] == "import")
+        .map(|f| {
+            f["body_names"]
+                .as_array()
+                .map(|names| {
+                    names
+                        .iter()
+                        .map(|n| n.as_str().unwrap().to_owned())
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+#[test]
+fn a_part_body_takes_the_manifest_part_name_not_its_models_solid_name() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("board.step"), cube_step()).unwrap();
+    let manifest = json!({
+        "schema": PARTS_SCHEMA,
+        "models": [{"id": "board", "file": "board.step"}],
+        "parts": [{"name": "Board", "model": "board", "color": "#c8b27a"}],
+    });
+    let (bytes, _) = write(dir.path(), manifest.to_string().as_bytes());
+    assert_eq!(import_body_names(&bytes), [["Board"]]);
+    let looks = document(&bytes)["appearances"]["bodies"].clone();
+    assert!(looks.get("Board").is_some(), "{looks}");
+    assert!(looks.get("unit cube").is_none(), "{looks}");
+}
+
+#[test]
+fn a_part_whose_model_has_two_solids_names_them_part_and_part_2() {
+    // Two thick areas of one overlay are two solids in one STEP file.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("board.step"), cube_step()).unwrap();
+    let square = |x: f64| json!([[x, 0.0], [x + 1.0, 0.0], [x + 1.0, 1.0], [x, 1.0]]);
+    let maker = json!({
+        "schema": PARTS_SCHEMA,
+        "models": [{"id": "board", "file": "board.step"}],
+        "parts": [{"name": "Board", "model": "board"}],
+        "overlays": [{"name": "Pair", "kind": "copper", "part": "Board", "z": 2.0,
+                      "thickness": 0.5,
+                      "areas": [{"outer": square(0.0), "holes": []},
+                                {"outer": square(3.0), "holes": []}]}],
+    });
+    let (made, _) = write(dir.path(), maker.to_string().as_bytes());
+    std::fs::write(dir.path().join("pair.step"), blob_of(&made, "Pair")).unwrap();
+    let manifest = json!({
+        "schema": PARTS_SCHEMA,
+        "models": [{"id": "pair", "file": "pair.step"}, {"id": "board", "file": "board.step"}],
+        "parts": [
+            {"name": "Pair", "model": "pair", "color": "#336699"},
+            {"name": "Plate", "model": "board", "color": "#c8b27a"},
+        ],
+    });
+    let (bytes, _) = write(dir.path(), manifest.to_string().as_bytes());
+    let names = import_body_names(&bytes);
+    assert!(names.contains(&vec!["Pair".to_owned(), "Pair (2)".to_owned()]), "{names:?}");
+    assert!(names.contains(&vec!["Plate".to_owned()]), "{names:?}");
 }

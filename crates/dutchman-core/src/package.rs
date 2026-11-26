@@ -279,6 +279,8 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
     let mut dropped_parts: BTreeSet<String> = BTreeSet::new();
     // The coloured copy of a model for each (model, colour) a part asks for.
     let mut variants: BTreeMap<(String, String, String), usize> = BTreeMap::new();
+    // The definitions whose bodies already carry a part's name.
+    let mut named_definitions: BTreeSet<usize> = BTreeSet::new();
 
     for value in &manifest.parts {
         let entry: PartEntry = match serde_json::from_value(value.clone()) {
@@ -467,6 +469,17 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
                     clip(&entry.name, 64)
                 ),
             );
+        }
+        // A definition's bodies are named by the first part placed from it, so a body reads as the
+        // part it is and not as the name its STEP model carries. Several bodies of one part
+        // share the name and are told apart as `<name> (2)`, `<name> (3)` when written.
+        if named_definitions.insert(index) {
+            if let Some(part) = assembly.parts.get_mut(index) {
+                let body_name = clip(&name, 200);
+                for body in &mut part.ir.geometry.bodies {
+                    body.name = Some(body_name.clone());
+                }
+            }
         }
         // The plating is one tube per plated hole: SolidCraft holds them as one body.
         if entry.name == "Plating" {
@@ -1169,6 +1182,10 @@ fn overlays(
             Ok(mut model) => {
                 model.name = clip(&entry.name, 200);
                 model.source_file = None;
+                // The overlay's bodies carry its name; several prisms read `<name> (2)`, `<name> (3)`.
+                for body in &mut model.ir.geometry.bodies {
+                    body.name = Some(clip(&entry.name, 200));
+                }
                 // One closed solid per area is one overlay to the person; sheets stay apart.
                 model.merge_bodies = solid.is_some();
                 // The look goes in as body bindings, which the writer reads when it restates the part.

@@ -53,6 +53,11 @@ A model used by a hundred parts is one STEP file and one definition in the desig
 identity: converting the same package twice gives the same names, so a part that only moves stays the same part.
 Names must be unique; a repeated name gets ` (2)` and a note.
 
+A part's body is named by the part's `name`, not by the solid name its STEP model carries. A model with several
+solids gives `Board`, `Board (2)`, `Board (3)` and so on, in the model's order. Parts placed from one model share
+one definition, and its bodies take the `name` of the first part placed from it (a part with its own `color` is a
+definition of its own).
+
 ### Overlays
 
 An overlay is a flat layer drawn on one part, such as copper or silkscreen on a board. The module does all the
@@ -85,8 +90,8 @@ geometry and hands over finished areas.
   refuses that overlay by name, and the rest converts.
 - Areas in one overlay never overlap or touch. Each area becomes its own closed prism, a solid with a top face, a
   bottom face, and one planar side face for each edge of its outer loop and of every hole, all with outward normals.
-  The prisms of one overlay are one part with one look, and each keeps its own volume. SolidCraft names the first
-  `Body (<overlay>)` and the others `Body (2)`, `Body (3)` and so on.
+  The prisms of one overlay are one part with one look, and each keeps its own volume. The first body is named
+  after the overlay (`Copper`) and the others `Copper (2)`, `Copper (3)` and so on.
 - The module sets the stacking through `z`. Dutchman moves nothing.
 - Dutchman caps the faces of all thick overlays in a package at 250,000 (each extruded area costs 2 plus its edge count,
   holes included). An overlay that would pass the cap is drawn as a sheet, with a `Degraded` note naming it.
