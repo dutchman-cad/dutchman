@@ -477,6 +477,7 @@ fn read_studio(
         source_file: path.file_name().map(|s| s.to_string_lossy().into_owned()),
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     };
     let mut model = if bundle.contains(&step_path) {
         let source = bundle.bytes(&step_path)?;
@@ -557,7 +558,7 @@ fn read_studio(
                 "onshape/history.part-not-matched",
                 format!(
                     "{} of {} parts could not be matched by name to the feature that made \
-                     them; SolidCraft names those parts, and their colours are left out",
+                     them; SolidCraft names those parts, and their colors are left out",
                     parts.saturating_sub(bound.len()),
                     parts
                 ),

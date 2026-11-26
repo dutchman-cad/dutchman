@@ -11,7 +11,7 @@ Their actual boundary edges still determine shell closure; native face associati
 cannot be carried are reported.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and resolved
-sketches are kept live in the part's own timeline, followed by a **Remove** feature that takes away the bodies they make and one **Import** named "Rest of the design (from <first feature not converted>)" that holds the source's final shape. The visible result is exactly the original shape, with one body per source body. Roll the timeline marker back before **Remove** to see and edit the body the converted features build; to keep modelling from them, delete or suppress the last two features. SolidCraft needs the CLI to name the bodies the features make; without it the kept features stay in a hidden **Editable history (partial)** component beside the visible Import, as before. The report names the blocker and counts retained source features;
+sketches are kept live in the part's own timeline, followed by a **Remove** feature that takes away the bodies they make and one **Import** named "Rest of the design (from <first feature not converted>)" that holds the source's final shape. The visible result is exactly the original shape, with one body per source body. Roll the timeline marker back before **Remove** to see and edit the body the converted features build; to keep modeling from them, delete or suppress the last two features. SolidCraft needs the CLI to name the bodies the features make; without it the kept features stay in a hidden **Editable history (partial)** component beside the visible Import, as before. The report names the blocker and counts retained source features;
 `mode: partial_history` and verification `partial` distinguish this from full verified
 history. The reason says whether retained features replayed or remain unverified. Later
 sketches with unresolved planes or external geometry are reported and left out. A sketch
@@ -49,6 +49,15 @@ container.
   A missing or unreadable linked file is left out and reported by name; the other components
   still convert. Cyclic links are left out and reported, with nesting limited to 32 levels.
   Links that name only a document identifier, or select subelements, are not supported yet.
+  A PartDesign Body that an Assembly container links from its own document converts once, in
+  the link's component at the link's placement, with its own history (sketches, pads, pockets,
+  revolutions) mapped and checked like a standalone Body's. The document's original Body,
+  which a visible, unsuppressed Assembly link places (also through a link to a link), is not
+  placed again; a Body no such link places, or that a Part container places, stays placed as
+  stored. The report says how many original Bodies were folded into their links. When a
+  feature of a Body cannot be told from another Body's (a Boolean or a sketch used by two
+  Bodies), the report names it as a warning and that Body stays as stored, without its
+  history. Sketches and datums no feature uses are named in the report too.
 - **Grounded joints** hold their part fixed to the design where it is stored, as a rigid
   joint to the design; the assembly's revolute and slider joints keep their motion.
   Assembly-workbench joints use the same mapping as Fusion joints when cadmpeg resolves
@@ -98,7 +107,7 @@ to geometry, as reported. With verification off or no usable CLI, history remain
 The endpoint mapping does not repair a misdecoded axis or instance set.
 
 Whole-sketch hole placements exclude construction geometry, including reference origin
-points. Explicit entity selections can still use construction points or circle centres.
+points. Explicit entity selections can still use construction points or circle centers.
 
 Fillets and chamfers need resolved named edges of their base feature's stored shape,
 before the blend.
@@ -166,8 +175,8 @@ axis, pitch/height/turn law, handedness, reversed direction, and join/cut operat
 sketch-profile coils when the target is SolidCraft 0.25 patch 1 or newer. Choose a target with
 `--solidcraft-version x.y.z` on `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The default is the found CLI's version, even with `--no-verify`, else the newest release
-known at build time (currently 0.48). The rolling 14-day window is currently
-0.40–0.48. Targets before 0.25 patch 1 block the helix with
+known at build time (currently 0.49). The rolling 14-day window is currently
+0.40–0.49. Targets before 0.25 patch 1 block the helix with
 `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the original
 geometry. Resolved feature parameter
 bindings drive the coil dimensions; dimensions without bindings keep their values.
@@ -267,15 +276,15 @@ to 100 ASCII letters, digits, underscores, and hyphens; other characters become
 underscores and collisions get numeric suffixes, also on case-insensitive systems.
 A selected page with an explicit file path uses that exact path. An unselected
 file path supplies a base: `-o drawing.dxf` writes `drawing-Page.dxf`, etc.
-An output directory must already exist. Defaults need `--force` to overwrite;
-explicit outputs replace unless `--no-clobber` is set. All pages are encoded and
+An output directory must already exist. An existing page file is never replaced:
+the page takes the next free name (`part-Page (2).dxf`) unless `--replace` is set. All pages are encoded and
 existing outputs checked before publication; an I/O failure while publishing
 multiple files can leave earlier pages written. A document without a TechDraw
 page returns a clear error. Pages without a 3D body can be exported.
 
 | Source IR | DXF and report |
 |---|---|
-| Page sheet | Millimetre page limits; page coordinates are written at 1:1. |
+| Page sheet | Millimeter page limits; page coordinates are written at 1:1. |
 | Page `Views`, collection `Group`, and template links | Determine page membership. |
 | View curves | Exact lines, circles, and arcs, scaled and rotated about the view origin. Each view has a layer; hidden curves use a HIDDEN line type, and center lines use CENTER. Cosmetic curves have separate layers. |
 | Dimension measurement, kind, replacement text, tolerances, and reference anchors | Labels on DIMENSIONS, with verified measurements in mm or degrees. Linear and radial anchor pairs generate conventional lines and open arrows; these are not the saved source layout. Angular dimensions and missing anchors keep text only, with a loss; dimensions are not associative DXF DIMENSION entities. |
@@ -342,7 +351,7 @@ about an axis other than Z, two-direction patterns, and combines across bodies. 
 was not rebuilt. `--import-only` keeps every part as STEP and leaves out joints.
 Assemblies retain placements and rebuild supported joints as described below.
 Pattern counts are limited to 10,000. Solid lines drawn corner to
-corner across a profile taken whole (a centre rectangle's diagonals, when the source does
+corner across a profile taken whole (a center rectangle's diagonals, when the source does
 not mark them construction) are left out of the padded profile, which is the same region.
 Geometry whose STEP uses replicated trimming curves (`CURVE_REPLICA`) is refused, because
 FreeCAD 1.1's STEP reader crashes on it.
@@ -355,7 +364,7 @@ distance, parallel, perpendicular, and angle joints are also written; axis coinc
 a cylindrical joint, and an insert uses a revolute joint with its plane offset. Joint lookup
 between directly placed parts follows the file definition's child order and prototype storage in CADIR,
 independently of the occurrence arena's record order. Their
-attachment offsets are kept, angular limits use degrees and linear limits millimetres, and
+attachment offsets are kept, angular limits use degrees and linear limits millimeters, and
 either bound may be enabled alone. FreeCAD's static solve preserves free coordinates; limit
 properties are kept for the workbench rather than used to drive a pose during conversion.
 For a single revolute joint with one of its parts grounded, the macro also provides

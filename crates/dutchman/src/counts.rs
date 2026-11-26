@@ -32,8 +32,15 @@ words!(SourceFormat {
     Acis => "acis",
     Step => "step",
     Iges => "iges",
+    ModuleBoard => "module_board",
     OnshapeBundle => "onshape_bundle",
     UnclassifiedPart => "unclassified_part",
+    InventorDrawing => "inventor_drawing",
+    SolidworksDrawing => "solidworks_drawing",
+    FusionDrawing => "fusion_drawing",
+    DwgDrawing => "dwg_drawing",
+    DxfDrawing => "dxf_drawing",
+    SolidEdgeDrawing => "solid_edge_drawing",
     Unknown => "unknown"
 });
 words!(Kind {

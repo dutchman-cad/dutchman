@@ -35,7 +35,7 @@ in **Preferences > Plugins**. Designs you made with it stay as they are.
 The package includes a small Dutchman ship icon in SolidCraft's vector icon format,
 referenced by the conversion entry's option schema. Its solid and wireframe sails
 keep the mark readable at small sizes; SolidCraft's palette supplies its theme and
-accent colours. SolidCraft documents schema icons for command buttons, menus and
+accent colors. SolidCraft documents schema icons for command buttons, menus and
 dialog headers; it does not document a ribbon button or icon display for importers.
 
 SolidCraft checks the converted history against the original geometry. A history that matches
@@ -87,6 +87,21 @@ design fits: the plugin checks expanded archive sizes and estimated work before 
 Designs above its conservative conversion budget are directed to the Dutchman app, which
 can save a `.sc` to open in SolidCraft. See [the preflight limits](plugin.md) for the formula
 and its calibration.
+
+## When a file does not convert
+
+The message SolidCraft shows says why, in the app's plain words, and then carries the full
+failure report: the `dutchman.convert/1` report the Dutchman app writes to `<name>.failed.json`,
+with the error's kind, stage, and reason codes, as one line of JSON under "Full report". The
+Dutchman app writes the same file when you open the design in it, which also works when the
+message is cut short in SolidCraft's status area.
+
+SolidCraft gives a plugin no clipboard and no file to write (its importer interface can only
+read the file you open and the folder beside it, and answer with a design or an error), so the
+message text is the only place the plugin can put the report. SolidCraft's refusal dialog for
+importers is not in a release yet; the report is in the text it will show. A design that is only
+too large for the plugin gets one plain line instead, with no report: it says which limit,
+what the design needs, what the plugin has, and sends you to the Dutchman app.
 
 ## Options
 

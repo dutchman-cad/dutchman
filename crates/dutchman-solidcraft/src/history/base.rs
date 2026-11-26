@@ -371,6 +371,7 @@ fn nested_model(model: &Model, nest: &cadmpeg_ir::history_body::HistoryBody, nam
         source_file: None,
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     }
 }
 

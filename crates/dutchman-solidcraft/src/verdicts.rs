@@ -173,6 +173,7 @@ impl SolidCraftWriter {
             source_file: model.source_file.clone(),
             assembly: None,
             source_step: None,
+            merge_bodies: false,
         };
         let mut verdicts = self.part_verdicts(&own, model, Some(format!("assembly: {path}")));
         // Map against the source geometry, but do not inventory aggregate bodies again.
