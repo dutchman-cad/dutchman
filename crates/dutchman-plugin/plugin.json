@@ -3,7 +3,7 @@
   "name": "Dutchman",
   "version": "0.2.10",
   "description": "Open Fusion, Inventor, SolidWorks or FreeCAD files with File > Open.",
-  "min_host_version": "0.49.1",
+  "min_host_version": "0.50.0",
   "capabilities": [
     "dialog@0.1",
     "evaluate@0.2",

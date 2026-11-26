@@ -18,8 +18,8 @@ needed to build or test this component, or to run its unit tests.
 Released SolidCraft refuses this package at install: a component's WIT imports are static, so
 `folders` and `user-storage` cannot be optional, and a release without them (and without the
 `min_host_version` and `file_first` manifest fields) reports the capability or field it lacks.
-`min_host_version` is the oldest release that serves all of them, and must be raised to the
-first release that includes #20425 before this ships; the previous package, built against
+`min_host_version` is the oldest release that serves all of them, 0.50.0, the first release that
+includes #20425; the previous package, built against
 `craft:plugin@0.1.0`, is what SolidCraft 0.44 to 0.49.1 can install.
 
 Open Fusion, Inventor, SolidWorks or FreeCAD files with **File > Open**. Before reading

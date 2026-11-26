@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 //! Dutchman's package on a real SolidCraft: its own `plugin check`, `plugin test` and `exec`.
 //! Run with `SOLIDCRAFT_CLI=/absolute/path/solidcraft-cli DUTCHMAN_PLUGIN_COMPONENT=/absolute/path/dutchman.wasm
 //! cargo test --release -p dutchman-plugin --features host-tests --test solidcraft_host -- --nocapture`,

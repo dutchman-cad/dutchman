@@ -506,6 +506,9 @@ fn manifest_names_the_oldest_solidcraft_that_serves_what_it_uses() {
     let parts: Vec<_> = minimum.split('.').collect();
     assert_eq!(parts.len(), 3, "{minimum}");
     assert!(parts.iter().all(|p| p.parse::<u32>().is_ok()), "{minimum}");
+    // Importer support (#20425) first shipped in SolidCraft 0.50.0; 0.49.1 lacks it.
+    let numbers: Vec<u32> = parts.iter().map(|p| p.parse().unwrap()).collect();
+    assert!(numbers >= vec![0, 50, 0], "{minimum}");
     let capabilities: Vec<_> = manifest["capabilities"]
         .as_array()
         .unwrap()
