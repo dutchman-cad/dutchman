@@ -105,7 +105,7 @@ pub fn report() -> Value {
             "mesh_chord_relative": MESH_CHORD_RELATIVE,
             "mesh_chord_floor_mm": MESH_CHORD_FLOOR_MM,
             "face_count": "not compared: SolidCraft merges faces that share a surface",
-            "centre": "the center of each body's box, not its center of mass",
+            "center": "the center of each body's box, not its center of mass",
         },
         "source_comparison": {
             "parameter_relative": PARAMETER_RELATIVE,
@@ -173,6 +173,13 @@ mod tests {
         assert_eq!((FACE_ARC_RADIUS, FACE_TURN_RAD), (1e-3, 2e-3));
         assert_eq!(CAP_AREA, (1.0, 0.03));
         assert_eq!(CAP_PLANE_MM, 1e-4);
+    }
+
+    #[test]
+    fn the_report_spells_the_box_center_field_in_american() {
+        let report = report();
+        assert!(report["replay"]["center"].is_string());
+        assert!(report["replay"].get("centre").is_none());
     }
 
     #[test]

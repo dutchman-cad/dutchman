@@ -534,6 +534,14 @@ fn diagnostic_tools_use_guarded_workers_and_do_not_return_local_paths() {
             "dutchman.part-trial/1"
         );
     }
+    for key in ["neighbors", "neighbours"] {
+        let result = client.call(
+            "convert_part",
+            json!({"input": fixture("generated_unit_cube.f3d"), "part": 1, key: true}),
+        );
+        assert_eq!(result["isError"], false, "{key}: {result}");
+        assert_eq!(result["structuredContent"]["neighbors"], true, "{key}");
+    }
     for tool in [
         "diagnose",
         "diagnose_narrow",

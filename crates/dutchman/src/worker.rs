@@ -930,12 +930,12 @@ fn convert_once(
                 ),
             ),
             Stopped::Cancelled => fail_as(
-                "cancelled",
-                "cancelled".into(),
+                "canceled",
+                "canceled".into(),
                 format!("{CANCELLED} while at the {} stage", at.id()),
             ),
             Stopped::Shutdown => fail_as(
-                "cancelled",
+                "canceled",
                 "shutdown".into(),
                 format!("{SHUTDOWN_STOPPED} while at the {} stage", at.id()),
             ),
