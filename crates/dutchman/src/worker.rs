@@ -1503,19 +1503,6 @@ fn is_text_file_busy(err: &std::io::Error) -> bool {
     }
 }
 
-/// Test helper: writes an executable script so its write handle is closed before any exec.
-#[cfg(all(test, unix))]
-#[allow(clippy::unwrap_used)]
-pub(crate) fn write_script(path: &Path, contents: &str) {
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-    let mut file = std::fs::File::create(path).unwrap();
-    file.write_all(contents.as_bytes()).unwrap();
-    file.sync_all().unwrap();
-    drop(file);
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
 /// The memory process `pid` holds, in bytes, when it can be measured.
 #[cfg(target_os = "linux")]
 pub(crate) fn resident_bytes(pid: u32) -> Option<u64> {
@@ -1854,8 +1841,20 @@ mod left_out_tests {
 }
 
 #[cfg(all(test, unix))]
-mod spawn_retry_tests {
+pub(crate) mod spawn_retry_tests {
     use super::*;
+
+    /// Test helper: writes an executable script so its write handle is closed before any exec.
+    #[allow(clippy::unwrap_used)]
+    pub(crate) fn write_script(path: &Path, contents: &str) {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
 
     /// A program still open for writing cannot start; it starts once the writer lets go.
     #[test]

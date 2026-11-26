@@ -1725,7 +1725,7 @@ mod tests {
     fn explicit_unverified_target_does_not_spawn_for_writer_or_reports() {
         let dir = tempfile::tempdir().unwrap();
         let cli = dir.path().join("solidcraft-cli");
-        crate::worker::write_script(
+        crate::worker::spawn_retry_tests::write_script(
             &cli,
             "#!/bin/sh\ntouch \"$0.spawned\"\necho 'solidcraft-cli 0.26.0'\n",
         );

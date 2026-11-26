@@ -1718,7 +1718,7 @@ mod tests {
     fn stopping_an_isolated_batch_ends_the_current_file_promptly() {
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("slow-worker");
-        crate::worker::write_script(&program, "#!/bin/sh\nexec sleep 120\n");
+        crate::worker::spawn_retry_tests::write_script(&program, "#!/bin/sh\nexec sleep 120\n");
         let input = dir.path().join("synthetic.f3d");
         std::fs::write(&input, []).unwrap();
         let fallback = input.with_extension("step");
@@ -1791,7 +1791,7 @@ mod tests {
     fn isolated_with_script(script: &str) -> Value {
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("fake-worker");
-        crate::worker::write_script(&program, &format!("#!/bin/sh\n{script}\n"));
+        crate::worker::spawn_retry_tests::write_script(&program, &format!("#!/bin/sh\n{script}\n"));
         let input = dir.path().join("synthetic.f3z");
         std::fs::write(&input, []).unwrap();
         let job = Job {
