@@ -1087,7 +1087,8 @@ impl<'a> Children<'a> {
 
     fn start(&self, memory: Option<u64>) -> Result<Child, String> {
         let options = &self.settings.rank.options;
-        let mut process = Command::new(&self.program)
+        let mut command = Command::new(&self.program);
+        command
             .arg(WORKER_ARG)
             .arg(self.input)
             .arg("--serve")
@@ -1095,8 +1096,8 @@ impl<'a> Children<'a> {
             .args(worker::search_args(&options.part_search()))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
+            .stderr(Stdio::piped());
+        let mut process = worker::spawn_retrying(&mut command)
             .map_err(|err| format!("cannot start the converter: {err}"))?;
         let stderr = process.stderr.take();
         let stdin = process.stdin.take().ok_or("cannot talk to the converter")?;

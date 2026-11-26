@@ -1679,11 +1679,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn stopping_an_isolated_batch_ends_the_current_file_promptly() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("slow-worker");
-        std::fs::write(&program, "#!/bin/sh\nexec sleep 120\n").unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::worker::write_script(&program, "#!/bin/sh\nexec sleep 120\n");
         let input = dir.path().join("synthetic.f3d");
         std::fs::write(&input, []).unwrap();
         let fallback = input.with_extension("step");
@@ -1754,11 +1752,9 @@ mod tests {
     /// Runs one isolated conversion with a fake worker script and returns its report.
     #[cfg(unix)]
     fn isolated_with_script(script: &str) -> Value {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("fake-worker");
-        std::fs::write(&program, format!("#!/bin/sh\n{script}\n")).unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::worker::write_script(&program, &format!("#!/bin/sh\n{script}\n"));
         let input = dir.path().join("synthetic.f3z");
         std::fs::write(&input, []).unwrap();
         let job = Job {
