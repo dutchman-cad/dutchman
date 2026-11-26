@@ -342,8 +342,8 @@ pub fn pages(
                         let position = drawing.position.map(|p| p.get());
                         if let Some([x, y]) = position.filter(|_| !annotation.text.is_empty()) {
                             let height = annotation.text_style.height.map_or(2.5, |h| h.get());
-                            let rotation = drawing.rotation_degrees.map_or(0.0, |r| r.get());
-                            let angle = rotation.to_radians();
+                            let angle = drawing.rotation.map_or(0.0, |r| r.get());
+                            let rotation = angle.to_degrees();
                             let mut line_index = 0_u32;
                             let mut written_lines = 0_u32;
                             for fragment in &annotation.text {

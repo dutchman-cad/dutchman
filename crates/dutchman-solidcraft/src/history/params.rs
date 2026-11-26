@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cadmpeg_ir::features::{DesignParameter, ParameterValue};
+use cadmpeg_ir::features::parameters::{DesignParameter, ParameterValue};
 use dutchman_core::{Report, Severity};
 use serde_json::{json, Value};
 

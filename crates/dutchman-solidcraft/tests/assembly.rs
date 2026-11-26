@@ -798,30 +798,47 @@ fn with_components(nested: bool) -> Model {
         {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body], "bom_properties": {}, "sketches": []},
         {"id": "f3d:model:component#root", "kind": "part", "label": "Top", "bodies": [], "bom_properties": {}, "sketches": []},
     ]);
-    let placed = |key: u32, definition: &str, x: f64, parent: Value| {
+    let definitions = wire["model"]["product_definitions"].as_array_mut().unwrap();
+    for definition in definitions.iter_mut() {
+        definition["storage"] = serde_json::json!({"kind":"embedded"});
+        for field in [
+            "tessellations",
+            "occurrences",
+            "instance_bodies",
+            "representations",
+        ] {
+            definition[field] = serde_json::json!([]);
+        }
+    }
+    if nested {
+        definitions[1]["occurrences"] =
+            serde_json::json!(["f3d:model:occurrence#0", "f3d:model:occurrence#1"]);
+    }
+    let mut file = definitions[1].clone();
+    file["id"] = serde_json::json!("f3d:model:product-definition#root");
+    file["storage"] = serde_json::json!({"kind":"file", "document":{}});
+    file["occurrences"] = if nested {
+        serde_json::json!(["f3d:model:occurrence#9"])
+    } else {
+        serde_json::json!(["f3d:model:occurrence#0", "f3d:model:occurrence#1"])
+    };
+    definitions.push(file);
+    let placed = |key: u32, definition: &str, x: f64| {
         serde_json::json!({
             "id": format!("f3d:model:occurrence#{key}"),
-            "prototype": {"kind": "local", "definition": format!("f3d:model:component#{definition}")},
-            "parent": parent,
-            "ordinal": key,
+            "prototype": format!("f3d:model:component#{definition}"),
+            "overrides": [],
             "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
-            "scale": [1.0, 1.0, 1.0],
         })
     };
-    let root = serde_json::json!({"kind": "root"});
     wire["model"]["occurrences"] = if nested {
-        let inside =
-            serde_json::json!({"kind": "occurrence", "occurrence": "f3d:model:occurrence#9"});
         serde_json::json!([
-            placed(9, "root", 100.0, root),
-            placed(0, "block", 0.0, inside.clone()),
-            placed(1, "block", 30.0, inside),
+            placed(9, "root", 100.0),
+            placed(0, "block", 0.0),
+            placed(1, "block", 30.0),
         ])
     } else {
-        serde_json::json!([
-            placed(0, "block", 0.0, root.clone()),
-            placed(1, "block", 30.0, root)
-        ])
+        serde_json::json!([placed(0, "block", 0.0), placed(1, "block", 30.0)])
     };
     let mut model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -1000,7 +1017,7 @@ fn with_sketch_of_a_component_without_bodies() -> Model {
         .collect::<Vec<_>>());
     let definitions = wire["model"]["product_definitions"].as_array_mut().unwrap();
     definitions[1]["sketches"] = serde_json::json!([ids[0]]);
-    definitions.push(serde_json::json!({"id": "f3d:model:component#ghost", "kind": "part", "label": "Ghost", "bodies": [], "sketches": [ids[1]], "bom_properties": {}}));
+    definitions.push(serde_json::json!({"id": "f3d:model:component#ghost", "kind": "part", "label": "Ghost", "bodies": [], "sketches": [ids[1]], "bom_properties": {}, "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}));
     let mut model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model

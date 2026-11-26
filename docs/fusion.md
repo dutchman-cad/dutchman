@@ -5,12 +5,19 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`a3e6191d`: `f1338aa2`, after cadmpeg 0.6.12, plus cadmpeg#1646).
+State at the cadmpeg commit pinned in `Cargo.toml` (`12ade170`, after cadmpeg 0.6.12).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
 placements resolve. Mapping still depends on the resolved operands each feature needs.
 Sketch names follow their timeline sketch features.
+Independent F3Z member decodes state their own document root, so minimum-reproduction
+checks validate each member as a complete document.
+
+Linked components whose designs are absent from the file are left out and reported,
+including unresolved placeholders in definition-owned product structure. Export the
+assembly as `.f3z`, or put the linked designs' `.f3d` files beside it. Breaking a link
+before export stores the component locally and does not report it as missing.
 
 Revolve profiles and axes now follow their stored curve and region selections, including
 resolved unions of subdivided regions. Unresolved stored selections remain native and
@@ -314,9 +321,6 @@ different end, and CADIR supplies no input face geometry to prove which face exi
 Final-body faces cannot establish that timeline state. Tilted plane ends and native,
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
-A two-sided blind extrude whose second extent is signed and lies on the same side of the
-sketch plane as the first (a negative second distance) is written as a one-sided extrude
-that starts at the nearer end; extents that cancel to zero thickness are refused.
 
 Planar historical face selections also search intervals between trim-loop crossings when
 corner-triangle picks all land in holes. Each new point must lie in the material region,
@@ -432,6 +436,15 @@ still need additional decoding in cadmpeg.
 Reference sketches are mapped from the sketch, feature and parameter data alone, built once per
 conversion: on the Voron V1.8 that takes the peak from 11.0 GB to 8.7 GB, with the same output.
 
+## Sketch text
+
+Fusion sketch text maps to SolidCraft sketch text, and SolidCraft sets the letters. The words,
+font, bold, baseline start, angle, height and the horizontal (left, center, right) and vertical
+(top, middle, bottom) alignment are kept. Width scaling, a medium weight, and top or bottom
+anchoring (which can sit differently in SolidCraft's font box) are reported as degraded notes.
+A text with no stored placement, such as one laid out along a curve, is left out of its sketch
+with a degraded note, and the rest of the sketch maps.
+
 ## Sketches without a timeline row
 
 Fusion keeps some sketches with no Sketch step in the timeline; cadmpeg then lists the sketch
@@ -504,16 +517,6 @@ surface comparison with both face counts. Every source and replayed body must al
 finite volume, area, complete bounds and derived placement; unavailable comparisons or missing
 measurements keep the refusal. The earlier two-reading comparison stays permissive. A final shape that later differs from the source cuts the timeline
 before the first measured feature, so it never keeps fewer features than without measuring.
-
-A profile region chosen without a final-shape comparison (inferred against the stored body centers
-of an earlier feature, or the single region of a sketch with several loops) is checked once more
-when the history stops. If no source feature after the retained ones can build material (only
-fillets, chamfers, cuts and intersections follow), the rebuilt bodies' box must still reach
-the source's final shape, within the larger of 0.5 mm and 1% of its diagonal; when only cuts and
-intersections follow, they must hold at least 95% of its volume too. Otherwise the retained body is a
-different one (a 6.5 mm tube where the source has a 15 mm block, with the same center), and the
-timeline is cut before its first body-building feature, as for any other final-shape difference,
-with a `history/body-mismatch` note. Later features stay in the imported final shape.
 
 The same applies to the last fillet or chamfer of a history when its input edges cannot be proven
 on the rebuilt body (a midpoint off every edge, or an edge with other ends or length). For each
@@ -598,6 +601,17 @@ including assembly holders, rather than additional history representations in th
 
 ## Components
 
+At this pin, each product definition lists its children once. Dutchman expands
+those children for every insertion and applies nested placement, visibility and
+suppression overrides along that insertion path. File definitions that also stand
+for a root component retain the document container in the written component tree.
+
+Exact placement compatibility remains blocked for archives whose joint operands
+lose an insertion path during cadmpeg's shared-occurrence rewrite. The product
+placements survive, but the joint can no longer select one copy. This is an
+upstream limitation, not a reason to substitute a guessed placement; see
+[the product API notes](cadir-v11.md#definition-owned-product-structure).
+
 Assemblies with multiple top-level designs group each design's features into a uniquely
 named timeline folder, including the root design's own features when present, while keeping
 feature order and leaving joints outside folders; a single part or one top-level design
@@ -667,6 +681,11 @@ transform, and each component as a product definition.
   holds it. Its geometry is still converted and can be shown again in SolidCraft. In a part with
   shown and hidden bodies, the hidden ones are written marked hidden: SolidCraft 0.42 and newer
   open them hidden, older releases show the part whole.
+- **Suppressed components** (an occurrence the source itself marks suppressed, as in Inventor
+  and Solid Edge assemblies) are placed hidden at their position, the same way; they stay in
+  the design and its part list, and an Info `suppressed components` note names them. A
+  component a Fusion insertion does not hold (the suppression Fusion uses to select a stored
+  layout) is left out as before.
 - **Joints** between components become SolidCraft joints: fixed ones rigid (their offset kept),
   revolute ones turning about the connector's z axis with their limits, slider ones along it.
   Each connector frame is in its own part. Offsets apply to the second connector:
@@ -708,7 +727,9 @@ transform, and each component as a product definition.
   inserted. Within an already posed component, an isolated leaf pose marker yields to a
   partner held by joints that already close; the design root alone does not override that
   child pose. Explicit holder poses and child poses already
-  confirmed by a solved joint stay protected. This also preserves a child component named by
+  confirmed by a solved joint stay protected. A joint from the design root to a child with
+  an explicit source pose checks that child's placement directly, including when its containing
+  component has no pose of its own. This also preserves a child component named by
   a contained pose inside an inserted design when that design has no current pose of its own. An inserted design's own current
   pose holds the design; its children still use their own poses or joints. A contained pose is
   matched within that design instance and its stored owner chain, so an
@@ -781,9 +802,6 @@ relations remain reported losses. One sketch carries at most 400,000 wire constr
 additional relations are reported and their solved geometry is retained. An unresolved sketch binding cannot be replaced
 by guessed geometry. A nonplanar historical face boundary remains a separate face
 selection blocker. Targets before 0.44 keep their existing output and refusals.
-A face sketch is made only from a flat face: every boundary point must lie on one plane, within
-1e-5 of the face's size. When one does not, the refusal gives the largest distance off the plane
-and names a curved face such as a cylinder wall, whose two end circles face opposite ways.
 
 ## A .f3d whose inserted designs are missing
 
@@ -876,10 +894,6 @@ must fail first. Unresolved selections within existing sketches, unsupported opt
 and failed measurement checks keep their usual refusal. A missing input is proved
 by its CADIR reference or a missing-profile loss attributed to that feature; an
 unresolved carrier alone does not establish that it belongs to an external design.
-A loss that names the feature only by its scope record (`Extrude scope record N`) is
-attributed to the one feature whose identity carries that record, and to none when no
-feature or several do. In an assembly, each part receives the decode losses of its own
-design (those prefixed `xref <design name>:`).
 It uses the history body produced by that feature first. A final-model body is used
 only when no later active feature changes it. Joins, cuts and intersections never use
 this fallback: replacing them would discard earlier body history. No geometry is

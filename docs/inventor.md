@@ -5,7 +5,7 @@ Dutchman reads Inventor through cadmpeg's Inventor codec (cadmpeg-registry's
 when the pin is bumped. This page says what Dutchman makes of what that codec gives, and which
 upstream gaps keep Inventor history from replaying. It drives what is asked of cadmpeg next.
 
-State as of the cadmpeg commit Dutchman pins (`f1338aa2`, after cadmpeg 0.6.12; see `Cargo.toml`).
+State as of the cadmpeg commit Dutchman pins (`bb8c69a7`, after cadmpeg 0.6.12; see `Cargo.toml`).
 Fixed-spacing rectangular body patterns and more face operands now decode, and resolved
 split targets retain their earlier body producer for history mapping. Body patterns still
 need earlier mapped body names; feature-local body selections remain unsupported.
@@ -123,6 +123,8 @@ maps (see the parts table above for what blocks Inventor history today):
   are taken from the sub-assembly files instead.
 - Left out and reported as Dropped: parts or sub-assemblies that cannot be found or read,
   scaled placements, and occurrences whose part is not a separate file.
+- Suppressed occurrences are placed hidden at their position, not dropped; an Info
+  `suppressed components` note names them.
 - Upstream: cadmpeg leaves local prototypes untransferred. CADIR version 7 (cadmpeg 0.6.3) can
   carry assembly joints, but the Inventor codec does not read them yet.
 

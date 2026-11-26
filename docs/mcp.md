@@ -1,5 +1,12 @@
 # The MCP server
 
+Component catalogs follow assembly nesting, including repeated insertions.
+Assembly files claim their referenced parts, so a project converts its roots
+and then its unused parts. Nested placement, visibility, and suppression
+overrides apply separately to each insertion.
+Alternate representations and instance bodies are not supported yet;
+the report names that limitation rather than treating the design as empty.
+
 The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
 Folder and selection summaries use the highest per-file memory estimate and sum the displayed
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
@@ -575,10 +582,10 @@ once. Grounding and supported Assembly-workbench joints map like other assembly 
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
 targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
-stored circle with center, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
-only that body supplies replay candidates, even when another body has a coincident rim.
-Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
-refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's center, axis, radius,
+circle that the feature's input topology stores beside the edge, with center, axis, radius and a
+full-turn parameter range. Its input topology must hold a single body that is one earlier named
+body; only that body supplies replay candidates, even when another body has a coincident rim.
+A missing carrier or owner, and ellipses, remain refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's center, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
 A missing source carrier reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.

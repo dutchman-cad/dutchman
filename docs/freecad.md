@@ -26,6 +26,13 @@ as well as the visible final shape.
 
 ## What converts
 
+The pinned reader lists child occurrences on their product definitions. Dutchman
+walks that structure for component catalogs and linked-part selection, including
+shared definitions inserted more than once. The document root remains separate
+from its placed parts. Hidden-body filtering checks each insertion: a shown
+instance keeps shared geometry even when another instance is under a hidden
+container.
+
 - **Geometry**, written as a SolidCraft import and checked in SolidCraft like any other.
   Only the bodies FreeCAD shows convert: a body cadmpeg marks hidden (`visible: false`, as it
   marks the shape of each step inside a PartDesign Body) is left out, with the geometry only
@@ -354,7 +361,9 @@ revolute, and slider joints the SolidCraft output writes are written to FreeCAD 
 same resolved parts, connector frames, frame sense, angles, and limits, through
 sub-assemblies as well. Between parts placed directly in the assembly, cylindrical, ball,
 distance, parallel, perpendicular, and angle joints are also written; axis coincidence uses
-a cylindrical joint, and an insert uses a revolute joint with its plane offset. Their
+a cylindrical joint, and an insert uses a revolute joint with its plane offset. Joint lookup
+between directly placed parts follows the file definition's child order and prototype storage in CADIR,
+independently of the occurrence arena's record order. Their
 attachment offsets are kept, angular limits use degrees and linear limits millimeters, and
 either bound may be enabled alone. FreeCAD's static solve preserves free coordinates; limit
 properties are kept for the workbench rather than used to drive a pose during conversion.

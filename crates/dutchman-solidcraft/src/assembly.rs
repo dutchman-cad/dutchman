@@ -1856,8 +1856,8 @@ fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none(
     let listed = "test:model:sketch#listed";
     let feature_only = "test:model:sketch#feature";
     wire["model"]["product_definitions"] = json!([
-        {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed], "bom_properties": {}},
-        {"id": owner_b, "kind": "part", "bodies": [], "bom_properties": {}, "sketches": []}
+        {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed], "bom_properties": {}, "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]},
+        {"id": owner_b, "kind": "part", "bodies": [], "bom_properties": {}, "sketches": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}
     ]);
     wire["model"]["features"] = json!([
         {"id": "test:model:feature#listed", "ordinal": 0, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": listed}}}}, "dependencies": [], "source_properties": {}, "source_content": []},

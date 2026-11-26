@@ -1,7 +1,7 @@
 # CADIR v11 in Dutchman
 
 Dutchman reads the wire and Rust types at cadmpeg commit
-`f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a`. The field map in cadmpeg's
+`20abb6277a84ef3ada4040cff452a3e69024a83c`. The field map in cadmpeg's
 `docs/cadir-v11.md`, section 9.2, describes the complete design vocabulary.
 The pinned implementation also retains the `features` vocabulary in `model`;
 its native readers still emit those records. `Design` is a separate namespace
@@ -22,7 +22,7 @@ placement admission, and minimum reproductions follow these mappings:
 | fields on a feature operation | the operation enum's `value` |
 | fields on a solved curve or surface | `geometry.value` inside the `solved` arm |
 | appearance target `id` | `target.entity.value`; the discriminator is `target.entity.kind` |
-| prototype `scope`, external document `resolution` | `kind` |
+| occurrence prototype, parent, and ordinal | prototype definition id; ordered children on the owning definition; external identity in definition `storage` |
 | joint operands `arity` | `kind`, with operands in `value` |
 | datum reference `reference`, sketch binding `space`, profile region `region`, face loops `classification`, NURBS poles `form` | `kind` |
 | extrusion `ProfileRef` planar operand | `{"kind":"planar","value": <PlanarProfileRef>}` |
@@ -37,6 +37,12 @@ together without conflating `design`'s
 restated identities. Imported region appearances follow the region directly,
 without reconstructing the removed body membership field. The empty `native` home is written explicitly on slices;
 v11 requires it even when there are no retained native records.
+
+Decoded documents state exactly one root product definition, stored in the file
+without a separate source. A bare root represents the document itself. Component
+and minimum-reproduction subsets are marked `fragment`: they retain source
+coordinates and identities, while the enclosing document root may lie outside
+the selected records. Their geometry and reference checks still run.
 
 A document with only `design.features` is kept as final geometry with a specific
 history refusal: its ordered selections and evaluation states have no
@@ -78,7 +84,10 @@ Onshape thin walls pair a typed `design.features` extrusion with the existing
 `model.features` projection by feature identity. The typed `output.body` carries
 the thin thickness and side; profile, direction, extent and Boolean semantics
 must agree with the projection before the writer uses it. This narrow bridge does
-not admit design-only histories or infer absent projection operands.
+not admit design-only histories or infer absent projection operands; design-only
+histories go through the `design_history` projection instead.
+Other typed design operations leave the retained model-history mapping in control;
+the thin-output bridge applies only to an explicit typed thin extrusion.
 
 ## Changes after the original v11 port
 
@@ -112,8 +121,10 @@ mapper. They are not interpreted through the model's old operation wrappers.
 At `f1338aa`, Fusion's `decode/design_intent.rs`, Inventor's history projection,
 SolidWorks' history projection, and FreeCAD's `design.rs` still populate
 `model.features` and model sketch arenas. No native reader in this comparison
-switched to design-only history. No design-arena history reader is added here;
-the existing design-only history refusal remains in force.
+switched to design-only history. A design-only history is read by
+`dutchman-core`'s `design_history` projection, which fills the model-history arenas
+from the design layer once after decoding (sketches, extrudes and revolves of whole
+sketches; other features stay unmapped and stop the history).
 
 The JSON-read audit of core and SolidCraft found changed appearance-target reads
 in `assembly/slicing.rs` and `history/faces.rs`, both ported above. Neither crate
@@ -166,8 +177,10 @@ mapper. They are not interpreted through the model's old operation wrappers.
 At `f1338aa`, Fusion's `decode/design_intent.rs`, Inventor's history projection,
 SolidWorks' history projection, and FreeCAD's `design.rs` still populate
 `model.features` and model sketch arenas. No native reader in this comparison
-switched to design-only history. No design-arena history reader is added here;
-the existing design-only history refusal remains in force.
+switched to design-only history. A design-only history is read by
+`dutchman-core`'s `design_history` projection, which fills the model-history arenas
+from the design layer once after decoding (sketches, extrudes and revolves of whole
+sketches; other features stay unmapped and stop the history).
 
 The JSON-read audit of core and SolidCraft found changed appearance-target reads
 in `assembly/slicing.rs` and `history/faces.rs`, both ported above. Neither crate
@@ -186,6 +199,84 @@ and scoped entity references remain unresolved and reported; no geometry is
 inferred from a source name. Drawing traversal and projection offsets otherwise
 stay unchanged. Assembly joint operands still use their separate model
 `object`/`subelements` representation; those fields are not drawing references.
+
+## Drawing dimensions at the current pin
+
+At `959d28b8`, `semantic_annotations::DimensionKind` became
+`AnnotationDimensionKind`, with unit variants for the existing distance, radius,
+diameter, and angle categories. DXF uses the renamed type and keeps the same
+labels, tolerances, extension lines, and arrows for those categories. The new
+`Area` and `Extent` categories have no generated DXF label or dimension lines;
+explicit replacement text still takes precedence. Their presentation follows
+the existing fallback and loss reporting for unmapped dimensions.
+
+Drawing rotation now uses `rotation: Angle` in radians; DXF uses that angle for
+curve placement and converts it to degrees for text entities. Angular annotation
+measurements and tolerances also use radians, so DXF converts both back to degrees
+for the existing labels. Drawing radii use `PositiveLength`, and a drawing's native
+reference is optional. These type changes preserve the previous DXF presentation.
+
+## Definition-owned product structure
+
+Commit `b3bcdb267c513774acc39bf36dc4c07ceb348190` replaces occurrence parents
+and tagged prototypes with `ProductDefinition.occurrences` and an occurrence's
+prototype definition id. Fusion's `tree::own_once`, FreeCAD's
+`product::transfer_neutral` and SolidWorks'
+`NativeAssembly::into_projection` emit this structure. External paths and
+configuration/object names now live in the prototype definition's `storage`.
+`ExternalDocument` is a record of optional path, document identity, version, stamp
+and object fields without a `kind` tag; external joint operands use the same record.
+This is an API change; the readers retain the product tree.
+
+Dutchman projects that neutral graph into an internal placed tree for component
+extraction, external resolution, and project reference grouping. The root is the
+file definition without a separate source. Child order comes from each definition's
+occurrence list, and shared children expand for every placed use with distinct
+internal identities. Expanded identities retain their native child key so an
+explicit nested joint path resolves inside the requested insertion, rather than
+selecting another copy with the same source key. Depth and expanded count retain
+the existing assembly limits.
+The projection leaves the decoded CADIR and geometry slices unchanged. Bodies owned
+by the root remain root geometry. Suppressed placements and inactive definitions
+are omitted. Nested overrides match source occurrence paths before transforms,
+visibility, and
+suppression are resolved for each insertion. FreeCAD hidden-body classification
+uses the same placed view so a shown insertion keeps shared geometry. Parent and child transforms compose
+in the existing placement builder; overrides never transform source geometry.
+Alternate representations and instance bodies receive a named refusal instead of
+silently using the prototype's default geometry.
+
+Synthetic assembly fixtures construct the same definition-owned graph. Different
+layouts of a shared component use insertion overrides, preserving checks of
+placement, visibility, history ownership and definition reuse. Malformed parent
+placements are checked at the internal placed-tree boundary.
+
+Commit `9522b16732` (#1437) adds definition-owned `tessellations` for bodiless STEP
+meshes. It does not change the Fusion, FreeCAD, or SolidWorks occurrence walk.
+Saved meshes remain outside the exact-body conversion path, as before.
+
+
+The same commit folds identity root components into file definitions. The placed
+view retains the surrounding document container that previous conversions wrote.
+The codec's component and document identity namespaces distinguish those roles,
+including scoped member identities (`model:component` and
+`archive:product-definition`). Xrefs, unresolved insertion declarations, and
+stored-frame groups remain at file level; the component's children stay below
+its identity placement. The file keeps its inherited label, and the component
+keeps its source name or the existing fallback name. Override paths count source
+occurrences, keeping the added display level transparent to source overrides.
+
+The pinned public assembly has 69 file definitions: 20 component roots and 49
+document roots. The shared definition walk reaches the component roots 59 times.
+Those 59 context levels restore the expected 367 named occurrences. The unchanged
+placement comparison still fails: 56 matching paths move and 151 generated names
+differ. This pin also loses insertion paths when `SharedIdentities::rewrite`
+canonicalizes joint operands. The upstream synthetic test
+`tree::tests::a_reference_to_one_instance_names_its_occurrence` explicitly changes
+a joint selecting `b:bolt` into a selection of the shared `bolt` with an empty
+occurrence path. Product placement overrides retain both bolts but cannot say
+which one that joint selected. Exact placement compatibility therefore remains
+unverified; the occurrence adaptation does not reconstruct missing selections.
 
 ## Sketch arc direction
 
