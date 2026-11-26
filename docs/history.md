@@ -41,7 +41,9 @@ history, with no flattened-history warning.
   - move face, as SolidCraft's offset face: planar faces cadmpeg resolves in the feature's own
     input topology and moves along their normal, each written as a point inside the face with
     the signed distance. For SolidCraft 0.45 or newer, the selection also names the unique
-    earlier body in the part’s history. Ambiguous body ownership is refused. Circular trims
+    earlier body in the part’s history. On a state with several bodies the body is the one
+    the state's face ownership gives for the moved faces; faces of different bodies, or faces
+    with no recorded owner, are refused. Ambiguous body ownership is refused. Circular trims
     use interior candidates with clearance from both outer boundaries and holes, accounting
     for the exact curves beyond their sampled chords. Older targets keep the previous
     point-only representation. Translations along a direction, rotations, non-planar faces and native
