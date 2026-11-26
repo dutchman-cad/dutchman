@@ -394,7 +394,6 @@ mod drawing_words_tests {
             );
             let message = crate::drawing::not_decoded_message(format);
             assert!(message.starts_with(&format!("{}: no drawing was written", format.name())));
-            assert!(message.contains("a PDF or DXF export of the same drawing"));
             assert!(!message.contains("accepted") && !message.contains("cannot be read"));
             assert!(format.status_for(std::path::Path::new("x")).contains(words));
         }

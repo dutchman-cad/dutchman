@@ -175,12 +175,11 @@ fn dwg_version(version: &str) -> Option<&'static str> {
 }
 
 /// What to tell a user whose drawing is recognised but whose sheets are not read yet. The
-/// result card shows it under the line that says the sheets are not supported yet, so it adds
-/// what to do rather than saying that again.
+/// result card shows it under the line that says the sheets are not supported yet, and above
+/// the help steps that ask for a PDF or DXF export, so it says only what was not done.
 pub fn not_decoded_message(format: Format) -> String {
     format!(
-        "{}: no drawing was written. Please send the file, with a PDF or DXF export of the same \
-         drawing, so the reader can be built.",
+        "{}: no drawing was written. Please send the file so the reader can be built.",
         format.name()
     )
 }
