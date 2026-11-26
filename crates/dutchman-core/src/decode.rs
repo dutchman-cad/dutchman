@@ -92,7 +92,29 @@ pub(crate) fn decode_with_progress(
             format.name()
         )))
     });
-    finish_recovered(recovered.as_ref(), result, report)
+    let result = finish_recovered(recovered.as_ref(), result, report);
+    explain_missing_geometry(format, bytes, result)
+}
+
+/// A whole Fusion archive that cadmpeg refuses as malformed because its geometry part is missing
+/// says what the export holds and what it lacks, like one with no geometry at all.
+fn explain_missing_geometry(
+    format: Format,
+    bytes: &[u8],
+    result: Result<Model, Error>,
+) -> Result<Model, Error> {
+    match result {
+        Err(Error::Decode(_)) if format == Format::FusionArchive => {
+            match crate::fusion_archive::missing_geometry(bytes) {
+                Some(why) => Err(Error::EmptyExport(format!(
+                    "cannot read this design: {}. {why}",
+                    no_geometry_message(format)
+                ))),
+                None => result,
+            }
+        }
+        other => other,
+    }
 }
 
 /// A Fusion archive whose end is missing, rebuilt from the members that are whole.
