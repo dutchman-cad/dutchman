@@ -1248,6 +1248,8 @@ fn picked_folder_not_granted(
     Ok(())
 }
 
+type HookRun = (Result<String, PluginError>, Store<Host>);
+
 /// The three dialog options are saved after an accepted import and offered back as the
 /// dialog's defaults; a failed import saves nothing, and damaged settings change nothing.
 fn settings_are_saved_and_offered(
@@ -1260,10 +1262,7 @@ fn settings_are_saved_and_offered(
     let size = cube.len() as u64;
     let hook = |host: Host,
                 entry: &str|
-     -> Result<
-        (Result<String, PluginError>, Store<Host>),
-        Box<dyn std::error::Error + Send + Sync>,
-    > {
+     -> Result<HookRun, Box<dyn std::error::Error + Send + Sync>> {
         let mut store = Store::new(engine, host);
         store.limiter(|host| &mut host.limits);
         store.set_fuel(50_000_000)?;
