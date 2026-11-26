@@ -163,6 +163,14 @@ an `inventory` job into Dutchman's folder, then an `export` job with the picked 
 `.cancel` file, and after the job ends Dutchman deletes its three job files. Everything the
 exporter writes stays on your computer.
 
+## Linked components
+
+A single .f3d whose components are linked from other files, and are not inside it, has no
+bodies of its own. Dutchman says "this Fusion design links its components from other files,
+and they aren't inside this .f3d" and asks you to export it from Fusion as .f3z (File >
+Export > Fusion Archive), which carries the linked components. The JSON error has `kind`
+`assembly` and stage `input`.
+
 ## Mesh bodies
 
 When cadmpeg reports mesh bodies for a Fusion design with no decoded B-rep bodies or
