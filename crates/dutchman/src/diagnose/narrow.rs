@@ -494,7 +494,7 @@ impl<T: Trials> Drive<'_, T> {
                 self.say(
                     2,
                     match scope {
-                        Scope::Neighbours => format!("isolating part {part} with its neighbours"),
+                        Scope::Neighbours => format!("isolating part {part} with its neighbors"),
                         _ => format!("isolating part {part}, alone"),
                     },
                 );
@@ -696,7 +696,7 @@ fn summary(found: &Value, state: &Checkpoint) -> String {
             signature.map_or("none", Signature::short)
         ),
         Some("not_repeated") => format!(
-            "{} parts failed in the ranking, but none failed again alone or with its neighbours: \
+            "{} parts failed in the ranking, but none failed again alone or with its neighbors: \
              see report.txt for the limits they ran into.",
             state.failing_parts
         ),
@@ -713,7 +713,7 @@ fn summary(found: &Value, state: &Checkpoint) -> String {
             let place = match (found["part"].as_u64(), found["scope"].as_str()) {
                 (None, _) => "the whole design".to_owned(),
                 (Some(part), Some("neighbours")) => {
-                    format!("part {part}, only with its neighbours")
+                    format!("part {part}, only with its neighbors")
                 }
                 (Some(part), _) => format!("part {part}"),
             };

@@ -84,7 +84,7 @@ mod guest {
             execute: &mut crate::evaluator::Execute<'_>,
         ) -> Result<Vec<serde_json::Value>, String> {
             if control::cancelled() {
-                return Err("Cancelled".into());
+                return Err("Canceled".into());
             }
             report(self.0.check_started());
             // Staging after a run starts a new design; reset also drops the last one.
@@ -299,7 +299,7 @@ mod guest {
             }
             if control::cancelled() {
                 *self.error.borrow_mut() = Some(PluginError::Cancelled);
-                return Err(std::io::Error::other("Cancelled"));
+                return Err(std::io::Error::other("Canceled"));
             }
             let length = (buf.len() as u64)
                 .min(self.size.saturating_sub(self.position))

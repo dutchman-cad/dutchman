@@ -1422,7 +1422,7 @@ fn diagnostic_tools() -> Vec<Value> {
         ("verify_repro", "Replay a saved bundle locally. Returns sizes, manifest and reproduction status only.", vec!["folder"]),
         ("diagnose", "Rank numbered parts locally under time and memory limits.", vec!["input", "out"]),
         ("diagnose_narrow", "Resume automatic narrowing, returning the anonymous signature and rebuild recipe.", vec!["input", "out"]),
-        ("convert_part", "Try one numbered part, optionally with neighbours; discard the converted geometry.", vec!["input", "part"]),
+        ("convert_part", "Try one numbered part, optionally with neighbors; discard the converted geometry.", vec!["input", "part"]),
         ("stop_at_feature", "Try a numbered part through a history feature (0 means stored shape only); discard geometry.", vec!["input", "part", "feature"]),
         ("same_failure", "Check a freshly rebuilt small file against the signature in out.", vec!["input", "out"]),
         ("make_report", "Prepare a local ZIP from the checked small file. It contains geometry. Nothing is sent; ask the user to review it locally before sharing.", vec!["input", "out"]),

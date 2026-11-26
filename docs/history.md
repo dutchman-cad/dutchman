@@ -70,11 +70,11 @@ history, with no flattened-history warning.
 
 A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
 and each body's position, box, area, and volume with the original. Position and box checks
-allow the larger of 0.01 mm and 0.02% of the larger box diagonal, for the centre distance and
+allow the larger of 0.01 mm and 0.02% of the larger box diagonal, for the center distance and
 each minimum/maximum coordinate. The size term is four times the measuring mesh chord
 allowance, with margin above the measured 0.0022 mm difference on a 38 mm curved body.
 Volume and area keep their measuring mesh tolerances ([every number](#verification-tolerances)). Bodies are paired by nearest box
-centre, with volume breaking ties. When the evaluator gives no box for a pair, the position and box checks are unavailable. The result is in the
+center, with volume breaking ties. When the evaluator gives no box for a pair, the position and box checks are unavailable. The result is in the
 `history:` line of the report and in `verification.status` in `--json`:
 
 | Status | Meaning |
@@ -100,7 +100,7 @@ keep their existing one-to-one comparisons.
 ### Verification tolerances
 
 Every number below is a constant in `crates/dutchman-solidcraft/src/tolerances.rs`, and the
-conversion report states them in `verification_tolerances` (see [json.md](json.md)). Millimetres
+conversion report states them in `verification_tolerances` (see [json.md](json.md)). Millimeters
 are mm; a "share" is a fraction of the size it applies to.
 
 **Replay against the original** (both evaluated in the same SolidCraft, so kernel differences
@@ -108,15 +108,15 @@ cancel):
 
 | Compared | Allowed difference |
 |---|---|
-| Bodies | The same comparison count after the single-body disconnected-region normalization described above. Otherwise, bodies are paired by nearest box centre, volume breaking ties. |
+| Bodies | The same comparison count after the single-body disconnected-region normalization described above. Otherwise, bodies are paired by nearest box center, volume breaking ties. |
 | Volume | The larger of 1e-4 (0.01%) of the larger volume and the mesh allowance: each body's area times the mesh chord, `max(5e-5 of the box diagonal, 1e-4 mm)`, summed for both bodies. With no area or box from SolidCraft, only 1e-4. |
 | Area | 1e-3 (0.1%) of the larger area, when SolidCraft gives both. |
-| Position (box centre) and box corners | The larger of 0.01 mm and 2e-4 (0.02%, four mesh chords) of the larger box diagonal; the centre distance and each minimum and maximum coordinate. Skipped when SolidCraft gives no box. |
+| Position (box center) and box corners | The larger of 0.01 mm and 2e-4 (0.02%, four mesh chords) of the larger box diagonal; the center distance and each minimum and maximum coordinate. Skipped when SolidCraft gives no box. |
 | Kernel face, edge and shell counts | Informational only: `info` when equal, `differs` when unequal. Equivalent split or merged faces may differ; counts never reject a final history. Earlier inference retains its geometry comparison policy. |
 | Merged face counts | Final history comparisons require equal available top-level counts per paired body. SolidCraft merges adjacent pieces of one surface and periodic seams. A mismatch retains the imported final shape and reports the differing count. Free-form and mesh surface totals are not comparable and are not checked. Missing counts are not checked. |
 | Merged edge counts | Informational only: `info` when equal, `differs` when unequal. Edge splitting after mirrors and full-turn revolves can differ across SolidCraft releases without changing the faces or shape. |
 | Analytic surface-kind counts | Available merged counts of planes, cylinders, cones and spheres must match, including in bodies with free-form faces. Mesh bodies are not checked. |
-| Centre of mass | Final history comparisons use the position allowance above on actual centroids, when both are available. A box centre is never substituted. |
+| Center of mass | Final history comparisons use the position allowance above on actual centroids, when both are available. A box center is never substituted. |
 | Closed shell | Final history comparisons require source and replay closure to agree; a source sheet may be open. |
 | Named parameters | Replayed numeric values must match source values within 5e-12 times max(1, absolute source value), allowing measured reply serialization roundoff. Omitted or renamed parameters are not checked. |
 | Manifoldness | Not checked: the evaluator exposes no explicit manifold result. |
@@ -129,7 +129,7 @@ geometry is retained. See [source comparison evidence](json.md#source-comparison
 
 **Bodies the source stores at a point in a partial history** (a retained prefix against the
 source's own body at that step): the source's body count must not exceed the replay's, and each
-stored body needs a replayed body whose box centre is within the larger of 0.5 mm and 1% of the
+stored body needs a replayed body whose box center is within the larger of 0.5 mm and 1% of the
 replayed box diagonal when the stored box is the solid's own, or 1 mm and 2% when it is a box
 over sampled points. More replayed bodies than the source lists is not a difference.
 
@@ -226,8 +226,8 @@ or designation does not block a known metric size: `3 mm` and `0.5 mm` become `M
 without rounding. A genuine contradiction names the designation's dimensions and the
 secondary numbers and asks you to check the source thread table.
 
-UNC/UNF designations are checked in millimetres (25.4 mm per inch), with pitch expressed as
-millimetres or threads per inch. When those numbers agree, a UNC, UNF or UNEF thread is written as a Thread feature in
+UNC/UNF designations are checked in millimeters (25.4 mm per inch), with pitch expressed as
+millimeters or threads per inch. When those numbers agree, a UNC, UNF or UNEF thread is written as a Thread feature in
 SolidCraft's Unified form (`#2-56 UNC`, `1/4-20 UNC`), keeping a class the source names
 (`-2A` external, `-2B` internal), on targets with Unified thread support. No SolidCraft release
 has it yet, so every target reports "Unified threads need a SolidCraft release with Unified
@@ -281,12 +281,12 @@ a curved edge along the polyline it draws, so a rebuilt arc's length must lie be
 and the input arc's length. Arcs SolidCraft
 splits into pieces and other non-circular curves are refused. Closed input circles map for
 targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
-stored circle with exact centre, axis, radius and full-turn parameter range; historical
+stored circle with exact center, axis, radius and full-turn parameter range; historical
 samples cannot establish circularity. Stored topology must identify one earlier named owning
 body, and only that body supplies replay candidates. Missing carrier or ownership evidence,
 ellipses, and transformed source carriers are refused. Each rebuilt piece must lie on its
 plane and radius, with mesh length between the sample chords and the circular arc. An extra
-`inspect.measure` pass confirms the circular carrier's centre, axis, radius, and analytic
+`inspect.measure` pass confirms the circular carrier's center, axis, radius, and analytic
 length; it cannot certify a circle from its two seam samples alone. Sorted
 angular intervals must cover exactly one turn without gaps or overlaps on exactly one body.
 An overlapping candidate without carrier metadata on the selected body also blocks the proof.
@@ -408,7 +408,7 @@ the way FreeCAD's default (bullseye) face maker builds them stop the history, an
 names which.
 
 Whole-sketch hole placements exclude construction entities; explicit entity selections
-can still use construction points or circle centres.
+can still use construction points or circle centers.
 
 When every feature using a sketch selects regions (whole loops or trimmed) or a list of its
 profile loops, curves that bound none of the selected regions or loops are written as
@@ -541,7 +541,7 @@ is still converted.
 Roll the timeline marker back before **Remove** to see and edit the body the converted features build.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and
-resolved sketches are kept live in the part's own timeline, followed by a **Remove** feature that takes away the bodies they make and one **Import** named "Rest of the design (from <first feature not converted>)" that holds the source's final shape. The visible result is exactly the original shape, with one body per source body. Roll the timeline marker back before **Remove** to see and edit the body the converted features build; to keep modelling from them, delete or suppress the last two features. SolidCraft needs the CLI to name the bodies the features make; without it the kept features stay in a hidden **Editable history (partial)** component beside the visible Import, as before, with their body-building features suppressed so an export holds each part once. The report names the blocker and counts
+resolved sketches are kept live in the part's own timeline, followed by a **Remove** feature that takes away the bodies they make and one **Import** named "Rest of the design (from <first feature not converted>)" that holds the source's final shape. The visible result is exactly the original shape, with one body per source body. Roll the timeline marker back before **Remove** to see and edit the body the converted features build; to keep modeling from them, delete or suppress the last two features. SolidCraft needs the CLI to name the bodies the features make; without it the kept features stay in a hidden **Editable history (partial)** component beside the visible Import, as before, with their body-building features suppressed so an export holds each part once. The report names the blocker and counts
 retained source features; `mode: partial_history` and verification `partial` distinguish
 this from full verified history. The reason says whether retained features replayed or
 remain unverified. Later sketches with unresolved planes or external geometry are

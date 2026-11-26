@@ -76,7 +76,7 @@ fn not_decoded(format: Format, input: &Path) -> Value {
                             "dwg" => "a DWG drawing",
                             "dxf" => "a DXF drawing",
                             "text" => "a text file",
-                            _ => "an unrecognised file",
+                            _ => "an unrecognized file",
                         },
                         format.name()
                     ),

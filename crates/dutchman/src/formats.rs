@@ -97,7 +97,7 @@ pub fn markdown() -> String {
             .collect::<Vec<_>>()
             .join(", ");
         let reads = if format == Format::Iges {
-            "Recognised, not converted".to_owned()
+            "Recognized, not converted".to_owned()
         } else {
             capitalised(format.words())
         };

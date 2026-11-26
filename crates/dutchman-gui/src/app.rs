@@ -1029,7 +1029,7 @@ impl App {
             self.intake.approval = None;
             if !approval.resume {
                 self.notice =
-                    Some("Fetch cancelled. No more Onshape API calls were used.".to_owned());
+                    Some("Fetch canceled. No more Onshape API calls were used.".to_owned());
             }
         }
         if go {

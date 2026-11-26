@@ -477,7 +477,7 @@ pub fn full_log(report: &Value, line: &str) -> String {
 
 /// What the text reports say once when they cut a note short.
 pub const CUT_NOTE: &str =
-    "notes are summarised in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full";
+    "notes are summarized in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full";
 
 /// A report of a run that stopped with `message`, at the input stage (the file, or how it
 /// was asked for).

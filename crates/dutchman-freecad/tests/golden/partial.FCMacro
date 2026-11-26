@@ -212,7 +212,7 @@ def add_constraint(obj, c, points):
         obj.setDriving(index, False)
 
 def crossing(source, curves):
-    # Solid lines from corner to corner through the region the other curves bound (a centre
+    # Solid lines from corner to corner through the region the other curves bound (a center
     # rectangle's diagonals when the source does not mark them construction). FreeCAD cannot
     # pad a sketch they split, and the region taken whole is the same without them.
     solid = [i for i, c in enumerate(curves) if not c.get('construction')]
