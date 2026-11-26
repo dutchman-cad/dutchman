@@ -2501,8 +2501,12 @@ impl App {
             ui.label(RichText::new(text.0).small().color(p.tide));
             let more = ui.add(egui::Link::new(RichText::new(text.1).small()));
             // Another "More" button lives on result cards; give this one its own name.
-            ui.ctx().accesskit_node_builder(more.id, |node| {
-                node.set_label("More about Dutchman and your files");
+            more.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Link,
+                    true,
+                    "More about Dutchman and your files",
+                )
             });
             if more.clicked() {
                 ctx.open_url(egui::OpenUrl::new_tab(footer_docs_url(
