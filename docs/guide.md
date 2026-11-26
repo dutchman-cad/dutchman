@@ -219,7 +219,7 @@ A design stores its geometry compressed, so a large assembly stays small: SolidC
 [Install](install.md) has every option, checksums, and the one-time
 [first-run approval](install.md#opening-the-app-the-first-time) on macOS. Install
 [SolidCraft](install.md#solidcraft-optional-recommended) too: Dutchman uses it to check each
-converted history. The supported SolidCraft window is currently 0.40–0.48.
+converted history. The supported SolidCraft window is currently 0.40–0.49.
 
 ## Your first conversion
 
@@ -247,25 +247,24 @@ converted  solidworks_cube.sldprt -> cube.sc (geometry without history)
 dutchman: Degraded: sldprt/source.dialect-unverified: the document carries no swSolidWorks swVersion declaration, so no declared identity was verified. …
 dutchman: Degraded: sldprt/config.inferred-without-native: 1 configuration state(s) are inferred from geometry partitions without native configuration definitions.
 dutchman: Info: step/design.parametric-records-omitted: 1 parametric/design record(s) were not represented in STEP: configuration=1
-dutchman: Info: step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s) were not represented in STEP
-dutchman: Info: step/native.source-record-omitted: 1 source-native record(s) were not represented in STEP
 dutchman: Info: history: flattened: the design carries no feature history
-dutchman: (repeated notes are grouped and long notes shortened; --verbose prints every note in full)
+dutchman: (notes are summarized in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)
 Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 The synthetic SolidWorks cube lacks native version and configuration metadata, so those
 warnings are expected for this sample. The internal records omitted from STEP do not change
-its shape: the written geometry should be one 10 mm cube (1,000 mm³). The sample has no
+its shape (`--verbose` lists them): the written geometry should be one 10 mm cube (1,000 mm³). The sample has no
 editable feature history. Check the result in SolidCraft as [below](#open-the-result-in-solidcraft).
 
 The exit code is 0, and the first line, on stdout, says what was written where: here the
 geometry, as this file has no feature history (else `editable history, verified in SolidCraft`
 or `editable history, unverified`). After progress updates, the lines on stderr are the loss report, explained
 [below](#reading-the-loss-report). Long notes are cut to their first sentence, marked `…`;
-`--verbose` prints them whole. An explicitly named existing output file is
-replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
-when the conversion fails.
+`--verbose` prints them whole. An existing file at the output is never
+replaced: the design is written to the next free name (`part (2).sc`), and its reports
+beside it carry the same number. `--replace` replaces it. Nothing is written when the
+conversion fails.
 
 Inventor attached sheet-metal plates and their bends can keep editable history on an unchanged
 L-shaped or notched base. The plate must span one proven straight profile edge at 90 degrees;
@@ -335,6 +334,18 @@ Convert; see [the desktop guide](desktop.md).
 
 ## Reading the loss report
 
+Each note leads with one plain sentence: what is missing or different, and what you can do
+about it. Notes that change nothing you see (records STEP has no place for or keeps as they are,
+an edge tolerance, a timeline folder, a placement statistic of nothing) are left out of the default view. `--verbose` prints every note as
+Dutchman wrote it, `LEVEL: SUBJECT: MESSAGE` with the code first in the subject, and the JSON
+report always keeps every note, with the sentence added as `summary`
+([JSON report](json.md)). A note without a plain sentence yet prints as before. The sentences
+live in one table, `PLAIN_NOTES` in `crates/dutchman-core/src/plain_notes.rs`. Beside an
+editable history that was not checked, the text report says what "unverified" means (SolidCraft
+did not replay it and compare the result with the original shape; it is not a warning that the
+history is wrong) and how to check it: run again without `--no-verify`, with a STEP export of
+the same design beside the file.
+
 An assembly's conversion first says how complete it is, under the line saying what was
 written:
 
@@ -403,7 +414,7 @@ default material: the decoded model does not establish that no source appearance
 
 Appearance or attribute bindings for one placed instance or an evaluation state are
 left out with a specific loss: Dutchman has no per-occurrence override for them.
-Definition-level appearance bindings still colour every placement of that definition.
+Definition-level appearance bindings still color every placement of that definition.
 
 A Dropped definition-level appearance binding names its body or face target.
 “Its target is absent from the decoded model” means no decoded geometry can receive it; “its target exists in the decoded
@@ -483,7 +494,7 @@ solidcraft-cli eval cube.sc
 Check that `body_count` is what you expect, that no `timeline` entry has an `error` or a
 meshing warning, and compare each body's box position, box bounds, `area_mm2`, and
 `volume_mm3` with the original design. History position and box checks allow
-the larger of 0.01 mm and 0.02% of the larger box diagonal, for the centre distance and each
+the larger of 0.01 mm and 0.02% of the larger box diagonal, for the center distance and each
 minimum/maximum coordinate; volume and area retain their measuring mesh tolerances.
 A face-count difference alone does not establish a defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
 `solidcraft-cli mcp --in cube.sc` and call its `measure` tool.
@@ -495,7 +506,7 @@ Single-lump and multiple-source-body comparisons retain their existing checks. S
 [How a history is checked](history.md#how-a-history-is-checked).
 
 Conversion JSON includes `verification_checks` when a final history comparison is attempted.
-It records each body's measurements, counts, closure and centre of mass against source
+It records each body's measurements, counts, closure and center of mass against source
 geometry, plus source parameter values and quantity kinds after replay. Geometric, closure
 and parameter checks say `pass`, `fail` or `not_checked` with evidence or a reason. A failed check can cause conversion to retain the
 original geometry. Raw kernel face, edge and shell counts are informational: `info` when equal and
@@ -605,7 +616,8 @@ Folder runs in the desktop app and CLI keep paths relative to the input folder:
 `in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`. Designs with the same name in
 other subfolders stay separate. Linked design companions and desktop reports stay
 beside their design. Repeating a run into an explicit output folder reuses those
-paths and replaces designs unless `--no-clobber` is set; edited linked companions
+paths, and a design already there is kept: the new one gets the next free name
+(`part (2).sc`) unless `--replace` is set; edited linked companions
 are kept and reported as a conflict. Single-file output paths are unchanged.
 
 [Convert a whole folder: convert-all](command-line.md#convert-a-whole-folder-convert-all)
@@ -628,7 +640,7 @@ Body moves require SolidCraft 0.45 or newer. This requirement applies only to de
 with a body move; it does not trigger a general history-loss notice for older targets.
 Dutchman keeps resolved translations
 and axis-angle rotations, including explicit pivots, when every selected body has
-a proven earlier name. CADIR supplies millimetres and radians; the writer never
+a proven earlier name. CADIR supplies millimeters and radians; the writer never
 infers a transform from final geometry. Unresolved body selections, unresolved
 point-to-point motion, and copied body result identities remain blockers. Bodies
 available only as final geometry also require a captured pre-move body. Older
@@ -638,8 +650,8 @@ targets keep the original final geometry with a named version refusal.
 
 Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
 secondary numeric values. ISO metric table designations tolerate decimal rounding and
-floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
-separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
+floating-point unit-conversion noise. UNC/UNF values in millimeters or TPI are checked, and a Unified thread is written once a
+SolidCraft release supports Unified Thread designations; until then it is reported. See
 [cosmetic threads](history.md) for details.
 
 Separate modeled Thread features keep their helical shape in the imported final geometry
@@ -680,10 +692,10 @@ evaluations; late results keep the refusal.
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
 targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
-circle that the feature's input topology stores beside the edge, with centre, axis, radius and a
+circle that the feature's input topology stores beside the edge, with center, axis, radius and a
 full-turn parameter range. Its input topology must hold a single body that is one earlier named
 body; only that body supplies replay candidates, even when another body has a coincident rim.
-A missing carrier or owner, and ellipses, remain refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+A missing carrier or owner, and ellipses, remain refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's center, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
 A missing source carrier reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
@@ -705,7 +717,7 @@ history statuses, counts and report fields are unchanged.
 For SolidCraft 0.44 and newer, extrude joins, cuts and intersections can keep a
 selected body scope at the final body-building feature when the reader names
 modified bodies and replay matches the final source geometry. The Info note `history/body-scope-confirmed`
-records this confirmation. Intermediate body centres cannot confirm body scope,
+records this confirmation. Intermediate body centers cannot confirm body scope,
 so intermediate features keep the previous mapping. Without confirmation the
 previous mapping applies; older targets keep their existing output.
 
@@ -713,7 +725,7 @@ On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
 keeps a name only when its identity is proved: the source retains exactly one
 history body with `produced_by` matching its single-output producer, or the
 complete replay matches the final source geometry. Replay candidates keep
-their names only after that check passes; intermediate body centres cannot
+their names only after that check passes; intermediate body centers cannot
 confirm them. An output ID alone is not proof. Without proof, selecting the
 tool stops editable history with "it selects a body that an earlier feature
 has not named". Older targets keep the previous mapping.
@@ -1000,7 +1012,9 @@ in the JSON report and do not count as placed. The CLI, app and plugin say
 “N parts couldn't be placed (their position in the archive couldn't be read).”
 The result is incomplete, with `verification.status` set to `partial`. Output is
 still written; JSON `ok` is `false` and the CLI returns exit status 1
-when parts are unplaced. This also covers single designs whose local components
+when parts are unplaced. That report has no `error`; its `reason` object (`stage`, `kind`,
+`code: "unplaced_parts"`, `message`, such as “47 of 49 parts placed: 2 parts couldn't be
+placed …”) says why, in batch results and in `failed.json`. This also covers single designs whose local components
 remain flattened because their occurrence positions could not be read. A replay
 against the same flattened source cannot prove their positions. Geometry and
 fallback transforms are unchanged. Decoded bodies without a written component
@@ -1137,9 +1151,10 @@ Library planning outcomes used by preflight keep empty output ids with
 
 ## Orient a Y-up design
 
-Use `--stand-up` with `convert` or `convert-all` to rotate a Y-up design +90°
-about +X, so its +Y axis becomes SolidCraft's +Z axis. Source axes are preserved
-by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
+A design is stood up (+90° about +X, so +Y becomes SolidCraft's +Z) by default when
+its source states that it is Y-up, as a Fusion export's manifest does; Z-up designs and
+designs of unknown up axis keep their axes. Use `--stand-up` with `convert` or
+`convert-all` to always rotate; `--keep-axes` (or `--no-stand-up`) never rotates. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.

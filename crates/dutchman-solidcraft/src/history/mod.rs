@@ -341,7 +341,23 @@ pub(crate) fn imported(
     report: &mut Report,
     name_all: bool,
 ) -> Result<History, dutchman_core::Error> {
-    if model.source_step.is_some() || (!name_all && model.ir.model.appearance_bindings.is_empty()) {
+    // A STEP input goes to SolidCraft as its own text, whose names and looks the model's
+    // appearance bindings do not describe.
+    if model.source_step.is_some() {
+        return Ok(History::default());
+    }
+    imported_restated(model, step, report, name_all)
+}
+
+/// Like [`imported`], for a part whose `step` was restated from its geometry (an assembly
+/// part, whatever text it was read from): the model's own bindings and colours describe it.
+pub(crate) fn imported_restated(
+    model: &Model,
+    step: &str,
+    report: &mut Report,
+    name_all: bool,
+) -> Result<History, dutchman_core::Error> {
+    if !name_all && model.ir.model.appearance_bindings.is_empty() {
         return Ok(History::default());
     }
     let wire = serde_json::to_value(&model.ir)

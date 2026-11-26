@@ -123,6 +123,16 @@ jobs:
             url: https://raw.githubusercontent.com/Adriaeik/fusion2URDF/4411ffbdffc0364dc6f5922c40b3e14fd7b642f8/examples/Assem1_description/Assem1.f3z
             sha256: 3fd57697437949374b76df74dbc69342d286512f0ef8f4580b5dca7c1d6dfe44
     steps:
+      # A flyer runner's reused workspace can hold a clone missing objects it claims
+      # ("remote did not send all necessary objects"); start that workspace clean.
+      - name: Clear a corrupt reused workspace
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/.git" ] && ! git -C "$GITHUB_WORKSPACE" fsck --connectivity-only --no-progress >/dev/null 2>&1; then
+            echo "::warning::corrupt git workspace on $RUNNER_NAME; clearing it before checkout"
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:

@@ -443,7 +443,7 @@ fn a_flat_end_mill_is_carried_field_by_field() {
     assert_eq!(d["material_group"], "all");
     assert!(
         d.get("center_cutting").is_none(),
-        "centre cutting is the default"
+        "center cutting is the default"
     );
     let text = c.text.unwrap();
     assert!(text.contains("\"version\": 1"));

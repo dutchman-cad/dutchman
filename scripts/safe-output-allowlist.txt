@@ -1,0 +1,35 @@
+# File	allowed direct write/rename/delete calls	why. Counts may only go down: see scripts/check-safe-output.py.
+crates/dutchman/src/batch.rs	2	journal file (append only) and the private folder a project ZIP unpacks into
+crates/dutchman/src/diagnose/narrow.rs	3	scratch and kit files in a folder Dutchman made
+crates/dutchman/src/diagnostics/location.rs	3	diagnostic log appended to a path the user named; never truncated
+crates/dutchman/src/diagnostics.rs	1	diagnostic log appended to a path the user named; never truncated
+crates/dutchman/src/investigate/compare.rs	4	the investigation folder Dutchman made, private to it
+crates/dutchman/src/investigate.rs	2	the investigation folder Dutchman made, private to it
+crates/dutchman/src/onshape/auth.rs	3	Onshape bundle cache and credentials Dutchman owns
+crates/dutchman/src/onshape/export.rs	1	Onshape bundle cache and credentials Dutchman owns
+crates/dutchman/src/onshape/mod.rs	5	Onshape bundle cache and credentials Dutchman owns
+crates/dutchman/src/onshape/store.rs	5	Onshape bundle cache and credentials Dutchman owns
+crates/dutchman/src/report_send.rs	1	private local report copy (exclusive create)
+crates/dutchman/src/repro.rs	3	a new reproduction kit folder (exclusive create)
+crates/dutchman/src/share_scratch.rs	1	scratch folder Dutchman made
+crates/dutchman/src/watch.rs	6	watch publishes only through its ownership ledger of files it wrote itself (audit: move onto safe_output)
+crates/dutchman/src/worker.rs	1	a private temporary copy of an archive the converter reads
+crates/dutchman-core/src/companion.rs	1	companion staging: exclusive create, never over an edited file
+crates/dutchman-core/src/module.rs	5	module cache Dutchman owns
+crates/dutchman-freecad/src/run.rs	1	FreeCAD run scratch folder Dutchman made
+crates/dutchman-gui/src/app.rs	1	a file the user chose in a save dialog (audit)
+crates/dutchman-gui/src/fusion_export/install.rs	3	Fusion exporter install files (audit: move onto safe_output)
+crates/dutchman-gui/src/lib.rs	1	settings, pasted-file and platform state Dutchman owns (audit)
+crates/dutchman-gui/src/paste.rs	2	settings, pasted-file and platform state Dutchman owns (audit)
+crates/dutchman-gui/src/platform.rs	1	settings, pasted-file and platform state Dutchman owns (audit)
+crates/dutchman-gui/src/update/package/appimage.rs	1	updater downloads and package staging Dutchman owns (audit)
+crates/dutchman-gui/src/update/package/msi.rs	5	updater downloads and package staging Dutchman owns (audit)
+crates/dutchman-gui/src/update/package/scoop.rs	5	updater downloads and package staging Dutchman owns (audit)
+crates/dutchman-serve/src/upload.rs	2	upload staging in a job folder Dutchman made
+crates/dutchman-solidcraft/src/compare.rs	1	SolidCraft check scratch and version cache Dutchman owns
+crates/dutchman-solidcraft/src/evaluator.rs	1	SolidCraft check scratch and version cache Dutchman owns
+crates/dutchman-solidcraft/src/version_cache.rs	1	SolidCraft check scratch and version cache Dutchman owns
+crates/dutchman-web/src/lib.rs	5	web job folders (fresh) and the numbered save into the output folder (audit: move onto safe_output)
+crates/dutchman-web/src/save.rs	2	web job folders (fresh) and the numbered save into the output folder (audit: move onto safe_output)
+crates/dutchman-gui/src/fusion_export/job.rs	5	Fusion exporter job folder Dutchman owns (its own atomic job, status and cancel files)
+crates/dutchman-gui/src/fusion_export/mod.rs	1	Fusion export inventory folder Dutchman owns (clears its own stale inventory.json)

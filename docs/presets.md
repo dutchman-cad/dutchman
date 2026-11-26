@@ -15,7 +15,7 @@ choices from the preset. `--no-sketches` removes reference sketches, including t
 kept beside an imported shape or after a blocked history; sketches needed to replay
 retained history stay. `--no-joints` omits assembly joints and restores the source's
 stored placements. An Info line under `joints` records that choice.
-FreeCAD output (`--to freecad` or `--to fcstd`) honours the history choice only;
+FreeCAD output (`--to freecad` or `--to fcstd`) honors the history choice only;
 the sketch and joint choices do not control that writer.
 
 ```sh

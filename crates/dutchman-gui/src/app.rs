@@ -150,6 +150,7 @@ pub struct App {
     download_root: Option<tempfile::TempDir>,
     doctor: Option<crate::doctor::Page>,
     onshape: crate::onshape::Panel,
+    fusion_export: crate::fusion_export::Panel,
     intake: crate::paste::Inbox,
     output_picker: Box<dyn Fn(Sender<Message>, egui::Context)>,
     clipboard: Box<dyn Fn() -> (Vec<PathBuf>, String)>,
@@ -194,6 +195,9 @@ pub struct App {
     /// The SolidCraft CLI that checks histories when nothing else is chosen, if one is found.
     checker: Result<PathBuf, dutchman_solidcraft::NoCli>,
     solidcraft_open: bool,
+    /// What this session wrote at each output path: its size and modified time then. A design is
+    /// converted again over its own file only while the file is still exactly that.
+    written: std::collections::BTreeMap<PathBuf, (u64, std::time::SystemTime)>,
     /// Keep an explicit UI preview independent of the installed CLI.
     solidcraft_preview: bool,
     /// Where the search for `solidcraft-cli` looked, when it found none.
@@ -237,6 +241,12 @@ struct PendingRun {
     kind: RunKind,
 }
 
+/// The size and modified time of the file at `path`.
+fn file_stamp(path: &Path) -> Option<(u64, std::time::SystemTime)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.len(), metadata.modified().ok()?))
+}
+
 enum RunKind {
     Batch {
         inputs: Vec<PathBuf>,
@@ -264,6 +274,38 @@ fn select_preset(options: &mut ConvertOptions, preset: Preset) {
     options.import_only = false;
     options.no_sketches = false;
     options.no_joints = false;
+}
+
+/// What the options say about standing a design up.
+fn orientation_of(options: &ConvertOptions) -> dutchman_core::Orientation {
+    match options.stand_up_choice() {
+        Some(true) => dutchman_core::Orientation::StandUp,
+        Some(false) => dutchman_core::Orientation::KeepAxes,
+        None => dutchman_core::Orientation::Auto,
+    }
+}
+
+fn set_orientation(options: &mut ConvertOptions, orientation: dutchman_core::Orientation) {
+    options.stand_up = orientation == dutchman_core::Orientation::StandUp;
+    options.no_stand_up = orientation == dutchman_core::Orientation::KeepAxes;
+}
+
+fn orientation_label(orientation: dutchman_core::Orientation) -> &'static str {
+    match orientation {
+        dutchman_core::Orientation::Auto => "Automatic",
+        dutchman_core::Orientation::StandUp => "Stand up (Y-up to Z-up)",
+        dutchman_core::Orientation::KeepAxes => "Keep the file's axes",
+    }
+}
+
+fn orientation_help(orientation: dutchman_core::Orientation) -> &'static str {
+    match orientation {
+        dutchman_core::Orientation::Auto => {
+            "Stands a design up when its source says it is Y-up; keeps the axes when it is Z-up or says nothing."
+        }
+        dutchman_core::Orientation::StandUp => "Always rotates so +Y becomes +Z.",
+        dutchman_core::Orientation::KeepAxes => "Never rotates, even for a design that is Y-up.",
+    }
 }
 
 fn set_choices(options: &mut ConvertOptions, history: bool, sketches: bool, joints: bool) {
@@ -310,6 +352,14 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
         .get("no_joints")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    set_orientation(
+        options,
+        settings
+            .get("up_axis")
+            .and_then(Value::as_str)
+            .and_then(dutchman_core::Orientation::from_name)
+            .unwrap_or_default(),
+    );
     settings
         .get("custom")
         .and_then(Value::as_bool)
@@ -388,6 +438,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
         "no_verify": options.no_verify,
         "part_positions": options.effective_part_positions().name(),
+        "up_axis": orientation_of(options).name(),
     })
 }
 
@@ -471,6 +522,7 @@ impl App {
             download_root: None,
             doctor: None,
             onshape: crate::onshape::Panel::new(&cc.egui_ctx),
+            fusion_export: crate::fusion_export::Panel::new(),
             intake: crate::paste::Inbox::new(),
             output_picker: Box::new(|sender, ctx| worker::pick(Pick::Output, sender, ctx)),
             clipboard: Box::new(crate::paste::clipboard),
@@ -512,6 +564,7 @@ impl App {
             has_app: platform::has_solidcraft_app(),
             checker: dutchman_solidcraft::usable_cli(&checking_with),
             solidcraft_open: false,
+            written: std::collections::BTreeMap::new(),
             solidcraft_preview: false,
             search_note,
             header_bottom: 72.0,
@@ -639,10 +692,63 @@ impl App {
         }
     }
 
+    /// Shows the Export from Fusion window in a given state, for tests and screenshots.
+    #[doc(hidden)]
+    pub fn preview_fusion(
+        &mut self,
+        offered: bool,
+        presence: crate::fusion_export::agent::Presence,
+        installed: Option<&str>,
+        step: crate::fusion_export::installer::Install,
+    ) {
+        self.fusion_export
+            .preview_install(offered, presence, installed, step);
+    }
+
     /// Supplies a saved account for UI previews without contacting Onshape.
     #[doc(hidden)]
     pub fn preview_onshape(&mut self, user: Option<&str>) {
         self.onshape.preview(user);
+    }
+
+    /// Points "Export from Fusion" at a test home and offers it on any system (UI tests and
+    /// screenshots only).
+    #[doc(hidden)]
+    pub fn preview_fusion_export(&mut self, env: crate::fusion_export::Env) {
+        self.fusion_export.preview(env);
+    }
+
+    /// Offers "Export from Fusion…" on any system (UI tests only).
+    #[doc(hidden)]
+    pub fn offer_everywhere_for_tests(&mut self) {
+        self.fusion_export.offer();
+    }
+
+    /// The designs and folders added to convert, for UI tests.
+    #[doc(hidden)]
+    pub fn inputs_for_test(&self) -> &[PathBuf] {
+        &self.inputs
+    }
+
+    /// Where the "Export from Fusion" window is, for UI tests.
+    #[doc(hidden)]
+    pub fn fusion_export_stage(&self) -> crate::fusion_export::Stage {
+        self.fusion_export.stage()
+    }
+
+    /// Converts the folder an export from Fusion wrote, like a folder dropped on the window:
+    /// it becomes an input and the conversion starts unless one is already running. The
+    /// manifest reader will replace the body of this function.
+    pub fn convert_export_folder(&mut self, dir: PathBuf, ctx: &egui::Context) {
+        self.add_inputs([dir]);
+        if self.running() {
+            self.notice = Some(
+                "The folder exported from Fusion is queued. Press Convert when the current conversion ends."
+                    .into(),
+            );
+        } else {
+            self.start(ctx);
+        }
     }
 
     /// Completes a connection save for headless UI tests without storing real keys.
@@ -923,7 +1029,7 @@ impl App {
             self.intake.approval = None;
             if !approval.resume {
                 self.notice =
-                    Some("Fetch cancelled. No more Onshape API calls were used.".to_owned());
+                    Some("Fetch canceled. No more Onshape API calls were used.".to_owned());
             }
         }
         if go {
@@ -1126,6 +1232,7 @@ impl App {
             job.search.also.push(folder);
         }
         let job = job.clone();
+        let job = self.retry_job(job);
         self.pending = Some(PendingRun {
             options: self.options.clone(),
             kind: RunKind::Retry {
@@ -1134,6 +1241,23 @@ impl App {
             },
         });
         self.start_checked(ctx);
+    }
+
+    /// `job` set to convert again: over the file this session wrote at its output name when that
+    /// file is still exactly as written, else to the next free name, so a file the user changed or
+    /// put there since is never replaced.
+    fn retry_job(&self, mut job: Job) -> Job {
+        job.replace = false;
+        if job.output.try_exists().unwrap_or(true) {
+            if file_stamp(&job.output)
+                .is_some_and(|now| self.written.get(&job.output) == Some(&now))
+            {
+                job.replace = true;
+            } else {
+                job.output = dutchman_core::safe_output::free_slot(&job.output);
+            }
+        }
+        job
     }
 
     /// The anonymous report of the file of the row at `index`, its id in it, and its convert
@@ -1844,6 +1968,16 @@ impl App {
                             row.status = Status::NotStarted;
                             row.report = None;
                         } else {
+                            if let Some((path, stamp)) = report
+                                .get("ok")
+                                .filter(|ok| **ok == Value::Bool(true))
+                                .and_then(|_| report.pointer("/output/path"))
+                                .and_then(Value::as_str)
+                                .map(PathBuf::from)
+                                .and_then(|path| file_stamp(&path).map(|stamp| (path, stamp)))
+                            {
+                                self.written.insert(path, stamp);
+                            }
                             row.status = if report.get("ok") == Some(&Value::Bool(true)) {
                                 Status::Converted
                             } else {
@@ -2082,6 +2216,12 @@ impl App {
             let (_, clipboard) = (self.clipboard)();
             self.onshape.offer_link(&clipboard);
         }
+        if let Some(folder) = self.fusion_export.poll(ctx) {
+            self.convert_export_folder(folder, ctx);
+        }
+        if let Some(notice) = self.fusion_export.take_notice() {
+            self.notice = Some(notice);
+        }
         self.receive_links(ctx);
         self.take_dropped_files(ctx);
         self.refresh_estimates(ctx);
@@ -2184,6 +2324,9 @@ impl App {
             .window(ctx, self.header_bottom, !self.running())
         {
             self.queue_link(crate::paste::Source::Onshape(link), ctx);
+        }
+        if let Some(folder) = self.fusion_export.window(ctx, self.header_bottom) {
+            self.convert_export_folder(folder, ctx);
         }
         self.download_window(ctx);
         self.approval_window(ctx);
@@ -2780,6 +2923,26 @@ impl App {
                             );
                         }
                     });
+                let current = orientation_of(&self.options);
+                let response = egui::ComboBox::from_label("Up axis")
+                    .selected_text(orientation_label(current))
+                    .show_ui(ui, |ui| {
+                        for choice in [
+                            dutchman_core::Orientation::Auto,
+                            dutchman_core::Orientation::StandUp,
+                            dutchman_core::Orientation::KeepAxes,
+                        ] {
+                            let response =
+                                ui.selectable_label(current == choice, orientation_label(choice));
+                            preset_help(&response, orientation_help(choice));
+                            if response.clicked() {
+                                set_orientation(&mut self.options, choice);
+                                ui.close();
+                            }
+                        }
+                    })
+                    .response;
+                preset_help(&response, orientation_help(current));
             });
             let choices = self.options.choices();
             let (mut history, mut sketches, mut joints) =
@@ -2946,12 +3109,12 @@ impl App {
                         });
                 });
                 side_by_side(ui, wide, |ui| {
-                    let mut replace = !self.options.no_clobber;
+                    let mut replace = self.options.replace;
                     if ui
                         .checkbox(&mut replace, "Replace designs already in the output folder")
                         .changed()
                     {
-                        self.options.no_clobber = !replace;
+                        self.options.replace = replace;
                     }
                     if ui.small_button("SolidCraft version…").clicked() {
                         self.solidcraft_open = true;
@@ -3125,6 +3288,20 @@ impl App {
                     ui.label(dutchman::tool_library::WORDS);
                 });
             });
+            if self.fusion_export.offered()
+                && ui
+                    .add_enabled(
+                        !self.running() && !self.updater.blocks_conversions(),
+                        egui::Button::new("Export from Fusion…"),
+                    )
+                    .on_hover_text(
+                        "Ask the Fusion exporter in your Fusion to export designs, then convert them. \
+                         If the exporter is missing, you can install it from here",
+                    )
+                    .clicked()
+            {
+                self.fusion_export.toggle();
+            }
         });
         if self.running() && self.diagnostic_stopped {
             ui.label(RichText::new(report_panel::STOPPING).color(p.lantern_text));
@@ -3249,7 +3426,16 @@ impl App {
     /// Does what a button on a result card or in the report panel asked for.
     fn act(&mut self, action: Action, ctx: &egui::Context) -> Result<(), String> {
         match action {
-            Action::Open(path) => platform::open_in_solidcraft(&path),
+            Action::Open(path) => {
+                let chosen = self.options.solidcraft.clone();
+                let how = platform::open_in_solidcraft(&path, chosen.as_deref())?;
+                if how == platform::Opened::SystemDefault {
+                    self.notice = Some(
+                        "No SolidCraft is chosen, so the design opened with the system's default app for it, which may be another SolidCraft release. Choose a solidcraft-cli in the SolidCraft version window to open it in that release.".into(),
+                    );
+                }
+                Ok(())
+            }
             Action::Reveal(path) => platform::reveal(&path),
             Action::Check(index) => {
                 if let Some(row) = self.rows.get(index) {
@@ -3675,7 +3861,7 @@ fn result_colour(p: &Palette, report: Option<&Value>, view: &FileView) -> egui::
             p.lantern_text
         }
         present::Status::Converted | present::Status::ConvertedWithLosses => p.spectre,
-        present::Status::Stopped => p.lantern_text,
+        present::Status::Stopped | present::Status::NotSupported => p.lantern_text,
         present::Status::Failed => p.danger,
         _ => p.tide,
     }
@@ -3718,8 +3904,9 @@ fn row_ui(
         .report
         .as_ref()
         .is_some_and(dutchman::tool_library::is_report);
-    // A tool library has no design to open and no STEP to match.
-    let step_button = !running && row.report.is_some() && !stopped && !tool_library;
+    // A tool library has no design to open and no STEP to match, and nor does a drawing.
+    let drawing = view.status == present::Status::NotSupported;
+    let step_button = !running && row.report.is_some() && !stopped && !tool_library && !drawing;
     let bundle =
         crate::onshape::is_bundle(&row.input) && row.input.is_file() && row.report.is_some();
     if output.is_some() || step_button || bundle {
@@ -3841,7 +4028,13 @@ fn row_ui(
         return action;
     }
     if let Some(message) = &view.error {
-        text_with_links(ui, message, p.danger);
+        // A drawing that is not read yet is not a failure: its note is in the warning colour.
+        let colour = if view.status == present::Status::NotSupported {
+            p.lantern_text
+        } else {
+            p.danger
+        };
+        text_with_links(ui, message, colour);
         if let Some((path, ready)) = log {
             if let Err(message) = platform::log_controls(ui, path, ready) {
                 action = Some(Action::Notice(message));
@@ -3870,6 +4063,9 @@ fn row_ui(
         .on_hover_text(output);
         let (outcome, history) = outcome_and_history(&view.outcome, row.report.as_ref());
         ui.label(RichText::new(outcome).color(p.ink));
+        if let Some(meaning) = view.unverified_note {
+            ui.label(RichText::new(meaning).small().color(p.tide));
+        }
         for loss in history {
             ui.label(RichText::new(loss).color(p.tide));
         }
@@ -3913,8 +4109,19 @@ fn row_ui(
                     }
                 });
         }
+        if !view.details.is_empty() {
+            // The raw subject, code and message of the notes above that lead with a plain
+            // sentence. Notes that change nothing are only in the saved full log.
+            egui::CollapsingHeader::new(RichText::new("Details").color(p.tide))
+                .id_salt(("details", index))
+                .show(ui, |ui| {
+                    for loss in &view.details {
+                        loss_line(ui, p, loss);
+                    }
+                });
+        }
         theme::control_row(ui, |ui| {
-            if !view.components.is_empty() && ui.button("Save the full log…").clicked() {
+            if view.has_log && ui.button("Save the full log…").clicked() {
                 action = Some(Action::Pick(Pick::SaveLog(index)));
             }
             // Every finished file has the way to report it, whatever the card says: Dutchman
@@ -4608,7 +4815,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
             let mut app = App::new(cc);
             app.options.no_verify = true;
-            app.found_version = Some("0.48.0".into());
+            app.found_version = Some("0.49.0".into());
             app.rows.push(Row {
                 input: PathBuf::from("synthetic.f3d"),
                 output: Some(PathBuf::from("synthetic.sc")),
@@ -4690,6 +4897,36 @@ mod tests {
             assert!(window.contains_rect(harness.get_by_label("Report this design…").rect()));
             harness.get_by_value("About synthetic-0.f3d");
         }
+    }
+
+    #[test]
+    fn up_axis_choice_is_saved_and_restored() {
+        use dutchman_core::Orientation;
+        let mut options = ConvertOptions::default();
+        assert_eq!(orientation_of(&options), Orientation::Auto);
+        for choice in [
+            Orientation::StandUp,
+            Orientation::KeepAxes,
+            Orientation::Auto,
+        ] {
+            set_orientation(&mut options, choice);
+            assert_eq!(orientation_of(&options), choice);
+            assert_eq!(
+                options.stand_up_choice(),
+                match choice {
+                    Orientation::Auto => None,
+                    Orientation::StandUp => Some(true),
+                    Orientation::KeepAxes => Some(false),
+                }
+            );
+            let mut restored = ConvertOptions::default();
+            restore_choices(&mut restored, &saved_choices(&options, false));
+            assert_eq!(orientation_of(&restored), choice);
+        }
+        // Older settings say nothing: automatic.
+        let mut restored = ConvertOptions::default();
+        restore_choices(&mut restored, &json!({}));
+        assert_eq!(orientation_of(&restored), Orientation::Auto);
     }
 
     #[test]

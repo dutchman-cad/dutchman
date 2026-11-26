@@ -156,7 +156,7 @@ pub(super) fn contour_flange(
         "suppressed": false,
         "sketch": sketch,
         "curves": chain,
-        "distance": format!("{} mm", length.abs()),
+        "distance": format!("{} mm", super::helpers::clean(length.abs())),
         "rule": rule,
     });
     if let Some(fields) = out.as_object_mut() {

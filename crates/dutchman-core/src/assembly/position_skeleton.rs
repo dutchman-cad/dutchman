@@ -7,6 +7,7 @@ pub(super) struct Skeleton<'a> {
     pub assembly: Assembly,
     pub paths: BTreeMap<&'a str, Located>,
     world_posed: BTreeSet<Vec<usize>>,
+    unstored: BTreeSet<Vec<usize>>,
 }
 
 impl<'a> Skeleton<'a> {
@@ -86,10 +87,17 @@ impl<'a> Skeleton<'a> {
             .filter(|(id, _)| world_ids.contains(**id))
             .map(|(_, p)| p.path.clone())
             .collect();
+        let unstored_ids = unstored_poses(document);
+        let unstored = paths
+            .iter()
+            .filter(|(id, _)| unstored_ids.contains(**id))
+            .map(|(_, p)| p.path.clone())
+            .collect();
         Ok(Self {
             assembly,
             paths,
             world_posed,
+            unstored,
         })
     }
     pub fn solve(&mut self, posed: &BTreeSet<String>) {
@@ -99,7 +107,12 @@ impl<'a> Skeleton<'a> {
             .filter(|(id, _)| posed.contains(**id))
             .map(|(_, p)| p.path.clone())
             .collect();
-        let _ = place_by_joints_with(&mut self.assembly, &paths, &self.world_posed);
+        let _ = place_by_joints_with(
+            &mut self.assembly,
+            &paths,
+            &self.world_posed,
+            &self.unstored,
+        );
     }
     pub fn worlds(&self) -> BTreeMap<String, Placement3x4> {
         self.paths
@@ -174,6 +187,7 @@ fn level<'a>(
                     source_file: None,
                     assembly: None,
                     source_step: None,
+                    merge_bodies: false,
                 });
                 inner.placements.push(Placement {
                     unproven: false,
@@ -196,6 +210,7 @@ fn level<'a>(
             source_file: None,
             assembly: inner,
             source_step: None,
+            merge_bodies: false,
         });
         assembly.placements.push(Placement {
             unproven: false,
