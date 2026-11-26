@@ -216,8 +216,8 @@ def collect(args):
            or s.get('files') != len(rows[i::build['shards']]) for i, s in enumerate(shards)):
         raise ValueError('Shard evidence is missing or uses a different manifest')
     versions = {s.get('solidcraft') for s in shards}
-    if len(versions) != 1 or not next(iter(versions), '').startswith('0.49.'):
-        raise ValueError('Shards must use the same SolidCraft 0.49 version')
+    if len(versions) != 1 or not next(iter(versions), '').startswith('0.50.'):
+        raise ValueError('Shards must use the same SolidCraft 0.50 version')
     for row in rows:
         value = read_json(args.out / (row['file'] + '.result.json'), {})
         if not {'exit', 'reopen_exit', 'report', 'evaluation', 'seconds'} <= value.keys():
@@ -240,7 +240,7 @@ def main():
     part.add_argument('--shards', type=int, required=True)
     part.add_argument('--binary', type=Path, default=Path('bin/dutchman'))
     part.add_argument('--cli', type=Path, default=Path('solidcraft-cli'))
-    part.add_argument('--solidcraft', default='0.49.0')
+    part.add_argument('--solidcraft', default='0.50.0')
     part.add_argument('--out', type=Path, required=True)
     part.add_argument('--dry-run', action='store_true')
     part.add_argument('--local-root', type=Path)

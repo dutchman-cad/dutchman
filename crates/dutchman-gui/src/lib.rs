@@ -34,6 +34,12 @@ pub const SUBTITLE: &str = "Converts native CAD designs into SolidCraft designs.
 #[cfg(feature = "test-support")]
 pub static SUBTITLE_FOR_TEST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+/// The quiet line at the bottom of the main window.
+pub const FOOTER: &str = "Dutchman is in active development and provided as is. Keep a copy of your designs somewhere else, just in case.";
+
+/// The link after the footer line.
+pub const FOOTER_MORE: &str = "More";
+
 /// The version beside the app's name in its top row.
 pub fn version_label() -> String {
     format!("v{}", dutchman::BUILD_VERSION)
