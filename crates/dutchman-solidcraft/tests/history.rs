@@ -6842,7 +6842,7 @@ fn body_patterns_resolve_generated_and_input_state_seeds() {
         wire["model"]["feature_input_topologies"] = json!([{
             "id": "synthetic:history-input:state#0", "input_of": "f3d:model:feature#3",
             "bodies": state_bodies, "faces": [], "edges": [], "vertices": [],
-            "edge_geometry": [], "face_owners": []}]);
+            "edge_geometry": [], "face_owners": [], "face_geometry": [], "body_writers": []}]);
         model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
@@ -7275,14 +7275,15 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
         let model = if file == "P08b.FCStd" {
             assert_eq!(document["features"][4]["pattern"]["count"], "7");
             assert_eq!(document["features"][4]["pattern"]["angle"], "360 deg");
-            // The pinned decoder resolves Z_Axis as -Y and includes a duplicate endpoint
-            // where the recipe has eight distinct holes. Never repair native decoding
-            // in the mapper: expose both gaps and isolate them in this neutral test model.
+            // The pinned decoder resolves Z_Axis as +Z now (it resolved it as -Y before cadmpeg
+            // main 4062d266) and still includes a duplicate endpoint where the recipe has eight
+            // distinct holes. Never repair native decoding in the mapper: expose the gap and
+            // isolate it in this neutral test model.
             assert!(
-                (document["features"][4]["pattern"]["axis"][1]
+                (document["features"][4]["pattern"]["axis"][2]
                     .as_f64()
                     .unwrap()
-                    + 1.0)
+                    - 1.0)
                     .abs()
                     < 1e-9
             );
@@ -21525,7 +21526,7 @@ fn unresolved_revolve_before_trimmed_cuts(explicit_all: bool) -> Model {
             "edges":{"kind":"historical","value":{"state":"synthetic:shared:input#0",
             "edges":["synthetic:shared:edge#0"],"native":"synthetic corner"}}}]}}}}));
     m["feature_input_topologies"] = json!([{"id":"synthetic:shared:input#0",
-        "input_of":"synthetic:shared:feature#fillet", "bodies":[],"faces":[],"face_owners": [], "face_geometry": [], "body_writers": [],"vertices":[],
+        "input_of":"synthetic:shared:feature#fillet", "bodies":[],"faces":[],"face_owners":[],"face_geometry":[],"body_writers":[],"vertices":[],
         "edges":["synthetic:shared:edge#0"], "edge_geometry":[{"edge":"synthetic:shared:edge#0",
             "start":{"x":10,"y":8,"z":0},"end":{"x":10,"y":8,"z":26},
             "interior":{"x":10,"y":8,"z":13},"supports": [], "tangent":{"x":0,"y":0,"z":1},"faces":[]}]}]);

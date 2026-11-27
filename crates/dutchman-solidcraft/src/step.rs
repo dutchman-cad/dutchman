@@ -53,9 +53,10 @@ fn plan(model: &Model) -> Result<cadmpeg_ir::codec::write::ExportPlan, Error> {
     if model.ir.geometry.bodies.is_empty() || model.ir.geometry.faces.is_empty() {
         return Err(no_geometry());
     }
-    let input = EncodeInput::new(&model.ir, model.fidelity.as_ref());
+    let input = EncodeInput::new(&model.ir, model.fidelity.as_ref())
+        .with_target(TargetRequest::Explicit(SCHEMA));
     let plan = build_encoder(Format::Step)
-        .plan(input, TargetRequest::Explicit(SCHEMA))
+        .plan(input)
         .map_err(|err| Error::Restate(format!("cannot restate the model as STEP: {err}")))?;
     let losses = &plan.report().losses;
     if losses

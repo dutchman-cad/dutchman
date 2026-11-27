@@ -160,7 +160,7 @@ pub const PLAIN_NOTES: &[PlainNote] = &[
         Shown::No,
     ),
     coded(
-        "export/native.",
+        "export/native.records-omitted",
         "Some of the file's internal records have no STEP equivalent and were not written to the STEP copy; the shape is not affected.",
         Shown::No,
     ),

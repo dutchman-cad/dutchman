@@ -1059,8 +1059,12 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
         stderr.contains("Agreement is consistency, not a declaration."),
         "{stderr}"
     );
+    // cadmpeg's shared write wrapper (cadmpeg 2221) states the records a writer leaves out in
+    // one note, `export/native.records-omitted`, in place of the STEP writer's two.
     assert!(
-        stderr.contains("export/native.records-omitted: the STEP write omits 1 native record(s)"),
+        stderr.contains(
+            "export/native.records-omitted: the STEP write omits 1 native record(s) of `sldprt` arena `feature_histories`"
+        ),
         "{stderr}"
     );
     assert!(!stderr.contains("--verbose prints"), "{stderr}");

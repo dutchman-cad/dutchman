@@ -44,8 +44,9 @@ pub(crate) fn detect_part(path: &Path) -> Option<Format> {
     .flatten()
 }
 
-/// cadmpeg's desktop ceilings in salvage mode: a successful decode keeps going past a loss
-/// and reports it, rather than refusing the whole file. The input cap is Dutchman's own.
+/// cadmpeg's desktop ceilings. With the default strictness, which refuses nothing, a successful
+/// decode keeps going past a loss and reports it, rather than refusing the whole file. The input
+/// cap is Dutchman's own.
 pub(crate) fn policy() -> DecodePolicy {
     DecodePolicy {
         limits: ResourceLimits {

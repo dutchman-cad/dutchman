@@ -41,8 +41,12 @@ pub fn safe_name(name: &str) -> String {
 }
 
 fn name(drawing: &Drawing) -> &str {
-    let object = drawing.object.as_str();
-    object.rsplit('#').next().unwrap_or(object)
+    drawing
+        .object
+        .as_str()
+        .rsplit('#')
+        .next()
+        .unwrap_or(drawing.object.as_str())
 }
 
 /// V11 retains a local drawing object's source name as an unresolved reference.
@@ -468,7 +472,7 @@ pub fn pages(
                 || drawing.base_view.is_some()
                 || !drawing.assets.is_empty()
             {
-                notes.push(Severity::Dropped, name(drawing), format!("remaining source metadata, associations and resources are not carried in DXF (parameters: {}; relationship roles: {}; assets: {}); typed placement is used for page entities, Views/Group and template links for page membership", drawing.parameters.keys().map(|s| s.as_str()).collect::<Vec<_>>().join(", "), drawing.relationships.keys().map(|s| s.as_str()).collect::<Vec<_>>().join(", "), drawing.assets.iter().map(|asset| asset.as_str()).collect::<Vec<_>>().join(", ")));
+                notes.push(Severity::Dropped, name(drawing), format!("remaining source metadata, associations and resources are not carried in DXF (parameters: {}; relationship roles: {}; assets: {}); typed placement is used for page entities, Views/Group and template links for page membership", drawing.parameters.keys().map(|s| s.as_str()).collect::<Vec<_>>().join(", "), drawing.relationships.keys().map(|s| s.as_str()).collect::<Vec<_>>().join(", "), drawing.assets.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
             }
         }
         let mut counts: BTreeMap<_, _> = document.layers.iter().map(|l| (l.clone(), 0)).collect();

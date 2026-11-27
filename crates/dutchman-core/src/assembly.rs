@@ -1017,7 +1017,8 @@ fn local_components_in_document(
     let mut identities = std::mem::take(&mut tree.part_identities);
     let worlds = world_placements(&occurrences)?;
     let inserted = inserted_designs(&occurrences);
-    let ordered = joints_in_timeline_order(arena("assembly_joints"), arena("features"));
+    let member_joints = per_instance_member_joints(arena("assembly_joints"), &occurrences);
+    let ordered = joints_in_timeline_order(&member_joints, arena("features"));
     let (joints, mut left_out) = joints(&ordered, &tree.paths, &worlds, &inserted);
 
     let own_part = if !loose.is_empty() {
@@ -1343,7 +1344,7 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
             let Some(index) = owner
                 .get("native_ref")
                 .and_then(Value::as_str)
-                .filter(|id| !id.starts_with("f3d:xref/"))
+                .filter(|id| !products::is_member_identity(id))
                 .and_then(|id| carriers.get(id))
             else {
                 break;
@@ -2409,6 +2410,76 @@ fn joints(
         }
     }
     (joints, notes)
+}
+
+/// cadmpeg states the joints of a member document once, naming the occurrence that inserts the
+/// document first. A document inserted more than once has no joints for its other insertions,
+/// so each of those gets its own copy of the joint, rebased onto its insertion: the same joint
+/// ids, in the same place in the order, and the original first.
+fn per_instance_member_joints(joints: &[Value], occurrences: &[&Value]) -> Vec<Value> {
+    let mut prototype_of: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut inserts: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for row in occurrences {
+        if let (Some(id), Some(definition)) = (
+            row.get("id").and_then(Value::as_str),
+            row.pointer("/prototype/definition").and_then(Value::as_str),
+        ) {
+            prototype_of.insert(id, definition);
+            inserts.entry(definition).or_default().push(id);
+        }
+    }
+    let mut out = joints.to_vec();
+    for joint in joints {
+        // A member document's own joints carry its scope in the id (`f3d:<key>@model:joint#`).
+        if !joint
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.contains("@model:joint#"))
+        {
+            continue;
+        }
+        let pointers = [
+            "/operands/value/connector/operand/container",
+            "/operands/value/connectors/0/operand/container",
+            "/operands/value/connectors/1/operand/container",
+        ];
+        let mut named: BTreeSet<&str> = BTreeSet::new();
+        for pointer in pointers {
+            if let Some(container) = joint.pointer(pointer) {
+                if container.get("kind").and_then(Value::as_str) == Some("occurrence") {
+                    named.extend(container.get("occurrence").and_then(Value::as_str));
+                }
+            }
+        }
+        let instanced: Vec<&str> = named
+            .into_iter()
+            .filter(|id| {
+                prototype_of
+                    .get(id)
+                    .and_then(|definition| inserts.get(definition))
+                    .is_some_and(|all| all.len() > 1)
+            })
+            .collect();
+        // Two different inserted documents in one joint cannot be paired up by position.
+        let [base] = instanced.as_slice() else {
+            continue;
+        };
+        let Some(all) = prototype_of.get(base).and_then(|d| inserts.get(d)) else {
+            continue;
+        };
+        for sibling in all.iter().filter(|id| *id != base) {
+            let mut copy = joint.clone();
+            for pointer in pointers {
+                if let Some(container) = copy.pointer_mut(pointer) {
+                    if container.get("occurrence").and_then(Value::as_str) == Some(*base) {
+                        container["occurrence"] = Value::String((*sibling).to_owned());
+                    }
+                }
+            }
+            out.push(copy);
+        }
+    }
+    out
 }
 
 /// A joint row's kind: `grounded` for a joint to the ground, else its pair kind.
@@ -7610,6 +7681,64 @@ mod tests {
         assert_eq!(
             source_posed(&wire),
             BTreeSet::from(["insert".to_owned(), "other".to_owned()])
+        );
+    }
+
+    #[test]
+    fn a_member_documents_joint_is_applied_once_per_insertion_of_the_document() {
+        let occurrence = |id: &str, definition: &str| json!({"id": id, "prototype": {"kind": "local", "definition": definition}});
+        let rows = [
+            occurrence(
+                "f3d:model:occurrence#xref-1-0",
+                "f3d:xref:product-definition#member",
+            ),
+            occurrence(
+                "f3d:model:occurrence#xref-1-1",
+                "f3d:xref:product-definition#member",
+            ),
+            occurrence(
+                "f3d:model:occurrence#xref-2-0",
+                "f3d:xref:product-definition#other",
+            ),
+        ];
+        let rows: Vec<&Value> = rows.iter().collect();
+        let joint = |id: &str, occurrence: &str| {
+            json!({"id": id, "operands": {"kind": "pair", "value": {"connectors": [
+                {"operand": {"container": {"kind": "root"}}},
+                {"operand": {"container": {"kind": "occurrence", "occurrence": occurrence,
+                    "occurrence_path": ["part"]}}}]}}})
+        };
+        let joints = [
+            joint("f3d:key.f3d@model:joint#1", "f3d:model:occurrence#xref-1-0"),
+            // A joint of the document's root design, and one of a document inserted once.
+            joint("f3d:model:joint#2", "f3d:model:occurrence#xref-1-0"),
+            joint("f3d:key.f3d@model:joint#3", "f3d:model:occurrence#xref-2-0"),
+        ];
+        let applied = per_instance_member_joints(&joints, &rows);
+        let named: Vec<(&str, &str)> = applied
+            .iter()
+            .map(|row| {
+                (
+                    row["id"].as_str().unwrap(),
+                    row.pointer("/operands/value/connectors/1/operand/container/occurrence")
+                        .and_then(Value::as_str)
+                        .unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("f3d:key.f3d@model:joint#1", "f3d:model:occurrence#xref-1-0"),
+                ("f3d:model:joint#2", "f3d:model:occurrence#xref-1-0"),
+                ("f3d:key.f3d@model:joint#3", "f3d:model:occurrence#xref-2-0"),
+                ("f3d:key.f3d@model:joint#1", "f3d:model:occurrence#xref-1-1"),
+            ]
+        );
+        // The path inside the document is kept: only the insertion changes.
+        assert_eq!(
+            applied[3].pointer("/operands/value/connectors/1/operand/container/occurrence_path"),
+            Some(&json!(["part"]))
         );
     }
 

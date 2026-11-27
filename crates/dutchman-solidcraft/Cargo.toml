@@ -29,6 +29,7 @@ onshape = []
 [dev-dependencies]
 dutchman-core = { workspace = true, features = ["formats", "freecad"] }
 tempfile.workspace = true
+cadmpeg-ir = { workspace = true }
 serde_json.workspace = true
 sha2.workspace = true
 zip.workspace = true
