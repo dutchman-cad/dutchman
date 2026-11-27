@@ -2666,7 +2666,7 @@ mod tests {
     }
 
     #[test]
-    fn a_standard_body_and_its_leads_land_in_one_folder_with_their_own_colours() {
+    fn a_standard_body_and_its_leads_land_in_one_folder_with_their_own_colors() {
         let dir = package("leads");
         write_models(&dir);
         let mut m = manifest(json!({}));
@@ -2692,17 +2692,24 @@ mod tests {
             .map(|p| p.name.clone().unwrap())
             .collect();
         assert_eq!(names, ["U1", "U1 leads"]);
-        // Two colours, so two coloured copies of the model.
+        // Two colors, so two colored copies of the model.
         assert_eq!(folder.parts.len(), 2);
-        let colour = |name: &str| {
+        // A colored copy is written from its geometry with the color bound to its bodies, so it
+        // carries no STEP text; its identity names the color.
+        let identity = |name: &str| {
             let placement = folder
                 .placements
                 .iter()
                 .find(|p| p.name.as_deref() == Some(name))
                 .unwrap();
-            folder.parts[placement.part].source_step.clone().unwrap()
+            folder.identities[placement.part].clone().unwrap()
         };
-        assert_ne!(colour("U1"), colour("U1 leads"));
+        assert!(identity("U1").contains("202020"), "{}", identity("U1"));
+        assert!(identity("U1 leads").contains("c0c0c0"));
+        for part in &folder.parts {
+            assert!(part.source_step.is_none());
+            assert!(!part.ir.geometry.bodies.is_empty());
+        }
     }
 
     #[test]
