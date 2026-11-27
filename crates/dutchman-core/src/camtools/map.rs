@@ -508,7 +508,7 @@ fn plan(type_word: &str) -> Plan {
         "turning form" => Plan::Kind(Kind::Form),
         "face mill" => Plan::Approx(
             Kind::EndMill,
-            "CamCraft has no face mill: written as a flat end mill that does not cut at its centre",
+            "CamCraft has no face mill: written as a flat end mill that does not cut at its center",
         ),
         "slot mill" => Plan::Approx(
             Kind::Keyseat,

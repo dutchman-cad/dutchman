@@ -1,5 +1,12 @@
 # Getting started
 
+Component catalogs follow assembly nesting, including repeated insertions.
+Assembly files claim their referenced parts, so a project converts its roots
+and then its unused parts. Nested placement, visibility, and suppression
+overrides apply separately to each insertion.
+Alternate representations and instance bodies are not supported yet;
+the report names that limitation rather than treating the design as empty.
+
 The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
 Folder and selection summaries use the highest per-file memory estimate and sum the displayed
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
@@ -212,7 +219,7 @@ A design stores its geometry compressed, so a large assembly stays small: SolidC
 [Install](install.md) has every option, checksums, and the one-time
 [first-run approval](install.md#opening-the-app-the-first-time) on macOS. Install
 [SolidCraft](install.md#solidcraft-optional-recommended) too: Dutchman uses it to check each
-converted history. The supported SolidCraft window is currently 0.40–0.49.
+converted history. The supported SolidCraft window is currently 0.40–0.50.
 
 ## Your first conversion
 
@@ -241,7 +248,7 @@ dutchman: Degraded: sldprt/source.dialect-unverified: the document carries no sw
 dutchman: Degraded: sldprt/config.inferred-without-native: 1 configuration state(s) are inferred from geometry partitions without native configuration definitions.
 dutchman: Info: step/design.parametric-records-omitted: 1 parametric/design record(s) were not represented in STEP: configuration=1
 dutchman: Info: history: flattened: the design carries no feature history
-dutchman: (notes are summarised in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)
+dutchman: (notes are summarized in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)
 Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
@@ -407,7 +414,7 @@ default material: the decoded model does not establish that no source appearance
 
 Appearance or attribute bindings for one placed instance or an evaluation state are
 left out with a specific loss: Dutchman has no per-occurrence override for them.
-Definition-level appearance bindings still colour every placement of that definition.
+Definition-level appearance bindings still color every placement of that definition.
 
 A Dropped definition-level appearance binding names its body or face target.
 “Its target is absent from the decoded model” means no decoded geometry can receive it; “its target exists in the decoded
@@ -487,7 +494,7 @@ solidcraft-cli eval cube.sc
 Check that `body_count` is what you expect, that no `timeline` entry has an `error` or a
 meshing warning, and compare each body's box position, box bounds, `area_mm2`, and
 `volume_mm3` with the original design. History position and box checks allow
-the larger of 0.01 mm and 0.02% of the larger box diagonal, for the centre distance and each
+the larger of 0.01 mm and 0.02% of the larger box diagonal, for the center distance and each
 minimum/maximum coordinate; volume and area retain their measuring mesh tolerances.
 A face-count difference alone does not establish a defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
 `solidcraft-cli mcp --in cube.sc` and call its `measure` tool.
@@ -499,7 +506,7 @@ Single-lump and multiple-source-body comparisons retain their existing checks. S
 [How a history is checked](history.md#how-a-history-is-checked).
 
 Conversion JSON includes `verification_checks` when a final history comparison is attempted.
-It records each body's measurements, counts, closure and centre of mass against source
+It records each body's measurements, counts, closure and center of mass against source
 geometry, plus source parameter values and quantity kinds after replay. Geometric, closure
 and parameter checks say `pass`, `fail` or `not_checked` with evidence or a reason. A failed check can cause conversion to retain the
 original geometry. Raw kernel face, edge and shell counts are informational: `info` when equal and
@@ -633,7 +640,7 @@ Body moves require SolidCraft 0.45 or newer. This requirement applies only to de
 with a body move; it does not trigger a general history-loss notice for older targets.
 Dutchman keeps resolved translations
 and axis-angle rotations, including explicit pivots, when every selected body has
-a proven earlier name. CADIR supplies millimetres and radians; the writer never
+a proven earlier name. CADIR supplies millimeters and radians; the writer never
 infers a transform from final geometry. Unresolved body selections, unresolved
 point-to-point motion, and copied body result identities remain blockers. Bodies
 available only as final geometry also require a captured pre-move body. Older
@@ -643,8 +650,8 @@ targets keep the original final geometry with a named version refusal.
 
 Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
 secondary numeric values. ISO metric table designations tolerate decimal rounding and
-floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, and a Unified thread is written once a
-SolidCraft release supports Unified Thread designations; until then it is reported. See
+floating-point unit-conversion noise. UNC/UNF values in millimeters or TPI are checked, and a Unified thread is written for
+SolidCraft 0.50 and newer; earlier targets report it. See
 [cosmetic threads](history.md) for details.
 
 Separate modeled Thread features keep their helical shape in the imported final geometry
@@ -685,10 +692,10 @@ evaluations; late results keep the refusal.
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
 targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
-stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
-only that body supplies replay candidates, even when another body has a coincident rim.
-Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
-refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+circle that the feature's input topology stores beside the edge, with center, axis, radius and a
+full-turn parameter range. Its input topology must hold a single body that is one earlier named
+body; only that body supplies replay candidates, even when another body has a coincident rim.
+A missing carrier or owner, and ellipses, remain refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's center, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
 A missing source carrier reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
@@ -710,7 +717,7 @@ history statuses, counts and report fields are unchanged.
 For SolidCraft 0.44 and newer, extrude joins, cuts and intersections can keep a
 selected body scope at the final body-building feature when the reader names
 modified bodies and replay matches the final source geometry. The Info note `history/body-scope-confirmed`
-records this confirmation. Intermediate body centres cannot confirm body scope,
+records this confirmation. Intermediate body centers cannot confirm body scope,
 so intermediate features keep the previous mapping. Without confirmation the
 previous mapping applies; older targets keep their existing output.
 
@@ -718,7 +725,7 @@ On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
 keeps a name only when its identity is proved: the source retains exactly one
 history body with `produced_by` matching its single-output producer, or the
 complete replay matches the final source geometry. Replay candidates keep
-their names only after that check passes; intermediate body centres cannot
+their names only after that check passes; intermediate body centers cannot
 confirm them. An output ID alone is not proof. Without proof, selecting the
 tool stops editable history with "it selects a body that an earlier feature
 has not named". Older targets keep the previous mapping.

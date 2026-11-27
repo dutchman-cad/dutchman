@@ -6,6 +6,8 @@ use super::*;
 pub(super) struct Skeleton<'a> {
     pub assembly: Assembly,
     pub paths: BTreeMap<&'a str, Located>,
+    world_posed: BTreeSet<Vec<usize>>,
+    unstored: BTreeSet<Vec<usize>>,
 }
 
 impl<'a> Skeleton<'a> {
@@ -63,22 +65,40 @@ impl<'a> Skeleton<'a> {
         let occurrences: Vec<_> = rows.iter().collect();
         let worlds: BTreeMap<&str, Placement3x4> =
             positions.iter().map(|(id, p)| (id.as_str(), *p)).collect();
-        let (joints, _) = joints(
+        let arena = |name: &str| {
             document
-                .pointer("/model/assembly_joints")
+                .pointer(&format!("/model/{name}"))
                 .and_then(Value::as_array)
-                .map_or(&[][..], Vec::as_slice),
-            &paths,
-            &worlds,
-            &inserted_designs(&occurrences),
-        );
+                .map_or(&[][..], Vec::as_slice)
+        };
+        let ordered = joints_in_timeline_order(arena("assembly_joints"), arena("features"));
+        let (joints, _) = joints(&ordered, &paths, &worlds, &inserted_designs(&occurrences));
         assembly.joints = joints;
-        assembly.held = paths
+        assembly.held = rows
             .iter()
-            .filter(|(id, _)| id.contains("occurrence#root-"))
+            .filter(|row| is_root_component(row))
+            .filter_map(|row| row.get("id").and_then(Value::as_str))
+            .filter_map(|id| paths.get(id))
+            .map(|p| p.path.clone())
+            .collect();
+        let world_ids = world_posed(document);
+        let world_posed = paths
+            .iter()
+            .filter(|(id, _)| world_ids.contains(**id))
             .map(|(_, p)| p.path.clone())
             .collect();
-        Ok(Self { assembly, paths })
+        let unstored_ids = unstored_poses(document);
+        let unstored = paths
+            .iter()
+            .filter(|(id, _)| unstored_ids.contains(**id))
+            .map(|(_, p)| p.path.clone())
+            .collect();
+        Ok(Self {
+            assembly,
+            paths,
+            world_posed,
+            unstored,
+        })
     }
     pub fn solve(&mut self, posed: &BTreeSet<String>) {
         let paths = self
@@ -87,7 +107,12 @@ impl<'a> Skeleton<'a> {
             .filter(|(id, _)| posed.contains(**id))
             .map(|(_, p)| p.path.clone())
             .collect();
-        let _ = place_by_joints(&mut self.assembly, &paths);
+        let _ = place_by_joints_with(
+            &mut self.assembly,
+            &paths,
+            &self.world_posed,
+            &self.unstored,
+        );
     }
     pub fn worlds(&self) -> BTreeMap<String, Placement3x4> {
         self.paths

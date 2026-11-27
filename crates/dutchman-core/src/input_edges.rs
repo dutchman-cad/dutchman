@@ -10,15 +10,33 @@ const LIMIT: usize = 10_000;
 
 /// Resolved edges of a hidden, earlier dependency result become feature input edges.
 /// Final-body selections are left alone. The writer still has to prove each pick on replay.
+#[cfg(test)]
 pub(crate) fn preserve(document: &mut Value, ir: &cadmpeg_ir::CadIr) {
+    let changes = plan(document, ir);
+    apply_json(document, &changes);
+}
+
+/// One feature's stored input edges: its position in the feature list and the feature, the
+/// input state that holds them, the selection that now names them, and whether the feature
+/// is a sweep (its path) rather than a blend.
+pub(crate) struct Change {
+    index: usize,
+    feature: String,
+    state: Value,
+    selection: Value,
+    path: bool,
+}
+
+/// The features whose resolved blend edges or sweep path become stored input edges.
+pub(crate) fn plan(document: &Value, ir: &cadmpeg_ir::CadIr) -> Vec<Change> {
     let Some(wire) = document.get("model").and_then(Value::as_object) else {
-        return;
+        return Vec::new();
     };
     let Some(features) = wire.get("features").and_then(Value::as_array) else {
-        return;
+        return Vec::new();
     };
     if features.len() > LIMIT {
-        return;
+        return Vec::new();
     }
     let available = LIMIT.saturating_sub(
         wire.get("feature_input_topologies")
@@ -156,15 +174,102 @@ pub(crate) fn preserve(document: &mut Value, ir: &cadmpeg_ir::CadIr) {
             .filter_map(|edge| sample(ir, edge.as_str()?, body))
             .collect();
         let bodies: Vec<&str> = if path { vec![body] } else { Vec::new() };
-        let state = json!({"id": state_id, "input_of": id, "edges": edges, "edge_geometry": geometry, "bodies": bodies, "faces": [], "vertices": []});
+        let state = json!({"id": state_id, "input_of": id, "edges": edges, "edge_geometry": geometry, "bodies": bodies, "faces": [], "face_owners": [], "vertices": []});
         let selection = json!({"kind": if path { "historical_edges" } else { "historical" }, "value": {
             "state": state_id, "edges": edges, "native": native}});
-        changes.push((index, state, selection, path));
+        changes.push(Change {
+            index,
+            feature: id.to_owned(),
+            state,
+            selection,
+            path,
+        });
     }
+    changes
+}
+
+/// `changes` written into the document: each feature's selection names its stored input edges,
+/// and the input state that holds them joins the document's. Only these small rows are read
+/// from JSON; the rest of the document stays typed.
+pub(crate) fn apply(ir: &mut cadmpeg_ir::CadIr, changes: Vec<Change>) -> Result<(), String> {
+    use cadmpeg_ir::features::{
+        edge_treatments::{ChamferGroup, FilletGroup},
+        evaluation::FeatureInputTopology,
+        profiles::PathRef,
+        selections::{EdgeSelection, NonEmptyMembers},
+        FeatureDefinition, FeatureOperation,
+    };
+    fn read<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, String> {
+        serde_json::from_value(value).map_err(|err| err.to_string())
+    }
+    for Change {
+        index,
+        feature,
+        state,
+        selection,
+        path,
+    } in changes
+    {
+        let state: FeatureInputTopology = read(state)?;
+        let target = ir
+            .model
+            .features
+            .get_mut(index)
+            .filter(|row| row.id.as_str() == feature)
+            .ok_or("a feature moved while its input edges were stored")?;
+        let mut outcome = Ok(());
+        target.evaluation.edit(|definition, _| {
+            let operation = match definition {
+                FeatureDefinition::PostProcess { operation, .. } => operation,
+                FeatureDefinition::Operation(operation) => operation,
+            };
+            outcome = (|| -> Result<(), String> {
+                match operation {
+                    FeatureOperation::Fillet { groups } if !path => {
+                        let mut group: FilletGroup = groups
+                            .first()
+                            .cloned()
+                            .ok_or("a blend names no edge group")?;
+                        group.edges = read::<EdgeSelection>(selection)?;
+                        *groups = NonEmptyMembers::one(group);
+                    }
+                    FeatureOperation::Chamfer { groups, .. } if !path => {
+                        let mut group: ChamferGroup = groups
+                            .first()
+                            .cloned()
+                            .ok_or("a blend names no edge group")?;
+                        group.edges = read::<EdgeSelection>(selection)?;
+                        *groups = NonEmptyMembers::one(group);
+                    }
+                    FeatureOperation::Sweep { path: along, .. } if path => {
+                        *along = Some(read::<PathRef>(selection)?);
+                    }
+                    _ => {}
+                }
+                Ok(())
+            })();
+        });
+        outcome?;
+        ir.model.feature_input_topologies.push(state);
+    }
+    Ok(())
+}
+
+/// `changes` written into the JSON of a document.
+#[cfg(test)]
+pub(crate) fn apply_json(document: &mut Value, changes: &[Change]) {
     let Some(wire) = document.get_mut("model").and_then(Value::as_object_mut) else {
         return;
     };
-    for (index, state, selection, path) in changes {
+    for Change {
+        index,
+        state,
+        selection,
+        path,
+        ..
+    } in changes
+    {
+        let (index, state, selection, path) = (*index, state.clone(), selection.clone(), *path);
         if let Some(feature) = wire
             .get_mut("features")
             .and_then(Value::as_array_mut)
@@ -319,7 +424,7 @@ fn sample(ir: &cadmpeg_ir::CadIr, id: &str, body: &str) -> Option<Value> {
         if !rigid(transform) {
             return None;
         }
-        let placed = |point: cadmpeg_ir::features::FinitePoint3| transform.apply_point(point.get());
+        let placed = |point: cadmpeg_ir::features::geometry::FinitePoint3| transform.apply_point(point.get());
         let edge = ir
             .geometry
             .edges
@@ -353,7 +458,7 @@ fn sample(ir: &cadmpeg_ir::CadIr, id: &str, body: &str) -> Option<Value> {
                 .map(|p| p.position())
         };
         let sample = json!({"edge": id, "interior": placed(interior)?, "tangent": tangent,
-            "faces": [], "start": placed(position(edge.start()?)?)?, "end": placed(position(edge.end()?)?)?});
+            "faces": [], "supports": [], "start": placed(position(edge.start()?)?)?, "end": placed(position(edge.end()?)?)?});
         ctx.finish_session().ok()?;
         Some(sample)
     }))

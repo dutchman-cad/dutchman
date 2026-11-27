@@ -131,7 +131,7 @@ fn report_question_and_actions_stay_inside_the_wide_window() {
 #[test]
 fn converted_results_with_missing_history_or_degraded_losses_use_warning_colour() {
     for p in [theme::DAY, theme::NIGHT] {
-        let degraded = json!({"ok":true,"mode":"history","losses":[{"level":"Degraded","subject":"body","message":"Colour is missing."}]});
+        let degraded = json!({"ok":true,"mode":"history","losses":[{"level":"Degraded","subject":"body","message":"Color is missing."}]});
         let info = json!({"ok":true,"mode":"history","losses":[{"level":"Info","subject":"body","message":"Converted."}]});
         for (report, expected) in [
             (report(1), p.spectre),
@@ -388,7 +388,7 @@ fn assert_control_rows(rects: &[(String, egui::Rect)]) {
             if rect.y_range().intersects(other_rect.y_range()) {
                 assert!(
                     (rect.center().y - other_rect.center().y).abs() <= 0.5,
-                    "{name} {rect:?} and {other} {other_rect:?} differ in centre line"
+                    "{name} {rect:?} and {other} {other_rect:?} differ in center line"
                 );
             }
         }

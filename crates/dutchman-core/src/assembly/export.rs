@@ -27,9 +27,12 @@ pub(crate) struct Insert {
 /// prototype as unresolved, or (newer readers) as an empty placeholder definition named for
 /// the unresolved occurrence.
 pub(crate) fn unresolved_inserts(model: &Model) -> Vec<Insert> {
+    // The placed view the assembly builder reads: its occurrence ids (one per use of a shared
+    // definition) are the keys the placements are filled by, and its parents compose a nested
+    // insertion child -> parent -> root.
     let (Ok(definitions), Ok(occurrences)) = (
         serde_json::to_value(&model.ir.model.product_definitions),
-        serde_json::to_value(&model.ir.model.occurrences),
+        products::occurrences(&model.ir.model),
     ) else {
         return Vec::new();
     };
@@ -49,12 +52,41 @@ pub(crate) fn unresolved_inserts(model: &Model) -> Vec<Insert> {
                 })
             })
     };
+    // The projection keeps no definition id for an external or unresolved prototype, and names
+    // a repeated use of one occurrence `["<original id>", n]`: read the prototype off the
+    // stored occurrence the placed row came from.
+    let stored: BTreeMap<String, String> = serde_json::to_value(&model.ir.model.occurrences)
+        .ok()
+        .and_then(|rows| {
+            Some(
+                rows.as_array()?
+                    .iter()
+                    .filter_map(|row| {
+                        Some((
+                            row.get("id")?.as_str()?.to_owned(),
+                            row.get("prototype")?.as_str()?.to_owned(),
+                        ))
+                    })
+                    .collect(),
+            )
+        })
+        .unwrap_or_default();
+    let prototype = |row: &Value| {
+        let id = row.get("id")?.as_str()?;
+        let original = serde_json::from_str::<Value>(id)
+            .ok()
+            .and_then(|pair| pair.get(0)?.as_str().map(str::to_owned))
+            .unwrap_or_else(|| id.to_owned());
+        stored.get(&original).cloned()
+    };
     let stated = |row: &Value, key: &str| {
-        let definition = row.pointer("/prototype/definition")?.as_str()?;
+        let definition = prototype(row)?;
         definitions
             .as_array()?
             .iter()
-            .find(|candidate| candidate.get("id").and_then(Value::as_str) == Some(definition))?
+            .find(|candidate| {
+                candidate.get("id").and_then(Value::as_str) == Some(definition.as_str())
+            })?
             .pointer(&format!("/storage/{key}"))?
             .as_str()
             .map(str::to_owned)
@@ -65,12 +97,9 @@ pub(crate) fn unresolved_inserts(model: &Model) -> Vec<Insert> {
         .flatten()
         .filter(|row| {
             scope(row) == Some("unresolved")
-                || row
-                    .pointer("/prototype/definition")
-                    .and_then(Value::as_str)
-                    .is_some_and(|definition| {
-                        definition.ends_with("/unresolved") && empty(definition)
-                    })
+                || prototype(row).is_some_and(|definition| {
+                    definition.ends_with("/unresolved") && empty(&definition)
+                })
         })
         .map(|row| Insert {
             id: row
@@ -545,7 +574,8 @@ mod tests {
 
     fn insertion(key: usize, name: &str, x: f64) -> Value {
         json!({"id": format!("synthetic:assembly:occurrence#{key}"), "ordinal": key, "name": name,
-               "parent": {"kind": "root"}, "prototype": {"kind": "unresolved"},
+               "parent": {"kind": "root"},
+               "prototype": format!("synthetic:assembly:occurrence#{key}/unresolved"),
                "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
                "scale": [1.0, 1.0, 1.0]})
     }
@@ -553,16 +583,13 @@ mod tests {
     #[test]
     fn insertions_are_placed_from_the_export_folder_at_their_transforms() {
         let dir = export_folder();
-        let mut parent = cube();
-        parent.ir.model.occurrences = serde_json::from_value(json!([
+        let parent = inserting(vec![
             insertion(1, "Screw v2:1", 10.0),
             insertion(2, "Screw v2:2", 20.0),
             insertion(3, "Plate v1:1", 30.0),
             // A role that names no design stays missing.
             insertion(4, "0f1e2d3c-0000-4000-8000-000000000000", 40.0),
-        ]))
-        .unwrap();
-        parent.ir.model.product_definitions = Vec::new();
+        ]);
         let reads = std::cell::Cell::new(0);
         let decode = |_: Format, _: &Path, _: &mut Report| -> Result<Model, Error> {
             reads.set(reads.get() + 1);
@@ -631,9 +658,7 @@ mod tests {
     #[test]
     fn a_listed_design_that_cannot_be_read_is_left_out_with_its_reason() {
         let dir = export_folder();
-        let mut parent = cube();
-        parent.ir.model.occurrences =
-            serde_json::from_value(json!([insertion(1, "Screw v2:1", 10.0)])).unwrap();
+        let parent = inserting(vec![insertion(1, "Screw v2:1", 10.0)]);
         let decode = |_: Format, _: &Path, _: &mut Report| -> Result<Model, Error> {
             Err(Error::Decode("not a Fusion design".to_owned()))
         };
@@ -663,9 +688,7 @@ mod tests {
     fn without_a_manifest_nothing_is_resolved() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("Asm v1.f3d"), b"x").unwrap();
-        let mut parent = cube();
-        parent.ir.model.occurrences =
-            serde_json::from_value(json!([insertion(1, "Screw v2:1", 10.0)])).unwrap();
+        let parent = inserting(vec![insertion(1, "Screw v2:1", 10.0)]);
         let decode = |_: Format, _: &Path, _: &mut Report| -> Result<Model, Error> { Ok(cube()) };
         let external = resolve(
             &parent,
@@ -681,15 +704,26 @@ mod tests {
 
     fn at(key: usize, name: &str, transform: Value) -> Value {
         json!({"id": format!("synthetic:assembly:occurrence#{key}"), "ordinal": key, "name": name,
-               "parent": {"kind": "root"}, "prototype": {"kind": "unresolved"},
+               "parent": {"kind": "root"},
+               "prototype": format!("synthetic:assembly:occurrence#{key}/unresolved"),
                "transform": transform, "scale": [1.0, 1.0, 1.0]})
     }
 
     /// A cube that inserts the designs in `inserts`.
     fn inserting(inserts: Vec<Value>) -> Model {
         let mut model = cube();
-        model.ir.model.occurrences = serde_json::from_value(Value::Array(inserts)).unwrap();
-        model.ir.model.product_definitions = Vec::new();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["occurrences"] = Value::Array(inserts);
+        // Each insertion's placeholder definition: empty, naming no stored design.
+        wire["model"]["product_definitions"] = Value::Array(
+            wire["model"]["occurrences"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| json!({"id": row["prototype"], "storage": {"kind": "external"}}))
+                .collect(),
+        );
+        model.ir = crate::test_products::read(&wire);
         model
     }
 

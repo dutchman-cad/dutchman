@@ -75,7 +75,7 @@ pub(crate) fn map(
             .get("value")
             .and_then(Value::as_array)
             .map_or(&[][..], Vec::as_slice),
-        Some("centerline") => return Err("lofts along a centreline are not mapped yet".to_owned()),
+        Some("centerline") => return Err("lofts along a centerline are not mapped yet".to_owned()),
         Some(_) => return Err("its guidance is malformed".to_owned()),
     };
     if guides.len() > 2 {

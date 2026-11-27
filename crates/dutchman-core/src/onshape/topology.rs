@@ -574,6 +574,7 @@ fn load(
         })?;
     super::microversion(response, "microversionId", mid)?;
     let mut faces = BTreeMap::new();
+    let mut face_owners = BTreeMap::new();
     let mut edges = BTreeMap::new();
     let mut bodies = BTreeSet::new();
     let mut vertices = BTreeSet::new();
@@ -590,6 +591,7 @@ fn load(
             {
                 return Err("bodydetails repeats a face id".into());
             }
+            face_owners.insert(text(face, "id")?.to_owned(), text(body, "id")?.to_owned());
         }
         let mut body_vertices = BTreeSet::new();
         for vertex in optional_rows(body, "vertices")? {
@@ -655,6 +657,7 @@ fn load(
     }
     let row = json!({"id": id("input", text(feature, "featureId")?), "input_of": id("feature", text(feature, "featureId")?),
         "bodies": bodies, "faces": faces.keys().collect::<Vec<_>>(), "edges": edges.keys().collect::<Vec<_>>(),
+        "face_owners": face_owners.iter().map(|(face, body)| json!({"face": face, "body": body})).collect::<Vec<_>>(),
         "vertices": [], "edge_geometry": samples, "native_ref": format!("{prefix}/bodydetails/{ordinal}.json")});
     Ok(State {
         row,
@@ -705,7 +708,7 @@ fn sample(edge: &Value) -> Mapping<Value> {
         other => return Err(format!("{other} input edges are not supported yet")),
     };
     Ok(
-        json!({"edge": text(edge, "id")?, "interior": point(mid), "start": point(start), "end": point(end), "tangent": point(tangent)}),
+        json!({"edge": text(edge, "id")?, "interior": point(mid), "start": point(start), "end": point(end), "tangent": point(tangent), "supports": []}),
     )
 }
 

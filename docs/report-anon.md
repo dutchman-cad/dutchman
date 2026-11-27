@@ -128,20 +128,20 @@ The report's fields are added to, never renamed or removed, while its schema sta
 
 Appearance assignments left out of the output use these fixed codes in both the anonymous
 report and the diagnostic log's `end.losses` counts. These categories never contain a target
-id, binding id, colour name or component name. Anonymous appearance entries have no `example`.
+id, binding id, color name or component name. Anonymous appearance entries have no `example`.
 
 | Code | Cause |
 |---|---|
-| `dutchman/appearance.redundant-face` | Face colour equals its body's colour, with no visible effect. Reserved: these assignments are retained and produce no loss count. |
+| `dutchman/appearance.redundant-face` | Face color equals its body's color, with no visible effect. Reserved: these assignments are retained and produce no loss count. |
 | `dutchman/appearance.wire` | Target is a wire body or saved free edge. |
 | `dutchman/appearance.face-pick-missed` | Face geometry could not be matched to an output face with a resolved interior pick. |
 | `dutchman/appearance.target-absent` | Target is absent from the decoded model. |
 | `dutchman/appearance.unwritable-body` | Target belongs to a body with no geometry the writer can write. |
-| `dutchman/appearance.other` | Another appearance mapping gap, such as a missing colour, conflicting assignments or no placed component geometry. |
+| `dutchman/appearance.other` | Another appearance mapping gap, such as a missing color, conflicting assignments or no placed component geometry. |
 
 The exact codes above are allow-listed; arbitrary `dutchman/appearance.*` strings are not
-accepted as categories. Assignments kept as body colours, uniform face colours or individual
-face colours are not counted as dropped. Multiple dropped assignments count individually,
+accepted as categories. Assignments kept as body colors, uniform face colors or individual
+face colors are not counted as dropped. Multiple dropped assignments count individually,
 even when they share a target. Ordinary conversion reports retain their human explanations.
 
 

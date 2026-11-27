@@ -57,12 +57,8 @@ pub(super) fn resolve(
         )));
     }
     let folder = input_folder(input);
-    let wire =
-        serde_json::to_value(&model.ir.model).map_err(|err| Error::Decode(err.to_string()))?;
-    let rows = wire
-        .get("occurrences")
-        .and_then(Value::as_array)
-        .map_or(&[][..], Vec::as_slice);
+    let wire = products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
+    let rows = wire.as_array().map_or(&[][..], Vec::as_slice);
     let mut external = ExternalParts::new();
     let mut selected_parts = BTreeMap::new();
     let mut files: BTreeMap<PathBuf, Result<Model, (Stage, String)>> = BTreeMap::new();
@@ -256,7 +252,10 @@ pub(super) fn resolve(
 /// Select the linked definition, never the other objects in the same document. Definition
 /// geometry is already in its own frame; LinkTransform decides whether to carry its pose.
 fn select(model: &Model, object: &str) -> Result<(Model, Placement3x4), String> {
-    let document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
+    let mut document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
+    if let Some(model) = document.get_mut("model") {
+        products::project(model)?;
+    }
     let definitions = document
         .pointer("/model/product_definitions")
         .and_then(Value::as_array)
@@ -485,7 +484,7 @@ mod tests {
         wire["native"]["fcstd"] = json!({"objects": [{
             "id": "test:source:object#body", "name": "Standalone"
         }]});
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         let (selected, _) = select(&model, "Standalone").unwrap();
         assert_eq!(selected.ir.geometry.bodies.len(), 1);
         assert_eq!(
@@ -540,7 +539,7 @@ mod tests {
                 100.0
             ),
         ]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         model.assembly = local_assembly(&model).unwrap();
         let (selected, placement) = select(&model, "TargetPart").unwrap();
         assert_eq!(placement[0][3], 10.0);

@@ -76,6 +76,15 @@ pub(crate) fn failure_in(file_name: &str, error: &Error) -> String {
     )
 }
 
+/// Said when SolidCraft refuses a read of the folder the person picked for the parts. It names
+/// the grant (the Parts folder field), what it is for, and how to give it.
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn parts_folder_access(file_name: &str, host: &str) -> String {
+    format!(
+        "Dutchman needs read access to the parts folder for {file_name}, and SolidCraft has not granted it. Pick the folder in the \"Folder with the parts\" field when you open the file (Browse...), or leave that field empty to read the folder that holds {file_name} instead. A saved or scripted value does not grant access: the folder has to be picked or edited in the dialog. Dutchman only reads that folder, never writes, and never looks elsewhere. SolidCraft said: {host}"
+    )
+}
+
 pub(crate) const QUESTION: &str = "Is there a problem? Is something missing?";
 pub(crate) fn help() -> String {
     let policy: serde_json::Value =

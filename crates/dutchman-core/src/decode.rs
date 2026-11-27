@@ -68,7 +68,11 @@ pub(crate) fn decode_with_progress(
     progress: Option<&crate::Progress<'_>>,
 ) -> Result<Model, Error> {
     let codec_id = format.codec_id().ok_or(Error::NotSupportedYet { format })?;
-    catch_unwind(AssertUnwindSafe(|| {
+    let recovered = recover_fusion_archive(format, bytes);
+    let bytes = recovered
+        .as_ref()
+        .map_or(bytes, |found| found.bytes.as_slice());
+    let result = catch_unwind(AssertUnwindSafe(|| {
         decode_unguarded(
             format,
             codec_id,
@@ -87,7 +91,77 @@ pub(crate) fn decode_with_progress(
             "the {} decoder failed unexpectedly on this file",
             format.name()
         )))
-    })
+    });
+    let result = finish_recovered(recovered.as_ref(), result, report);
+    explain_missing_geometry(format, bytes, result)
+}
+
+/// A whole Fusion archive that cadmpeg refuses as malformed because its geometry part is missing
+/// says what the export holds and what it lacks, like one with no geometry at all.
+fn explain_missing_geometry(
+    format: Format,
+    bytes: &[u8],
+    result: Result<Model, Error>,
+) -> Result<Model, Error> {
+    match result {
+        Err(Error::Decode(_)) if format == Format::FusionArchive => {
+            match crate::fusion_archive::missing_geometry(bytes) {
+                Some(why) => Err(Error::EmptyExport(format!(
+                    "cannot read this design: {}. {why}",
+                    no_geometry_message(format)
+                ))),
+                None => result,
+            }
+        }
+        other => other,
+    }
+}
+
+/// A Fusion archive whose end is missing, rebuilt from the members that are whole.
+fn recover_fusion_archive(
+    format: Format,
+    bytes: &[u8],
+) -> Option<crate::fusion_archive::Recovered> {
+    matches!(format, Format::FusionArchive | Format::FusionMultiDocument)
+        .then(|| crate::fusion_archive::recover(bytes))
+        .flatten()
+}
+
+/// Says in the report that a recovered archive is incomplete, and when nothing could be read from
+/// what remains, in the error.
+fn finish_recovered(
+    recovered: Option<&crate::fusion_archive::Recovered>,
+    result: Result<Model, Error>,
+    report: &mut Report,
+) -> Result<Model, Error> {
+    let Some(recovered) = recovered else {
+        return result;
+    };
+    let note = crate::fusion_archive::recovered_note(recovered);
+    match result {
+        Ok(model) => {
+            report.push_at(Stage::Decode, Severity::Degraded, "incomplete-export", note);
+            Ok(model)
+        }
+        Err(Error::EmptyExport(message)) => Err(Error::EmptyExport(format!(
+            "{message} The file also ends early: its zip end record is missing, so only the {} part(s) before that point could be read.",
+            recovered.kept
+        ))),
+        Err(error @ Error::Decode(_)) => Err(Error::EmptyExport(format!(
+            "{error}. {}",
+            incomplete_sentence(&note)
+        ))),
+        Err(other) => Err(other),
+    }
+}
+
+/// The note, capitalized for the start of a sentence.
+fn incomplete_sentence(note: &str) -> String {
+    let mut chars = note.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect::<String>() + ".")
+        .unwrap_or_default()
 }
 
 /// Planning needs design history; this depth includes geometry but skips process data.
@@ -121,6 +195,10 @@ pub(crate) fn planned(
         features: std::cell::Cell::new(0),
         stop: std::cell::Cell::new(None),
     };
+    let recovered = recover_fusion_archive(format, bytes);
+    let bytes = recovered
+        .as_ref()
+        .map_or(bytes, |found| found.bytes.as_slice());
     let result = catch_unwind(AssertUnwindSafe(|| {
         decode_unguarded(
             format,
@@ -140,6 +218,7 @@ pub(crate) fn planned(
             "the decoder failed unexpectedly during planning".to_owned(),
         ))
     });
+    let result = finish_recovered(recovered.as_ref(), result, report);
     let model = match limits.stop.get() {
         Some(PlanningStop::Features) => Err(PlanningError::FeatureBudget),
         Some(PlanningStop::Time) => Err(PlanningError::TimeBudget),
@@ -441,6 +520,11 @@ fn decode_unguarded(
     {
         return Err(error);
     }
+    if let Some(error) = linked_components_error(format, &ir, &decode_report.losses)
+        .filter(|_| !drawings && !decode_report.geometry_transferred())
+    {
+        return Err(error);
+    }
     // An assembly's geometry is in its parts' files, read afterwards.
     if !drawings
         && !decode_report.geometry_transferred()
@@ -449,6 +533,14 @@ fn decode_unguarded(
     {
         if format == Format::Step && step_holds_no_shapes(bytes) {
             return Err(Error::EmptyExport(EMPTY_STEP_MESSAGE.to_owned()));
+        }
+        if format == Format::FusionArchive {
+            if let Some(why) = crate::fusion_archive::missing_geometry(bytes) {
+                return Err(Error::EmptyExport(format!(
+                    "cannot read this design: {}. {why}",
+                    no_geometry_message(format)
+                )));
+            }
         }
         return Err(Error::Decode(no_geometry_message(format)));
     }
@@ -483,6 +575,7 @@ fn decode_unguarded(
     }
     drop_removed_bodies(&mut ir, report);
     drop_inactive_configuration_bodies(&mut ir, report);
+    crate::design_history::project(&mut ir, report);
 
     let model = Model {
         ir,
@@ -696,6 +789,28 @@ fn undecoded_mesh_only_error(
         })
 }
 
+/// cadmpeg's loss for a Fusion design whose components live in other files.
+const COMPONENTS_EXTERNAL: (&str, &str) = ("f3d", "assembly.components-external");
+
+/// Name a single Fusion .f3d whose bodies are all in linked components that are not inside the
+/// file. The .f3z archive carries them.
+fn linked_components_error(
+    format: Format,
+    ir: &cadmpeg_ir::CadIr,
+    losses: &[cadmpeg_ir::report::loss::LossNote],
+) -> Option<Error> {
+    if format != Format::FusionArchive || !ir.geometry.bodies.is_empty() {
+        return None;
+    }
+    let (namespace, code) = COMPONENTS_EXTERNAL;
+    losses
+        .iter()
+        .any(|note| note.code.namespace() == namespace && note.code.local_code() == code)
+        .then(|| Error::Assembly(LINKED_COMPONENTS_MESSAGE.to_owned()))
+}
+
+const LINKED_COMPONENTS_MESSAGE: &str = "this Fusion design links its components from other files, and they aren't inside this .f3d. Export it from Fusion as .f3z (File > Export > Fusion Archive), which carries the linked components";
+
 /// Visit independent F3Z members through cadmpeg's bounded session API. Models are released
 /// after the callback; the caller may retain the first matching member. This is local only.
 pub fn repro_members(
@@ -888,7 +1003,6 @@ fn member_error_code(error: &CodecError) -> &'static str {
         CodecError::ResourceLimit(_) => "resource_limit",
         CodecError::UnsupportedDialect { .. } => "unsupported_dialect",
         CodecError::UnsupportedTarget(_) => "unsupported_target",
-        CodecError::InsufficientDepth { .. } => "insufficient_depth",
         CodecError::NotImplemented(_) => "not_implemented",
         CodecError::Io(_) => "io",
         _ => "other",
@@ -902,7 +1016,9 @@ fn member_error_code(error: &CodecError) -> &'static str {
 /// would otherwise be converted as part of the design. Only a Remove whose bodies cadmpeg
 /// resolves can say which bodies those are; any other is left as it is.
 fn drop_removed_bodies(ir: &mut cadmpeg_ir::CadIr, report: &mut Report) {
-    use cadmpeg_ir::{BodyRetentionMode, BodySelection, FeatureOperation};
+    use cadmpeg_ir::features::operation_settings::BodyRetentionMode;
+    use cadmpeg_ir::features::selections::BodySelection;
+    use cadmpeg_ir::FeatureOperation;
     let mut removed: Vec<(cadmpeg_ir::ids::BodyId, String)> = Vec::new();
     for feature in &ir.model.features {
         if feature.suppressed == Some(true) {
@@ -1475,6 +1591,33 @@ mod tests {
     }
 
     #[test]
+    fn linked_components_only_fusion_design_is_named() {
+        let mut model = cube();
+        let losses = vec![mesh_only_untransferred(
+            "f3d",
+            "assembly.components-external",
+        )];
+        // A design with B-rep bodies keeps its conversion.
+        assert!(linked_components_error(Format::FusionArchive, &model.ir, &losses).is_none());
+        model.ir.geometry.bodies.clear();
+        let error = linked_components_error(Format::FusionArchive, &model.ir, &losses).unwrap();
+        assert_eq!(error.kind(), "assembly");
+        assert_eq!(error.stage(), Stage::Input);
+        assert_eq!(error.upstream(), None);
+        assert!(error
+            .to_string()
+            .starts_with("cannot read this design: this Fusion design links its components"));
+        assert!(error.to_string().contains("Export it from Fusion as .f3z"));
+        // An archive already is the .f3z, and other losses keep the generic message.
+        assert!(linked_components_error(Format::FusionMultiDocument, &model.ir, &losses).is_none());
+        let other = vec![mesh_only_untransferred(
+            "f3d",
+            "design.mesh-only-untransferred",
+        )];
+        assert!(linked_components_error(Format::FusionArchive, &model.ir, &other).is_none());
+    }
+
+    #[test]
     fn undecoded_mesh_only_design_is_named_from_cadmpeg_loss() {
         let mut model = cube();
         let losses = vec![mesh_only_untransferred(
@@ -1715,7 +1858,7 @@ mod tests {
             );
         }
         ir.model.product_definitions.push(
-            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "bodies": ["test:model:body#A", "test:model:body#B"], "bom_properties": {}, "sketches": []}))
+            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "bodies": ["test:model:body#A", "test:model:body#B"], "bom_properties": {}, "sketches": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}))
             .unwrap(),
         );
         for (ordinal, name, body, active) in [(0, "Short", "A", true), (1, "Tall", "B", false)] {
@@ -1821,7 +1964,7 @@ mod tests {
     fn geometry_alone_leaves_no_definition_naming_a_removed_sketch() {
         let mut model = cube();
         model.ir.model.product_definitions.push(
-            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "sketches": ["test:model:sketch#0"], "bom_properties": {}, "bodies": []}))
+            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "sketches": ["test:model:sketch#0"], "bom_properties": {}, "bodies": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}))
             .unwrap(),
         );
         geometry_only(&mut model.ir);

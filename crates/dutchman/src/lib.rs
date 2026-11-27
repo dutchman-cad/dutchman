@@ -620,7 +620,7 @@ pub fn resolve_file(path: PathBuf, replace: bool) -> PathBuf {
     if replace {
         path
     } else {
-        dutchman_core::safe_output::next_free(&path, &|p| p.try_exists().unwrap_or(true))
+        dutchman_core::safe_output::next_free(&path, &dutchman_core::safe_output::present)
     }
 }
 

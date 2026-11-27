@@ -105,7 +105,7 @@ pub fn report() -> Value {
             "mesh_chord_relative": MESH_CHORD_RELATIVE,
             "mesh_chord_floor_mm": MESH_CHORD_FLOOR_MM,
             "face_count": "not compared: SolidCraft merges faces that share a surface",
-            "centre": "the centre of each body's box, not its centre of mass",
+            "centre": "the center of each body's box, not its center of mass",
         },
         "source_comparison": {
             "parameter_relative": PARAMETER_RELATIVE,

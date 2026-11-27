@@ -1,6 +1,6 @@
 //! What the importer tells SolidCraft's operations panel while it converts. The bar only moves
 //! forward, each report is a small step (a job has a budget of host calls), and the numbers are
-//! the same on every SolidCraft: `control.progress` exists in `craft:plugin@0.1.0`, and a host
+//! the same on every SolidCraft: `control.progress` exists in `craft:plugin@0.1.0` and 0.2.0, and a host
 //! that does not draw it ignores it.
 use std::sync::atomic::{AtomicU32, Ordering};
 
