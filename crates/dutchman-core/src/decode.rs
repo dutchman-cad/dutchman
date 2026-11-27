@@ -419,9 +419,6 @@ fn with_fallback(
 
 /// How a failure of cadmpeg's checks begins.
 const CHECKS: &str = "cadmpeg's model of it fails its checks ";
-/// How cadmpeg's refusal of a JSON or XML tree over the per-expansion allowance ends
-/// (`cadmpeg_core::decode::tree`). A test pins it against the pinned cadmpeg.
-const TREE_OVER_ALLOWANCE: &str = "per-expansion allowance";
 /// cadmpeg's Onshape loss for a bundle member it omits as too large to expand. A test pins
 /// it against the pinned cadmpeg.
 const ONSHAPE_MEMBER_TOO_LARGE: &str = "onshape/member.too-large";
@@ -486,14 +483,10 @@ fn decode_unguarded(
     drop(members);
     drop(reading);
     let decoded = decoded.map_err(|err| {
-        // cadmpeg refuses a JSON or XML tree that could exceed the per-expansion allowance as
-        // NotImplemented (cadmpeg_core::decode::tree); under planning limits that is the limit.
-        let over_allowance = planning.is_some()
-            && matches!(&err, DecodeFailure::Codec(CodecError::NotImplemented(message))
-                if message.ends_with(TREE_OVER_ALLOWANCE));
-        if over_allowance
-            || depth == DecodeDepth::Design
-                && matches!(&err, DecodeFailure::Codec(CodecError::ResourceLimit(_)))
+        // cadmpeg refuses a JSON or XML tree over the session ceiling as a structured resource
+        // limit; under planning limits, as at design depth, that is the memory budget.
+        if (planning.is_some() || depth == DecodeDepth::Design)
+            && matches!(&err, DecodeFailure::Codec(CodecError::ResourceLimit(_)))
         {
             Error::MemoryBudget(format!("planning decoder resource limit reached: {err}"))
         } else {
@@ -1455,20 +1448,41 @@ pub(crate) fn preflight_codec(prefix: &[u8]) -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    /// decode_unguarded reads cadmpeg's tree refusal by its wording; a cadmpeg that words it
-    /// otherwise fails here instead of reading a smaller model under planning limits.
+    /// Tree storage uses the session ceiling, not the per-expansion allowance. Pin the
+    /// structured refusal mapped by decode_unguarded and cadmpeg's displayed wording.
     #[test]
-    fn cadmpeg_words_a_tree_over_the_allowance_as_matched() {
+    fn cadmpeg_refuses_tree_storage_over_the_session_ceiling() {
+        use cadmpeg_core::decode::{LimitScope, ResourceDimension, ResourceFailure};
+
         let arena = DecodeArena::new();
         let mut policy = DecodePolicy::default();
         policy.limits.max_decompressed_bytes_per_expand = 1 << 10;
-        let (ctx, _) = DecodeContext::from_root_bytes(b"", &arena, &policy).unwrap();
         let text = format!("[{}]", vec!["0"; 1 << 12].join(","));
+        {
+            let (ctx, _) = DecodeContext::from_root_bytes(b"", &arena, &policy).unwrap();
+            let value = ctx.parse_json_value(&text, "JSON").unwrap();
+            assert_eq!(value.as_array().unwrap().len(), 1 << 12);
+        }
+
+        policy.limits.max_decompressed_bytes_total = 1 << 10;
+        let (ctx, _) = DecodeContext::from_root_bytes(b"", &arena, &policy).unwrap();
         let error = ctx.parse_json_value(&text, "JSON").unwrap_err();
-        assert!(
-            matches!(&error, CodecError::NotImplemented(message)
-                if message.ends_with(TREE_OVER_ALLOWANCE)),
-            "{error:?}"
+        // tree::json_storage_bytes: 1024 + four source lengths + 4097 values at 64 bytes.
+        let storage = 1024 + 4 * text.len() as u64 + 4097 * 64;
+        let CodecError::ResourceLimit(limit) = &error else {
+            panic!("expected a session resource refusal, got {error:?}");
+        };
+        assert_eq!(limit.scope, LimitScope::Session);
+        assert_eq!(limit.dimension, ResourceDimension::DecompressedBytes);
+        assert_eq!(limit.reason, ResourceFailure::BudgetExceeded);
+        assert_eq!(
+            (limit.limit, limit.used, limit.additional),
+            (1024, 0, storage)
+        );
+        assert_eq!(limit.operation, "JSON");
+        assert_eq!(
+            error.to_string(),
+            format!("resource limit on DecompressedBytes: BudgetExceeded (scope Session, limit 1024, used 0, requested {storage})")
         );
     }
 
