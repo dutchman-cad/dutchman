@@ -80,7 +80,7 @@ mod tests {
         };
         let mut drawing = Drawing::new(
             DrawingId::mint("synthetic:test:drawing#view").unwrap(),
-            "view".into(),
+            cadmpeg_ir::ids::Identity::new("synthetic:test:object#view").unwrap(),
             DrawingKind::View,
             "View".into(),
             0,
