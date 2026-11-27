@@ -1089,6 +1089,7 @@ fn run_cli() -> ExitCode {
                         options.output_extension()
                     })
             });
+            let requested = output.clone();
             if derived
                 && (input == output
                     || std::fs::canonicalize(&input)
@@ -1099,7 +1100,13 @@ fn run_cli() -> ExitCode {
                 eprintln!("dutchman: default output {} is the input file; choose another output with -o PATH", output.display());
                 return ExitCode::from(2);
             }
-            let output = dutchman::resolve_output(&output, options.replace);
+            let (output, replaces) = dutchman::mark::place(&input, &output, options.replace);
+            if !json && output != requested {
+                eprintln!(
+                    "dutchman: {}",
+                    dutchman::mark::numbered_note(&requested, &output)
+                );
+            }
             if !json {
                 if let Some(status) =
                     json::status_line(&serde_json::json!({"input": json::input(&input)}))
@@ -1114,6 +1121,7 @@ fn run_cli() -> ExitCode {
                 &input,
                 &output,
                 &options,
+                options.replace || replaces,
                 log.as_deref(),
                 anon.as_ref(),
                 Output {
@@ -1676,6 +1684,7 @@ fn convert(
     input: &Path,
     output: &Path,
     options: &ConvertOptions,
+    replace: bool,
     log: Option<&Path>,
     anon: Option<&anon::Request>,
     printing: Output,
@@ -1706,7 +1715,7 @@ fn convert(
         input,
         output,
         options,
-        options.replace,
+        replace,
         &options.part_search(),
         &|event| progress.report(input, event),
     );

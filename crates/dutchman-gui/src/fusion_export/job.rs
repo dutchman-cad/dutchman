@@ -354,10 +354,21 @@ pub struct Status {
     pub inventory: Option<PathBuf>,
 }
 
+/// The exporter's job protocol 1 writes `cancelled`; later versions write `canceled`. Both are
+/// read as `canceled`.
+fn american(word: &str) -> String {
+    if word == "cancelled" {
+        "canceled"
+    } else {
+        word
+    }
+    .to_owned()
+}
+
 impl Status {
-    /// `done`, `failed` and `cancelled` never change again.
+    /// `done`, `failed` and `canceled` never change again.
     pub fn is_final(&self) -> bool {
-        matches!(self.state.as_str(), "done" | "failed" | "cancelled")
+        matches!(self.state.as_str(), "done" | "failed" | "canceled")
     }
 
     pub fn from_value(value: &Value) -> Option<Self> {
@@ -369,11 +380,8 @@ impl Status {
         };
         let path = |key: &str| value.get(key).and_then(Value::as_str).map(PathBuf::from);
         Some(Self {
-            state: value.get("state")?.as_str()?.to_owned(),
-            reason: value
-                .get("reason")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+            state: american(value.get("state")?.as_str()?),
+            reason: value.get("reason").and_then(Value::as_str).map(american),
             message: value
                 .get("message")
                 .and_then(Value::as_str)
@@ -472,7 +480,7 @@ pub fn reason_info(reason: &str, message: &str) -> (String, Next) {
             "Fusion closed or crashed during the export. Open Fusion and try again; the export carries on where it stopped. If it keeps stopping, one design may be the cause.",
             Next::TryAgain,
         ),
-        "cancelled" => (
+        "canceled" | "cancelled" => (
             "The export was stopped. Everything finished so far is kept.",
             Next::Nothing,
         ),

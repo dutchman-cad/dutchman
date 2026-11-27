@@ -255,13 +255,13 @@ impl Panel {
                 });
             }
             state => {
-                let reason = status.reason.as_deref().unwrap_or(if state == "cancelled" {
-                    "cancelled"
+                let reason = status.reason.as_deref().unwrap_or(if state == "canceled" {
+                    "canceled"
                 } else {
                     "error"
                 });
                 let (text, next) = super::job::reason_info(reason, &status.message);
-                let color = if state == "cancelled" {
+                let color = if state == "canceled" {
                     p.tide
                 } else {
                     p.danger
@@ -270,7 +270,7 @@ impl Panel {
                 ui.horizontal_wrapped(|ui| {
                     match next {
                         Next::TryAgain => again = ui.button("Try again").clicked(),
-                        _ if state == "cancelled" => {
+                        _ if state == "canceled" => {
                             again = ui.button("Continue the export").clicked();
                         }
                         _ => {}

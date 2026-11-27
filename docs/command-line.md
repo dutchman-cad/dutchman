@@ -88,9 +88,14 @@ Targets before SolidCraft 0.25.1 get `.solidcraft` by default.
 `--to dxf` writes one `part-PageName.dxf` per TechDraw page; see
 [TechDraw drawing output](freecad.md#techdraw-to-dxf). If a model default exists, Dutchman
 writes the next free name (`part (2).sc`) and leaves it as it is. A default
-that is the input itself is always refused. An existing file is never replaced unless you pass
-`--replace` (`--force` means the same). A name that differs from an existing one only in capitals or in how an accented letter is stored counts as that file, because macOS and Windows keep one file for both; the old `--no-clobber` is accepted and does nothing,
-and `--force` conflicts with it. The report names the file actually written. Built-in commands win
+that is the input itself is always refused. An existing file is replaced only when Dutchman made
+it from the same input and nothing has changed since (the `dutchman.json` entry inside the
+design); anything else is kept and the
+new design is numbered, with a line saying why. `--replace` (`--force` means the same) replaces any
+existing file without asking, sending it to the trash (or keeping it beside the new one as
+`name.replaced-<time>.sc`); `DUTCHMAN_NO_TRASH=1` always keeps it beside. The old `--no-clobber` is
+accepted and does nothing, and `--force` conflicts with it. The report names the file actually
+written. Built-in commands win
 over files with the same name; use `dutchman convert pilot` for a file named `pilot`.
 Installed tools take precedence over bare files; otherwise an existing file or a recognized
 CAD extension selects conversion.
@@ -113,7 +118,7 @@ CAD extension selects conversion.
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--write-replay` | For a `.sc` design, also write `<design>.replay.json` beside it (the design's name with `.replay.json` in place of `.sc`): the command script that rebuilds the history step by step. See [Replay a history by hand](troubleshooting.md#replay-a-history-by-hand). Works with `convert` and `convert-all`; the JSON report names it as `replay_script`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
-| `--replace` | Replace an existing design at the output. Without it nothing already there is replaced: a taken name gets the next free one (`part (2).sc`, `part (3).sc`), and the `.report.json`, `.failed.json` and `.replay.json` beside it, the logs and the anonymous report follow the same rule. The report states the path written. |
+| `--replace` | Replace any existing design at the output, without asking; the old file goes to the trash. Without it only a design Dutchman made from the same input, unchanged since, is replaced: a taken name gets the next free one (`part (2).sc`, `part (3).sc`), and the `.report.json`, `.failed.json` and `.replay.json` beside it, the logs and the anonymous report follow the same rule. The report states the path written. |
 | `--no-clobber` | Does nothing: not replacing is the default. Kept so existing scripts work. |
 | `--project DIR` | The project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an `.ipj`, else two folders up. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `--search DIR` | Another folder to search for part files the project folder does not hold, such as a shared library. May be given more than once. |

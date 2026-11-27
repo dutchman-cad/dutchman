@@ -1889,7 +1889,7 @@ mod tests {
         assert_eq!(row["reason"], json!(clean));
         assert_eq!(row["reason_raw"], json!(raw));
         assert_eq!(row["source"], "solidcraft");
-        assert_eq!(row["category"], "fillet-overflows-neighbouring-face");
+        assert_eq!(row["category"], "fillet-overflows-neighboring-face");
         assert_eq!(
             row["upstream"],
             "https://github.com/tangency-labs/solidcraft/issues/4782"

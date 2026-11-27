@@ -64,6 +64,17 @@ fn sized(input: &Path) -> Message {
     }
 }
 
+/// `event` with a finished report marked as it is saved (see [`dutchman::saved_report::mark`]).
+fn marked(event: Event) -> Event {
+    match event {
+        Event::Finished(index, mut report) => {
+            dutchman::saved_report::mark(&mut report);
+            Event::Finished(index, report)
+        }
+        other => other,
+    }
+}
+
 fn save_report(output: &Path, report: &Value, send: &impl Fn(Message)) {
     if let Err(message) = dutchman::saved_report::save(output, report) {
         send(Message::ReportSaveFailed(message));
@@ -148,8 +159,12 @@ impl Run {
             // A panic here must not take the window down; it ends the run.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let batch::Plan {
-                    mut jobs, problems, ..
+                    mut jobs,
+                    mut problems,
+                    ..
                 } = batch::plan(&inputs, &out_dir);
+                // What the window shows of a report is what is saved of it.
+                problems.iter_mut().for_each(dutchman::saved_report::mark);
                 batch::prepare(&mut jobs, &options);
                 let refused: Vec<PathBuf> = problems
                     .iter()
@@ -180,6 +195,7 @@ impl Run {
                     send(sized(input));
                 }
                 let on_event = |event: Event| {
+                    let event = marked(event);
                     if let Event::Finished(index, report) = &event {
                         if let Some(job) = jobs.get(*index) {
                             save_report(&job.output, report, &send);
@@ -228,6 +244,7 @@ impl Run {
             };
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let on_event = |event: Event| {
+                    let event = marked(event);
                     if let Event::Finished(_, report) = &event {
                         save_report(&output, report, &send);
                     }

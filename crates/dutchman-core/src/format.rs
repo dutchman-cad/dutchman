@@ -293,7 +293,7 @@ impl Format {
         } else if self.codec_id().is_some() {
             "opens, no geometry yet"
         } else {
-            "recognised, not read yet"
+            "recognized, not read yet"
         }
     }
 
