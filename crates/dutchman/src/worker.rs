@@ -1936,12 +1936,33 @@ mod output_kept_tests {
         let input = dir.path().join("in.step");
         let output = dir.path().join("out.sc");
         std::fs::write(&input, "x").unwrap();
+        // The child finishes its write, says it is in the write stage, and then hangs. The stop
+        // is requested when that stage is reported, not after a guessed time, so a busy machine
+        // cannot stop the child before it has written.
         let program = fake_child(
             dir.path(),
-            "printf finished > \"$3\"\necho 'dutchman-stage: write' >&2\n\
+            "printf finished > \"$3\"\n\
+             echo '{\"schema\":\"dutchman.progress/1\",\"stage\":\"write\",\"elapsed_ms\":0,\
+             \"designs_read\":0,\"designs_total\":null,\"heartbeat\":false}' >&2\n\
              sleep 30",
         );
-        let report = run(&program, &job(&input, &output), &limits(1500, None));
+        let options = ConvertOptions {
+            no_memory_check: true,
+            ..ConvertOptions::default()
+        };
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let report = convert_isolated_with_stop(
+            &program,
+            &job(&input, &output),
+            &options,
+            &limits(120_000, None),
+            Some(StopSignal::Cancel(&stop)),
+            &|event| {
+                if event.stage == dutchman_core::Stage::Write {
+                    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            },
+        );
         assert_eq!(report["ok"], false);
         assert_eq!(report["error"]["stage"], "write");
         assert_eq!(std::fs::read_to_string(&output).unwrap(), "finished");
