@@ -352,14 +352,27 @@ pub fn estimate(options: &FetchOptions) -> Result<Estimate> {
 
 /// Fetches after the estimate was shown and, if it was above [`ASK_ABOVE_CALLS`], allowed.
 pub fn run_after(options: &FetchOptions, estimate: &Estimate) -> Value {
+    run_after_with_progress(options, estimate, None)
+}
+
+/// [`run_after`], telling `progress` after each call.
+pub fn run_after_with_progress(
+    options: &FetchOptions,
+    estimate: &Estimate,
+    mut progress: Option<&mut dyn FetchProgress>,
+) -> Value {
     let result = setup(options).and_then(|setup| {
-        let result = fetch_approved(
+        let progress = progress
+            .as_mut()
+            .map(|progress| &mut **progress as &mut dyn FetchProgress);
+        let result = fetch_approved_watched(
             &mut NetworkClient::default(),
             &setup.credentials,
             &setup.source,
             &setup.output,
             &setup.cache,
             estimate,
+            progress,
         );
         finish(result, setup.retitle)
     });
@@ -421,6 +434,25 @@ impl Estimate {
 }
 
 pub const APPROVAL_NEEDED: &str = "This Onshape document needs more of your yearly API calls than Dutchman spends without asking (Onshape's Free plan allows 2,500 a year), so it stopped before fetching. Ask the user, then allow it with --yes on the command line, or with an explicit --max-calls (MCP: max_calls) that caps the calls it may use.";
+/// What a stop at the call limit says on the command line: the calls spent, what the whole
+/// document needs, and the `--max-calls` that finishes it. Cached replies cost none on the
+/// rerun.
+pub fn budget_stop_text(calls: u32, estimate: Option<u32>) -> String {
+    let spent = calls_text(calls);
+    match estimate {
+        Some(needed) => {
+            // A limit that does not exceed the calls already spent would stop at once.
+            let needed = needed.max(calls.saturating_add(1));
+            format!(
+                "Onshape call budget reached after {spent} API calls; this document needs about {}. Rerun with --max-calls {needed} (MCP: max_calls) to finish; replies already fetched cost no calls.",
+                calls_text(needed)
+            )
+        }
+        None => format!(
+            "Onshape call budget reached after {spent} API calls. Rerun with a larger --max-calls (MCP: max_calls) to finish; replies already fetched cost no calls."
+        ),
+    }
+}
 pub const APPROVAL_DECLINED: &str = "Fetch canceled. No more Onshape API calls were used.";
 
 /// Lists the document, which costs at most three calls and is cached, and counts what the
@@ -517,16 +549,33 @@ pub fn fetch_approved<C: HttpClient>(
     cache: &Path,
     estimate: &Estimate,
 ) -> Result<FetchReport> {
+    fetch_approved_watched(client, credentials, source, output, cache, estimate, None)
+}
+
+/// [`fetch_approved`], telling `progress` after each call.
+pub fn fetch_approved_watched<'a, C: HttpClient>(
+    client: &'a mut C,
+    credentials: &'a FetchAuth,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+    estimate: &Estimate,
+    progress: Option<&'a mut dyn FetchProgress>,
+) -> Result<FetchReport> {
     fetch_auth(
         client,
         credentials.as_auth(),
         source,
         output,
         cache,
-        http::AUTO_BASE_CALLS.max(estimate.listing_calls),
+        // The limit fits the estimate the user was shown, so a document that needs a call
+        // more than the starting limit is not stopped at it. It still grows as work is found.
+        http::AUTO_BASE_CALLS
+            .max(estimate.listing_calls)
+            .max(estimate.calls.min(http::AUTO_CEILING_CALLS)),
         true,
         Some(estimate),
-        None,
+        progress,
     )
 }
 
@@ -590,7 +639,7 @@ fn fetch_gated_watched<'a, C: HttpClient>(
     yes: bool,
     progress: Option<&'a mut dyn FetchProgress>,
 ) -> Result<FetchReport> {
-    if max_calls.is_some() || yes {
+    if max_calls.is_some() {
         return fetch_watched(
             client,
             credentials,
@@ -601,17 +650,17 @@ fn fetch_gated_watched<'a, C: HttpClient>(
             progress,
         );
     }
+    // `yes` is the consent, so it skips the question but not the estimate: the limit still
+    // fits the document, for the command line, the app and the MCP tool alike.
     let estimate = estimate_calls(client, credentials, source, cache)?;
-    approval(&estimate, false, false, |_| false)?;
-    fetch_auth(
+    approval(&estimate, yes, false, |_| false)?;
+    fetch_approved_watched(
         client,
-        credentials.as_auth(),
+        credentials,
         source,
         output,
         cache,
-        http::AUTO_BASE_CALLS.max(estimate.listing_calls),
-        true,
-        Some(&estimate),
+        &estimate,
         progress,
     )
 }
@@ -818,7 +867,8 @@ fn fetch_auth<'a, C: HttpClient>(
         max_calls,
         auto,
         progress,
-        needed: None,
+        // Until the fetch counts what is left, the estimate is what it is expected to need.
+        needed: after.map(|estimate| estimate.calls),
     };
     let result = fetch_inner(
         &mut session,

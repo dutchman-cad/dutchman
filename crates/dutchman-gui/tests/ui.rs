@@ -5002,7 +5002,7 @@ mod paste_inputs {
         // The numbers are stated, with a thousands separator.
         assert_eq!(
             message,
-            "Stopped after 50 Onshape API calls. About 1,500 more are needed; Continue fetching uses them from your yearly allowance. What's fetched so far is kept."
+            "Stopped after 50 Onshape API calls. About 1,500 more needed, 1,550 in all; choose Continue fetching to confirm them against your yearly allowance. What's fetched so far is kept."
         );
         // It is resumable, so it does not look like a failure.
         assert_eq!(h.state().rows()[0].status, Status::Stopped);
