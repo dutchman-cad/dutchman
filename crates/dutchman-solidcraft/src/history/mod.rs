@@ -775,6 +775,10 @@ struct Context<'a> {
     topological_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
+    /// Whether an earlier feature made a body the history could not name. Then the one
+    /// named body is not necessarily the only body, so a single-body input state cannot be
+    /// taken for it.
+    unnamed_bodies: bool,
     /// Bodies an earlier feature makes that the final model leaves out, under their names:
     /// ((CADIR producing feature id, feature-local body id), name).
     generated_bodies: Vec<((String, String), String)>,
@@ -849,6 +853,7 @@ impl<'a> Context<'a> {
             pattern_replay_required: false,
             topological_replay_required: false,
             named_bodies: Vec::new(),
+            unnamed_bodies: false,
             generated_bodies: Vec::new(),
             confirming_consumed_bodies: false,
             default_bodies: BTreeMap::new(),
@@ -1557,6 +1562,7 @@ fn map_into(
         map_unbound_sketches(feature, &bound, &mut ctx, report, &mut history, references);
         let builds = ctx.builds;
         let named_bodies = ctx.named_bodies.len();
+        let unnamed_bodies = ctx.unnamed_bodies;
         let before = history.features.len();
         let blends = ctx.blends.len();
         let inferred = infer::map(
@@ -1588,6 +1594,7 @@ fn map_into(
             }
             ctx.builds = builds;
             ctx.named_bodies.truncate(named_bodies);
+            ctx.unnamed_bodies = unnamed_bodies;
             ctx.extra.clear();
             ctx.blends.truncate(blends);
             history.features.truncate(before);

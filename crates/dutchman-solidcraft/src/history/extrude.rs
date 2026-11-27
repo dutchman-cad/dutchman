@@ -627,6 +627,14 @@ pub(super) fn body_names(
     if operation != "new_body" {
         return None;
     }
+    let names = new_body_names(feature, ctx);
+    if names.is_none() {
+        ctx.unnamed_bodies = true;
+    }
+    names
+}
+
+fn new_body_names(feature: &Value, ctx: &mut Context) -> Option<Vec<String>> {
     if feature
         .pointer("/source_properties/historical_bodies")
         .is_some()
