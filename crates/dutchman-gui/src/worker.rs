@@ -329,9 +329,9 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
                         "CAD designs",
                         &[
                             "f3d", "f3z", "ipt", "iam", "sldprt", "sldasm", "FCStd", "fcstd",
-                            "CATPart", "catpart", "prt", "pvz", "3dm", "sat", "sab", "smt", "smb",
-                            "step", "stp", "igs", "iges", "zip", "idw", "slddrw", "f2d", "dft",
-                            "dwg", "dxf",
+                            "CATPart", "catpart", "prt", "pvz", "AD_PRT", "ad_prt", "3dm", "sat",
+                            "sab", "smt", "smb", "step", "stp", "igs", "iges", "zip", "idw",
+                            "slddrw", "f2d", "dft", "dwg", "dxf",
                         ],
                     )
                     .add_filter(

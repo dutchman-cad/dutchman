@@ -28,6 +28,7 @@ words!(SourceFormat {
     CreoPart => "creo_part",
     NxPart => "nx_part",
     CreoView => "creo_view",
+    AlibrePart => "alibre_part",
     Rhino => "rhino",
     Acis => "acis",
     Step => "step",

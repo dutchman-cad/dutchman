@@ -225,6 +225,8 @@ fn metadata_identifies_native_apps_without_guessing_exchange_file_authors() {
         ("creo_part", "Creo"),
         ("nx_part", "NX"),
         ("pvz", "Creo View"),
+        ("ad_prt", "Alibre Design"),
+        ("alibre_part", "Alibre Design"),
         ("3dm", "Rhino"),
         ("prt", "unknown"),
         ("step", "unknown"),

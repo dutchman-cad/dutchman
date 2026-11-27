@@ -1,6 +1,6 @@
 # The FreeCAD add-on
 
-[Dutchman for FreeCAD](https://github.com/dutchman-cad/freecad-addon) is a FreeCAD add-on that opens the files Dutchman reads (Fusion, Inventor, SolidWorks, CATIA, NX, Rhino, Creo View, ACIS, STEP, IGES and more) directly in FreeCAD. Dutchman converts the file in the background and the add-on loads the result into your document.
+[Dutchman for FreeCAD](https://github.com/dutchman-cad/freecad-addon) is a FreeCAD add-on that opens the files Dutchman reads (Fusion, Inventor, SolidWorks, CATIA, NX, Rhino, Creo View, Alibre Design, ACIS, STEP, IGES and more) directly in FreeCAD. Dutchman converts the file in the background and the add-on loads the result into your document.
 
 ## Install
 

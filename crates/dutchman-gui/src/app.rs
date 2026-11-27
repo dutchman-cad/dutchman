@@ -2829,7 +2829,7 @@ impl App {
                     ui.add_space(theme::SPACE_4);
                     ui.label(RichText::new("Drop design files, folders, ZIPs or link shortcuts here").heading());
                     ui.label(
-                        RichText::new("Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo, NX, Creo View, Rhino, ACIS, STEP and IGES")
+                        RichText::new("Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo, NX, Creo View, Alibre Design, Rhino, ACIS, STEP and IGES")
                         .small()
                         .color(p.tide),
                     );

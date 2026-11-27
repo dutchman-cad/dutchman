@@ -743,6 +743,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cadmpeg-codec-alibre"
+version = "0.6.12"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=4062d266f6c35b39fda420c3727526023c68fa43#4062d266f6c35b39fda420c3727526023c68fa43"
+dependencies = [
+ "cadmpeg-asm",
+ "cadmpeg-container",
+ "cadmpeg-core",
+ "cadmpeg-ir",
+]
+
+[[package]]
 name = "cadmpeg-codec-catia"
 version = "0.6.12"
 source = "git+https://github.com/cadmpeg/cadmpeg?rev=4062d266f6c35b39fda420c3727526023c68fa43#4062d266f6c35b39fda420c3727526023c68fa43"
@@ -1013,6 +1024,7 @@ name = "cadmpeg-registry"
 version = "0.6.12"
 source = "git+https://github.com/cadmpeg/cadmpeg?rev=4062d266f6c35b39fda420c3727526023c68fa43#4062d266f6c35b39fda420c3727526023c68fa43"
 dependencies = [
+ "cadmpeg-codec-alibre",
  "cadmpeg-codec-catia",
  "cadmpeg-codec-creo",
  "cadmpeg-codec-f3d",
