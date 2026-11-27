@@ -112,7 +112,7 @@ pub enum ReportCase {
 
 pub const REPORT_CONVERTED: &str = "Something wrong? Report this file";
 pub const SEND_CONVERTED_INTRO: &str =
-    "If the converted result has lost features, wrong placement or missing colours, help us fix it:";
+    "If the converted result has lost features, wrong placement or missing colors, help us fix it:";
 
 /// The third card's note for a Fusion tool library.
 pub const SEND_TOOLS_STEP_NOTE: &str =
@@ -1314,7 +1314,7 @@ mod tests {
     fn reporting_distinguishes_converted_and_failed_files_and_excludes_missing_parts() {
         for report in [
             json!({"ok": true}),
-            json!({"ok": true, "losses": [{"level": "Dropped", "message": "Colour omitted"}]}),
+            json!({"ok": true, "losses": [{"level": "Dropped", "message": "Color omitted"}]}),
             json!({"ok": true, "verification": {"status": "flattened"}}),
             json!({"ok": true, "completeness": {"placed_empty": 1}}),
         ] {

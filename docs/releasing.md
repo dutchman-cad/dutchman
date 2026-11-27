@@ -34,7 +34,7 @@ Release notes get a "Breaking changes" section whenever there is a breaking chan
    `OLDEST_SOLIDCRAFT` floor (0.18.2). `NEWEST_SOLIDCRAFT` names only the newest known
    minor, currently `[0, 47]`; a patch release requires no Dutchman constant or docs update.
    Choose the oldest release and newest minor from SolidCraft's release dates, then run
-   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.40.0 0.49` with a read-only GitHub token.
+   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.40.0 0.50` with a read-only GitHub token.
    The script reads the authenticated GitHub releases list, selects the highest published
    stable patch of that minor, and checks its checksum metadata. It prints the constants,
    the oldest checksum, and the newest minor's dynamic CI matrix entry. Copy the constants
@@ -100,6 +100,10 @@ Release notes get a "Breaking changes" section whenever there is a breaking chan
    a draft never reaches the registry. To republish a release's image, run it on demand with
    that tag (`gh workflow run release-image.yml -f tag=vX.Y.Z`). Candidate, merge-queue and manual full
    runs build both image architectures without logging in or pushing.
+   Publishing also moves the `latest-release` branch to the release's commit (`release-branch.yml`), so
+   a Nix flake or git dependency that follows `latest-release` gets the newest release. Candidates and
+   drafts never move it, and it only moves forward. To point it at a published tag by hand:
+   `gh workflow run release-branch.yml -f tag=vX.Y.Z`.
    The same run then builds the Arch Linux package: the `arch-package` job turns the draft's
    x86_64 archive into `dutchman-bin-X.Y.Z-x86_64.pkg.tar.zst` with `makepkg` in an
    `archlinux:latest` container (as a non-root user) and attaches it and its `.sha256` to the
@@ -285,7 +289,7 @@ default features. The nightly keeps its own Rust cache per target (`macos-releas
 release candidate builds use no cache and build from scratch.
 
 Regular releases build with the `release` profile: thin LTO and 16 codegen units. A major or
-stable release, starting with 0.3.0, builds with a slower, fully optimised profile instead
+stable release, starting with 0.3.0, builds with a slower, fully optimized profile instead
 (one codegen unit and fat LTO).
 
 All cadmpeg crates, including cadmpeg-registry, come directly from the pinned git revision.
@@ -306,7 +310,7 @@ nightly. Remove an entry once its fix is released; an empty list publishes an em
 The Linux archive builds run in Debian bookworm so their glibc requirements fit the
 `debian:bookworm-slim` runtime. `docker/release.Dockerfile` installs the CLI and MCP
 server, plus `dutchman-web` whenever it is included in the archives, and retains the
-licence files. Image licence metadata comes from `Cargo.toml`. Only the image publishing
+license files. Image license metadata comes from `Cargo.toml`. Only the image publishing
 jobs receive `packages: write`. The nightly image job waits for the nightly pre-release
 publication to succeed, then publishes `ghcr.io/dutchman-cad/dutchman:nightly` from the
 same run's Linux artifacts.
@@ -327,8 +331,8 @@ pulls work. See [Docker](docker.md) for conversion, MCP and Compose examples.
 The **Public corpus sweep** workflow (`.github/workflows/corpus-sweep.yml`) converts the CAD
 files of public repositories on GitHub's free runners, so a sweep over a real-world corpus does
 not need anyone's machine. `corpus/public.toml` lists the sources: only public repositories under
-an open licence, each with its SPDX licence. The workflow reads the licence from the GitHub API
-and skips a source whose licence no longer matches. A repository with no open licence is not
+an open license, each with its SPDX license. The workflow reads the license from the GitHub API
+and skips a source whose license no longer matches. A repository with no open license is not
 listed (the file says which were left out). It fetches only the CAD files, never the whole
 repository, and publishes nothing: the results are workflow artifacts and the run summary.
 

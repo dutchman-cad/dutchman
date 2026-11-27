@@ -6,7 +6,10 @@ decoding land in cadmpeg and reach Dutchman when the pin is bumped. This page sa
 Dutchman makes of what that codec gives, and which upstream gaps keep SolidWorks history from
 replaying. It drives what is asked of cadmpeg next.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`a3e6191d`: `f1338aa2`, after cadmpeg 0.6.12, plus cadmpeg#1646).
+State at the cadmpeg commit pinned in `Cargo.toml` (`12ade170`, after cadmpeg 0.6.12).
+Assembly decoding completes the document root after projecting the component tree,
+so assemblies retain one root definition and project conversion can group their referenced parts.
+
 `dutchman formats` reports the reader's current reader status alongside what Dutchman converts.
 
 Compact extrusion continuation records now supply their join or cut operation when their
@@ -44,7 +47,7 @@ seam.
 Stored base features name only regions that STEP can emit: a region with no shells
 contributes no shape and consumes no appearance target. Empty exterior or void regions
 therefore do not discard the editable history. Other shape-count mismatches leave the explicit appearance targets unbound while
-keeping the base geometry and history; colours must never shift onto different bodies.
+keeping the base geometry and history; colors must never shift onto different bodies.
 
 Offset datum planes retain their resolved reference frame and signed distance for later
 plane consumers. A missing support does not block history when every consumer is a sketch
@@ -96,6 +99,12 @@ placement is reported.
 
 ## Assemblies (`.sldasm`)
 
+Ordered child occurrences now belong to product definitions, and external file
+paths and configuration names belong to the prototype definition's storage.
+Dutchman follows those references through local sub-assemblies when planning
+folder and ZIP projects, so parts claimed by an assembly are not converted again
+as unused parts.
+
 Assemblies convert as placed parts and nested components. cadmpeg supplies product definitions,
 occurrences and placements; Dutchman resolves external `.sldprt` and `.sldasm` references
 through the shared assembly file finder. Absolute Windows paths are matched by file name,
@@ -106,14 +115,16 @@ the first part files it looked for. "Beside the assembly" also holds for a bare 
 `dutchman convert A01a.SLDASM` run in the assembly's own folder.
 See [finding part files](inventor.md#finding-the-part-files) for the shared search rules.
 
-Local sub-assemblies keep their component tree. Referenced assembly files are read recursively,
+The file's root component stays around its placed parts, including when CADIR stores
+those occurrences directly on the file definition. Local sub-assemblies keep their
+component tree. Referenced assembly files are read recursively,
 with cycle protection and a depth limit of 32. Repeated references to the saved active
 configuration share one read across the whole assembly tree, including sibling sub-assemblies.
 Saved display tessellations are released before building that tree; exact geometry and feature
 history are kept.
 
-Assemblies with many coloured faces retain their body and face colours without long pauses
-while mapping those colours, including with the fast preset.
+Assemblies with many colored faces retain their body and face colors without long pauses
+while mapping those colors, including with the fast preset.
 
 Parts that cannot be found or read are left out and reported for every affected occurrence;
 the remaining parts still convert. Virtual components without readable geometry are reported.

@@ -94,7 +94,7 @@ fn header_harness(width: f32, theme: ThemePreference, update: bool) -> Harness<'
         .with_size(egui::vec2(width, 680.0))
         .build_eframe(|cc| test_app(cc));
     h.ctx.set_theme(theme);
-    h.state_mut().preview_solidcraft(Some("0.49.9"));
+    h.state_mut().preview_solidcraft(Some("0.50.9"));
     if update {
         h.state_mut()
             .updater
@@ -125,11 +125,11 @@ fn assert_header_fits(h: &Harness<'_, App>, width: f32, update: bool, theme: &st
     let narrow = width - 64.0 < 850.0;
     let mut labels = vec!["Settings", "Report a problem"];
     let found = h
-        .query_by_label(if narrow { "0.49" } else { "SolidCraft 0.49" })
+        .query_by_label(if narrow { "0.50" } else { "SolidCraft 0.50" })
         .is_some();
     labels.push(match (narrow, found) {
-        (true, true) => "0.49",
-        (false, true) => "SolidCraft 0.49",
+        (true, true) => "0.50",
+        (false, true) => "SolidCraft 0.50",
         (true, false) => "not found",
         (false, false) => "SolidCraft not found",
     });
@@ -263,7 +263,7 @@ fn header_version_screenshots() {
                 .with_size(egui::vec2(1280.0, 800.0))
                 .build_eframe(|cc| test_app(cc));
             harness.ctx.set_theme(theme);
-            harness.state_mut().preview_solidcraft(Some("0.49.0"));
+            harness.state_mut().preview_solidcraft(Some("0.50.0"));
             harness.run_steps(8);
             let title = baseline_of(&harness, "Dutchman Convert", dutchman_gui::theme::title());
             let small = baseline_of(
@@ -928,13 +928,13 @@ fn screenshots() {
             "A newer release is available: the Update pill in the header.",
         );
         for (found, case, update, width) in [
-            (Some("0.49.9"), "current", false, 1120.0),
-            (Some("0.50.0"), "newer", false, 1120.0),
-            (Some("0.50.0"), "newer-update", true, 1120.0),
+            (Some("0.50.9"), "current", false, 1120.0),
+            (Some("0.51.0"), "newer", false, 1120.0),
+            (Some("0.51.0"), "newer-update", true, 1120.0),
             (Some("0.17.9"), "too-old", false, 1120.0),
             (Some("0.24.0"), "older-history", false, 1120.0),
             (None, "none-found", false, 1120.0),
-            (Some("0.50.0"), "narrow", true, 760.0),
+            (Some("0.51.0"), "narrow", true, 760.0),
         ] {
             let mut preview = Harness::builder()
                 .with_size(egui::vec2(width, 680.0))
@@ -978,7 +978,7 @@ fn screenshots() {
                     "too-old" => "is too old to open Dutchman's designs",
                     "older-history" => "A newer SolidCraft keeps more of their history.",
                     "none-found" => "SolidCraft not found. Install SolidCraft",
-                    _ => "SolidCraft 0.49 is installed.",
+                    _ => "SolidCraft 0.50 is installed.",
                 })
                 .is_some());
             let file = format!("00-solidcraft-{case}-{name}.png");
@@ -1377,13 +1377,13 @@ fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
         return;
     }
     for (found, expected) in [
-        (Some("0.50.0"), "is newer than this Dutchman knows"),
+        (Some("0.51.0"), "is newer than this Dutchman knows"),
         (Some("0.17.9"), "is too old to open Dutchman's designs"),
         (
             Some("0.24.0"),
             "A newer SolidCraft keeps more of their history.",
         ),
-        (Some("0.49.0"), "SolidCraft 0.49 is installed."),
+        (Some("0.50.0"), "SolidCraft 0.50 is installed."),
         (None, "SolidCraft not found. Install SolidCraft"),
     ] {
         let mut harness = Harness::builder()
@@ -1450,10 +1450,10 @@ fn solidcraft_panel_takes_a_chosen_cli_and_explains_the_app_alone() {
         .query_by_label_contains("Found the SolidCraft app")
         .is_none());
 
-    script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.49.0");
+    script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.50.0");
     harness.state_mut().choose_solidcraft_cli(&app);
     harness.run_steps(8);
-    assert!(harness.query_by_label("SolidCraft 0.49").is_some());
+    assert!(harness.query_by_label("SolidCraft 0.50").is_some());
     assert!(harness.query_by_label("Find automatically").is_some());
     assert!(harness
         .query_by_label_contains("the portable ZIP and the MSI")
@@ -2208,7 +2208,7 @@ mod consent_e2e {
             // Parts unplaced.
             json!({"ok": true, "mode": "import", "completeness": {"placed": 2, "placed_empty": 1, "placements": 3, "left_out": []}}),
             // Colours dropped.
-            json!({"ok": true, "mode": "import", "losses": [{"level": "Dropped", "subject": "appearance", "message": "Colour omitted"}]}),
+            json!({"ok": true, "mode": "import", "losses": [{"level": "Dropped", "subject": "appearance", "message": "Color omitted"}]}),
         ];
         for report in cases {
             let sent = send_converted(report.clone());
@@ -3477,7 +3477,7 @@ fn tool_library_screenshots() {
                 let mut harness = screenshot_harness(theme);
                 harness.set_size(egui::vec2(1280.0, 800.0));
                 harness.state_mut().set_checker_for_test(true);
-                harness.state_mut().preview_solidcraft(Some("0.49.0"));
+                harness.state_mut().preview_solidcraft(Some("0.50.0"));
                 harness.state_mut().add_inputs([input.clone()]);
                 harness.state_mut().set_out_dir(docs.join("Converted"));
                 harness.state_mut().set_project_summary_for_test(&summary);
@@ -3761,7 +3761,7 @@ fn fit_harness_for(
         .with_size(egui::vec2(size[0], size[1]))
         .build_eframe(|cc| test_app(cc));
     harness.ctx.set_theme(theme);
-    harness.state_mut().preview_solidcraft(Some("0.49.9"));
+    harness.state_mut().preview_solidcraft(Some("0.50.9"));
     // A fixed checker, so no path of the machine running the test is shown.
     #[cfg(feature = "test-support")]
     harness.state_mut().set_checker_for_test(true);
@@ -4258,7 +4258,7 @@ fn solidcraft_window_screenshots() {
             "{window:?} outside {viewport:?}"
         );
         let texts: &[&str] = if found {
-            &["SolidCraft 0.49 is installed."]
+            &["SolidCraft 0.50 is installed."]
         } else {
             &[
                 "SolidCraft not found.",
@@ -4478,7 +4478,7 @@ fn running_step_screenshots() {
     ] {
         for seconds in [0, 61, 120, 121] {
             let mut harness = screenshot_harness(theme);
-            harness.state_mut().preview_solidcraft(Some("0.49.0"));
+            harness.state_mut().preview_solidcraft(Some("0.50.0"));
             harness.state_mut().set_checker_for_test(true);
             harness
                 .state_mut()
@@ -4543,7 +4543,7 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
             .with_size(egui::vec2(width, 800.0))
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
-        harness.state_mut().preview_solidcraft(Some("0.49.0"));
+        harness.state_mut().preview_solidcraft(Some("0.50.0"));
         harness.state_mut().set_checker_for_test(true);
         let rows = (0..1293)
             .map(|index| {
@@ -5057,7 +5057,7 @@ mod paste_inputs {
                 let mut h = window(true);
                 h.ctx.set_theme(theme);
                 h.state_mut().set_checker_for_test(true);
-                h.state_mut().preview_solidcraft(Some("0.49.0"));
+                h.state_mut().preview_solidcraft(Some("0.50.0"));
                 h.state_mut()
                     .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
                 h.state_mut().set_verify(false);
@@ -5478,7 +5478,7 @@ fn a_running_card_shows_the_feature_and_the_measured_note() {
     ] {
         for measured in [false, true] {
             let mut harness = screenshot_harness(theme);
-            harness.state_mut().preview_solidcraft(Some("0.49.1"));
+            harness.state_mut().preview_solidcraft(Some("0.50.1"));
             harness.state_mut().set_checker_for_test(true);
             harness
                 .state_mut()
@@ -5652,7 +5652,7 @@ fn report_flow_case_screenshots() {
             .with_size(size)
             .build_eframe(|cc| test_app(cc));
         h.ctx.set_theme(ThemePreference::Light);
-        h.state_mut().preview_solidcraft(Some("0.49.1"));
+        h.state_mut().preview_solidcraft(Some("0.50.1"));
         h.state_mut().set_checker_for_test(true);
         h.state_mut().set_file_manager(|_| Ok(()));
         h.state_mut().set_out_dir(work.path().join("converted"));
@@ -6040,6 +6040,24 @@ fn connected_onshape_keeps_results_in_their_own_column() {
     }
 }
 
+/// The as-is footer is one line under every control, in both themes, and the left column's
+/// controls stay on screen with it.
+#[cfg(feature = "test-support")]
+#[test]
+fn as_is_footer_is_one_quiet_line_below_the_controls() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let out = tempfile::tempdir().unwrap();
+        let h = many_results_onshape_harness(out.path(), theme, true);
+        let footer = h.get_by_label_contains("provided as is").rect();
+        let convert = h.get_by_label("Convert").rect();
+        assert!(convert.bottom() <= footer.top());
+        assert!(footer.bottom() <= h.ctx.content_rect().bottom());
+        assert!(footer.height() < 24.0, "one line, not a banner");
+        h.get_by_label("More about Dutchman and your files");
+        assert!(!h.state().page_scrolls());
+    }
+}
+
 /// Windows and macOS offer "Export from Fusion…" in the Convert bar (the tests offer it
 /// everywhere): it must not make the left column overflow at 1280x800.
 #[test]
@@ -6057,6 +6075,59 @@ fn the_fusion_button_in_the_convert_bar_keeps_the_left_column_inside() {
         assert!(button.right() <= 1280.0);
         assert!(!h.state().page_scrolls());
     }
+}
+
+/// The main window with the footer at 1280x800, Day and Night: an English design name, and a
+/// long German one (the app has no translations, so the footer stays English in both).
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn as_is_footer_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, file) in [
+        ("en", "Cube.ipt"),
+        (
+            "de-DE",
+            "Getriebegehäuse_Hauptwelle_Lagerdeckel_Konstruktionsstand_Revision_C.ipt",
+        ),
+    ] {
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let docs = PathBuf::from("/Users/demo/Documents");
+            let mut harness = screenshot_harness(theme);
+            harness.set_size(egui::vec2(1280.0, 800.0));
+            harness.state_mut().preview_solidcraft(Some("0.50.0"));
+            harness.state_mut().set_out_dir(docs.join("Converted"));
+            let mut report = developer_notes_report();
+            report["mode"] = serde_json::json!("history");
+            let stem = file.trim_end_matches(".ipt");
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: docs.join(file),
+                    output: Some(docs.join("Converted").join(format!("{stem}.sc"))),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(report),
+                });
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("as-is-footer-{language}"),
+                name,
+                "The main window with the as-is line at the bottom.",
+            );
+        }
+    }
+    std::fs::write(dir.join("as-is-footer.md"), index).unwrap();
 }
 
 /// Synthetic result cards, identical in both revisions for screenshot comparison.
@@ -6321,7 +6392,7 @@ fn import_notes_screenshots() {
             let mut harness = screenshot_harness(theme);
             harness.set_size(egui::vec2(1280.0, 800.0));
             harness.state_mut().set_checker_for_test(true);
-            harness.state_mut().preview_solidcraft(Some("0.49.1"));
+            harness.state_mut().preview_solidcraft(Some("0.50.1"));
             harness.state_mut().set_out_dir(docs.join("Converted"));
             let output = docs.join("Converted").join(file.replace(".f3d", ".sc"));
             let report = serde_json::json!({
@@ -6339,7 +6410,7 @@ fn import_notes_screenshots() {
                  "message": "SolidCraft could not rebuild the feature"},
                 {"level": "Info", "code": "dutchman/appearance.redundant-face",
                  "subject": part, "stage": "map",
-                 "message": "A face colour equal to its body colour was not written"},
+                 "message": "A face color equal to its body color was not written"},
                 {"level": "Info", "code": "history/body-scope-confirmed",
                  "subject": format!("{part}: Extrude 3"), "stage": "map",
                  "message": "The bodies this feature acts on were confirmed"},
@@ -6531,7 +6602,7 @@ fn step_cards_screenshots() {
                     .build_eframe(|cc| test_app(cc));
                 harness.ctx.set_theme(theme);
                 harness.state_mut().set_checker_for_test(true);
-                harness.state_mut().preview_solidcraft(Some("0.49.0"));
+                harness.state_mut().preview_solidcraft(Some("0.50.0"));
                 harness.state_mut().set_out_dir(docs.join("Converted"));
                 if state == "finished" {
                     harness
@@ -6603,7 +6674,7 @@ fn report_buttons_screenshots() {
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
         harness.state_mut().set_checker_for_test(true);
-        harness.state_mut().preview_solidcraft(Some("0.49.0"));
+        harness.state_mut().preview_solidcraft(Some("0.50.0"));
         harness.state_mut().set_out_dir(docs.join("Converted"));
         harness
             .state_mut()
@@ -6643,7 +6714,7 @@ fn report_buttons_screenshots() {
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
         harness.state_mut().set_checker_for_test(true);
-        harness.state_mut().preview_solidcraft(Some("0.49.0"));
+        harness.state_mut().preview_solidcraft(Some("0.50.0"));
         harness
             .state_mut()
             .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
@@ -6708,7 +6779,7 @@ fn a_drawing_that_is_not_read_yet_is_not_supported_yet_not_failed() {
         assert_eq!(
             harness
                 .query_all_by_label_contains(
-                    "recognised, but reading its sheets isn't supported yet"
+                    "recognized, but reading its sheets isn't supported yet"
                 )
                 .count(),
             2,
