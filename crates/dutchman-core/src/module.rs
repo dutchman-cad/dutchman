@@ -288,7 +288,9 @@ pub fn read_with(
             source,
         })?;
     let out = scratch.path();
-    let read_args = |all: bool| -> Vec<&OsStr> {
+    // `--copper all` (when asked for) first, then one `--accept-overlay <kind>` for each kind
+    // the module only sends when told. An older module rejects an option it does not know.
+    let read_args = |copper_all: bool, accept: bool| -> Vec<&OsStr> {
         let mut args: Vec<&OsStr> = vec![
             "read".as_ref(),
             input.as_os_str(),
@@ -296,30 +298,42 @@ pub fn read_with(
             out.as_os_str(),
             "--json".as_ref(),
         ];
-        if all {
+        if copper_all {
             args.push(OsStr::new("--copper"));
             args.push(OsStr::new("all"));
         }
+        if accept {
+            for kind in crate::package::ACCEPTED_OVERLAY_KINDS {
+                args.push(OsStr::new("--accept-overlay"));
+                args.push(OsStr::new(kind));
+            }
+        }
         args
     };
-    let mut run = run(
-        program,
-        &read_args(copper == CopperLayers::All),
-        limits.timeout,
-    )
-    .map_err(|err| Error::Module(cannot_start(program, &err)))?;
-    let mut copper_unsupported = false;
-    if copper == CopperLayers::All && !run.timed_out && !run.status.is_some_and(|s| s.success()) {
-        // An older module rejects the unknown `--copper` option; read again for the outer faces.
+    let want_copper = copper == CopperLayers::All;
+    let mut run = run(program, &read_args(want_copper, true), limits.timeout)
+        .map_err(|err| Error::Module(cannot_start(program, &err)))?;
+    // Which options an older module turned down: the one extra read leaves out only those.
+    let (mut copper_unsupported, mut accept_unsupported) = (false, false);
+    if !run.timed_out && !run.status.is_some_and(|s| s.success()) {
         let said = format!("{}{}", lossy(&run.stderr), lossy(&run.stdout)).to_ascii_lowercase();
-        if said.contains("--copper")
-            || said.contains("unexpected argument")
-            || said.contains("unrecognized")
+        let rejected = said.contains("unexpected argument")
             || said.contains("unknown option")
-        {
-            copper_unsupported = true;
-            run = self::run(program, &read_args(false), limits.timeout)
-                .map_err(|err| Error::Module(cannot_start(program, &err)))?;
+            || said.contains("unknown argument");
+        let names_copper = said.contains("--copper");
+        let names_accept = said.contains("--accept-overlay");
+        if rejected || names_copper || names_accept {
+            // `--copper` came before `--accept-overlay` in modules, so one that does not know
+            // `--copper` does not know `--accept-overlay` either. An error that names only
+            // `--accept-overlay` keeps `--copper`; one that names neither leaves both out.
+            accept_unsupported = true;
+            copper_unsupported = want_copper && (names_copper || !names_accept);
+            run = self::run(
+                program,
+                &read_args(want_copper && !copper_unsupported, false),
+                limits.timeout,
+            )
+            .map_err(|err| Error::Module(cannot_start(program, &err)))?;
         }
     }
     let stderr = lossy(&run.stderr);
@@ -398,6 +412,17 @@ pub fn read_with(
             )
         }
     };
+    if accept_unsupported {
+        report.push_at(
+            Stage::Decode,
+            Severity::Info,
+            "electronics module",
+            format!(
+                "the installed electronics module {} does not support `--accept-overlay`, so it sent no laminate and an opaque solder mask; install a newer module for those: {ELECTRONICS_URL}",
+                info.version
+            ),
+        );
+    }
     if copper_unsupported {
         report.push_at(
             Stage::Decode,
@@ -695,37 +720,63 @@ cat "$out/manifest.json""#
         (report, calls.lines().map(str::to_owned).collect())
     }
 
+    /// A `read` script that rejects any command line naming `flag`, as an older module does,
+    /// and otherwise acts like `copper_echo`. Each run is recorded, so a rejected run shows once
+    /// and an accepted one twice.
+    fn rejecting(flag: &str) -> String {
+        format!(
+            "echo \"$*\" >> \"$(dirname \"$in\")/calls.log\"\ncase \"$*\" in *{flag}*) echo \"error: unexpected argument '{flag}' found\" >&2; exit 2 ;; esac\n{}",
+            copper_echo()
+        )
+    }
+
+    fn note<'a>(report: &'a Report, needle: &str) -> Option<&'a crate::report::Loss> {
+        report.losses().iter().find(|l| l.detail.contains(needle))
+    }
+
     #[test]
-    fn copper_all_is_passed_to_the_module_and_outer_is_not() {
+    fn both_options_are_passed_to_the_module_and_only_the_accepted_kinds_when_outer() {
         let _scripts = scripts();
-        let (_, all) = read_copper(&copper_echo(), CopperLayers::All);
+        let (report, all) = read_copper(&copper_echo(), CopperLayers::All);
         assert_eq!(all.len(), 1, "{all:?}");
-        assert!(all[0].ends_with("--json --copper all"), "{all:?}");
+        assert!(
+            all[0].ends_with("--json --copper all --accept-overlay laminate"),
+            "{all:?}"
+        );
+        assert!(note(&report, "does not support").is_none());
         let (_, outer) = read_copper(&copper_echo(), CopperLayers::Outer);
         assert_eq!(outer.len(), 1, "{outer:?}");
         assert!(!outer[0].contains("--copper"), "{outer:?}");
+        assert!(outer[0].ends_with("--accept-overlay laminate"), "{outer:?}");
         assert_eq!("all".parse::<CopperLayers>(), Ok(CopperLayers::All));
         assert!("inner".parse::<CopperLayers>().is_err());
     }
 
     #[test]
-    fn an_older_module_without_copper_falls_back_to_outer_with_a_note() {
+    fn an_older_module_without_copper_falls_back_with_both_notes_in_one_extra_read() {
         let _scripts = scripts();
-        let older = format!(
-            "echo \"$*\" >> \"$(dirname \"$in\")/calls.log\"\ncase \"$*\" in *--copper*) echo \"error: unexpected argument '--copper' found\" >&2; exit 2 ;; esac\n{}",
-            copper_echo()
-        );
-        let (report, calls) = read_copper(&older, CopperLayers::All);
-        // Asked with `--copper all`, refused, then asked again without it.
+        let (report, calls) = read_copper(&rejecting("--copper"), CopperLayers::All);
+        // Asked with both, refused, then asked once more with neither.
         assert_eq!(calls.len(), 3, "{calls:?}");
         assert!(calls[0].contains("--copper all"), "{calls:?}");
-        assert!(!calls[2].contains("--copper"), "{calls:?}");
-        let note = report
-            .losses()
-            .iter()
-            .find(|l| l.detail.contains("does not support `--copper all`"))
-            .expect("a note says the module cannot read inner copper");
-        assert_eq!(note.severity, Severity::Degraded);
+        assert!(
+            !calls[2].contains("--copper") && !calls[2].contains("--accept-overlay"),
+            "{calls:?}"
+        );
+        let copper = note(&report, "does not support `--copper all`").expect("copper note");
+        assert_eq!(copper.severity, Severity::Degraded);
+        assert!(note(&report, "does not support `--accept-overlay`").is_some());
+    }
+
+    #[test]
+    fn a_module_without_accept_overlay_keeps_copper_and_notes_the_missing_kinds() {
+        let _scripts = scripts();
+        let (report, calls) = read_copper(&rejecting("--accept-overlay"), CopperLayers::All);
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert!(calls[0].contains("--accept-overlay laminate"), "{calls:?}");
+        assert!(calls[2].ends_with("--copper all"), "{calls:?}");
+        assert!(note(&report, "does not support `--accept-overlay`").is_some());
+        assert!(note(&report, "does not support `--copper all`").is_none());
     }
 
     #[test]

@@ -17,13 +17,19 @@ Dutchman talks to a module with three commands, each with `--json`:
    for that file. Dutchman runs it for a file whose extension `info` lists, and treats `no` as
    "not a board" with a note. Detection needs the extension as well as the contents, so a board
    renamed to another extension is not read.
-3. `read <file> --out <folder> [--copper all] --json` writes a placed-parts package (below) into a temporary
+3. `read <file> --out <folder> [--copper all] [--accept-overlay <kind>]... --json` writes a placed-parts package (below) into a temporary
    folder and prints the manifest. Dutchman reads the package and deletes the folder.
 
    Dutchman adds `--copper all` only when the person asks for inner copper layers (`--copper all` on the
    command line, the `copper` option of the MCP tools, or **Inner copper layers** under Advanced in the app).
    A module that rejects the option is run again without it, and the report carries a `Degraded` note that only
    the outer layers were read.
+
+   Dutchman also passes one `--accept-overlay <kind>` for each overlay kind it can load that a module sends only
+   when told (`laminate` today). Without the flag a module sends no laminate and an opaque solder mask, so the
+   board is still right. A module that rejects an option is read once more without it: an error naming
+   `--accept-overlay` alone keeps `--copper all`; one naming `--copper`, or neither option, leaves both out. The
+   report notes each option that was dropped. A new kind is added in one place, `ACCEPTED_OVERLAY_KINDS`.
 
 The conversion then goes on like any other: Results card, report, `--json`.
 

@@ -41,6 +41,10 @@ pub const MAX_MANIFEST_BYTES: usize = 16 << 20;
 pub const MAX_PACKAGE_BYTES: u64 = 4 << 30;
 /// The most overlays one package may carry.
 pub const MAX_OVERLAYS: usize = 64;
+/// The overlay kinds Dutchman can load that a module sends only when told to
+/// (`read --accept-overlay <kind>`, once for each). A module that does not know the option
+/// sends none of them, and the board is still right without them. Add a new kind here.
+pub const ACCEPTED_OVERLAY_KINDS: &[&str] = &["laminate"];
 /// The most areas one overlay may carry.
 pub const MAX_AREAS: usize = 100_000;
 /// The most points all the areas of one package may carry.
