@@ -21525,7 +21525,7 @@ fn unresolved_revolve_before_trimmed_cuts(explicit_all: bool) -> Model {
             "edges":{"kind":"historical","value":{"state":"synthetic:shared:input#0",
             "edges":["synthetic:shared:edge#0"],"native":"synthetic corner"}}}]}}}}));
     m["feature_input_topologies"] = json!([{"id":"synthetic:shared:input#0",
-        "input_of":"synthetic:shared:feature#fillet", "bodies":[],"faces":[],"face_owners":[],"vertices":[],
+        "input_of":"synthetic:shared:feature#fillet", "bodies":[],"faces":[],"face_owners":[],"face_geometry":[],"body_writers":[],"vertices":[],
         "edges":["synthetic:shared:edge#0"], "edge_geometry":[{"edge":"synthetic:shared:edge#0",
             "start":{"x":10,"y":8,"z":0},"end":{"x":10,"y":8,"z":26},
             "interior":{"x":10,"y":8,"z":13},"supports": [], "tangent":{"x":0,"y":0,"z":1},"faces":[]}]}]);
