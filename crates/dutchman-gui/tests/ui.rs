@@ -7049,7 +7049,7 @@ fn inner_copper_screenshots() {
             harness.get_by_label("Advanced").click_accesskit();
             harness.run_steps(8);
             harness
-                .get_by_label("Inner copper layers (circuit boards)")
+                .get_by_label("Inner copper layers")
                 .click_accesskit();
             harness.run_steps(8);
             shot(
