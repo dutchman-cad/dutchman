@@ -450,7 +450,9 @@ fn main_panel_control_rows_align_without_overlaps() {
                     hint_rect.bottom(),
                 ),
                 (
-                    h.get_by_label("2. CHOOSE WHERE TO SAVE THEM").rect().bottom(),
+                    h.get_by_label("2. CHOOSE WHERE TO SAVE THEM")
+                        .rect()
+                        .bottom(),
                     h.get_by_label("Change…").rect().bottom(),
                 ),
                 (

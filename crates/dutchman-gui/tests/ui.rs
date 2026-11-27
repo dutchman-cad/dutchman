@@ -177,7 +177,10 @@ fn the_header_has_donate_and_discord_buttons_that_settings_can_hide() {
     assert!(!donate.intersects(discord));
     // Both are buttons a screen reader names.
     for name in ["Donate", "Discord"] {
-        assert_eq!(egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(name)).role(), egui::accesskit::Role::Button);
+        assert_eq!(
+            egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(name)).role(),
+            egui::accesskit::Role::Button
+        );
     }
     h.get_by_label("Settings").click_accesskit();
     h.run_steps(4);
@@ -356,7 +359,10 @@ fn the_main_screen_has_three_numbered_steps_with_labels_before_controls() {
         // Labels stand in one column left of their controls, and Save to is the same column.
         let label_left = h.get_by_label("Save to").rect().left();
         for name in ["Existing files", "Checks"] {
-            assert!((h.get_by_label(name).rect().left() - label_left).abs() < 1.0, "{name}");
+            assert!(
+                (h.get_by_label(name).rect().left() - label_left).abs() < 1.0,
+                "{name}"
+            );
         }
         for (label, control) in [
             ("Existing files", "Replace existing files"),
@@ -381,14 +387,22 @@ fn inner_copper_waits_for_a_circuit_board_in_the_same_place() {
     let spot = h.get_by_label("Inner copper layers").rect();
     assert!(h.get_by_label("Circuit boards").rect().right() <= spot.left());
     h.get_by_label("Add a circuit board to use this.");
-    assert!(egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label("Inner copper layers")).is_disabled());
+    assert!(
+        egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label("Inner copper layers"))
+            .is_disabled()
+    );
     let work = tempfile::tempdir().unwrap();
     let board = work.path().join("controller-board.PcbDoc");
     std::fs::copy(fixture("synthetic_cube.ipt"), &board).unwrap();
     h.state_mut().add_inputs([board]);
     h.run_steps(12);
-    assert!(h.query_by_label("Add a circuit board to use this.").is_none());
-    assert!(!egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label("Inner copper layers")).is_disabled());
+    assert!(h
+        .query_by_label("Add a circuit board to use this.")
+        .is_none());
+    assert!(
+        !egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label("Inner copper layers"))
+            .is_disabled()
+    );
     assert!((h.get_by_label("Inner copper layers").rect().left() - spot.left()).abs() < 1.0);
 }
 
@@ -401,7 +415,14 @@ fn header_controls_share_one_height_and_the_buttons_one_shape() {
     h.run_steps(8);
     let height = |h: &Harness<'_, App>, label: &str| h.get_by_label(label).rect().height();
     let settings = height(&h, "Settings");
-    for name in ["SolidCraft 0.50", "Donate", "Discord", "Day", "Night", "System"] {
+    for name in [
+        "SolidCraft 0.50",
+        "Donate",
+        "Discord",
+        "Day",
+        "Night",
+        "System",
+    ] {
         assert!(
             (height(&h, name) - settings).abs() < 0.5,
             "{name} is {} high, Settings {settings}",
@@ -410,7 +431,10 @@ fn header_controls_share_one_height_and_the_buttons_one_shape() {
     }
     let line = h.get_by_label("Settings").rect().center().y;
     for name in ["Report a problem", "Day", "SolidCraft 0.50"] {
-        assert!((h.get_by_label(name).rect().center().y - line).abs() < 1.0, "{name}");
+        assert!(
+            (h.get_by_label(name).rect().center().y - line).abs() < 1.0,
+            "{name}"
+        );
     }
 }
 
@@ -1444,7 +1468,9 @@ fn screenshots() {
         harness.get_by_label("Dismiss").click_accesskit();
         harness.run_steps(8);
         std::fs::remove_file(unfinished).unwrap();
-        harness.get_by_label("2. CHOOSE WHERE TO SAVE THEM").scroll_to_me();
+        harness
+            .get_by_label("2. CHOOSE WHERE TO SAVE THEM")
+            .scroll_to_me();
         harness.run_steps(8);
         shot(&mut harness, &dir, &mut index, "13-settings", name, "Output folder, SolidCraft output and target, history checking, assembly project folder, and diagnostics settings; scrolled to the output section.");
         harness.get_by_label("Formats").click_accesskit();

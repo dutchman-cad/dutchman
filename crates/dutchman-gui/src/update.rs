@@ -739,8 +739,7 @@ impl Updater {
                         .unwrap_or("")
                 )
             };
-            if crate::theme::header_button(ui, label).clicked()
-            {
+            if crate::theme::header_button(ui, label).clicked() {
                 self.press(ui.ctx());
             }
         }

@@ -2465,7 +2465,11 @@ impl App {
         // Donate and Discord join the controls row, so it needs more room; when it does not fit
         // the whole row goes below the title as one block.
         let width = ui.available_width();
-        let update_room = if self.updater.pill_shown() { 130.0 } else { 0.0 };
+        let update_room = if self.updater.pill_shown() {
+            130.0
+        } else {
+            0.0
+        };
         let needed = if compact { 1100.0 } else { 1216.0 } + update_room;
         let two_rows = width < 1000.0 || width < needed;
         // The wide title includes a subtitle, so it needs more room than the compact title.
@@ -2935,8 +2939,8 @@ impl App {
                             ui.horizontal_wrapped(summary);
                         },
                         |ui| {
-                            let button = egui::Button::new(RichText::new("Clear").small())
-                                .frame(false);
+                            let button =
+                                egui::Button::new(RichText::new("Clear").small()).frame(false);
                             clear = ui.add_enabled(!self.running(), button).clicked();
                         },
                     );
@@ -3083,7 +3087,7 @@ impl App {
             .show(ui, |ui| self.preset_ui(ui));
         egui::CollapsingHeader::new("Advanced").show_unindented(ui, |ui| {
             egui::Grid::new("options-advanced")
-            .spacing([theme::SPACE_2, theme::SPACE_1])
+                .spacing([theme::SPACE_2, theme::SPACE_1])
                 .num_columns(2)
                 .min_col_width(LABEL_COLUMN)
                 .show(ui, |ui| self.advanced_rows(ui, p));
@@ -3150,9 +3154,12 @@ impl App {
         ui.label("Keep");
         let changed = ui
             .horizontal_wrapped(|ui| {
-                ui.add_enabled(narrowing, egui::Checkbox::new(&mut history, "Feature history"))
-                    .on_disabled_hover_text(hint)
-                    .changed()
+                ui.add_enabled(
+                    narrowing,
+                    egui::Checkbox::new(&mut history, "Feature history"),
+                )
+                .on_disabled_hover_text(hint)
+                .changed()
                     | ui.add_enabled(narrowing, egui::Checkbox::new(&mut sketches, "Sketches"))
                         .on_disabled_hover_text(hint)
                         .changed()
@@ -3200,11 +3207,14 @@ impl App {
     fn may_hold_board(&self) -> bool {
         self.inputs.iter().any(|path| {
             path.is_dir()
-                || path.extension().and_then(|e| e.to_str()).is_some_and(|ext| {
-                    ["pcbdoc", "schdoc", "kicad_pcb", "brd", "zip"]
-                        .iter()
-                        .any(|known| ext.eq_ignore_ascii_case(known))
-                })
+                || path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|ext| {
+                        ["pcbdoc", "schdoc", "kicad_pcb", "brd", "zip"]
+                            .iter()
+                            .any(|known| ext.eq_ignore_ascii_case(known))
+                    })
         })
     }
 
@@ -3381,7 +3391,13 @@ impl App {
 
     /// "Save to", the path (cut in the middle when long) and the button that changes it. Once
     /// there are results the path itself opens the choices again.
-    fn save_to_row(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, p: &Palette, collapsed: bool) -> bool {
+    fn save_to_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        p: &Palette,
+        collapsed: bool,
+    ) -> bool {
         let running = self.running();
         let clicked = std::cell::Cell::new(false);
         theme::control_row(ui, |ui| {
@@ -4761,12 +4777,7 @@ fn middle_ellipsis(ui: &egui::Ui, text: &str, max_width: f32) -> String {
 
 /// One group of controls inside a panel, under a small heading. Where the window is wide the
 /// heading stands in the label column, left of its controls, to save a line.
-fn group_row(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    heading: &str,
-    body: impl FnOnce(&mut egui::Ui),
-) {
+fn group_row(ui: &mut egui::Ui, p: &Palette, heading: &str, body: impl FnOnce(&mut egui::Ui)) {
     let text = RichText::new(heading).small().strong().color(p.tide);
     if is_wide(ui) {
         theme::control_row(ui, |ui| {
