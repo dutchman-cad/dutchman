@@ -114,7 +114,7 @@ Folder runs keep the input tree under the selected output folder. For example,
 `in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`, with linked design companions
 and its `.report.json` beside it. Same-named designs in different subfolders stay
 separate. Every design Dutchman writes carries a small "made by Dutchman" record: its version, the
-source file's name, a checksum of the source, the options and the time. Repeating a run into the
+source file's name, a checksum of the source and the options. Repeating a run into the
 same selected folder replaces a design Dutchman made from the same file when nothing has changed
 since (a normal re-convert, no copies pile up); any other file already there is kept, and the new
 design gets the next free name (`part (2).sc`) with its `.report.json` beside it. The result says
