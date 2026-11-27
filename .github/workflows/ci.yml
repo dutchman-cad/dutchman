@@ -54,6 +54,9 @@ jobs:
       # A change to Cargo.toml or Cargo.lock (Dependabot's included) runs the Rust 1.88 build too,
       # so a dependency that moves past the minimum Rust version is caught before it merges.
       lockfile: ${{ steps.diff.outputs.lockfile }}
+      # A pull request that touches the plugin, its packaging or the cadmpeg pin also builds the
+      # plugin component and imports the Fusion fixtures through it (the plugin-host job).
+      plugin: ${{ steps.diff.outputs.plugin }}
       platform: ${{ steps.platform.outputs.platform }}
       floor: ${{ steps.platform.outputs.floor }}
       # Self-hosted 'flyer' runners: the merge queue and pushes to main only. Every pull request
@@ -74,6 +77,7 @@ jobs:
             echo "docker=true" >> "$GITHUB_OUTPUT"
             echo "placements=true" >> "$GITHUB_OUTPUT"
             echo "lockfile=true" >> "$GITHUB_OUTPUT"
+            echo "plugin=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
@@ -82,12 +86,19 @@ jobs:
             echo "docker=true" >> "$GITHUB_OUTPUT"
             echo "placements=true" >> "$GITHUB_OUTPUT"
             echo "lockfile=true" >> "$GITHUB_OUTPUT"
+            echo "plugin=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if git diff --name-only "$BASE" HEAD | grep -qE '(^|/)Cargo\.(toml|lock)$'; then
             echo "lockfile=true" >> "$GITHUB_OUTPUT"
           else
             echo "lockfile=false" >> "$GITHUB_OUTPUT"
+          fi
+          if git diff --name-only "$BASE" HEAD | grep -qE '^(crates/dutchman-plugin/|scripts/package-plugin\.sh$)' \
+            || git diff "$BASE" HEAD -- Cargo.toml Cargo.lock | grep -qE '^[-+][^-+].*cadmpeg'; then
+            echo "plugin=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "plugin=false" >> "$GITHUB_OUTPUT"
           fi
           if git diff --name-only "$BASE" HEAD | grep -qE '^crates/dutchman-(core|solidcraft)/src/assembly' \
             || git diff "$BASE" HEAD -- Cargo.toml Cargo.lock | grep -qE '^[-+][^-+].*cadmpeg'; then
@@ -243,7 +254,7 @@ jobs:
   # stops here as a trap instead of in SolidCraft. Needs the wasm32 target, so GitHub-hosted.
   plugin-host:
     needs: changes
-    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && (needs.changes.outputs.full == 'true' || needs.changes.outputs.plugin == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
