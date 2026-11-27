@@ -16,6 +16,23 @@ pub fn path(output: &Path, success: bool) -> PathBuf {
     })
 }
 
+/// Adds to `report` the entry that names Dutchman and the source the report was made from,
+/// which is how a later conversion knows the report is its own to replace. A report shown in a
+/// window is marked the same way, so what is shown is what is saved. Marking twice changes
+/// nothing.
+pub fn mark(report: &mut Value) {
+    let Some(input) = report
+        .pointer("/input/path")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+    else {
+        return;
+    };
+    if let Some(fields) = report.as_object_mut() {
+        fields.insert("generator".to_owned(), crate::mark::report_mark(&input));
+    }
+}
+
 /// Publish a complete report, keeping the previous report if writing fails.
 pub fn save(output: &Path, report: &Value) -> Result<(), String> {
     let target = path(output, report.get("ok") == Some(&Value::Bool(true)));
@@ -24,15 +41,7 @@ pub fn save(output: &Path, report: &Value) -> Result<(), String> {
             std::fs::create_dir_all(parent)?;
         }
         let mut marked = report.clone();
-        if let (Some(fields), Some(input)) = (
-            marked.as_object_mut(),
-            report.pointer("/input/path").and_then(Value::as_str),
-        ) {
-            fields.insert(
-                "generator".to_owned(),
-                crate::mark::report_mark(Path::new(input)),
-            );
-        }
+        mark(&mut marked);
         let mut bytes = serde_json::to_vec_pretty(&marked)?;
         bytes.push(b'\n');
         // This report belongs to the design just written in its own slot, so it replaces the

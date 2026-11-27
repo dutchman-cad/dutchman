@@ -2800,9 +2800,6 @@ fn ask_ai_copies_a_short_prompt_naming_files_that_exist() {
     assert!(prompt.matches(". ").count() <= 6, "{prompt}");
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
-    // The saved copy also names Dutchman and the source it was made from.
-    let mut saved = saved;
-    saved.as_object_mut().unwrap().remove("generator");
     assert_eq!(Some(&saved), row.report.as_ref());
     // The same text is shown under the button, and Copy copies it again.
     assert_eq!(shown_prompt(&harness), prompt);
