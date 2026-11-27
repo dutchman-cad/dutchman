@@ -964,7 +964,8 @@ fn same_document_two_part_revolute_assembly_includes_referenced_partstudio_once(
                     "documentMicroversion": MID
                 }
             ]
-        }
+        },
+        "subAssemblies": []
     }))
     .unwrap();
     let mut part = partstudio_replies(MID, "1");
@@ -1135,7 +1136,8 @@ fn assembly_fetch_rejects_external_reference_without_document_version() {
                 "elementId": OTHER_ELEMENT,
                 "documentMicroversion": OTHER_MID
             }]
-        }
+        },
+        "subAssemblies": []
     }))
     .unwrap();
 
@@ -2450,7 +2452,7 @@ fn listing_mock(tabs: Value) -> Mock {
         response(200, tabs),
     ]);
     if has_assembly {
-        replies.push_back(response(200, json!({"rootAssembly":{"documentId":DID,"elementId":AS,"documentMicroversion":MID,"instances":[]}})));
+        replies.push_back(response(200, json!({"rootAssembly":{"documentId":DID,"elementId":AS,"documentMicroversion":MID,"instances":[]},"subAssemblies":[]})));
     }
     Mock {
         replies,
@@ -2505,7 +2507,8 @@ fn the_assembly_estimate_counts_external_configurations_and_reuses_definitions()
             "documentId": DID, "elementId": AS, "documentMicroversion": MID,
             "instances": [{"type":"Part","documentId":OTHER,"elementId":OTHER_ELEMENT,
                 "documentVersion":OTHER_VERSION,"documentMicroversion":OTHER_MID,"configuration":"size=large;","linkDocumentId":DID}]
-        }
+        },
+        "subAssemblies": []
     })).unwrap();
     let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
     assert_eq!(estimate.elements, 2);
