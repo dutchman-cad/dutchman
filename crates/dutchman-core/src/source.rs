@@ -165,7 +165,7 @@ mod tests {
                 "path":[1,0], "binding":{"state":"bound","occurrence":"synthetic:assembly:occurrence#0"},
                 "transform":[[1,0,0,25],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
             }]});
-            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            model.ir = crate::test_products::read(&wire);
             Ok(model)
         };
         fn leaf_x(model: &Model) -> f64 {

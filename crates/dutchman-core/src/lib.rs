@@ -12,13 +12,16 @@ pub mod camtools;
 mod companion;
 pub mod contents;
 mod decode;
+pub mod design_history;
 pub mod drawing;
 mod error;
 pub mod estimate;
 mod export_folder;
 mod format;
+mod fusion_archive;
 mod hidden;
 mod input_edges;
+mod ir_retain;
 mod locate;
 mod memory;
 pub mod module;
@@ -39,6 +42,8 @@ pub mod safe_output;
 pub mod source;
 mod source_errors;
 mod source_version;
+#[cfg(test)]
+mod test_products;
 pub mod time;
 mod up_axis;
 pub use module::CopperLayers;
@@ -288,8 +293,7 @@ pub fn assembly_references(
         return Ok(Vec::new());
     }
     let model = decode_file(format, input, &mut Report::default(), None, search.copper)?;
-    let value = serde_json::to_value(&model.ir.model.occurrences)
-        .map_err(|err| Error::Decode(format!("cannot read assembly references: {err}")))?;
+    let value = assembly::products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
     let finder = locate::Finder::new(search);
     let folder = assembly::input_folder(input);
     let mut references: std::collections::BTreeSet<_> = value
@@ -343,10 +347,13 @@ pub fn assembly_references(
             .map(|definition| (definition.id.as_str(), definition))
             .collect();
         for row in value.as_array().into_iter().flatten().take(MAX_PLACEMENTS) {
+            // The document root is a definition the file itself holds, placed by a
+            // synthetic row. Its name is the input's own, so it is not a reference.
+            // Its direct children can themselves be saved local sub-assemblies.
             if row
-                .pointer("/parent/kind")
-                .and_then(serde_json::Value::as_str)
-                == Some("root")
+                .get("file_root_component")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
             {
                 continue;
             }
@@ -587,7 +594,7 @@ fn local_components_with(
 }
 
 /// Occurrences whose design is a linked document the file doesn't contain: the reader states
-/// their prototype as unresolved.
+/// their prototype as unresolved or refers to an empty unresolved definition.
 fn missing_linked_components(model: &Model, inserted: &assembly::ExternalParts) -> Vec<String> {
     let (Ok(definitions), Ok(occurrences)) = (
         serde_json::to_value(&model.ir.model.product_definitions),
@@ -595,6 +602,14 @@ fn missing_linked_components(model: &Model, inserted: &assembly::ExternalParts) 
     ) else {
         return Vec::new();
     };
+    missing_linked_component_names(&definitions, &occurrences, inserted)
+}
+
+fn missing_linked_component_names(
+    definitions: &serde_json::Value,
+    occurrences: &serde_json::Value,
+    inserted: &assembly::ExternalParts,
+) -> Vec<String> {
     // The placeholder is either a definition with no bodies and no children, or no definition
     // at all (readers that name the unresolved prototype without stating it).
     let empty = |id: &str| {
@@ -622,15 +637,19 @@ fn missing_linked_components(model: &Model, inserted: &assembly::ExternalParts) 
                 .is_some_and(|id| inserted.contains_key(id))
         })
         .filter_map(|row| {
-            // The reader states the prototype as unresolved, or (newer readers) as an empty
-            // placeholder definition named for the unresolved occurrence.
+            // Definition-owned products name the prototype directly by id. Keep the older
+            // tagged forms too; an unresolved suffix alone must not hide stored geometry.
             let unresolved = row
                 .pointer("/prototype/kind")
                 .and_then(serde_json::Value::as_str)
                 == Some("unresolved")
                 || row
-                    .pointer("/prototype/definition")
+                    .get("prototype")
                     .and_then(serde_json::Value::as_str)
+                    .or_else(|| {
+                        row.pointer("/prototype/definition")
+                            .and_then(serde_json::Value::as_str)
+                    })
                     .is_some_and(|definition| {
                         definition.ends_with("/unresolved") && empty(definition)
                     });
@@ -981,7 +1000,6 @@ fn write_output(output: &Path, bytes: &[u8], replace: bool) -> Result<(), Error>
 }
 
 fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {
-    let expected = writer.extension();
     let matches = output
         .extension()
         .and_then(|ext| ext.to_str())
@@ -991,7 +1009,7 @@ fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {
     } else {
         Err(Error::WrongOutputExtension {
             path: output.to_path_buf(),
-            expected,
+            expected: writer.extension(),
         })
     }
 }
@@ -1048,7 +1066,9 @@ mod tests {
             bodies.push(body);
             definitions.push(json!({
                 "id": format!("synthetic:test:component#block-{index}"), "kind": "part",
-                "bodies": [id], "sketches": [], "bom_properties": {}
+                "bodies": [id], "sketches": [], "bom_properties": {},
+                "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [],
+                "instance_bodies": [], "representations": []
             }));
         }
         wire["geometry"]["bodies"] = json!(bodies);
@@ -1117,15 +1137,24 @@ mod tests {
             Some("generated_unit_cube.f3d")
         );
         // Synthetic: two insertions whose source designs the reader states as unresolved.
-        model.ir.model.occurrences = serde_json::from_value(json!([
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        // On this CADIR, an insertion whose design is not in the file is a part definition
+        // with no bodies, as in `missing_links_are_reported_but_embedded_components_are_complete`.
+        wire["model"]["product_definitions"] = json!([{
+            "id": "synthetic:assembly:component#part/unresolved", "kind": "part",
+            "bodies": [], "sketches": [], "bom_properties": {}
+        }]);
+        let prototype =
+            json!({"kind": "local", "definition": "synthetic:assembly:component#part/unresolved"});
+        wire["model"]["occurrences"] = json!([
             {"id": "synthetic:assembly:occurrence#1", "ordinal": 1, "name": "Component Insert",
-             "parent": {"kind": "root"}, "prototype": {"kind": "unresolved"},
+             "parent": {"kind": "root"}, "prototype": prototype,
              "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]},
             {"id": "synthetic:assembly:occurrence#2", "ordinal": 2, "name": "Component Insert",
-             "parent": {"kind": "root"}, "prototype": {"kind": "unresolved"},
+             "parent": {"kind": "root"}, "prototype": prototype,
              "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]}
-        ]))
-        .unwrap();
+        ]);
+        model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         local_components(&mut model, 1, PartPositions::FirstPlaced, &mut report);
         let dropped: Vec<_> = report
@@ -1150,11 +1179,20 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap();
+        // The older tagged form of a missing design names no definition at all.
+        assert_eq!(
+            missing_linked_component_names(
+                &json!([]),
+                &json!([{"id": "synthetic:assembly:occurrence#1", "name": "Component",
+                    "prototype": {"kind": "unresolved"}}]),
+                &assembly::ExternalParts::new()
+            ),
+            vec!["Component"]
+        );
         let body = model.ir.geometry.bodies[0].id.clone();
-        // Both reader representations of a missing design, then a component embedded
+        // A missing design, then a component embedded
         // after breaking its link. All identities and product structure are synthetic.
         for (prototype, bodies, missing) in [
-            (json!({"kind": "unresolved"}), json!([]), true),
             (
                 json!({"kind": "local", "definition": "synthetic:assembly:component#part/unresolved"}),
                 json!([]),
@@ -1166,17 +1204,17 @@ mod tests {
                 false,
             ),
         ] {
-            model.ir.model.product_definitions = serde_json::from_value(json!([{
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["product_definitions"] = json!([{
                 "id": "synthetic:assembly:component#part/unresolved", "kind": "part",
                 "bodies": bodies, "sketches": [], "bom_properties": {}
-            }]))
-            .unwrap();
-            model.ir.model.occurrences = serde_json::from_value(json!([{
+            }]);
+            wire["model"]["occurrences"] = json!([{
                 "id": "synthetic:assembly:occurrence#1", "ordinal": 1, "name": "Component",
                 "parent": {"kind": "root"}, "prototype": prototype,
                 "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]
-            }]))
-            .unwrap();
+            }]);
+            model.ir = crate::test_products::read(&wire);
             let names = missing_linked_components(&model, &assembly::ExternalParts::new());
             assert_eq!(names, if missing { vec!["Component"] } else { vec![] });
             let mut report = Report::default();
@@ -1209,6 +1247,131 @@ mod tests {
                 assert!(losses.is_empty());
                 assert_eq!(report.outcome().unwrap().check, Check::Verified);
                 assert!(report.completeness().unwrap().left_out.is_empty());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod output_checks {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn accepted_suffixes_do_not_probe_the_default_and_errors_still_name_it() {
+        struct ProbedWriter(Cell<usize>);
+        impl Writer for ProbedWriter {
+            fn extension(&self) -> &'static str {
+                self.0.set(self.0.get() + 1);
+                "sc"
+            }
+
+            fn accepts_extension(&self, extension: &str) -> bool {
+                matches!(extension, "sc" | "solidcraft")
+            }
+
+            fn write(
+                &self,
+                _: &Model,
+                _: &mut dyn std::io::Write,
+                _: &mut Report,
+            ) -> Result<(), Error> {
+                Ok(())
+            }
+        }
+        let writer = ProbedWriter(Cell::new(0));
+        assert!(check_output(Path::new("design.sc"), &writer).is_ok());
+        assert!(check_output(Path::new("design.solidcraft"), &writer).is_ok());
+        assert_eq!(writer.0.get(), 0);
+        assert!(matches!(
+            check_output(Path::new("design.txt"), &writer),
+            Err(Error::WrongOutputExtension { expected: "sc", .. })
+        ));
+        assert_eq!(writer.0.get(), 1);
+    }
+}
+
+#[cfg(test)]
+mod missing_links_tests {
+    use super::missing_linked_component_names;
+    use serde_json::json;
+
+    #[test]
+    fn unresolved_prototypes_keep_both_tagged_forms_and_definition_ids() {
+        let definitions = json!([
+            {"id":"link/unresolved", "storage":{"kind":"external"}, "bodies":[], "occurrences":[]},
+            {"id":"body/unresolved", "bodies":["body"], "occurrences":[]},
+            {"id":"assembly/unresolved", "bodies":[], "occurrences":["child"]},
+            {"id":"local", "storage":{"kind":"embedded"}, "bodies":[], "occurrences":[]}
+        ]);
+        let occurrences = json!([
+            {"name":"direct", "prototype":"link/unresolved"},
+            {"name":"tagged", "prototype":{"kind":"local", "definition":"link/unresolved"}},
+            {"name":"old", "prototype":{"kind":"unresolved"}},
+            {"name":"absent", "prototype":"absent/unresolved"},
+            {"name":"old absent", "prototype":{"definition":"absent/unresolved"}},
+            {"name":"stored body", "prototype":"body/unresolved"},
+            {"name":"stored children", "prototype":"assembly/unresolved"},
+            {"name":"tagged body", "prototype":{"definition":"body/unresolved"}},
+            {"name":"tagged children", "prototype":{"definition":"assembly/unresolved"}},
+            {"name":"local empty", "prototype":"local"}
+        ]);
+        assert_eq!(
+            missing_linked_component_names(
+                &definitions,
+                &occurrences,
+                &crate::assembly::ExternalParts::new()
+            ),
+            ["direct", "tagged", "old", "absent", "old absent"]
+        );
+    }
+
+    #[test]
+    fn a_solidworks_assembly_is_not_its_own_reference() {
+        use super::*;
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        for fixture in [
+            "local_cubes.sldasm",
+            "nested_cubes.sldasm",
+            "placed_cubes.sldasm",
+        ] {
+            let source = fixtures.join(fixture);
+            let model = decode_file(
+                Format::SolidWorksAssembly,
+                &source,
+                &mut Report::default(),
+                None,
+            )
+            .unwrap();
+            // Save the assembly under the name its own root component carries (a placed
+            // sub-assembly's name is a reference, so only the root counts).
+            let roots: Vec<_> = model
+                .ir
+                .model
+                .product_definitions
+                .iter()
+                .filter(|definition| {
+                    matches!(
+                        definition.storage,
+                        cadmpeg_ir::products::Storage::File { source: None, .. }
+                    )
+                })
+                .filter_map(|definition| definition.source_name.clone())
+                .collect();
+            for name in roots {
+                let dir = tempfile::tempdir().unwrap();
+                let input = dir.path().join(format!("{name}.sldasm"));
+                if std::fs::copy(&source, &input).is_err() {
+                    continue;
+                }
+                let found = assembly_references(&input, &PartSearch::default()).unwrap();
+                let own = input.canonicalize().unwrap();
+                assert!(
+                    found
+                        .iter()
+                        .all(|path| path.canonicalize().unwrap_or_else(|_| path.clone()) != own),
+                    "{fixture} saved as {name}.sldasm lists itself: {found:?}"
+                );
             }
         }
     }

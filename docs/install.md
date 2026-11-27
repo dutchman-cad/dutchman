@@ -20,7 +20,7 @@ these guides stay beside the programs. Portable Windows updates refresh them too
 ## Windows: the installer
 
 Download `dutchman-VERSION-x86_64-pc-windows-msvc.msi` and its `.msi.sha256` from the
-[latest release](https://github.com/dutchman-cad/dutchman/releases/latest). The README links
+[latest release](https://github.com/dutchman-cad/dutchman/latest-releases/latest). The README links
 the same files under versionless names. Check the hash in PowerShell before opening it:
 
 ```powershell
@@ -187,7 +187,7 @@ Links named `dutchman-mcp` and `dutchman-web` work the same way.
 
 ## From a release archive
 
-Each [release](https://github.com/dutchman-cad/dutchman/releases) has archives for the
+Each [release](https://github.com/dutchman-cad/dutchman/latest-releases) has archives for the
 platforms below. Each archive holds `dutchman` (the command), `dutchman-mcp` (the
 [MCP server](mcp.md)), `dutchman-gui` (the desktop app, from 0.1.1 on), `LICENSE`, `NOTICE`,
 `README.md` and the font licenses, with a `.sha256` file beside it.
@@ -211,7 +211,7 @@ target for another release or machine):
 
 ```sh
 VERSION=0.2.6 TARGET=x86_64-unknown-linux-gnu
-base=https://github.com/dutchman-cad/dutchman/releases/download/v$VERSION
+base=https://github.com/dutchman-cad/dutchman/latest-releases/download/v$VERSION
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz"
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz.sha256"
 sha256sum -c dutchman-$VERSION-$TARGET.tar.gz.sha256
@@ -237,7 +237,7 @@ On macOS, download the latest universal archive and its checksum, check it, and 
 All three programs run on Apple silicon and Intel:
 
 ```sh
-base=https://github.com/dutchman-cad/dutchman/releases/latest/download
+base=https://github.com/dutchman-cad/dutchman/latest-releases/latest/download
 curl -fLO "$base/dutchman-macos-universal.tar.gz"
 curl -fLO "$base/dutchman-macos-universal.tar.gz.sha256"
 shasum -a 256 -c dutchman-macos-universal.tar.gz.sha256
@@ -279,7 +279,7 @@ Expand-Archive dutchman-VERSION-x86_64-pc-windows-msvc.zip -DestinationPath .
 
 - **Stable** releases (`v0.2.6`, …) are the ones to use. Each is built against one tested
   commit of cadmpeg, the library that reads the native files.
-- **Nightly** is one pre-release, [`nightly`](https://github.com/dutchman-cad/dutchman/releases/tag/nightly),
+- **Nightly** is one pre-release, [`nightly`](https://github.com/dutchman-cad/dutchman/latest-releases/tag/nightly),
   rebuilt each day from Dutchman's latest code against cadmpeg's latest code, and published
   only when every test passes. Its notes give both commits and the date. Its archives are
   named `dutchman-nightly-TARGET` and install the same way. Use it when an issue says a fix is
@@ -292,6 +292,11 @@ With Rust 1.88 or newer:
 ```sh
 cargo install --git https://github.com/dutchman-cad/dutchman dutchman
 ```
+
+That builds the newest code on `main`. To build the newest published release instead, add
+`--branch latest-release`: the `latest-release` branch always points at the latest release. A Nix flake or
+other package manager that follows a branch can use the same branch
+(`github:dutchman-cad/dutchman/latest-release`), or a tag such as `v0.3.0` to pin one release.
 
 This installs both `dutchman` and `dutchman-mcp`. Check the install:
 
@@ -336,9 +341,9 @@ it says so under the check option:
 
 Dutchman is made for the current SolidCraft (any release from the last two weeks);
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
-`convert`, `convert-all`, or `watch`. The current window is 0.40–0.49; roundtrip
+`convert`, `convert-all`, or `watch`. The current window is 0.40–0.50; roundtrip
 checks cover the 0.18.2 opens-in floor and newest release. Each design targets the found CLI's version,
-even with `--no-verify`, else the newest release known at build time (currently 0.49).
+even with `--no-verify`, else the newest release known at build time (currently 0.50).
 Versions below 0.18.2 and malformed versions are refused. Older targets remain accepted
 down to 0.18.2. Features that need a newer release block history with a named reason
 and preserve the original geometry as for other blockers.

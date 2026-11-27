@@ -1,5 +1,12 @@
 # Machine-readable reports
 
+Component catalogs follow assembly nesting, including repeated insertions.
+Assembly files claim their referenced parts, so a project converts its roots
+and then its unused parts. Nested placement, visibility, and suppression
+overrides apply separately to each insertion.
+Alternate representations and instance bodies are not supported yet;
+the report names that limitation rather than treating the design as empty.
+
 Folder conversions retain paths relative to each input folder in the existing
 `results[].output.path` field: `in/ProjectA/part.f3d` writes
 `out/ProjectA/part.sc`. Same-named files in other subfolders have distinct paths.
@@ -194,8 +201,8 @@ faces without input surface geometry. Unspecified modeled construction, when an 
 can be placed, adds a Degraded loss explaining that only the cosmetic annotation is kept.
 Cosmetic thread contradictions name the designation’s nominal dimensions and secondary numeric
 values. Decimal rounding and floating-point conversion noise are accepted for metric labels.
-A matching UNC/UNF designation is written as a Unified Thread on a SolidCraft release with
-Unified thread support, and reports that missing support instead of a numeric conflict until then. These use the existing loss fields; no report schema or field changes.
+A matching UNC/UNF designation is written as a Unified Thread for SolidCraft 0.50 and newer,
+and earlier targets report that missing support. These use the existing loss fields; no report schema or field changes.
 When reached in the timeline, a `cosmetic_thread` feature with `modeled: true` adds a
 Degraded loss with code `history/modeled-thread-retained`.
 Its `detail` includes the source designation when available and explains that hand,
@@ -274,10 +281,21 @@ completed documents with an unknown total. A heartbeat says the worker is runnin
 claiming that the decoder completed more work. Final report schemas remain unchanged.
 MCP and the web app return their final reports without a progress stream.
 
-A CADIR v11 design-only history uses the existing history refusal and loss fields:
-its ordered selections and evaluation states have no model-history projection, so
-conversion keeps the final geometry. This adds no report fields or schema version.
-See [the port audit](cadir-v11.md).
+A CADIR v11 history stated only in the design layer is projected into model history
+before the history is written: sketches and extrudes and revolves of whole sketches
+become history features, each marked with the source property `projected_from=design`.
+The reader adds five loss codes, all at stage `map` and subject `design history` or the
+feature's name: `design-history/projected` (Info) says the history was read from the design
+layer; `design-history/feature-not-projected` (Degraded) names a feature, or an operand of
+one, that is not projected yet, and the history stops there; `design-history/not-projected`
+(Degraded) says the whole history is not projected yet (several scopes, a configuration, or
+a root that is not one timeline), so conversion keeps the final geometry.
+`design-history/rolled-back` (Degraded) says the source rolled its history back and the
+rolled-back features are written as active features.
+`design-history/construction-unstated` (Info, subject the sketch's name) says the source did
+not state which entities of that sketch are construction geometry and they were read as
+profile geometry; the sketch's history row carries `source_properties.construction_stated=false`. This adds no report fields or schema
+version. See [the port audit](cadir-v11.md).
 
 ## Exit codes
 
@@ -550,9 +568,9 @@ asking for its body-producing feature to resolve first. Source storage order doe
 change replay order: the neutral ordinal controls it.
 
 SolidCraft version presentation uses minors: `solidcraft.target` and
-`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.49"`), changing their
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.50"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
-`"0.44.0"`). Status comparisons use minors, so all 0.49 patches are current; 0.50 is newer
+`"0.44.0"`). Status comparisons use minors, so all 0.50 patches are current; 0.51 is newer
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.
@@ -626,10 +644,10 @@ loss notes while stored placements are retained. No report schema fields are add
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
 targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
-stored circle with center, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
-only that body supplies replay candidates, even when another body has a coincident rim.
-Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
-refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's center, axis, radius,
+circle that the feature's input topology stores beside the edge, with center, axis, radius and a
+full-turn parameter range. Its input topology must hold a single body that is one earlier named
+body; only that body supplies replay candidates, even when another body has a coincident rim.
+A missing carrier or owner, and ellipses, remain refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's center, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
 A missing source carrier reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
@@ -685,7 +703,7 @@ For older targets, `history.features[].reason` says
 line explains the blocker. `--solidcraft-version x.y.z` selects the target on `convert`,
 `convert-all`, and `watch`; it must be at least 0.18.2. By default the found verification
 CLI's version is used, even with `--no-verify`, else the newest release known at build
-time (currently 0.49). The supported rolling 14-day window is currently 0.40–0.49;
+time (currently 0.50). The supported rolling 14-day window is currently 0.40–0.50;
 older targets down to 0.18.2 retain the existing feature simplifications.
 When a written coil or flat entry-recess tip uses the newer mapping, the history line
 includes the actual target, such as `target SolidCraft 0.25 patch 1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip
@@ -1444,7 +1462,7 @@ Per-member records appear when the decoder reports them. The pinned Fusion decod
 actual `.f3z` member decode attempts, including re-decodes during composition; these are
 not unique design completion counts. Error categories are `wrong_format`, `malformed`,
 `invalid_input`, `truncated`, `resource_limit`, `unsupported_dialect`, `unsupported_target`,
-`insufficient_depth`, `not_implemented`, `io`, or `other`. They contain no exception text.
+`not_implemented`, `io`, or `other`. They contain no exception text.
 `member_decodes` tracks at most 100,000 distinct ids per conversion.
 
 ```json

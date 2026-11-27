@@ -1421,7 +1421,7 @@ fn map_into(
     }
     if model.ir.model.features.is_empty() && !model.ir.design.features.is_empty() {
         return Err(
-            "CADIR v11 design-only history is not mapped yet: its ordered selections and evaluation states have no model-history projection".to_owned(),
+            "CADIR v11 design-only history is not mapped: the design layer's history was not projected into model history (the design-history entries of the report say why)".to_owned(),
         );
     }
     let mut document =

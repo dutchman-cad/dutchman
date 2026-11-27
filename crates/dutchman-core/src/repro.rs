@@ -117,6 +117,8 @@ fn subset_guarded(model: &Model, arena: &str, ordinal: usize) -> Result<Model, S
     }
     let mut subset = model.clone();
     subset.ir = serde_json::from_value(document).map_err(|e| e.to_string())?;
+    // Dependency closure need not retain the enclosing document root.
+    subset.ir.fragment = true;
     subset.fidelity = None;
     subset.assembly = None;
     subset.source_step = None;
@@ -364,6 +366,60 @@ mod bundle_tests {
         )
         .unwrap()
         .ir
+    }
+
+    #[test]
+    fn body_subsets_are_fragments_without_the_document_root() {
+        let model = Model {
+            ir: cube(),
+            fidelity: None,
+            name: "Synthetic".into(),
+            source_file: None,
+            assembly: None,
+            source_step: None,
+            merge_bodies: false,
+        };
+        assert!(!model.ir.fragment);
+        assert!(model
+            .ir
+            .model
+            .product_definitions
+            .iter()
+            .any(|d| d.is_root()));
+        let bodies: Vec<_> = model
+            .ir
+            .geometry
+            .bodies
+            .iter()
+            .map(|b| b.id.as_str())
+            .collect();
+        let part = crate::with_bodies(&model, &bodies, "Body".into()).unwrap();
+        assert!(part.ir.fragment);
+        assert!(!part
+            .ir
+            .model
+            .product_definitions
+            .iter()
+            .any(|d| d.is_root()));
+        assert_eq!(
+            part.ir.geometry.bodies.len(),
+            model.ir.geometry.bodies.len()
+        );
+        assert!(check(&part).is_ok());
+        let part = subset(&model, "bodies", 0).unwrap();
+        assert!(part.ir.fragment);
+        assert!(!part
+            .ir
+            .model
+            .product_definitions
+            .iter()
+            .any(|d| d.is_root()));
+        assert_eq!(
+            part.ir.geometry.bodies.len(),
+            model.ir.geometry.bodies.len()
+        );
+        assert!(check(&part).is_ok());
+        assert!(!model.ir.fragment);
     }
 
     #[test]

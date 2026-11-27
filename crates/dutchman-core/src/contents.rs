@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cadmpeg_ir::features::ParameterValue;
+use cadmpeg_ir::features::parameters::ParameterValue;
 use cadmpeg_ir::topology::BodyKind;
 
 use crate::Model;

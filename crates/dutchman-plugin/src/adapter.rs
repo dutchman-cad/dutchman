@@ -1,18 +1,24 @@
-//! SolidCraft's `craft:plugin@0.1.0` importer contract. All guest ABI names live here.
-//! `wit/craft-plugin.wit` is a copy of SolidCraft's `crates/craft-plugin/wit/plugin.wit`.
+//! SolidCraft's `craft:plugin@0.2.0` importer contract. All guest ABI names live here.
+//! `wit/craft-plugin.wit` is a copy of SolidCraft's `crates/craft-plugin/wit/plugin.wit`;
+//! `wit/dutchman.wit` names the world that adds the dialog hook, the per-user settings and the
+//! picked folder to its importer.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod host {
     wasmtime::component::bindgen!({
-        path: "wit/craft-plugin.wit",
-        world: "importer-plugin",
+        path: "wit",
+        world: "dutchman-importer",
     });
-    pub use craft::plugin::{clock, control, design, evaluate, log, source, types};
+    pub use craft::plugin::{
+        clock, control, design, evaluate, folders, log, source, types, user_storage,
+    };
 
     pub fn add_to_linker<T>(linker: &mut wasmtime::component::Linker<T>) -> wasmtime::Result<()>
     where
         T: source::Host
             + design::Host
             + evaluate::Host
+            + folders::Host
+            + user_storage::Host
             + log::Host
             + control::Host
             + clock::Host
@@ -20,11 +26,23 @@ pub mod host {
             + Send
             + 'static,
     {
-        ImporterPlugin::add_to_linker::<_, wasmtime::component::HasSelf<_>>(linker, |host| host)
+        DutchmanImporter::add_to_linker::<_, wasmtime::component::HasSelf<_>>(linker, |host| host)
+    }
+
+    /// The dialog hook: the form's field updates for a selected file.
+    pub fn update_fields<T>(
+        plugin: &DutchmanImporter,
+        store: &mut wasmtime::Store<T>,
+        entry: &str,
+        context: &str,
+    ) -> wasmtime::Result<Result<String, types::PluginError>> {
+        plugin
+            .craft_plugin_dialog_provider()
+            .call_update_fields(store, entry, &context.to_owned())
     }
 
     pub fn import_file<T>(
-        plugin: &ImporterPlugin,
+        plugin: &DutchmanImporter,
         store: &mut wasmtime::Store<T>,
         entry: &str,
         file: &source::FileInfo,
@@ -38,12 +56,12 @@ pub mod host {
 #[cfg(target_arch = "wasm32")]
 mod guest {
     wit_bindgen::generate!({
-        path: "wit/craft-plugin.wit",
-        world: "importer-plugin",
+        path: "wit",
+        world: "dutchman-importer",
     });
 
     use craft::plugin::types::{FieldFailure, PluginError};
-    use craft::plugin::{control, design, evaluate, source};
+    use craft::plugin::{control, design, evaluate, folders, log, source, user_storage};
     use std::cell::{Cell, RefCell};
     use std::path::Path;
 
@@ -105,7 +123,61 @@ mod guest {
         })
     }
 
+    /// Where an assembly's part files come from: the folder of the opened file (the plugin's
+    /// install grant, `input_folder`), or the folder the person picked in the dialog's parts
+    /// folder field, which SolidCraft grants for one import and names after that field.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Parts {
+        Input,
+        Picked,
+    }
+    impl Parts {
+        /// The file being opened is always read through `source`, whichever folder holds the parts.
+        fn read(self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, PluginError> {
+            match self {
+                Parts::Picked if !path.is_empty() => {
+                    folders::read(crate::PARTS_FOLDER, path, offset, len)
+                }
+                _ => source::read(path, offset, len),
+            }
+        }
+        fn size(self, path: &str) -> Result<Option<u64>, PluginError> {
+            match self {
+                Parts::Picked if !path.is_empty() => folders::size(crate::PARTS_FOLDER, path),
+                _ => source::size(path),
+            }
+        }
+        fn resolve(self, path: &str) -> Result<Option<String>, PluginError> {
+            match self {
+                Parts::Picked if !path.is_empty() => folders::resolve(crate::PARTS_FOLDER, path),
+                _ => source::resolve(path),
+            }
+        }
+        /// Ask for the grant itself, before anything is read.
+        fn probe(self, file_name: &str) -> Result<(), PluginError> {
+            match self {
+                Parts::Input => source::resolve(file_name).map(drop),
+                Parts::Picked => folders::resolve(crate::PARTS_FOLDER, "").map(drop),
+            }
+        }
+    }
+
     struct Importer;
+    impl exports::craft::plugin::dialog_provider::Guest for Importer {
+        /// The form's defaults are the person's last accepted options. A file-aware update
+        /// needs nothing from the file itself, and a settings read that fails leaves the
+        /// manifest's defaults rather than keeping the dialog from opening.
+        fn update_fields(entry: String, _context: String) -> Result<String, PluginError> {
+            if entry != ENTRY {
+                return Err(invalid(
+                    "entry",
+                    format!("Dutchman has one importer entry, \"{ENTRY}\""),
+                ));
+            }
+            let stored = user_storage::get(crate::settings::KEY).ok().flatten();
+            Ok(crate::settings::field_defaults(stored.as_deref()))
+        }
+    }
     impl exports::craft::plugin::importer::Guest for Importer {
         fn import_file(
             entry: String,
@@ -130,11 +202,18 @@ mod guest {
                 return Err(PluginError::Cancelled);
             }
             control::progress(0.0, "Reading the design");
+            // The folder field's value is only a switch: the path is never read, and the
+            // grant it names exists only if SolidCraft saw the person pick the folder.
+            let parts = match options.parts_folder.as_deref() {
+                Some(path) if !path.is_empty() => Parts::Picked,
+                _ => Parts::Input,
+            };
+            let saved = crate::settings::encode(&options);
             // An assembly cannot convert without its parts: ask for the folder now, before
             // reading the assembly, instead of failing on the first missing part.
-            if crate::notice::needs_part_folder(&file.name) {
-                if let Err(e) = source::resolve(&file.name) {
-                    return Err(folder_denied(&file.name, e));
+            if crate::notice::needs_part_folder(&file.name) || parts == Parts::Picked {
+                if let Err(e) = parts.probe(&file.name) {
+                    return Err(folder_denied(&file.name, parts == Parts::Picked, e));
                 }
             }
             // Parts are counted by size before they are read, so a design the guest cannot hold
@@ -162,13 +241,13 @@ mod guest {
                 return Err(error);
             }
             checked.map_err(|e| error(&file.name, e))?;
-            let main_bytes = RefCell::new(Some(read("", file.size, &budget)?));
+            let main_bytes = RefCell::new(Some(read(Parts::Input, "", file.size, &budget)?));
             report(progress.file_read());
             let files = Cell::new(1usize);
             // The first error a host import returned, passed back to the host unchanged.
             let host_error: RefCell<Option<PluginError>> = RefCell::new(None);
             let keep = |e: PluginError| {
-                let e = folder_denied(&file.name, e);
+                let e = folder_denied(&file.name, parts == Parts::Picked, e);
                 let message = format!("Host input: {e:?}");
                 host_error.borrow_mut().get_or_insert(e);
                 dutchman_core::Error::Decode(message)
@@ -188,9 +267,14 @@ mod guest {
                     return Err(keep(PluginError::Cancelled));
                 }
                 let host_path = path.to_string_lossy();
-                let size = source::size(&host_path).map_err(keep)?.ok_or_else(|| {
+                let size = parts.size(&host_path).map_err(keep)?.ok_or_else(|| {
                     dutchman_core::Error::Assembly(format!(
-                        "{host_path}: part not found in the input folder"
+                        "{host_path}: part not found in {}",
+                        if parts == Parts::Picked {
+                            "the parts folder you picked"
+                        } else {
+                            "the input folder"
+                        }
                     ))
                 })?;
                 if size > limit {
@@ -198,8 +282,8 @@ mod guest {
                         "{host_path}: input exceeds the {limit}-byte file limit; choose a smaller CAD file"
                     ))));
                 }
-                // The 1 GiB aggregate limit is `read`'s to report; this refusal is for parts
-                // that are within it.
+                // The 1 GiB aggregate limit is `read`'s to report; the memory refusal is for
+                // parts that are within it.
                 if size <= (1u64 << 30).saturating_sub(budget.get()) {
                     if let Err(dutchman_core::Error::MemoryBudget(reason)) = load.add(size) {
                         return Err(keep(PluginError::LimitExceeded(reason)));
@@ -212,7 +296,7 @@ mod guest {
                         "More than 4096 input files; convert a smaller assembly".into(),
                     )));
                 }
-                read(&host_path, size, &budget).map_err(keep)
+                read(parts, &host_path, size, &budget).map_err(keep)
             };
             let resolve = |stored: &str, folder: &Path| {
                 let canonical = RefCell::new(None);
@@ -220,7 +304,7 @@ mod guest {
                     if host_error.borrow().is_some() {
                         return false;
                     }
-                    match source::resolve(&path.to_string_lossy()) {
+                    match parts.resolve(&path.to_string_lossy()) {
                         Ok(Some(name)) => {
                             *canonical.borrow_mut() = Some(name);
                             true
@@ -256,24 +340,35 @@ mod guest {
             for chunk in design.chunks(crate::CHUNK_BYTES) {
                 design::write(chunk)?;
             }
+            // SolidCraft keeps this only when it accepts the design; a failure to stage it
+            // never costs the person their conversion.
+            if let Err(e) = user_storage::set(crate::settings::KEY, &saved) {
+                note(&format!("Options not remembered: {e:?}"));
+            }
             control::progress(1.0, "Converted");
             Ok(report)
         }
     }
 
-    /// A refused folder read says what the grant is for and how to give it.
-    fn folder_denied(file_name: &str, e: PluginError) -> PluginError {
+    /// A refused folder read says which grant is missing, what it is for and how to give it.
+    fn folder_denied(file_name: &str, picked: bool, e: PluginError) -> PluginError {
         match e {
-            PluginError::PermissionDenied(host) => {
-                PluginError::PermissionDenied(crate::notice::folder_access(file_name, &host))
-            }
+            PluginError::PermissionDenied(host) => PluginError::PermissionDenied(if picked {
+                crate::notice::parts_folder_access(file_name, &host)
+            } else {
+                crate::notice::folder_access(file_name, &host)
+            }),
             other => other,
         }
     }
 
-    /// An unsupported or unreadable file is invalid input; a size budget is a limit. Every
-    /// message carries the full failure report (`notice::failure_in`): the host gives a plugin
-    /// no clipboard and no file to write, so the text is where the report travels.
+    fn note(message: &str) {
+        log::log(log::Level::Info, message);
+    }
+
+    /// A format the plugin does not convert is `unsupported`, which a SolidCraft with a refusal
+    /// dialog shows to the person; an unreadable file is invalid input; a size budget is a
+    /// limit. Every message carries the full failure report (`notice::failure_in`).
     fn error(file_name: &str, e: dutchman_core::Error) -> PluginError {
         use dutchman_core::Error;
         let text = crate::notice::failure_in(file_name, &e);
@@ -281,6 +376,9 @@ mod guest {
             Error::TooLarge { .. } | Error::MemoryBudget(_) => PluginError::LimitExceeded(text),
             Error::Encode(ref reason) if reason.contains("exceeds") => {
                 PluginError::LimitExceeded(text)
+            }
+            Error::NotSupportedYet { .. } | Error::UnknownFormat { .. } => {
+                PluginError::Unsupported(text)
             }
             _ => invalid("file", text),
         }
@@ -339,7 +437,12 @@ mod guest {
         }
     }
 
-    fn read(path: &str, size: u64, budget: &Cell<u64>) -> Result<Vec<u8>, PluginError> {
+    fn read(
+        parts: Parts,
+        path: &str,
+        size: u64,
+        budget: &Cell<u64>,
+    ) -> Result<Vec<u8>, PluginError> {
         if size > dutchman_core::MAX_INPUT_BYTES || size > (1u64 << 30).saturating_sub(budget.get())
         {
             return Err(PluginError::LimitExceeded(
@@ -350,7 +453,7 @@ mod guest {
         let mut bytes = Vec::new();
         while (bytes.len() as u64) < size {
             let len = (size - bytes.len() as u64).min(crate::CHUNK_BYTES as u64) as u32;
-            let chunk = source::read(path, bytes.len() as u64, len)?;
+            let chunk = parts.read(path, bytes.len() as u64, len)?;
             if chunk.is_empty() || chunk.len() > len as usize {
                 return Err(invalid(
                     "file",

@@ -140,14 +140,24 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
     // FreeCAD hides what a hidden container holds. Other formats say each body's and each
     // occurrence's own visibility, and the assembly writer keeps hidden occurrences hidden.
     let freecad = document.pointer("/native/fcstd").is_some();
-    let visibility_changed = freecad && propagate_visibility(&mut document);
+    let concealed = if freecad {
+        propagate_visibility(&mut document)
+    } else {
+        BTreeSet::new()
+    };
+    let visibility_changed = !concealed.is_empty();
     let owned: BTreeSet<&str> = listed(document.pointer("/model/product_definitions"))
         .iter()
         .flat_map(|definition| listed(definition.get("bodies")))
         .filter_map(Value::as_str)
         .collect();
     let hidden_ids = if freecad && !fusion {
-        hidden_bodies(&document)
+        let mut placed = serde_json::json!({
+            "product_definitions": document.pointer("/model/product_definitions"),
+            "occurrences": document.pointer("/model/occurrences")
+        });
+        crate::assembly::products::project(&mut placed)?;
+        hidden_bodies(&document, &placed)
     } else {
         listed(document.pointer("/geometry/bodies"))
             .iter()
@@ -161,13 +171,10 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
     if (hidden == 0 && !visibility_changed) || (!fusion && hidden == bodies.len()) {
         return Ok(None);
     }
-    crate::input_edges::preserve(&mut document, &model.ir);
-    let mut geometry_home = document
-        .get_mut("geometry")
-        .ok_or("the model is malformed")?
-        .take();
-    let wire = geometry_home
-        .as_object_mut()
+    let edges = crate::input_edges::plan(&document, &model.ir);
+    let wire = document
+        .get("geometry")
+        .and_then(Value::as_object)
         .ok_or("the model is malformed")?;
     let tessellations = listed(document.pointer("/model/tessellations"));
     let shown_rows: Vec<&Value> = listed(wire.get("bodies"))
@@ -244,37 +251,24 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
         .filter(|id| !reached.contains(**id))
         .map(|id| (*id).to_owned())
         .collect();
-    for (arena, values) in wire.iter_mut() {
-        let Some(values) = values.as_array_mut() else {
-            continue;
-        };
-        values.retain(|row| {
-            let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
-            if arena == "bodies" {
-                !hidden_ids.contains(id)
-            } else {
-                !unreached.contains(id)
+    let ir = {
+        let keep = |id: &str| !unreached.contains(id);
+        let mut ir = model.ir.clone();
+        for occurrence in &mut ir.model.occurrences {
+            if concealed.contains(occurrence.id.as_str()) {
+                occurrence.visible = Some(false);
             }
+        }
+        crate::input_edges::apply(&mut ir, edges)?;
+        ir.geometry
+            .bodies
+            .retain(|body| !hidden_ids.contains(body.id.as_str()));
+        crate::ir_retain::retain_geometry(&mut ir.geometry, &keep);
+        ir.model.tessellations.retain(|row| {
+            !unreached.contains(cadmpeg_ir::schema::ArenaRecord::record_identity(row))
         });
-    }
-    if let Some(rows) = document
-        .pointer_mut("/model/tessellations")
-        .and_then(Value::as_array_mut)
-    {
-        rows.retain(|row| {
-            !row.get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| unreached.contains(id))
-        });
-    }
-    if let Some(home) = document.get_mut("geometry") {
-        *home = geometry_home;
-    }
-    // cadmpeg is third-party code; a panic in it is a reason, not a crash.
-    let text = document.to_string();
-    let ir = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text))
-        .map_err(|_| "cadmpeg failed unexpectedly on the shown bodies".to_owned())?
-        .map_err(|err| format!("the shown bodies do not stand alone: {err}"))?;
+        ir
+    };
     Ok(Some((
         Model {
             ir,
@@ -292,8 +286,7 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
 
 /// A definition used in any shown occurrence remains available. A hidden occurrence hides
 /// its descendants, even when their own visibility is explicitly true.
-fn hidden_bodies(document: &Value) -> BTreeSet<String> {
-    let model = document.get("model").unwrap_or(&Value::Null);
+fn hidden_bodies(document: &Value, model: &Value) -> BTreeSet<String> {
     let mut hidden: BTreeSet<String> = listed(document.pointer("/geometry/bodies"))
         .iter()
         .filter(|body| body.get("visible").and_then(Value::as_bool) == Some(false))
@@ -301,7 +294,7 @@ fn hidden_bodies(document: &Value) -> BTreeSet<String> {
         .collect();
     let concealed_objects = hidden_objects(document);
     let mut inherited = BTreeSet::new();
-    for feature in listed(model.get("features")) {
+    for feature in listed(document.pointer("/model/features")) {
         if feature
             .get("native_ref")
             .and_then(Value::as_str)
@@ -409,7 +402,7 @@ fn concealed_occurrences<'a>(
     concealed
 }
 
-fn propagate_visibility(document: &mut Value) -> bool {
+fn propagate_visibility(document: &mut Value) -> BTreeSet<String> {
     let objects = hidden_objects(document);
     let concealed: BTreeSet<String> =
         concealed_occurrences(document.get("model").unwrap_or(&Value::Null), &objects)
@@ -420,19 +413,23 @@ fn propagate_visibility(document: &mut Value) -> bool {
         .pointer_mut("/model/occurrences")
         .and_then(Value::as_array_mut)
     else {
-        return false;
+        return BTreeSet::new();
     };
-    let mut changed = false;
+    let mut changed = BTreeSet::new();
     for occurrence in occurrences {
-        if occurrence
+        let Some(id) = occurrence
             .get("id")
             .and_then(Value::as_str)
-            .is_some_and(|id| concealed.contains(id))
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        if concealed.contains(id.as_str())
             && occurrence.get("visible").and_then(Value::as_bool) != Some(false)
         {
             if let Some(fields) = occurrence.as_object_mut() {
                 fields.insert("visible".to_owned(), Value::Bool(false));
-                changed = true;
+                changed.insert(id);
             }
         }
     }
@@ -548,7 +545,7 @@ mod tests {
             {"id": "synthetic:test:binding#face", "target": {"entity": {"kind":"face","value":face}}, "appearance": "synthetic:test:appearance#red", "channels": {}},
             {"id": "synthetic:test:binding#missing", "target": {"entity": {"kind":"face","value":"synthetic:test:face#missing"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}
         ]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         let shown = fusion(model, &mut report);
         assert_eq!(shown.ir.geometry.bodies.len(), 1);
@@ -624,7 +621,7 @@ mod tests {
             rows.extend(copies);
         }
         Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: crate::test_products::read(&wire),
             ..part
         }
     }
@@ -685,7 +682,7 @@ mod tests {
         m["product_definitions"] = json!([{"id": "test:model:component#box", "kind": "part", "bodies": [target], "bom_properties": {}, "sketches": []}]);
         m["features"] = json!([{"id": "test:model:feature#cut", "ordinal": 0, "suppressed": false, "outputs": [target], "definition": {"kind": "operation", "value": {"kind": "combine", "value": {"op": "cut", "keep_tools": false, "operands": {"target": {"kind": "bodies", "value": [target]},
                     "tools": {"kind": "bodies", "value": [id("body", 0)]}}, "destination": "target_component"}}}, "dependencies": [], "source_properties": {}, "source_content": []}]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         model
     }
 
@@ -728,7 +725,7 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .push(tool);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         let kept = fusion(model, &mut report);
         assert_eq!(kept.ir.geometry.bodies.len(), 2);
@@ -752,7 +749,8 @@ mod tests {
             "prototype": {"kind": "local", "definition": "test:model:component#tool"},
             "parent": {"kind": "root"}, "transform": crate::placement::IDENTITY,
             "scale": [1, 1, 1], "visible": false}]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
+        let definitions = model.ir.model.product_definitions.clone();
         let mut report = Report::default();
         let kept = fusion(model, &mut report);
         assert_eq!(kept.ir.geometry.bodies.len(), 2);
@@ -762,7 +760,20 @@ mod tests {
             .iter()
             .all(|loss| !loss.detail.contains("not converted")));
         // Component membership is protected even when the occurrence itself is hidden.
-        assert_eq!(kept.ir.model.product_definitions.len(), 2);
+        // The two component definitions plus the file definition that owns the placement.
+        assert_eq!(kept.ir.model.product_definitions, definitions);
+        assert_eq!(
+            kept.ir.model.product_definitions[0].id.as_str(),
+            "test:model:component#box"
+        );
+        assert_eq!(
+            kept.ir.model.product_definitions[1].id.as_str(),
+            "test:model:component#tool"
+        );
+        assert!(matches!(
+            kept.ir.model.product_definitions[2].storage,
+            cadmpeg_ir::products::Storage::File { source: None, .. }
+        ));
     }
 
     #[test]
@@ -812,9 +823,9 @@ mod tests {
                 {"owner": "Part", "name": "Visibility", "type_name": "App::PropertyBool", "values": [{"tag": "Bool", "attributes": {"value": "false"}}]},
                 {"owner": "Part", "name": "Group", "links": [{"object": "Body"}]}]
         }}});
-        assert!(hidden_bodies(&document).is_empty());
+        assert!(hidden_bodies(&document, &document["model"]).is_empty());
         let mut shown_link = document.clone();
-        assert!(propagate_visibility(&mut shown_link));
+        assert!(!propagate_visibility(&mut shown_link).is_empty());
         assert_eq!(
             shown_link["model"]["occurrences"][0]["visible"],
             json!(false)
@@ -822,15 +833,90 @@ mod tests {
         assert!(shown_link["model"]["occurrences"][1]
             .get("visible")
             .is_none());
-        assert!(hidden_bodies(&shown_link).is_empty());
+        assert!(hidden_bodies(&shown_link, &shown_link["model"]).is_empty());
         let mut without_link = document;
         let _ = without_link["model"]["occurrences"]
             .as_array_mut()
             .unwrap()
             .pop();
         assert_eq!(
-            hidden_bodies(&without_link),
+            hidden_bodies(&without_link, &without_link["model"]),
             BTreeSet::from(["b".to_owned()])
+        );
+    }
+
+    #[test]
+    fn shared_definition_visibility_is_checked_per_insertion() {
+        use cadmpeg_ir::ids::{OccurrenceId, ProductDefinitionId};
+        use cadmpeg_ir::products::{ExternalDocument, Occurrence, ProductDefinition, Storage};
+        let definition =
+            |key| ProductDefinitionId::mint(format!("test:visibility:definition#{key}")).unwrap();
+        let occurrence =
+            |key| OccurrenceId::mint(format!("test:visibility:occurrence#{key}")).unwrap();
+        let mut model = two_cubes(Some(true));
+        let mut root = ProductDefinition::root(definition("root"), ExternalDocument::default());
+        root.bodies = vec![model.ir.geometry.bodies[0].id.clone()];
+        root.occurrences = vec![occurrence("hidden"), occurrence("shown")];
+        let mut holder = ProductDefinition::new(definition("holder"), Storage::Embedded);
+        holder.occurrences = vec![occurrence("child")];
+        let mut part = ProductDefinition::new(definition("part"), Storage::Embedded);
+        part.bodies = vec![model.ir.geometry.bodies[1].id.clone()];
+        model.ir.model.product_definitions = vec![root, holder, part];
+        let mut hidden = Occurrence::new(occurrence("hidden"), definition("holder"), None);
+        hidden.visible = Some(false);
+        let mut child = Occurrence::new(occurrence("child"), definition("part"), None);
+        child.visible = Some(true);
+        model.ir.model.occurrences = vec![
+            hidden,
+            Occurrence::new(occurrence("shown"), definition("holder"), None),
+            child,
+        ];
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["native"]["fcstd"] = json!({"objects":[{"id":"test:visibility:object#container", "type_name":"App::Part", "name":"Container"}]});
+        model.ir = crate::test_products::read(&wire);
+        assert!(
+            shown(&model).unwrap().is_none(),
+            "the shown insertion keeps its shared geometry"
+        );
+        // The document states its arenas in id order, so the root is found by its id.
+        let root = definition("root");
+        let _ = model
+            .ir
+            .model
+            .product_definitions
+            .iter_mut()
+            .find(|row| row.id == root)
+            .unwrap()
+            .occurrences
+            .pop();
+        model
+            .ir
+            .model
+            .occurrences
+            .retain(|row| row.id != occurrence("shown"));
+        let (filtered, hidden) = shown(&model).unwrap().unwrap();
+        assert_eq!(hidden, 1);
+        assert_eq!(filtered.ir.geometry.bodies.len(), 1);
+        assert_eq!(
+            filtered.ir.geometry.bodies[0].id,
+            model.ir.geometry.bodies[0].id
+        );
+        assert_eq!(
+            model.ir.geometry.bodies.len(),
+            2,
+            "the decoded source stays intact"
+        );
+        let child = occurrence("child");
+        assert_eq!(
+            model
+                .ir
+                .model
+                .occurrences
+                .iter()
+                .find(|row| row.id == child)
+                .unwrap()
+                .visible,
+            Some(true)
         );
     }
 
@@ -872,7 +958,7 @@ mod tests {
         ]);
         // The filtering policy consumes the neutral occurrence graph, including deeply nested
         // containers. Keep this independent of source-format visibility projection.
-        assert!(hidden_bodies(&wire).contains(second.as_str().unwrap()));
+        assert!(hidden_bodies(&wire, &wire["model"]).contains(second.as_str().unwrap()));
         wire["model"]["occurrences"]
             .as_array_mut()
             .unwrap()
@@ -882,13 +968,13 @@ mod tests {
                 json!({"kind": "root"}),
                 true,
             ));
-        assert!(!hidden_bodies(&wire).contains(second.as_str().unwrap()));
+        assert!(!hidden_bodies(&wire, &wire["model"]).contains(second.as_str().unwrap()));
         let _ = wire["model"]["occurrences"].as_array_mut().unwrap().pop();
         // Other formats state each occurrence's own visibility, so nothing is propagated.
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         assert!(shown(&model).unwrap().is_none());
-        wire["native"]["fcstd"] = json!({});
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        wire["native"]["fcstd"] = json!({"objects":[{"id":"test:visibility:object#container", "type_name":"App::Part", "name":"Container"}]});
+        model.ir = crate::test_products::read(&wire);
         let (shown, count) = shown(&model).unwrap().unwrap();
         assert_eq!(count, 1);
         assert_eq!(shown.ir.geometry.bodies.len(), 1);
@@ -927,7 +1013,7 @@ mod tests {
         m["curves"].as_array_mut().unwrap().extend(bases);
         m.insert("procedural_curves".to_owned(), json!(constructions));
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: crate::test_products::read(&wire),
             ..model
         };
         let (shown, _) = shown(&model).unwrap().unwrap();
@@ -1006,7 +1092,7 @@ mod tests {
                 wire["model"]["features"][1]["definition"]["value"]["value"]["flip_direction"] =
                     json!(false);
             }
-            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            model.ir = crate::test_products::read(&wire);
             let (shown, _) = shown(&model).unwrap().unwrap();
             assert_eq!(shown.ir.geometry.bodies.len(), 1);
             assert!(shown
@@ -1038,7 +1124,7 @@ mod tests {
             .map(|body| body["id"].clone())
             .collect();
         wire["model"]["product_definitions"] = json!([{"id": "fcstd:model:component#body", "kind": "part", "label": "Body", "bodies": ids, "bom_properties": {}, "sketches": []}]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         let (shown, _) = shown(&model).unwrap().unwrap();
         assert_eq!(shown.ir.geometry.bodies.len(), 1);
     }
@@ -1055,7 +1141,7 @@ mod tests {
                 "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}}}, "profiles": []}]);
         wire["model"]["sketch_entities"] = json!([{"id": "fcstd:model:sketch-entity#1", "sketch": sketch, "geometry": {"kind": "line",
             "start": {"u": 0.0, "v": 0.0}, "end": {"u": 10.0, "v": 0.0}}, "endpoint_refs": [], "construction": false}]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         let (shown, _) = shown(&model).unwrap().unwrap();
         assert_eq!(shown.ir.geometry.bodies.len(), 1);
         assert_eq!(shown.ir.geometry.faces.len(), 6);
@@ -1074,7 +1160,7 @@ mod tests {
         let mut model = two_cubes(Some(false));
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         wire["geometry"]["bodies"][0]["visible"] = json!(false);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         assert!(shown(&model).unwrap().is_none());
     }
 }
