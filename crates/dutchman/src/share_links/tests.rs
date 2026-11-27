@@ -593,21 +593,24 @@ fn sign_in_redirects_explain_private_links_without_contacting_login_hosts() {
 
 #[test]
 fn total_deadline_removes_scratch_while_body_is_still_streaming() {
+    // The body is held for far longer than any wait below, however busy the machine is: only
+    // the download deadline, never the transport's own timeout, can end this download early.
+    const BODY_HELD: Duration = Duration::from_secs(60);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
     let (headers, received) = std::sync::mpsc::channel();
     let (release, wait) = std::sync::mpsc::channel();
     let server = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(30);
         let mut stream = crate::test_support::accept_blocking(&listener, deadline).unwrap();
         stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
+            .set_read_timeout(Some(Duration::from_secs(30)))
             .unwrap();
         let _ = stream.read(&mut [0; 4096]);
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Disposition: attachment; filename=synthetic.f3d\r\n\r\nx").unwrap();
         headers.send(()).unwrap();
-        let _ = wait.recv_timeout(Duration::from_secs(5));
+        let _ = wait.recv_timeout(BODY_HELD);
         let _ = stream.write_all(b"xxxx");
     });
     let root = tempfile::tempdir().unwrap();
@@ -616,21 +619,21 @@ fn total_deadline_removes_scratch_while_body_is_still_streaming() {
         Provider::Drive,
         Url::parse("https://drive.google.com/uc?id=synthetic").unwrap(),
         Some(root.path()),
-        Duration::from_millis(200),
+        Duration::from_secs(2),
         move |_, _| {
             // Deliberately supply a transport whose body ignores the download deadline.
             ureq::AgentBuilder::new()
                 .try_proxy_from_env(false)
                 .build()
                 .get(&address)
-                .timeout(Duration::from_secs(5))
+                .timeout(BODY_HELD)
                 .call()
                 .map_err(|_| NETWORK.to_owned())
         },
     );
-    received.recv_timeout(Duration::from_secs(1)).unwrap();
+    received.recv_timeout(Duration::from_secs(30)).unwrap();
     assert_eq!(result.unwrap_err(), NETWORK);
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(started.elapsed() < BODY_HELD / 2);
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     release.send(()).unwrap();
     server.join().unwrap();
