@@ -169,7 +169,7 @@ A part found nowhere is left out and reported, `Dropped`, naming the project fol
 and how many other folders were.
 In the desktop app, the file's card names the parts not found: **Search a folder…** or **Find a
 file…** (whose folder is then searched) converts it again with that folder searched too. The
-app's **Inventor project folder** setting sets `--project` for a whole run.
+app's **Inventor project** row under **Advanced** sets `--project` for a whole run.
 
 Every file found is named as its folder lists it, whatever case the assembly stored it in.
 

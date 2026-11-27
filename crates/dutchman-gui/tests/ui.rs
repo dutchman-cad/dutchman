@@ -123,7 +123,7 @@ fn assert_header_fits(h: &Harness<'_, App>, width: f32, update: bool, theme: &st
     let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 680.0));
     assert!(window.contains_rect(title));
     let narrow = width - 64.0 < 850.0;
-    let mut labels = vec!["Settings", "Report a problem"];
+    let mut labels = vec!["Settings", "Donate", "Discord", "Report a problem"];
     let found = h
         .query_by_label(if narrow { "0.50" } else { "SolidCraft 0.50" })
         .is_some();
@@ -159,6 +159,293 @@ fn assert_header_fits(h: &Harness<'_, App>, width: f32, update: bool, theme: &st
             );
         }
         rects.push(rect);
+    }
+}
+
+#[test]
+fn the_header_has_donate_and_discord_buttons_that_settings_can_hide() {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe(|cc| test_app(cc));
+    h.run_steps(8);
+    let settings = h.get_by_label("Settings").rect();
+    let donate = h.get_by_label("Donate").rect();
+    let discord = h.get_by_label("Discord").rect();
+    assert!((donate.center().y - settings.center().y).abs() < 1.0);
+    assert!((discord.center().y - settings.center().y).abs() < 1.0);
+    assert!(donate.right() <= discord.left() && discord.right() <= settings.left());
+    assert!(!donate.intersects(discord));
+    // Both are buttons a screen reader names.
+    for name in ["Donate", "Discord"] {
+        assert_eq!(
+            egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(name)).role(),
+            egui::accesskit::Role::Button
+        );
+    }
+    h.get_by_label("Settings").click_accesskit();
+    h.run_steps(4);
+    h.get_by_label("Show the Donate button").click_accesskit();
+    h.run_steps(4);
+    assert!(h.query_by_label("Donate").is_none());
+    assert!(h.query_by_label("Discord").is_some());
+    h.get_by_label("Show the Discord button").click_accesskit();
+    h.run_steps(4);
+    assert!(h.query_by_label("Discord").is_none());
+    // The choice is saved with the other settings and shown again when turned back on.
+    h.get_by_label("Show the Donate button").click_accesskit();
+    h.run_steps(4);
+    assert!(h.query_by_label("Donate").is_some());
+}
+
+/// The three-step layout at 1280x800 (and the smallest width), English and with a long German
+/// design name, day and night, for a mechanical design and a circuit board, plus Settings.
+/// Neutral paths under /tmp/demo, synthetic design names only.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn app_layout_screenshots() {
+    let demo = PathBuf::from("/tmp/demo");
+    if std::env::var_os("DUTCHMAN_LAYOUT_SHOTS_CHILD").is_none() {
+        std::fs::create_dir_all(&demo).unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "app_layout_screenshots"])
+            .env("DUTCHMAN_LAYOUT_SHOTS_CHILD", "1")
+            .env("HOME", &demo)
+            .env("LOCALAPPDATA", &demo)
+            .env("XDG_CONFIG_HOME", demo.join("config"))
+            .env("XDG_CACHE_HOME", demo.join("cache"))
+            .env("XDG_DATA_HOME", demo.join("data"))
+            .env("XDG_STATE_HOME", demo.join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    // The app has no German text. The "de" set is the English window with long German design
+    // names, the stress case for the lists and rows; nothing else in it is translated.
+    for (set, mechanical, board) in [
+        ("en", "bracket", "controller-board"),
+        (
+            "de",
+            "Gehäuse-Rückwand für das Mehrzweck-Fräsgerät, Fassung 2",
+            "Leiterplatte Hauptsteuerung Erweiterungsmodul Entwurf Zwei",
+        ),
+    ] {
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            for (kind, file, size) in [
+                ("mechanical", format!("{mechanical}.ipt"), [1280.0, 800.0]),
+                ("board", format!("{board}.PcbDoc"), [1280.0, 800.0]),
+                ("narrow", format!("{mechanical}.ipt"), [520.0, 520.0]),
+            ] {
+                if kind == "narrow" && set == "de" {
+                    continue;
+                }
+                let work = tempfile::tempdir().unwrap();
+                let input = work.path().join(&file);
+                std::fs::copy(fixture("synthetic_cube.ipt"), &input).unwrap();
+                let out = demo.join("out");
+                std::fs::create_dir_all(&out).unwrap();
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(size[0], size[1]))
+                    .build_eframe(|cc| test_app(cc));
+                harness.ctx.set_theme(theme);
+                harness.state_mut().add_inputs([input]);
+                harness.state_mut().set_out_dir(out);
+                harness.state_mut().set_verify(false);
+                harness.state_mut().set_checker_for_test(true);
+                harness.state_mut().preview_solidcraft(Some("0.50.0"));
+                harness.run_steps(8);
+                harness.get_by_label("Advanced").click_accesskit();
+                harness.run_steps(8);
+                shot(
+                    &mut harness,
+                    &dir,
+                    &mut index,
+                    &format!("layout-{kind}-{set}"),
+                    name,
+                    &format!("Three-step layout, {kind} design, Advanced open."),
+                );
+                if kind != "narrow" {
+                    harness
+                        .get_by_label("Check feature history in SolidCraft")
+                        .scroll_to_me();
+                    harness.run_steps(8);
+                    shot(
+                        &mut harness,
+                        &dir,
+                        &mut index,
+                        &format!("layout-{kind}-scrolled-{set}"),
+                        name,
+                        &format!("Same, scrolled to the end of step 3 ({kind})."),
+                    );
+                }
+                if kind == "mechanical" {
+                    harness.get_by_label("Settings").click_accesskit();
+                    harness.run_steps(8);
+                    shot(
+                        &mut harness,
+                        &dir,
+                        &mut index,
+                        &format!("layout-settings-{set}"),
+                        name,
+                        "Settings: a checkbox hides each of Donate and Discord.",
+                    );
+                }
+            }
+        }
+    }
+    std::fs::write(dir.join("layout.md"), index).unwrap();
+}
+
+#[test]
+fn the_main_screen_has_three_numbered_steps_with_labels_before_controls() {
+    for width in [1280.0, 760.0] {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(width, 1400.0))
+            .build_eframe(|cc| test_app(cc));
+        h.state_mut()
+            .add_inputs([fixture("generated_unit_cube.f3d")]);
+        h.run_steps(12);
+        let top = |h: &Harness<'_, App>, label: &str| h.get_by_label(label).rect().top();
+        // Reading order: step 1 and its groups, step 2, step 3, then Convert.
+        let order = [
+            "1. ADD YOUR DESIGNS",
+            "Remove",
+            "Clear",
+            "From this computer",
+            "Add files…",
+            "From a link",
+            "Add link",
+            "From Onshape",
+            "Connect Onshape",
+            "2. CHOOSE WHERE TO SAVE THEM",
+            "Save to",
+            "3. PICK HOW TO CONVERT THEM",
+            "Preset",
+            "Output format",
+            "Existing files",
+            "Replace existing files",
+            "Convert",
+        ];
+        for pair in order.windows(2) {
+            assert!(
+                top(&h, pair[0]) <= top(&h, pair[1]) + 12.0,
+                "{width}: {} should come before {}",
+                pair[0],
+                pair[1]
+            );
+        }
+        // Add files…, Add folder… and Check a folder are one row, and the link field and
+        // Add link share another.
+        let files = h.get_by_label("Add files…").rect();
+        for name in ["Add folder…", "Check a folder"] {
+            assert!((h.get_by_label(name).rect().center().y - files.center().y).abs() < 1.0);
+        }
+        let field = h.get_by_role(egui::accesskit::Role::TextInput).rect();
+        let add_link = h.get_by_label("Add link").rect();
+        assert!((field.center().y - add_link.center().y).abs() < 1.0);
+        assert!(field.right() <= add_link.left());
+        // Clear is with the list, above the add buttons, and quiet: smaller than they are.
+        let clear = h.get_by_label("Clear").rect();
+        assert!(clear.bottom() <= h.get_by_label("From this computer").rect().top());
+        assert!(clear.height() < files.height());
+        // Labels stand in one column left of their controls, and Save to is the same column.
+        let label_left = h.get_by_label("Save to").rect().left();
+        for name in ["Existing files", "Checks"] {
+            assert!(
+                (h.get_by_label(name).rect().left() - label_left).abs() < 1.0,
+                "{name}"
+            );
+        }
+        // Diagnostics is a quiet button at the foot of the checks, not beside Replace.
+        assert!(
+            h.get_by_label("Open diagnostics folder").rect().top()
+                >= h.get_by_label("Checks").rect().bottom()
+        );
+        // Advanced's rows are indented one step, and their controls stay in the same column
+        // as the other rows'.
+        h.get_by_label("Advanced").click_accesskit();
+        h.run_steps(8);
+        let column = h.get_by_label("Output format").rect().left();
+        assert!((h.get_by_label("Part positions").rect().left() - column).abs() < 1.0);
+        assert!((h.get_by_label("Up axis").rect().left() - column).abs() < 1.0);
+        for (label, control) in [
+            ("Existing files", "Replace existing files"),
+            ("Checks", "Check feature history in SolidCraft"),
+        ] {
+            let (l, c) = (h.get_by_label(label).rect(), h.get_by_label(control).rect());
+            assert!(l.right() <= c.left(), "{label} comes before {control}");
+        }
+    }
+}
+
+#[test]
+fn inner_copper_waits_for_a_circuit_board_in_the_same_place() {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 1400.0))
+        .build_eframe(|cc| test_app(cc));
+    h.state_mut()
+        .add_inputs([fixture("generated_unit_cube.f3d")]);
+    h.run_steps(12);
+    h.get_by_label("Advanced").click_accesskit();
+    h.run_steps(8);
+    let spot = h.get_by_label("Inner copper layers").rect();
+    assert!(h.get_by_label("Circuit boards").rect().right() <= spot.left());
+    h.get_by_label("Add a circuit board to use this.");
+    assert!(
+        egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label("Inner copper layers"))
+            .is_disabled()
+    );
+    let work = tempfile::tempdir().unwrap();
+    let board = work.path().join("controller-board.PcbDoc");
+    std::fs::copy(fixture("synthetic_cube.ipt"), &board).unwrap();
+    h.state_mut().add_inputs([board]);
+    h.run_steps(12);
+    assert!(h
+        .query_by_label("Add a circuit board to use this.")
+        .is_none());
+    assert!(
+        !egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label("Inner copper layers"))
+            .is_disabled()
+    );
+    assert!((h.get_by_label("Inner copper layers").rect().left() - spot.left()).abs() < 1.0);
+}
+
+#[test]
+fn header_controls_share_one_height_and_the_buttons_one_shape() {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe(|cc| test_app(cc));
+    h.state_mut().preview_solidcraft(Some("0.50.0"));
+    h.run_steps(8);
+    let height = |h: &Harness<'_, App>, label: &str| h.get_by_label(label).rect().height();
+    let settings = height(&h, "Settings");
+    for name in [
+        "SolidCraft 0.50",
+        "Donate",
+        "Discord",
+        "Day",
+        "Night",
+        "System",
+    ] {
+        assert!(
+            (height(&h, name) - settings).abs() < 0.5,
+            "{name} is {} high, Settings {settings}",
+            height(&h, name)
+        );
+    }
+    let line = h.get_by_label("Settings").rect().center().y;
+    for name in ["Report a problem", "Day", "SolidCraft 0.50"] {
+        assert!(
+            (h.get_by_label(name).rect().center().y - line).abs() < 1.0,
+            "{name}"
+        );
     }
 }
 
@@ -238,8 +525,8 @@ fn the_version_sits_on_the_titles_baseline_in_one_line() {
     }
 }
 
-/// The main window's header at 1280x800: the version on the title's line, in English and with a
-/// long German subtitle (the app has no German text yet), Day and Night.
+/// The main window's header at 1280x800: the version on the title's line, Day and Night. (The
+/// app has no German text, so there is no German variant.)
 #[cfg(feature = "test-support")]
 #[test]
 #[ignore = "renders GPU screenshots of the header; set DUTCHMAN_GUI_SCREENSHOTS"]
@@ -247,14 +534,7 @@ fn header_version_screenshots() {
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
     let mut index = String::new();
-    for (language, subtitle) in [
-        ("english", None),
-        (
-            "german",
-            Some("Wandelt native CAD-Konstruktionen in SolidCraft-Konstruktionen um.".to_owned()),
-        ),
-    ] {
-        *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = subtitle;
+    for language in ["english"] {
         for (theme, name) in [
             (ThemePreference::Light, "day"),
             (ThemePreference::Dark, "night"),
@@ -282,7 +562,6 @@ fn header_version_screenshots() {
             );
         }
     }
-    *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = None;
     std::fs::write(dir.join("header-version.md"), index).unwrap();
 }
 
@@ -1192,7 +1471,9 @@ fn screenshots() {
         harness.get_by_label("Dismiss").click_accesskit();
         harness.run_steps(8);
         std::fs::remove_file(unfinished).unwrap();
-        harness.get_by_label("OUTPUT FOLDER").scroll_to_me();
+        harness
+            .get_by_label("2. CHOOSE WHERE TO SAVE THEM")
+            .scroll_to_me();
         harness.run_steps(8);
         shot(&mut harness, &dir, &mut index, "13-settings", name, "Output folder, SolidCraft output and target, history checking, assembly project folder, and diagnostics settings; scrolled to the output section.");
         harness.get_by_label("Formats").click_accesskit();
@@ -1841,12 +2122,9 @@ fn solidworks_folder_shows_the_plan_and_hides_inventor_settings() {
         assert!(started.elapsed() < Duration::from_secs(30));
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert_eq!(
-        harness
-            .query_all_by_label_contains("Inventor project folder:")
-            .count(),
-        0
-    );
+    harness.get_by_label("Advanced").click_accesskit();
+    harness.run_steps(8);
+    assert!(harness.query_by_label("Inventor project").is_none());
     assert!(harness.query_by_label("Choose an output folder.").is_none());
     harness
         .state_mut()
@@ -3808,9 +4086,11 @@ fn assert_main_screen_in_view(h: &mut Harness<'_, App>, size: [f32; 2]) {
     let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0], size[1]));
     let convert_row = h.get_by_label("Convert").rect().top();
     for label in [
-        "DESIGNS",
+        "1. ADD YOUR DESIGNS",
         "Add files…",
-        "OUTPUT FOLDER",
+        "2. CHOOSE WHERE TO SAVE THEM",
+        "Save to",
+        "3. PICK HOW TO CONVERT THEM",
         "Preset",
         "Part positions",
         "Feature history",
@@ -3867,7 +4147,7 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
         );
         assert_main_screen_in_view(&mut h, size);
         // Designs and the output choices sit beside the results, not above them.
-        let designs = h.get_by_label("DESIGNS").rect();
+        let designs = h.get_by_label("1. ADD YOUR DESIGNS").rect();
         let results = h.get_by_label("RESULTS").rect();
         assert!(
             results.left() > designs.right(),
@@ -4017,8 +4297,8 @@ fn a_narrow_window_keeps_the_single_column() {
     let size = [520.0, 2400.0];
     let h = fit_harness(size, ThemePreference::Light, work.path());
     let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0], size[1]));
-    let designs = h.get_by_label("DESIGNS").rect();
-    let output = h.get_by_label("OUTPUT FOLDER").rect();
+    let designs = h.get_by_label("1. ADD YOUR DESIGNS").rect();
+    let output = h.get_by_label("2. CHOOSE WHERE TO SAVE THEM").rect();
     let results = h.get_by_label("RESULTS").rect();
     assert!(
         output.top() > designs.bottom(),
@@ -4029,9 +4309,9 @@ fn a_narrow_window_keeps_the_single_column() {
         "Results is below the options"
     );
     for label in [
-        "DESIGNS",
+        "1. ADD YOUR DESIGNS",
         "Add files…",
-        "OUTPUT FOLDER",
+        "2. CHOOSE WHERE TO SAVE THEM",
         "Preset",
         "RESULTS",
     ] {
@@ -4118,11 +4398,11 @@ fn the_wide_left_column_stays_at_the_top_through_a_conversion() {
     h.state_mut().set_out_dir(work.path().join("converted"));
     h.state_mut().set_verify(false);
     h.run_steps(8);
-    let before = h.get_by_label("DESIGNS").rect().top();
+    let before = h.get_by_label("1. ADD YOUR DESIGNS").rect().top();
     convert(&mut h);
     for _ in 0..4 {
         h.run_steps(4);
-        assert_eq!(h.get_by_label("DESIGNS").rect().top(), before);
+        assert_eq!(h.get_by_label("1. ADD YOUR DESIGNS").rect().top(), before);
     }
 }
 
@@ -6103,7 +6383,7 @@ fn connected_onshape_keeps_results_in_their_own_column() {
             .query_by_label("Paste your Onshape Part Studio link")
             .is_none());
         let convert = h.get_by_label("Convert").rect();
-        assert!(h.get_by_label("Open diagnostics folder").rect().bottom() <= convert.top());
+        assert!(h.get_by_label("Preset").rect().bottom() <= convert.top());
         h.get_by_label("Onshape connected ✓").click_accesskit();
         h.run_steps(4);
         h.get_by_label("Paste your Onshape Part Studio link");
@@ -6142,7 +6422,7 @@ fn the_fusion_button_in_the_convert_bar_keeps_the_left_column_inside() {
             (button.center().y - convert.center().y).abs() < 1.0,
             "the button is on the Convert bar's row"
         );
-        assert!(h.get_by_label("Open diagnostics folder").rect().bottom() <= convert.top());
+        assert!(h.get_by_label("Preset").rect().bottom() <= convert.top());
         assert!(button.right() <= 1280.0);
         assert!(!h.state().page_scrolls());
     }
@@ -7069,10 +7349,10 @@ fn inner_copper_screenshots() {
     std::fs::create_dir_all(&designs).unwrap();
     let mut index = String::new();
     for (language, name) in [
-        ("english", "Controller board.f3d"),
+        ("english", "Controller board.PcbDoc"),
         (
             "german",
-            "Leiterplatte Hauptsteuerung Erweiterungsmodul Entwurf Zwei.f3d",
+            "Leiterplatte Hauptsteuerung Erweiterungsmodul Entwurf Zwei.PcbDoc",
         ),
     ] {
         let input = designs.join(name);
