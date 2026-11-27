@@ -913,9 +913,9 @@ top-bar **Report a problem** opens the same panel.
 Partial history says **Partly converted**; geometry-only or flattened results say
 **Converted, no history**, in amber. Full history keeps **Converted** in green unless
 degraded content needs review.
-With one result and compact output controls, the panel sits directly below **Output folder**;
+With one result and compact output controls, the panel sits directly below the steps;
 several results or expanded choices keep it pinned and visible.
-After a conversion, **Output folder** folds into a summary. Click its folder path or
+After a conversion, Step 2, **Choose where to save them**, folds into a summary. Click its folder path or
 **Change…** to reopen all output settings. **Clear** removes the designs and results and
 restores the expanded settings.
 

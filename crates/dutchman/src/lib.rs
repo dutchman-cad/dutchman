@@ -248,6 +248,10 @@ pub struct ConvertOptions {
     /// not hold; may be given more than once.
     #[arg(long = "search", value_name = "DIR")]
     pub search: Vec<PathBuf>,
+    /// Which copper layers a circuit board is read with: outer (top and bottom only) or all
+    /// (inner copper layers too, when the electronics module supports `--copper all`).
+    #[arg(long, value_name = "LAYERS", default_value_t = dutchman_core::CopperLayers::Outer)]
+    pub copper: dutchman_core::CopperLayers,
     /// Convert only this part of the design (set by `convert --part`).
     #[arg(skip)]
     pub part: Option<dutchman_core::PartSelection>,
@@ -282,6 +286,7 @@ impl Default for ConvertOptions {
             no_stand_up: false,
             project: None,
             search: Vec::new(),
+            copper: dutchman_core::CopperLayers::Outer,
             part: None,
         }
     }
@@ -371,6 +376,7 @@ impl ConvertOptions {
             part_positions: self.effective_part_positions(),
             project: self.project.clone(),
             also: self.search.clone(),
+            copper: self.copper,
         }
     }
 

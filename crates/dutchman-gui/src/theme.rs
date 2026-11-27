@@ -123,6 +123,24 @@ pub fn control_height(ui: &egui::Ui) -> f32 {
         .ceil()
 }
 
+/// The height every header control shares, so the row reads as one line.
+pub const HEADER_HEIGHT: f32 = 26.0;
+
+/// A header button: one shape, height and padding for Settings, the SolidCraft version, the
+/// update pill and the Discord button.
+pub fn header_button(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
+    header_button_with(ui, egui::Button::new(text))
+}
+
+/// `header_button` for a button whose text is already styled (a colored status).
+pub fn header_button_with(ui: &mut egui::Ui, button: egui::Button<'_>) -> egui::Response {
+    ui.add(
+        button
+            .min_size(egui::vec2(0.0, HEADER_HEIGHT))
+            .corner_radius(egui::CornerRadius::same(16)),
+    )
+}
+
 /// Centres controls and reserves their full height before wrapping to another row.
 pub fn control_row<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.scope(|ui| {

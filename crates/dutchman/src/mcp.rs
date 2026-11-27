@@ -225,6 +225,7 @@ fn option_properties() -> Map<String, Value> {
         "sketches": {"type": "boolean", "default": true, "description": "Keep reference sketches when the preset allows it. Sketches needed by retained history stay."},
         "joints": {"type": "boolean", "default": true, "description": "Keep assembly joints when the preset allows it; false keeps the selected placements before joint solving."},
         "part_positions": {"type": "string", "enum": ["smart", "last-shown", "first-placed"], "default": "smart", "description": "Part positions: Smart, As last shown in the original program, or As first placed."},
+        "copper": {"type": "string", "enum": ["outer", "all"], "default": "outer", "description": "Circuit boards: copper layers to read. Outer is the top and bottom faces; all adds each inner copper layer (needs an electronics module that supports it, else the outer layers are read and the report says so)."},
         "stored_placements": {"type": "boolean", "default": false, "description": "Place parts where they were first placed, ignoring later moves"},
         "no_memory_check": {"type": "boolean", "default": false, "description": "Run and check history even when estimated peak memory exceeds available memory; also disables Standard's history budget and history-check skipping."},
         "import_only": {
@@ -642,7 +643,7 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 21] = [
+const OPTIONS: [&str; 22] = [
     "diagnostics",
     "diagnostics_default",
     "threads",
@@ -652,6 +653,7 @@ const OPTIONS: [&str; 21] = [
     "joints",
     "stored_placements",
     "part_positions",
+    "copper",
     "no_memory_check",
     "to",
     "import_only",
@@ -665,6 +667,15 @@ const OPTIONS: [&str; 21] = [
     "project",
     "search",
 ];
+
+/// The `copper` argument: `outer` (default) or `all`.
+fn copper_layers(arguments: &Arguments) -> Result<dutchman_core::CopperLayers, String> {
+    match arguments.get("copper") {
+        None | Some(Value::Null) => Ok(dutchman_core::CopperLayers::Outer),
+        Some(Value::String(value)) => value.parse(),
+        Some(_) => Err("copper must be outer or all".to_owned()),
+    }
+}
 
 /// The `project` and `search` arguments.
 fn part_search(arguments: &Arguments) -> Result<PartSearch, String> {
@@ -688,6 +699,7 @@ fn part_search(arguments: &Arguments) -> Result<PartSearch, String> {
         part_positions: dutchman_core::PartPositions::Smart,
         project,
         also,
+        copper: copper_layers(arguments)?,
     })
 }
 
@@ -784,6 +796,7 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
             .map_or(defaults.verify_timeout, |n| n.get() as u64),
         project: search.project,
         search: search.also,
+        copper: search.copper,
         part: None,
     })
 }
@@ -1056,6 +1069,18 @@ mod tests {
                 mode.name()
             );
         }
+        let all = options(json!({"copper": "all"}).as_object().unwrap()).unwrap();
+        assert_eq!(all.copper, dutchman_core::CopperLayers::All);
+        assert_eq!(all.part_search().copper, dutchman_core::CopperLayers::All);
+        assert_eq!(
+            options(json!({}).as_object().unwrap()).unwrap().copper,
+            dutchman_core::CopperLayers::Outer
+        );
+        assert!(all
+            .to_args()
+            .windows(2)
+            .any(|pair| pair[0] == "--copper" && pair[1] == "all"));
+        assert!(options(json!({"copper": "inner"}).as_object().unwrap()).is_err());
         let alias = options(json!({"stored_placements":true}).as_object().unwrap()).unwrap();
         assert_eq!(alias.effective_part_positions(), PartPositions::FirstPlaced);
         assert_eq!(

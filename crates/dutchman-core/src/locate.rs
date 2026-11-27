@@ -40,6 +40,8 @@ pub struct PartSearch {
     /// More folders, searched with their subfolders, in order, for files the project folder
     /// does not hold.
     pub also: Vec<PathBuf>,
+    /// Which copper layers a circuit board is read with (the electronics module's `--copper`).
+    pub copper: crate::module::CopperLayers,
 }
 
 impl PartSearch {
@@ -50,6 +52,7 @@ impl PartSearch {
             part_positions: crate::PartPositions::Smart,
             project: Some(project.into()),
             also: Vec::new(),
+            copper: Default::default(),
         }
     }
 }
@@ -985,6 +988,7 @@ pub(crate) mod tests {
             part_positions: crate::PartPositions::Smart,
             project: None,
             also: vec![dir.path().join("Library")],
+            copper: Default::default(),
         });
         let screw = finder.locate(r"C:\Lib\Screw.ipt", &arm(&dir)).unwrap();
         assert!(

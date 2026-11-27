@@ -271,7 +271,8 @@ impl<C: HttpClient> Session<'_, C> {
             message,
             detail: None,
             calls: self.calls,
-            estimate: None,
+            // A stop at the call limit carries what the whole fetch is expected to need.
+            estimate: (kind == ErrorKind::Budget).then_some(self.needed).flatten(),
         }
     }
 }
