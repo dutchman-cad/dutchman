@@ -43,14 +43,14 @@ CAD files or for native geometry decoding.
 ## Numerical allowances
 
 Volume and area comparisons allow 1% relative error. Bounding boxes and placement
-centres allow 0.1% of the body diagonal, clamped to 0.1–0.5 mm. The ceiling keeps a
-1 mm translation detectable on metre-scale bodies. Synthetic comparisons cover a
+centers allow 0.1% of the body diagonal, clamped to 0.1–0.5 mm. The ceiling keeps a
+1 mm translation detectable on meter-scale bodies. Synthetic comparisons cover a
 1 mm translation and a floating part at three body sizes; SolidCraft evaluations also
 check unchanged, moved, and deliberately different stored/joint poses.
 
 Across 15 additional public designs, standard output supplied 25 complete and seven
 incomplete measured body rows. The largest observed relative volume difference was
-0.003992%; the largest area difference was 0.004572%. Box and centre differences were
+0.003992%; the largest area difference was 0.004572%. Box and center differences were
 below 0.000001 mm. Fast output supplied 37 complete and seven incomplete rows, with
 zero volume/area differences and position differences below 0.000001 mm. Neither mode
 produced numerical body findings. These results give no reason to widen the 1% allowance.

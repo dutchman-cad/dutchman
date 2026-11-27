@@ -22,6 +22,16 @@ pub(super) fn map(
     let Some(record) = records.next() else {
         return Ok(None);
     };
+    // Readers can supply typed design records beside ordinary model history.
+    // Only an explicit thin output needs this bridge; other records leave
+    // the model projection's mapping and refusal reason in control.
+    if record
+        .pointer("/definition/operation/value/output/body/kind")
+        .and_then(Value::as_str)
+        != Some("thin")
+    {
+        return Ok(None);
+    }
     let refused="the typed extrusion and its model-history projection disagree; this thin extrude is not supported yet";
     if records.next().is_some() {
         return Err(refused.to_owned());
@@ -175,4 +185,44 @@ pub(super) fn map(
         _ => return Err("this thin-wall thickness is not supported yet".to_owned()),
     }
     Ok(Some((sketch.to_owned(), thin)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn other_typed_operations_leave_model_history_in_control() {
+        let feature = json!({"id": "synthetic:test:feature#extrude"});
+        let model = json!({});
+        for operation in [
+            json!({"kind":"unresolved", "value":{"family":"extrude"}}),
+            json!({"kind":"native", "value":{"kind":"synthetic:extrude"}}),
+            json!({"kind":"extrude", "value":{"output":{"body":{"kind":"solid"}}}}),
+            json!({"kind":"extrude", "value":{"output":{"body":{"kind":"surface"}}}}),
+        ] {
+            let design = json!({"features":[{
+                "id": feature["id"], "definition":{"operation":operation}
+            }]});
+            let mut ctx = Context::new(&model);
+            ctx.design = &design;
+            assert_eq!(map(&feature, &model, &ctx).unwrap(), None, "{design}");
+        }
+    }
+
+    #[test]
+    fn explicit_thin_output_still_checks_its_operation() {
+        let feature = json!({"id":"synthetic:test:feature#extrude"});
+        let model = json!({});
+        let design = json!({"features":[{
+            "id":feature["id"], "definition":{"operation":{
+                "kind":"unresolved", "value":{"output":{"body":{"kind":"thin"}}}
+            }}
+        }]});
+        let mut ctx = Context::new(&model);
+        ctx.design = &design;
+        assert!(map(&feature, &model, &ctx)
+            .unwrap_err()
+            .contains("projection disagree"));
+    }
 }

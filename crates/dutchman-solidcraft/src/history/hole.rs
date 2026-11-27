@@ -133,11 +133,15 @@ pub(crate) fn map(
             if number(extent.get("offset")).is_some_and(|offset| offset != 0.0) {
                 return Err("a hole that ends offset from a face is not mapped yet".to_owned());
             }
-            let face = earlier_face(feature, extent.get("face"), ctx)?;
+            // A face with arcs or inner loops is proven by replay, like an entry face.
+            let mut face = entry_face(feature, extent.get("face"), ctx)?;
             if dot(sub(face.point, position), direction) <= 0.0
                 || dot(face.normal, direction).abs() < 1.0 - 1e-9
             {
                 return Err("its terminating face is not ahead of the hole".to_owned());
+            }
+            if let Some(entry) = face.entry.take() {
+                ctx.blends.push(entry.existing());
             }
             if drilled_recess
                 || hole.get("type").and_then(Value::as_str) == Some("drilled")

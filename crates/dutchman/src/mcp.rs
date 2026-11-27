@@ -241,7 +241,7 @@ fn option_properties() -> Map<String, Value> {
         },
         "overwrite": {
             "type": "boolean",
-            "description": "Replace an existing .sc file at the output (default true). When false, an existing file is left alone and that file's conversion fails, saying so.",
+            "description": "Replace an existing .sc file at the output (default false). Without it an existing file is never replaced: the design is written to the next free name, `name (2).sc`, and the report says where.",
         },
         "link_record": {
             "type": "boolean",
@@ -256,8 +256,8 @@ fn option_properties() -> Map<String, Value> {
             "minimum": 1,
             "description": "Seconds each SolidCraft check may run before the history is written unverified (default 120).",
         },
-        "stand_up": {"type": "boolean", "default": false, "description": "Rotate Y-up models +90 degrees about +X so +Y becomes +Z. Cannot be combined with no_stand_up."},
-        "no_stand_up": {"type": "boolean", "default": false, "description": "Preserve source axes (the default). Cannot be combined with stand_up."},
+        "stand_up": {"type": "boolean", "default": false, "description": "Rotate the design +90 degrees about +X so +Y becomes +Z, whatever its source says. By default a design is stood up only when its source states it is Y-up. Cannot be combined with no_stand_up."},
+        "no_stand_up": {"type": "boolean", "default": false, "description": "Keep the file's axes and never rotate (the CLI's --keep-axes). Cannot be combined with stand_up."},
         "project": project_property(),
         "search": search_property(),
     });
@@ -341,14 +341,14 @@ fn onshape_fetch(args: &Map<String, Value>) -> Result<Value, String> {
 fn tools() -> Value {
     let input = json!({
         "type": "string",
-        "description": "Absolute path of a CAD file. Call formats for supported extensions, reader status and what Dutchman converts. Creo and NX parts share .prt and are distinguished by contents; NX geometry converts, reading Creo geometry is not supported yet.",
+        "description": "Absolute path of a CAD file. Call formats for supported extensions, reader status and what Dutchman converts. Creo and NX parts share .prt and are distinguished by contents; their geometry converts without feature history.",
     });
     let mut convert = option_properties();
     convert.insert("input".to_owned(), input.clone());
     convert.insert("dry_run".to_owned(), json!({"type": "boolean", "default": false, "description": "Return estimate, choices and fits from a quick pre-read, without decoding or writing. Output is optional."}));
     convert.insert(
         "output".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the .sc (legacy .solidcraft or .solvecraft) or .FCMacro file to write, matching to. An existing file there is replaced, unless overwrite is false. If supplied, diagnostics is also written at its specified path."}),
+        json!({"type": "string", "description": "Absolute path of the .sc (legacy .solidcraft or .solvecraft) or .FCMacro file to write, matching to. An existing file there is never replaced unless overwrite is true; the design is written to the next free numbered name instead. If supplied, diagnostics is also written at its specified path."}),
     );
     let mut all = option_properties();
     all.insert(
@@ -362,7 +362,7 @@ fn tools() -> Value {
     );
     all.insert(
         "out_dir".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Designs already there are replaced, unless overwrite is false. Converted designs are written only inside out_dir. If supplied, diagnostics, journal, report_anon, and report_key are also written at their specified paths."}),
+        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Designs already there are never replaced unless overwrite is true; a new design gets the next free numbered name. Converted designs are written only inside out_dir. If supplied, diagnostics, journal, report_anon, and report_key are also written at their specified paths."}),
     );
     all.insert(
         "jobs".to_owned(),
@@ -775,7 +775,8 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         no_verify: !flag(arguments, "verify", true)?,
         write_replay: false,
         no_link_record: !flag(arguments, "link_record", true)?,
-        no_clobber: !flag(arguments, "overwrite", true)?,
+        replace: flag(arguments, "overwrite", false)?,
+        no_clobber: false,
         solidcraft,
         solidcraft_version,
         stand_up,
@@ -814,14 +815,14 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
             "fits": estimate.zip(available).map(|(e, free)| e.peak_bytes <= free),
         }));
     }
-    let output = path(arguments, "output")?;
+    let output = crate::resolve_output(&path(arguments, "output")?, options.replace);
     // A unit test's own program is not a converter.
     #[cfg(test)]
     return Ok(crate::convert_options_with_progress(
         &input,
         &output,
         &options,
-        !options.no_clobber,
+        options.replace,
         &options.part_search(),
         &|_| {},
     ));
@@ -835,7 +836,7 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
             fallback: None,
             input,
             output,
-            replace: !options.no_clobber,
+            replace: options.replace,
             search: options.part_search(),
         };
         let limits = crate::worker::Limits {
@@ -915,7 +916,7 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
     let mut anon = match optional("report_anon")? {
         Some(path) => Some(crate::anon::Request {
             counts,
-            path,
+            path: crate::resolve_file(path, options.replace),
             salt: match arguments.get("report_salt") {
                 None | Some(Value::Null) => None,
                 Some(Value::String(hex)) => Some(
@@ -923,7 +924,7 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
                 ),
                 Some(_) => return Err("report_salt must be 32 hex digits".to_owned()),
             },
-            key: optional("report_key")?,
+            key: optional("report_key")?.map(|key| crate::resolve_file(key, options.replace)),
         }),
         None if arguments.contains_key("report_salt") || arguments.contains_key("report_key") => {
             return Err("report_salt and report_key need report_anon".to_owned())
@@ -998,7 +999,7 @@ mod tests {
         }
         for (arguments, choice, flag) in [
             (json!({"stand_up": true}), Some(true), "--stand-up"),
-            (json!({"no_stand_up": true}), Some(false), "--no-stand-up"),
+            (json!({"no_stand_up": true}), Some(false), "--keep-axes"),
         ] {
             let parsed = options(arguments.as_object().unwrap()).unwrap();
             assert_eq!(parsed.stand_up_choice(), choice);
@@ -1427,7 +1428,7 @@ fn diagnostic_tools() -> Vec<Value> {
         ("verify_repro", "Replay a saved bundle locally. Returns sizes, manifest and reproduction status only.", vec!["folder"]),
         ("diagnose", "Rank numbered parts locally under time and memory limits.", vec!["input", "out"]),
         ("diagnose_narrow", "Resume automatic narrowing, returning the anonymous signature and rebuild recipe.", vec!["input", "out"]),
-        ("convert_part", "Try one numbered part, optionally with neighbours; discard the converted geometry.", vec!["input", "part"]),
+        ("convert_part", "Try one numbered part, optionally with neighbors; discard the converted geometry.", vec!["input", "part"]),
         ("stop_at_feature", "Try a numbered part through a history feature (0 means stored shape only); discard geometry.", vec!["input", "part", "feature"]),
         ("same_failure", "Check a freshly rebuilt small file against the signature in out.", vec!["input", "out"]),
         ("make_report", "Prepare a local ZIP from the checked small file. It contains geometry. Nothing is sent; ask the user to review it locally before sharing.", vec!["input", "out"]),

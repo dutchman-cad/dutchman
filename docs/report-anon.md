@@ -128,20 +128,20 @@ The report's fields are added to, never renamed or removed, while its schema sta
 
 Appearance assignments left out of the output use these fixed codes in both the anonymous
 report and the diagnostic log's `end.losses` counts. These categories never contain a target
-id, binding id, colour name or component name. Anonymous appearance entries have no `example`.
+id, binding id, color name or component name. Anonymous appearance entries have no `example`.
 
 | Code | Cause |
 |---|---|
-| `dutchman/appearance.redundant-face` | Face colour equals its body's colour, with no visible effect. Reserved: these assignments are retained and produce no loss count. |
+| `dutchman/appearance.redundant-face` | Face color equals its body's color, with no visible effect. Reserved: these assignments are retained and produce no loss count. |
 | `dutchman/appearance.wire` | Target is a wire body or saved free edge. |
 | `dutchman/appearance.face-pick-missed` | Face geometry could not be matched to an output face with a resolved interior pick. |
 | `dutchman/appearance.target-absent` | Target is absent from the decoded model. |
 | `dutchman/appearance.unwritable-body` | Target belongs to a body with no geometry the writer can write. |
-| `dutchman/appearance.other` | Another appearance mapping gap, such as a missing colour, conflicting assignments or no placed component geometry. |
+| `dutchman/appearance.other` | Another appearance mapping gap, such as a missing color, conflicting assignments or no placed component geometry. |
 
 The exact codes above are allow-listed; arbitrary `dutchman/appearance.*` strings are not
-accepted as categories. Assignments kept as body colours, uniform face colours or individual
-face colours are not counted as dropped. Multiple dropped assignments count individually,
+accepted as categories. Assignments kept as body colors, uniform face colors or individual
+face colors are not counted as dropped. Multiple dropped assignments count individually,
 even when they share a target. Ordinary conversion reports retain their human explanations.
 
 
@@ -151,7 +151,10 @@ Use `--report-counts --report-anon FILE` with `convert` or `convert-all` to writ
 `dutchman.report-counts/1`. For MCP `convert_all`, set `report_counts: true` and
 `report_anon` to the destination. This opt-in profile holds counts and fixed categories;
 it has no messages, file IDs, names, paths, dimensions or geometry. It cannot use
-`report_salt` or `report_key`. Source version bands remain `unknown` when unavailable.
+`report_salt` or `report_key`. Inventor files carry the release year they were saved with as a band (`inventor_2021`,
+`inventor_older`, `inventor_newer`); for an assembly it is the `.iam` file's own saving
+version, not its parts'. The band is `unknown` for other formats and when the
+file states no version.
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](json.md).

@@ -108,6 +108,27 @@ pub(super) fn map(
             .pointer("/profile/kind")
             .and_then(Value::as_str)
             == Some("spatial_sketch_profiles");
+    // A join that leaves the source with as many bodies as before merged nothing into its
+    // output: the extrude targets exactly that body, as the source's body list shows. Without
+    // the target, SolidCraft joins every body the profile touches.
+    if !final_state && !spatial {
+        if let Some(targets) = unchanged_join_targets(feature, ctx, history) {
+            if let Some(trial) =
+                Trial::map(feature, Some(&targets), ctx, history, params, &mut None)
+            {
+                *ctx = trial.ctx;
+                history.features = trial.preceding;
+                report.append(trial.notes);
+                report.push_coded(
+                    Severity::Info,
+                    describe(feature),
+                    "history/body-scope-confirmed",
+                    "The source's body list confirmed the extrude's target body: the join merged no other body into it",
+                );
+                return Some(Ok(Mapped::Feature(trial.mapped)));
+            }
+        }
+    }
     let scope = body_scope(feature, ctx).filter(|_| final_state);
     let first = if spatial {
         vec![feature.clone()]
@@ -661,6 +682,23 @@ fn body_scope(feature: &Value, ctx: &Context) -> Option<Vec<String>> {
     }
     let selection = json!({"kind": "bodies", "value": outputs});
     super::modify::body_names(feature, &selection, ctx).ok()
+}
+
+/// The one body a join extrude's output names, when the source stores as many bodies right
+/// after it as right before it, so the join consumed none. `None` when either state is not
+/// stored, or the join has several outputs.
+fn unchanged_join_targets(
+    feature: &Value,
+    ctx: &Context,
+    history: &History,
+) -> Option<Vec<String>> {
+    if super::operation(feature).get("op").and_then(Value::as_str) != Some("join") {
+        return None;
+    }
+    let targets = body_scope(feature, ctx).filter(|targets| targets.len() == 1)?;
+    let after = stored_body_centers(feature)?;
+    let before = history.stored_bodies_at_end()?;
+    (after.len() == before.len()).then_some(targets)
 }
 
 /// Try the selected neutral curve identities first, then the whole carrier sketch. Native

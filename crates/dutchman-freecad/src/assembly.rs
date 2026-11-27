@@ -36,6 +36,7 @@ pub(crate) fn finish(
     if assembly.placements.len() > MAX_PLACEMENTS
         || assembly.joints.len() > MAX_PLACEMENTS
         || assembly.held.len() > MAX_PLACEMENTS
+        || model.ir.model.product_definitions.len() > MAX_PLACEMENTS
         || model.ir.model.occurrences.len() > MAX_PLACEMENTS
         || model.ir.model.assembly_joints.len() > MAX_PLACEMENTS
     {
@@ -175,22 +176,66 @@ fn converted(joint: &dutchman_core::Joint, index: usize) -> Result<Converted, St
     })))
 }
 
-/// Match direct local occurrences in the same stable ordinal order as local_assembly.
+/// Match direct local occurrences in the file definition's source order.
 /// Nested/external operands require a separate reference resolver and are refused below.
 fn direct_paths(wire: &Value, assembly: &Assembly) -> BTreeMap<String, Vec<usize>> {
-    let mut roots: Vec<&Value> = wire
+    let definitions: BTreeMap<&str, &Value> = wire
+        .pointer("/model/product_definitions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| Some((row.get("id")?.as_str()?, row)))
+        .collect();
+    let occurrences: BTreeMap<&str, &Value> = wire
         .pointer("/model/occurrences")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|row| row.pointer("/parent/kind").and_then(Value::as_str) == Some("root"))
+        .filter_map(|row| Some((row.get("id")?.as_str()?, row)))
         .collect();
-    roots.sort_by_key(|row| row.get("ordinal").and_then(Value::as_u64));
+    let mut roots = Vec::new();
+    for definition in wire
+        .pointer("/model/product_definitions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|definition| {
+            definition.pointer("/storage/kind").and_then(Value::as_str) == Some("file")
+                && definition.pointer("/storage/source").is_none()
+        })
+    {
+        for id in definition
+            .get("occurrences")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(row) = id.as_str().and_then(|id| occurrences.get(id)).copied() else {
+                return BTreeMap::new();
+            };
+            let Some(prototype) = row
+                .get("prototype")
+                .and_then(Value::as_str)
+                .and_then(|id| definitions.get(id))
+                .copied()
+            else {
+                return BTreeMap::new();
+            };
+            if row.get("suppressed").and_then(Value::as_bool) == Some(true)
+                || prototype.get("active").and_then(Value::as_bool) == Some(false)
+            {
+                continue;
+            }
+            if prototype.pointer("/storage/kind").and_then(Value::as_str) == Some("external")
+                || roots.len() >= MAX_PLACEMENTS
+            {
+                return BTreeMap::new();
+            }
+            roots.push(row);
+        }
+    }
     let mut out = BTreeMap::new();
     for (index, row) in roots.into_iter().enumerate() {
-        if row.pointer("/prototype/kind").and_then(Value::as_str) != Some("local") {
-            return BTreeMap::new();
-        }
         let Some(placement) = assembly.placements.get(index) else {
             return BTreeMap::new();
         };

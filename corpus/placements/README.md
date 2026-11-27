@@ -4,11 +4,11 @@ Where every part of three public assemblies lands, as the "Placements" workflow
 (`.github/workflows/placements.yml`) checks it on each pull request that changes the converter.
 A golden maps an occurrence path (the occurrence names from the root, joined by `/`; a repeated
 name among siblings gets `#2`, `#3`, ... in document order) to the world position of its origin
-in millimetres, rounded to 0.001. These goldens record converter output; an independent source reference is needed to establish whether those positions are correct.
+in millimeters, rounded to 0.001. These goldens record converter output; an independent source reference is needed to establish whether those positions are correct.
 The check fails when a shared part moves more than 0.01 mm, or a part disappears or appears. The
 "Editable history" stand-ins the converter adds beside a part are not listed.
 
-| Golden | Source | Licence | Pinned file |
+| Golden | Source | License | Pinned file |
 |---|---|---|---|
 | `railcore.json` | RailCore II 300ZL, [railcore/parts](https://github.com/railcore/parts), `DXF/f3z/RailCore II 300ZL - Nov 2019.f3z` (the file now sits in `F3Z/` of that repository but is empty there; this commit still holds it) | CC BY 3.0 | commit `81ef3be6c712e56782142dbce4b736994c4a1477`, SHA-256 `eb4afd93e0a5bba9159090909532a91862385f8fcf17ee74c4b687fa45b434fe` |
 | `robot-arm.json` | Robot arm with gripper, [Adriaeik/fusion2URDF](https://github.com/Adriaeik/fusion2URDF), `examples/Assem1_description/Assem1.f3z` | MIT | commit `4411ffbdffc0364dc6f5922c40b3e14fd7b642f8`, SHA-256 `3fd57697437949374b76df74dbc69342d286512f0ef8f4580b5dca7c1d6dfe44` |
@@ -48,7 +48,7 @@ second-connector rule, `C0 = C1 * T(offset) * Rz(+angle)` for aligned frames.
 
 The robot-arm golden is checked against the root design's saved member
 `FusionAssetName[Active]/OGS.BlobFolder/OGS/DefaultScene/world`. Its matrices are column-major
-float32 4×4 transforms in centimetres. Absolute translation checks accept the rounded golden;
+float32 4×4 transforms in centimeters. Absolute translation checks accept the rounded golden;
 relative translation and rotation checks use the converted design's full, unrounded transforms.
 
 ```sh

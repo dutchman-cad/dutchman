@@ -241,17 +241,33 @@ pub(crate) fn map(
             shapes: builder.shapes.clone(),
         },
     );
+    let mut sketch = json!({
+        "points": builder.points,
+        "curves": builder.curves,
+        "constraints": constraints,
+    });
+    if !builder.links.is_empty() {
+        // The letters' own ids come after every id written here.
+        let counter = |prefix: &str| builder.counters.get(prefix).copied().unwrap_or(0);
+        if let Some(fields) = sketch.as_object_mut() {
+            fields.insert("links".to_owned(), Value::Array(builder.links.clone()));
+            fields.insert(
+                "counters".to_owned(),
+                json!({
+                    "j": builder.links.len(),
+                    "l": counter("l"),
+                    "p": counter("p"),
+                }),
+            );
+        }
+    }
     Ok(json!({
         "id": id,
         "name": name,
         "type": "sketch",
         "suppressed": false,
         "plane": plane,
-        "sketch": {
-            "points": builder.points,
-            "curves": builder.curves,
-            "constraints": constraints,
-        },
+        "sketch": sketch,
     }))
 }
 
@@ -628,6 +644,8 @@ pub(crate) struct Builder {
     curves: Vec<Value>,
     /// Continuity relations introduced between exact spline pieces.
     joints: Vec<Value>,
+    /// Text links: SolidCraft sets the letters as outlines when it opens the sketch.
+    links: Vec<Value>,
     /// The last number used per point or curve id prefix (conics use `q` to avoid constraint ids).
     counters: BTreeMap<&'static str, u64>,
     /// Largest displacement of a defining point when reusing an emitted point (mm).
@@ -644,6 +662,7 @@ impl Default for Builder {
             endpoint_refs: Vec::new(),
             curves: Vec::new(),
             joints: Vec::new(),
+            links: Vec::new(),
             counters: BTreeMap::new(),
             point_displacement: 0.0,
             shapes: BTreeMap::new(),
@@ -1162,10 +1181,26 @@ impl Builder {
                 ),
                 Err(why) => return Err(why),
             },
-            "text" | "external_reference" | "native" => {
+            "text" => {
+                if let Some(mut link) = text_link(geometry, report)? {
+                    if let Some(fields) = link.as_object_mut() {
+                        fields.insert("id".to_owned(), json!(format!("j{}", self.links.len() + 1)));
+                    }
+                    if construction {
+                        report.push(
+                            Severity::Degraded,
+                            "sketch",
+                            "a construction sketch text is written as solid text".to_owned(),
+                        );
+                    }
+                    self.links.push(link);
+                }
+            }
+            "external_reference" | "native" => {
                 let why = match kind {
-                    "text" => "sketch text is not supported yet: source font metrics, width scaling and vertical anchoring cannot be preserved as solved outlines",
-                    "external_reference" => "an external sketch reference has no solved sketch-space geometry",
+                    "external_reference" => {
+                        "an external sketch reference has no solved sketch-space geometry"
+                    }
                     _ => "source-native sketch geometry has no resolved neutral curve",
                 };
                 if construction {
@@ -1187,6 +1222,108 @@ impl Builder {
         }
         Ok(())
     }
+}
+
+/// A SolidCraft text link for a source sketch text, reporting what it cannot state.
+///
+/// SolidCraft sets the letters when it opens the sketch, from the text, the font, the height
+/// (the capital height), the baseline start, the angle and the alignment. The source's
+/// width scaling and a medium weight have no counterpart.
+fn text_link(geometry: &Value, report: &mut Report) -> Result<Option<Value>, String> {
+    let bad = || "its text sketch curve is malformed".to_owned();
+    let text = geometry
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or_else(bad)?;
+    let height = number(geometry.get("height"))
+        .filter(|height| *height > 0.0)
+        .ok_or_else(bad)?;
+    // A text laid out by references (along a curve, say) carries no placement of its own.
+    let Some(placement) = geometry.get("placement").filter(|value| !value.is_null()) else {
+        report.push(
+            Severity::Degraded,
+            "sketch",
+            "a sketch text has no stored placement (it follows a reference the reader does not \
+             resolve), so it is left out"
+                .to_owned(),
+        );
+        return Ok(None);
+    };
+    let at = p2(placement.get("anchor")).ok_or_else(bad)?;
+    let angle = number(placement.get("rotation")).unwrap_or(0.0);
+    let mut style = serde_json::Map::new();
+    let mut notes: Vec<&str> = Vec::new();
+    match number(geometry.get("font_weight")) {
+        Some(weight) if weight >= 700.0 => {
+            style.insert("bold".to_owned(), json!(true));
+        }
+        Some(weight) if weight > 450.0 => {
+            notes.push("a medium weight is set in the regular weight");
+        }
+        _ => {}
+    }
+    let kind_of = |key: &str| {
+        geometry
+            .get(key)
+            .filter(|value| !value.is_null())
+            .map(|value| value.get("kind").and_then(Value::as_str))
+    };
+    match kind_of("horizontal_alignment") {
+        Some(Some(kind @ ("left" | "center" | "right"))) => {
+            style.insert("align".to_owned(), json!(kind));
+        }
+        Some(_) => {
+            notes.push("a source horizontal alignment with no neutral meaning is set from the left")
+        }
+        None => {}
+    }
+    match kind_of("vertical_alignment") {
+        Some(Some(kind @ ("top" | "middle" | "bottom"))) => {
+            if kind != "middle" {
+                notes.push(
+                    "the source's top or bottom anchoring is set at the capitals' top or the \
+                     descenders' bottom, which can differ from the source's font box",
+                );
+            }
+            style.insert("vertical_align".to_owned(), json!(kind));
+        }
+        Some(_) => {
+            notes.push("a source vertical alignment with no neutral meaning is set on the baseline")
+        }
+        None => {}
+    }
+    if let Some(factor) = number(geometry.get("width_factor")) {
+        if (factor - 1.0).abs() > 1e-9 {
+            notes.push(
+                "the source's width scaling is not carried; the letters keep their natural width",
+            );
+        }
+    }
+    for note in notes {
+        report.push(Severity::Degraded, "sketch", format!("sketch text: {note}"));
+    }
+    let mut source = json!({
+        "type": "text",
+        "text": text,
+        "at": at,
+        "height": height,
+        "angle": angle,
+    });
+    if let Some(font) = geometry
+        .get("font_family")
+        .and_then(Value::as_str)
+        .filter(|font| !font.trim().is_empty())
+    {
+        if let Some(fields) = source.as_object_mut() {
+            fields.insert("font".to_owned(), json!(font));
+        }
+    }
+    if !style.is_empty() {
+        if let Some(fields) = source.as_object_mut() {
+            fields.insert("style".to_owned(), Value::Object(style));
+        }
+    }
+    Ok(Some(json!({"kind": "text", "source": source})))
 }
 
 /// A single rational quadratic Bézier has the same locus after normalizing its
@@ -2166,6 +2303,83 @@ mod tests {
             builder.entity(&entity(ellipse), &mut report).unwrap_err(),
             "an unbounded hyperbola cannot be expressed by SolidCraft's bounded conic"
         );
+    }
+
+    fn text(extra: Value) -> Value {
+        let mut geometry = json!({"kind": "text", "text": "Hi", "font_family": "Arial",
+            "font_weight": 400, "height": 5.0,
+            "placement": {"anchor": {"u": 1.0, "v": 2.0}, "rotation": 0.5}});
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            geometry[key] = value.clone();
+        }
+        entity(geometry)
+    }
+
+    #[test]
+    fn sketch_text_becomes_a_text_link_with_its_stated_fields() {
+        let mut report = Report::default();
+        let mut builder = Builder::default();
+        builder
+            .entity(
+                &text(json!({"font_weight": 750,
+                    "horizontal_alignment": {"kind": "center"},
+                    "vertical_alignment": {"kind": "middle"}})),
+                &mut report,
+            )
+            .unwrap();
+        assert_eq!(
+            builder.links,
+            vec![json!({"id": "j1", "kind": "text", "source": {
+                "type": "text", "text": "Hi", "at": [1.0, 2.0], "height": 5.0, "angle": 0.5,
+                "font": "Arial",
+                "style": {"bold": true, "align": "center", "vertical_align": "middle"}}})]
+        );
+        assert!(builder.curves.is_empty());
+        assert!(report.losses().is_empty());
+    }
+
+    #[test]
+    fn sketch_text_width_scaling_and_medium_weight_are_noted_not_refused() {
+        let mut report = Report::default();
+        let mut builder = Builder::default();
+        builder
+            .entity(
+                &text(json!({"width_factor": 0.8, "font_weight": 500,
+                    "vertical_alignment": {"kind": "top"}})),
+                &mut report,
+            )
+            .unwrap();
+        assert_eq!(builder.links.len(), 1);
+        let notes: Vec<&str> = report.losses().iter().map(|l| l.detail.as_str()).collect();
+        assert_eq!(notes.len(), 3, "{notes:?}");
+        assert!(notes.iter().any(|n| n.contains("width scaling")));
+        assert!(notes.iter().any(|n| n.contains("medium weight")));
+        assert!(notes.iter().any(|n| n.contains("top or bottom anchoring")));
+        assert!(report
+            .losses()
+            .iter()
+            .all(|loss| loss.severity == Severity::Degraded));
+        // A width factor of one states nothing the target cannot.
+        let mut quiet = Report::default();
+        Builder::default()
+            .entity(&text(json!({"width_factor": 1.0})), &mut quiet)
+            .unwrap();
+        assert!(quiet.losses().is_empty());
+    }
+
+    #[test]
+    fn sketch_text_without_a_placement_is_left_out_with_a_note() {
+        let mut geometry = text(json!({}));
+        geometry["geometry"]
+            .as_object_mut()
+            .unwrap()
+            .remove("placement");
+        let mut report = Report::default();
+        let mut builder = Builder::default();
+        builder.entity(&geometry, &mut report).unwrap();
+        assert!(builder.links.is_empty());
+        assert_eq!(report.losses().len(), 1);
+        assert!(report.losses()[0].detail.contains("no stored placement"));
     }
 
     /// The sketch of cadmpeg's synthetic `design_sketch_constraints.f3d`, compared with a

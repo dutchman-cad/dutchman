@@ -9,7 +9,7 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/dutchman-cad/dutchman'
 license=('Apache-2.0')
 depends=('glibc' 'gcc-libs' 'fontconfig' 'libxkbcommon' 'libx11' 'libxcursor' 'libxi' 'libxrandr'
-         'wayland' 'vulkan-icd-loader' 'mesa' 'hicolor-icon-theme')
+         'wayland' 'dbus' 'vulkan-icd-loader' 'mesa' 'hicolor-icon-theme')
 optdepends=('vulkan-driver: GPU drawing in the desktop app')
 provides=('dutchman')
 conflicts=('dutchman')
