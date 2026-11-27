@@ -232,35 +232,51 @@ mod tests {
     fn sync_window_screenshots() {
         let out = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
         std::fs::create_dir_all(&out).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join(sync_state::FILE_NAME);
-        let mut state = State::default();
-        state.add_folder(
-            PathBuf::from("/Users/demo/Documents/Converted"),
-            Some(PathBuf::from("/Users/demo/Documents/CAD")),
-        );
-        state.add_folder(
-            PathBuf::from("/Users/demo/Projects/Converted"),
-            Some(PathBuf::from("/Users/demo/Projects/CAD")),
-        );
-        state.folders[1].enabled = false;
-        state.start_at_login = true;
-        sync_state::write_to(&file, &state).unwrap();
-        for (theme, name) in [
-            (egui::ThemePreference::Light, "day"),
-            (egui::ThemePreference::Dark, "night"),
+        // The app has no German text yet, so the German set is a test-only simulation: long
+        // German folder names under the English labels.
+        for (language, converted, cad, second_converted, second_cad) in [
+            (
+                "en",
+                "/Users/demo/Documents/Converted",
+                "/Users/demo/Documents/CAD",
+                "/Users/demo/Projects/Converted",
+                "/Users/demo/Projects/CAD",
+            ),
+            (
+                "de-DE",
+                "/Users/demo/Dokumente/Konvertierte-Konstruktionszeichnungen-Fertigungsabteilung",
+                "/Users/demo/Dokumente/Konstruktionsdaten-Maschinenbau-Fertigungsabteilung",
+                "/Users/demo/Projekte/Außenhülle-Befestigungswinkel-Konvertiert",
+                "/Users/demo/Projekte/Außenhülle-Befestigungswinkel",
+            ),
         ] {
-            let state_file = file.clone();
-            let mut harness = egui_kittest::Harness::builder()
-                .with_size(egui::vec2(SIZE[0], SIZE[1]))
-                .build_eframe(move |cc| Window::new(cc, state_file));
-            harness.ctx.set_theme(theme);
-            harness.run_steps(8);
-            let image = harness.render().unwrap();
-            assert!(image.height() <= image.width());
-            image
-                .save(out.join(format!("sync-window-{name}.png")))
-                .unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join(sync_state::FILE_NAME);
+            let mut state = State::default();
+            state.add_folder(PathBuf::from(converted), Some(PathBuf::from(cad)));
+            state.add_folder(
+                PathBuf::from(second_converted),
+                Some(PathBuf::from(second_cad)),
+            );
+            state.folders[1].enabled = false;
+            state.start_at_login = true;
+            sync_state::write_to(&file, &state).unwrap();
+            for (theme, name) in [
+                (egui::ThemePreference::Light, "day"),
+                (egui::ThemePreference::Dark, "night"),
+            ] {
+                let state_file = file.clone();
+                let mut harness = egui_kittest::Harness::builder()
+                    .with_size(egui::vec2(SIZE[0], SIZE[1]))
+                    .build_eframe(move |cc| Window::new(cc, state_file));
+                harness.ctx.set_theme(theme);
+                harness.run_steps(8);
+                let image = harness.render().unwrap();
+                assert!(image.height() <= image.width());
+                image
+                    .save(out.join(format!("sync-window-{language}-{name}.png")))
+                    .unwrap();
+            }
         }
     }
 }
