@@ -734,6 +734,24 @@ fn converting_again_never_overwrites_a_file_changed_since_it_was_written() {
 #[test]
 #[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
 fn replace_existing_files_screenshots() {
+    // Settings and paths are neutral, so the images show nothing of this machine.
+    let demo = PathBuf::from("/tmp/demo");
+    if std::env::var_os("DUTCHMAN_REPLACE_SHOTS_CHILD").is_none() {
+        std::fs::create_dir_all(&demo).unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "replace_existing_files_screenshots"])
+            .env("DUTCHMAN_REPLACE_SHOTS_CHILD", "1")
+            .env("HOME", &demo)
+            .env("LOCALAPPDATA", &demo)
+            .env("XDG_CONFIG_HOME", demo.join("config"))
+            .env("XDG_CACHE_HOME", demo.join("cache"))
+            .env("XDG_DATA_HOME", demo.join("data"))
+            .env("XDG_STATE_HOME", demo.join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("DUTCHMAN_NO_TRASH", "1");
@@ -752,8 +770,9 @@ fn replace_existing_files_screenshots() {
             let work = tempfile::tempdir().unwrap();
             let input = work.path().join(format!("{design}.ipt"));
             std::fs::copy(fixture("synthetic_cube.ipt"), &input).unwrap();
-            let out = work.path().join("converted");
-            std::fs::create_dir(&out).unwrap();
+            let out = demo.join("out");
+            let _ = std::fs::remove_dir_all(&out);
+            std::fs::create_dir_all(&out).unwrap();
             std::fs::write(out.join(format!("{design}.sc")), b"MY OWN DESIGN").unwrap();
             let mut harness = Harness::builder()
                 .with_size(egui::vec2(1280.0, 800.0))
@@ -762,6 +781,8 @@ fn replace_existing_files_screenshots() {
             harness.state_mut().add_inputs([input]);
             harness.state_mut().set_out_dir(out);
             harness.state_mut().set_verify(false);
+            harness.state_mut().set_checker_for_test(true);
+            harness.state_mut().preview_solidcraft(Some("0.50.0"));
             harness.run_steps(8);
             harness.get_by_label("Advanced").click_accesskit();
             harness.run_steps(8);
