@@ -329,10 +329,76 @@ fn matches_asset(name: &str, os: &str, arch: &str, appimage: bool) -> bool {
     }
 }
 
+/// How long a network step may wait before the update gives up.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Timeouts {
+    /// The host-name lookup, and then each connection attempt, may each take this long.
+    pub connect: Duration,
+    /// No bytes arriving for this long. A slow download that keeps moving is never cut.
+    pub stall: Duration,
+    /// A deadline for the whole request, set only for small requests (the release feed and
+    /// checksums) so a server dripping one byte at a time cannot hold them forever.
+    pub total: Option<Duration>,
+}
+
+impl Timeouts {
+    pub(crate) const DEFAULT: Timeouts = Timeouts {
+        connect: Duration::from_secs(15),
+        stall: Duration::from_secs(30),
+        total: None,
+    };
+    /// For the release feed, the API and checksum files: small, so also bounded in total.
+    pub(crate) const SMALL: Timeouts = Timeouts {
+        total: Some(Duration::from_secs(20)),
+        ..Timeouts::DEFAULT
+    };
+}
+
+/// Resolves host names on a helper thread so a firewall that swallows DNS cannot hang a step.
+#[derive(Debug)]
+struct TimedResolver(Duration);
+
+impl ureq::Resolver for TimedResolver {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        use std::net::ToSocketAddrs;
+        // The lookup itself cannot be cancelled: the helper thread lives until getaddrinfo
+        // returns (the system bounds that) and at the latest until the program exits. Only
+        // the wait for it is cut here.
+        let (tx, rx) = channel();
+        let netloc = netloc.to_owned();
+        std::thread::spawn(move || {
+            let _ = tx.send(netloc.to_socket_addrs().map(|found| found.collect()));
+        });
+        rx.recv_timeout(self.0).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "host name lookup timed out")
+        })?
+    }
+}
+
+/// An HTTP agent whose name lookup, connection attempts, reads and writes are each bounded.
+pub(crate) fn agent(timeouts: Timeouts, redirects: u32) -> ureq::Agent {
+    let mut builder = ureq::AgentBuilder::new()
+        .redirects(redirects)
+        .resolver(TimedResolver(timeouts.connect))
+        .timeout_connect(timeouts.connect)
+        .timeout_read(timeouts.stall)
+        .timeout_write(timeouts.stall);
+    if let Some(total) = timeouts.total {
+        builder = builder.timeout(total);
+    }
+    builder.build()
+}
+
 pub(crate) fn fetch(url: &str, etag: Option<&str>) -> Result<Response, String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(20))
-        .build();
+    fetch_with(url, etag, Timeouts::SMALL)
+}
+
+pub(crate) fn fetch_with(
+    url: &str,
+    etag: Option<&str>,
+    timeouts: Timeouts,
+) -> Result<Response, String> {
+    let agent = agent(timeouts, 5);
     let mut request = agent.get(url).set(
         "User-Agent",
         concat!("Dutchman-update-check/", env!("CARGO_PKG_VERSION")),
@@ -572,7 +638,8 @@ impl Updater {
         }
     }
     pub fn tick(&mut self, ctx: &egui::Context) {
-        if self.job.busy() && ctx.input(|i| i.viewport().close_requested()) {
+        // A download in progress has installed nothing, so it never keeps the window open.
+        if self.job.blocks_close() && ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.open = true;
             self.closing = true;
@@ -987,9 +1054,16 @@ impl Updater {
             }
             Phase::Failed(error) => {
                 ui.label(error);
-                if ui.button("Try again").clicked() {
-                    self.job = Job::new();
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("Try again").clicked() {
+                        self.job = Job::new();
+                    }
+                    ui.hyperlink_to(
+                        "Download manually",
+                        format!("{RELEASES}/tag/{}", release.tag),
+                    );
+                });
+                return;
             }
         }
         ui.hyperlink_to("Download", format!("{RELEASES}/tag/{}", release.tag));
@@ -1038,6 +1112,19 @@ impl Updater {
         self.allowed = false;
         self.open = true;
         self.click = Click::Failed(failure_text(error));
+    }
+    /// Shows the update window after a download that could not reach GitHub, for GPU screenshots.
+    pub fn preview_download_unreachable(&mut self) {
+        self.install = Install::Zip("C:/Program Files/Dutchman".into());
+        self.open = true;
+        self.job.preview(
+            self.release
+                .as_ref()
+                .map(|r| r.tag.clone())
+                .unwrap_or_default(),
+            Phase::Failed(package::unreachable_message().into()),
+            "",
+        );
     }
     /// Supplies a release without networking for UI previews and GPU screenshots.
     pub fn preview(&mut self, release: Release) {

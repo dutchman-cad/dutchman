@@ -5,7 +5,7 @@ Dutchman reads Inventor through cadmpeg's Inventor codec (cadmpeg-registry's
 when the pin is bumped. This page says what Dutchman makes of what that codec gives, and which
 upstream gaps keep Inventor history from replaying. It drives what is asked of cadmpeg next.
 
-State as of the cadmpeg commit Dutchman pins (`f1338aa2`, after cadmpeg 0.6.12; see `Cargo.toml`).
+State as of the cadmpeg commit Dutchman pins (`bb8c69a7`, after cadmpeg 0.6.12; see `Cargo.toml`).
 Fixed-spacing rectangular body patterns and more face operands now decode, and resolved
 split targets retain their earlier body producer for history mapping. Body patterns still
 need earlier mapped body names; feature-local body selections remain unsupported.
@@ -16,7 +16,7 @@ need earlier mapped body names; feature-local body selections remain unsupported
 |---|---|
 | The part B-rep, from one typed ACIS/ASM kernel carrier (verified for ACIS majors 217 and 218). | Converts it: restated as STEP, written as SolidCraft's import container, like Fusion. |
 | No geometry (empty or invalid carrier: blocking `geometry_not_transferred`). | Stops: "no geometry could be read". |
-| Parameters (closed scalar graphs, including ones whose stored unit type cadmpeg doesn't recognise). | Mapped to SolidCraft parameters. |
+| Parameters (closed scalar graphs, including ones whose stored unit type cadmpeg doesn't recognize), with their expression text (`Width / 2 + 5 mm`) and the parameters each one reads. | Mapped to SolidCraft parameters that keep the expression, so editing `Width` in SolidCraft drives every parameter that reads it. User parameters (`Width`) and the `d0`, `d1`, ... parameters Inventor makes for dimensions are both written, the second kind as model parameters. A sketch dimension and a blind extrude distance (one side, or each side of a two-sided extrude) stay driven by their parameter. Unitless numbers in an expression (`ul`) are written plain; an expression with a unit SolidCraft has no name for (`grad`), or with a function SolidCraft lacks, keeps the parameter's value and the report names why. A parameter with no stored expression text (its unit type is only read by record layout) keeps its value. |
 | Planar sketches: points, lines, circles, ellipses, polygons, with typed and native constraints. | Mapped, ellipses as whole ellipses; typed constraints mapped, native ones reported as not carried. |
 | Periodic (closed) sketch B-splines, with a full knot vector and polynomial or equal-weight poles. | Mapped exactly by endpoint knot insertion into a clamped SolidCraft control spline. Nonuniform spacing and repeated interior knots become chains of exact spline pieces with shared endpoints, up to 200 pieces; uniform splines stay one spline. Unequal weights remain unsupported because SolidCraft control splines have no weights. |
 | Extrude, hole, constant-radius fillet, equal-distance chamfer, when every property, dimension and selection resolves. | Extrude: mapped when cadmpeg resolves its profile to sketch profiles or regions, blind, through all, or to a resolved plane parallel to the sketch before any body-building feature (including a placed work plane); resolved parallel planar faces on earlier named bodies also map. Native face selections, tilted terminating planes, vertex selections, and to-next-face ends are not mapped yet. Holes map where their placement resolves, drilled the way the hole points; constant-radius fillets and equal-setback chamfers map with proven feature input edge geometry (see guide.md). |
@@ -51,7 +51,7 @@ supplies an open line/arc chain and a blind normal sweep; see [sheet metal](hist
 
 On SolidCraft 0.44 and newer, the shared writer can confirm extrude body scope
 at the final body-building feature from resolved modified-body outputs and a
-matching replay against the final source geometry. Intermediate body centres
+matching replay against the final source geometry. Intermediate body centers
 cannot confirm scope. A consumed Combine tool without a final body row keeps
 its name only when the source retains exactly one history body whose
 `produced_by` matches its single-output producer, or a complete replay matches
@@ -69,7 +69,8 @@ attachments at concave edges. The plate must still be rectangular, square to the
 its entire selected edge, share its thickness, and start at the bend end or the outer face.
 Height is measured from the outer face; bend radius comes from the paired bend. The writer
 uses the existing `sheet_flange` feature with `edges`, `height`, `angle: "90 deg"`, `radius`,
-and `position: "inside"`; no new version gate or command inputs are needed.
+and `position: "inside"`; a plate attached along several equal, parallel edges on one face lists
+all of them in `edges`; no new version gate or command inputs are needed.
 
 The attachment proof refuses curved, open, crossing, disconnected, or collinear base edges,
 base profiles with holes or partial regions, and bases changed by earlier solid features.
@@ -78,6 +79,11 @@ Historical midpoint, tangent, and both endpoints must match the rebuilt edge; fi
 edges and a bounding rectangle cannot establish that match. See [sheet metal](history.md#sheet-metal)
 for the remaining plate and bend limits. Synthetic CADIR tests build polygonal bases in code
 and replay L-shaped and notched examples with the released SolidCraft CLI.
+
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry.
 
 ## Upstream gaps, in the order they block history
 
@@ -106,7 +112,7 @@ Assemblies convert as placed parts, each with its own feature history when that 
 maps (see the parts table above for what blocks Inventor history today):
 
 - cadmpeg gives each occurrence its stored part path (often absolute on the machine that
-  saved it), its rigid placement in millimetres, and its name. Dutchman finds each part as
+  saved it), its rigid placement in millimeters, and its name. Dutchman finds each part as
   [below](#finding-the-part-files), reads each part file once, and writes one SolidCraft
   component per part, holding the part's geometry as an import, with one occurrence per
   placement.
@@ -117,6 +123,9 @@ maps (see the parts table above for what blocks Inventor history today):
   are taken from the sub-assembly files instead.
 - Left out and reported as Dropped: parts or sub-assemblies that cannot be found or read,
   scaled placements, and occurrences whose part is not a separate file.
+- Suppressed occurrences are placed hidden at their position, not dropped; an Info
+  `suppressed components` note names them.
+- Occurrences the source hides are placed hidden at their position too.
 - Upstream: cadmpeg leaves local prototypes untransferred. CADIR version 7 (cadmpeg 0.6.3) can
   carry assembly joints, but the Inventor codec does not read them yet.
 
@@ -167,8 +176,10 @@ Every file found is named as its folder lists it, whatever case the assembly sto
 ## Testing without real Inventor files
 
 cadmpeg publishes no Inventor part with geometry or history, and Dutchman never uses customer
-files. `crates/dutchman-core/tests/fixtures/synthetic_cube.ipt` is generated from cadmpeg's own
-synthetic sources (its README has the recipe). History behaviour is tested on CADIR built in
+files. `crates/dutchman-core/tests/fixtures/inventor_parameter_expressions.ipt` is a CC0 block
+made on purpose in Inventor 2016 with user parameters, model parameters and expressions that read
+each other; `an_inventor_part_keeps_its_parameter_expressions` converts it. `crates/dutchman-core/tests/fixtures/synthetic_cube.ipt` is generated from cadmpeg's own
+synthetic sources (its README has the recipe). History behavior is tested on CADIR built in
 the tests in the shape the Inventor codec emits, until cadmpeg publishes generated Inventor
 goldens with a design segment (sketch and extrude).
 
@@ -179,3 +190,13 @@ location sketch and a multi-point hole. The hole's form and termination must als
 be supported. Each placement still passes the single-hole entry-face checks. Different drilling directions, different entry planes, and
 multiple unsigned axes remain not supported yet; the original geometry is retained.
 Older targets report `multiple spatial hole locations need SolidCraft 0.44 patch 1 or newer`.
+
+A single solid body may contain disconnected lumps. The STEP encoder writes one
+solid per connected region, which SolidCraft displays separately even when editable
+history retains one body. A `MANIFOLD_SOLID_BREP` has one outer shell;
+`BREP_WITH_VOIDS` adds cavity shells, not disconnected outer regions. SolidCraft can
+keep an all-closed `SHELL_BASED_SURFACE_MODEL` together; a model mixing open and closed
+shells splits its solids from its sheets. Dutchman retains the encoder's solid-per-region
+STEP representation and reconciles the body grouping during verification. It compares
+the lumps' combined volume, surface area and bounds, and still rejects missing lumps; see
+[How a history is checked](history.md#how-a-history-is-checked).

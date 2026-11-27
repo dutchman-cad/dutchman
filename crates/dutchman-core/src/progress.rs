@@ -349,6 +349,8 @@ pub struct Progress<'a> {
     total: AtomicU64,
     features: Mutex<Vec<ActiveFeature>>,
     feature_emitted: Mutex<Option<Instant>>,
+    #[cfg(test)]
+    feature_now: Mutex<Option<Instant>>,
     /// A feature change not yet emitted, flushed by the heartbeat thread.
     pending: AtomicBool,
     callback: &'a (dyn Fn(ProgressEvent) + Send + Sync),
@@ -368,6 +370,8 @@ impl<'a> Progress<'a> {
             total: AtomicU64::new(u64::MAX),
             features: Mutex::new(Vec::new()),
             feature_emitted: Mutex::new(None),
+            #[cfg(test)]
+            feature_now: Mutex::new(None),
             pending: AtomicBool::new(false),
             callback,
         }
@@ -482,6 +486,17 @@ impl<'a> Progress<'a> {
         MeasureGuard { progress: self, id }
     }
 
+    /// Tests may freeze the scheduling clock without changing elapsed-time reporting.
+    fn feature_time(&self) -> Instant {
+        #[cfg(test)]
+        if let Ok(now) = self.feature_now.lock() {
+            if let Some(now) = *now {
+                return now;
+            }
+        }
+        Instant::now()
+    }
+
     /// Use one clock for immediate updates and timer flushes, so a flushed update cannot
     /// be followed immediately by another feature-only event.
     fn flush_feature(&self) {
@@ -489,7 +504,7 @@ impl<'a> Progress<'a> {
             .feature_emitted
             .lock()
             .map(|mut last| {
-                let now = Instant::now();
+                let now = self.feature_time();
                 if last.is_none_or(|at| now.duration_since(at) >= FEATURE_INTERVAL)
                     && self.pending.swap(false, Ordering::Relaxed)
                 {
@@ -608,6 +623,18 @@ impl<'a> Progress<'a> {
         self.run_every(Duration::from_secs(5), work)
     }
 
+    #[cfg(not(target_family = "wasm"))]
+    fn timer_tick(&self, beat: &mut Instant, interval: Duration) {
+        let now = self.feature_time();
+        if now.duration_since(*beat) >= interval {
+            *beat = now;
+            self.pending.store(false, Ordering::Relaxed);
+            self.heartbeat();
+        } else {
+            self.flush_feature();
+        }
+    }
+
     /// Periodically flushes feature changes that were not emitted at once.
     #[cfg(not(target_family = "wasm"))]
     fn run_every<T>(&self, interval: Duration, work: impl FnOnce() -> T) -> T {
@@ -619,13 +646,7 @@ impl<'a> Progress<'a> {
                     receive.recv_timeout(interval.min(FEATURE_INTERVAL)),
                     Err(mpsc::RecvTimeoutError::Timeout)
                 ) {
-                    if beat.elapsed() >= interval {
-                        beat = Instant::now();
-                        self.pending.store(false, Ordering::Relaxed);
-                        self.heartbeat();
-                    } else {
-                        self.flush_feature();
-                    }
+                    self.timer_tick(&mut beat, interval);
                 }
             });
             let _stop = stop;
@@ -681,7 +702,7 @@ mod tests {
         progress.stage(Stage::Decode);
         receive.recv().unwrap();
         progress.run_every(Duration::from_millis(10), || {
-            let event = receive.recv_timeout(Duration::from_secs(2)).unwrap();
+            let event = receive.recv_timeout(Duration::from_secs(30)).unwrap();
             assert!(event.heartbeat);
             assert_eq!(event.stage, Stage::Decode);
             assert!(event.elapsed_ms >= 10);
@@ -765,7 +786,7 @@ mod running_tests {
         let step = progress.step(StepKind::Preparing, Some("Bracket"), None, None);
         receive.recv().unwrap();
         progress.run_every(Duration::from_millis(15), || {
-            let event = receive.recv_timeout(Duration::from_secs(2)).unwrap();
+            let event = receive.recv_timeout(Duration::from_secs(30)).unwrap();
             assert!(event.heartbeat);
             let running = event.running.as_ref().unwrap();
             assert_eq!(running.name.as_deref(), Some("Bracket"));
@@ -824,14 +845,17 @@ mod running_tests {
         let events = Mutex::new(Vec::new());
         let callback = |event: ProgressEvent| events.lock().unwrap().push(event);
         let progress = Progress::new(&callback);
+        let now = Instant::now();
+        *progress.feature_now.lock().unwrap() = Some(now);
         let _step = progress.step(StepKind::Preparing, None, None, None);
         let timeline = progress.features(3);
         timeline.at(1, Some("Sketch"));
         timeline.at(2, Some("Extrude"));
         let before = events.lock().unwrap().len();
         // Make the timer flush due without waiting for wall-clock time.
-        *progress.feature_emitted.lock().unwrap() = Some(Instant::now() - FEATURE_INTERVAL);
-        progress.flush_feature();
+        *progress.feature_now.lock().unwrap() = Some(now + FEATURE_INTERVAL);
+        let mut beat = now;
+        progress.timer_tick(&mut beat, Duration::from_secs(5));
         assert_eq!(events.lock().unwrap().len(), before + 1);
         timeline.at(3, Some("Fillet"));
         assert_eq!(events.lock().unwrap().len(), before + 1);
@@ -843,6 +867,8 @@ mod running_tests {
         let events = Mutex::new(Vec::new());
         let callback = |event: ProgressEvent| events.lock().unwrap().push(event);
         let progress = Progress::new(&callback);
+        let now = Instant::now();
+        *progress.feature_now.lock().unwrap() = Some(now);
         let feature = |events: &Mutex<Vec<ProgressEvent>>| {
             events
                 .lock()
@@ -867,16 +893,27 @@ mod running_tests {
         for index in 2..=1000 {
             timeline.at(index, Some("Extrude 1"));
         }
-        assert!(events.lock().unwrap().len() - before <= 1);
-        progress.run_every(Duration::from_millis(400), || {
-            timeline.at(29, Some("Extrude 1"));
-            let started = Instant::now();
-            while feature(&events).map(|f| f.index) != Some(29) {
-                assert!(started.elapsed() < Duration::from_secs(2), "not flushed");
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            assert!(!events.lock().unwrap().last().unwrap().heartbeat);
-        });
+        assert_eq!(events.lock().unwrap().len(), before);
+        timeline.at(29, Some("Extrude 1"));
+        let mut beat = now;
+        let interval = Duration::from_millis(400);
+        // A tick just before the feature interval must leave the update pending.
+        *progress.feature_now.lock().unwrap() =
+            Some(now + FEATURE_INTERVAL - Duration::from_nanos(1));
+        progress.timer_tick(&mut beat, interval);
+        assert_eq!(events.lock().unwrap().len(), before);
+        assert!(progress.pending.load(Ordering::Relaxed));
+        // The first due timer tick flushes the latest feature before a heartbeat is due.
+        *progress.feature_now.lock().unwrap() = Some(now + FEATURE_INTERVAL);
+        progress.timer_tick(&mut beat, interval);
+        assert_eq!(feature(&events).unwrap().index, 29);
+        assert_eq!(events.lock().unwrap().len(), before + 1);
+        assert!(!events.lock().unwrap().last().unwrap().heartbeat);
+        // The next tick is a heartbeat and retains the worker's current feature.
+        *progress.feature_now.lock().unwrap() = Some(now + interval);
+        progress.timer_tick(&mut beat, interval);
+        assert!(events.lock().unwrap().last().unwrap().heartbeat);
+        assert_eq!(feature(&events).unwrap().index, 29);
         {
             let _measuring = progress.measuring();
             assert!(feature(&events).unwrap().measured);

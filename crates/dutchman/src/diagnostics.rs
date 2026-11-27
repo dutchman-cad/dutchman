@@ -471,7 +471,6 @@ pub(crate) fn member_code(code: &str) -> &'static str {
         "resource_limit" => "resource_limit",
         "unsupported_dialect" => "unsupported_dialect",
         "unsupported_target" => "unsupported_target",
-        "insufficient_depth" => "insufficient_depth",
         "not_implemented" => "not_implemented",
         "io" => "io",
         _ => "other",

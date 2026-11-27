@@ -3,7 +3,7 @@
   <img alt="Dutchman Convert" src="assets/logo/dutchman-lockup-night.png#gh-dark-mode-only" width="252">
 </h1>
 
-Converts Fusion, Inventor, SolidWorks, FreeCAD, CATIA, NX, Rhino, Creo View, ACIS, STEP, and offline Onshape bundles into SolidCraft designs, keeping editable features where they map.
+Converts Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo, NX, Rhino, Creo View, ACIS, STEP, and offline Onshape bundles into SolidCraft designs, keeping editable features where they map.
 
 <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=Dutchman%20Convert%20in%20Day%20theme%3A%20a%20CC0%20FreeCAD%20bracket%20converted%2C%20with%20its%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="Dutchman Convert in Day theme: a CC0 FreeCAD bracket converted, with its mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png#gh-light-mode-only" width="100%"></a>
 <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-night.png&alt=Dutchman%20Convert%20in%20Night%20theme%3A%20the%20same%20CC0%20bracket%20conversion%20and%20its%20result%20card"><img alt="Dutchman Convert in Night theme: the same CC0 bracket conversion and its result card" src="docs/images/readme-result-night.png#gh-dark-mode-only" width="100%"></a>
@@ -19,7 +19,8 @@ See it first: [converted designs in your browser](https://dutchmancad.xyz/demo/)
 - **Linux AppImage** (0.2.10 and later): download `dutchman-<version>-x86_64.AppImage` (or `-aarch64`) from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest), run `chmod +x` on it, and run it. It works on any distribution and starts the desktop app. A launcher such as Gear Lever adds it to your menu and `PATH`; the command line programs are in it too ([how](docs/install.md#linux-the-appimage)).
 
 The Windows installer is unsigned. If SmartScreen says **Windows protected your PC**, click
-**More info**, then **Run anyway**. See [Windows first run](docs/install.md#windows-first-run).
+**More info**, then **Run anyway**. Windows 11's Smart App Control blocks it with no **Run anyway**
+button; see [Smart App Control](docs/install.md#smart-app-control).
 
 Release packages include local `skills/`, Markdown `docs/`, and an `AGENTS.md` explaining
 commands and saved reports ([locations and omitted images](docs/install.md#included-guidance)).
@@ -58,14 +59,19 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 
    <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>
 
-## What's new in 0.2.10
+## In FreeCAD
 
-- **SolidCraft 0.43:** designs now target SolidCraft 0.43 and still open back to 0.18.2 with simplified features; Fusion bodies you hid stay hidden in 0.42 and newer.
-- **More Fusion history stays editable:** Combine, Sweep, path pattern, sphere, Emboss, unfold, and body mirror steps are read, and history continues past As-built joints and steps that change no geometry.
-- **More Fusion holes and faces:** a Hole placed on an earlier face and a radial Hole into a whole cylinder convert, and more extrudes, fillets, and chamfers find their faces and edges.
-- **Inventor sheet metal:** flanges with their default height keep their editable history, and a corner that leaves its part unchanged no longer stops it.
-- **FreeCAD output:** parts that end as several bodies get a Body for each new-body feature, and parameter-driven dimensions rebuild with the parameter's value.
-- **Linux AppImage and Arch package:** each release has an AppImage for x86_64 and ARM64 that updates itself, an Arch Linux package, and a Docker image that includes SolidCraft's checker.
+The [Dutchman add-on for FreeCAD](https://github.com/dutchman-cad/freecad-addon) opens Fusion, Inventor, SolidWorks and the other formats Dutchman reads straight in FreeCAD, with an import report panel that says what came across and what didn't. To install it, open **Tools > Addon Manager > Preferences**, add the custom repository `https://github.com/dutchman-cad/freecad-addon` (branch `main`), reopen the Addon Manager, install **freecad-addon** and restart FreeCAD. The first import offers to download Dutchman itself. See [the FreeCAD add-on](docs/freecad-addon.md).
+
+## What's new in 0.3.0
+
+- **Dutchman inside SolidCraft:** Install the Dutchman plugin with Preferences > Plugins > Install plugin… in SolidCraft 0.44 or newer (desktop) and approve its memory request (a plugin copied into the plugins folder by hand isn't approved and is refused for memory), then open Fusion, Inventor, SolidWorks and FreeCAD files directly, with editable history.
+- **Onshape support:** Connect your Onshape account from the app or with `dutchman onshape login`, using your own API keys or an OAuth bearer token, then paste a Part Studio link or use `dutchman onshape fetch`.
+- **SolidCraft 0.44 support:** SolidCraft 0.44 is the newest target.
+- **More Fusion history stays editable:** Chamfers with two different distances, contour flanges, Split Body, Copy/Paste Bodies, mirrored-then-removed bodies, symmetric patterns, Base Features that later steps change, clockwise sketch arcs, narrow profile regions such as belt teeth, surface revolves of open curves, and sweep paths made of connected edges all keep their history.
+- **Tell us when something is wrong:** "Is there a problem?
+- **Batch reports, paste, share links and a look first:** After a folder run, Batch report writes `dutchman-batch-report.md` and `.csv` into the output folder: a totals line, then one row per file with its outcome (full history, partial N of M, geometry only, or failed) and the first reason.
+- **More formats, options and fixes:** Siemens NX parts convert their geometry.
 
 [Release notes](https://github.com/dutchman-cad/dutchman/releases/latest) · [Changelog](CHANGELOG.md)
 
@@ -77,8 +83,8 @@ result with the original body, both measured by the same SolidCraft. The numbers
 - **Bodies:** the same count.
 - **Volume:** within 0.01% (1e-4) of the larger volume, or the most SolidCraft's measuring mesh can miss, whichever is more.
 - **Area:** within 0.1% (1e-3) of the larger area.
-- **Position and bounding box:** the box centre and each box corner within the larger of 0.01 mm and 0.02% (2e-4) of the larger box diagonal.
-- **Face count and centre of mass:** not compared. SolidCraft merges faces that share a surface, and the centre used is the box centre.
+- **Position and bounding box:** the box center and each box corner within the larger of 0.01 mm and 0.02% (2e-4) of the larger box diagonal.
+- **Face count and center of mass:** not compared. SolidCraft merges faces that share a surface, and the center used is the box center.
 - **Edges, faces and extrude caps the source names:** an input edge must sit within 1e-6 mm of exactly one rebuilt edge; a profile face within 1e-5 mm, with area within 0.01% (2% when an edge is curved).
 
 Every conversion report states the numbers its check used in `verification_tolerances`. The full
@@ -121,22 +127,31 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 | SolidWorks assembly | `.sldasm` | Reads geometry | L3 | Placed parts and sub-assemblies, read from their files in the project |
 | FreeCAD document | `.FCStd` | Reads geometry | L5 | Geometry and components; feature history and joints when they map |
 | CATIA part | `.CATPart` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
-| Creo part | `.prt`, `.prt.N` | Opens, no geometry yet | L1 | Not yet |
+| Creo part | `.prt`, `.prt.N` | Reads geometry | L1 | Geometry; solids and surfaces SolidCraft can import |
 | NX part | `.prt` | Reads geometry | L1 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Creo View | `.pvz` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Rhino | `.3dm` | Reads geometry | L2 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | ACIS | `.sat`, `.sab`, `.smt`, `.smb` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Onshape bundle | `.onshape-bundle` | Reads geometry | – | One offline Part Studio; geometry and editable history where features map |
-| IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
+| IGES | `.igs`, `.iges` | Recognized, not converted | – | Import it in SolidCraft directly (File > Import) |
+| Circuit board | `.PcbDoc` | Reads geometry with the electronics module | – | Placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately) |
 | Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
+| Inventor drawing | `.idw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| SolidWorks drawing | `.slddrw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Fusion drawing | `.f2d` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| DWG drawing | `.dwg` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| DXF drawing | `.dxf` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Solid Edge drawing | `.dft` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
 
-FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
+FreeCAD TechDraw pages are written into the converted SolidCraft design as a drawing (sheets and views), and also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
+
+Fusion tool libraries (`.tools`, `.json`) also convert to CamCraft's `.camtools` (`dutchman library.tools`): tool geometry, holder and cutting data, with every tool and field CamCraft has no place for named in the report. See docs/camcraft-tools.md.
 
 Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
-Designs open in SolidCraft 0.18.2 to 0.45; 0.45 is the newest known target.
+Designs open in SolidCraft 0.18.2 to 0.50; 0.50 is the newest known target.
 
 A design Dutchman can't finish reading is stopped after 20 minutes with no progress (60 in all); in a Fusion `.f3z` archive it's left out and named, and the rest converts. Set `DUTCHMAN_DESIGN_TIME_LIMIT` to more minutes to give a large design longer.
 
@@ -149,9 +164,9 @@ or please send a file that converts wrong, with a STEP export of the exact same 
 [Discord](https://discord.gg/yTcseBEdeu). Send only designs you have the right to send; we keep them private and use them only to fix the converter.
 
 The desktop app always shows **Is there a problem? Is something missing?** at the bottom left:
-join the Discord server, then DM Dutchy. The secondary pills
-**Anonymous report** and **GitHub issue** sit directly below the three steps, and also appear
-under **More**. The anonymous report review shows
+join the Discord server, then DM Dutchy. The secondary buttons
+**File a GitHub issue ↗** and, last, **Review and send report** sit directly below the three steps. The
+anonymous report review shows
 exactly which metadata will be sent; descriptions go in the private DM or GitHub form.
 The CLI's `dutchman report` and MCP's `report_preview` / `report_submit` also support
 converted-file summaries. See [Reporting a problem](docs/guide.md#report-consent).
@@ -206,6 +221,7 @@ For other clients:
 
 - [Getting started](docs/guide.md): install, a first conversion, the loss report, and opening the result.
 - [Install](docs/install.md): Homebrew, Scoop, release archives and checksums, Docker, nightly, and source.
+- [The FreeCAD add-on](docs/freecad-addon.md): open other CAD formats in FreeCAD through Dutchman.
 - [The desktop app](docs/desktop.md): presets, estimates, the SolidCraft version pill, and updates.
 - [The command line](docs/command-line.md): options, `inspect`, `contents`, whole folders, and watching a folder.
 - [Choosing what to keep](docs/presets.md): Fast, Standard, Full, and the memory and time estimate.
@@ -215,7 +231,8 @@ For other clients:
 
 **Formats and results**
 
-- [Formats](docs/formats.md): how each format is recognised and what converts.
+- [Formats](docs/formats.md): how each format is recognized and what converts.
+- [Fusion tool libraries to CamCraft](docs/camcraft-tools.md): `.tools` and `.json` libraries to `.camtools`, field by field.
 - [Fusion](docs/fusion.md), [Inventor](docs/inventor.md), [SolidWorks](docs/sldprt.md), and [FreeCAD](docs/freecad.md): what converts from each program today, and what stands in the way.
 - [Feature history](docs/history.md): what maps onto SolidCraft, how it is checked, and partial history.
 - [Testing Dutchman on your library](docs/testing-your-library.md): convert your own files and report what broke, without sharing a file.
@@ -233,11 +250,17 @@ For other clients:
 
 **Contributing**
 
+- **Where to start:** [pick a CAD program](CONTRIBUTING.md#pick-a-cad-program) and paste its block
+  into your AI agent: [SolidWorks](https://github.com/dutchman-cad/dutchman/issues/866),
+  [Solid Edge](https://github.com/dutchman-cad/dutchman/issues/840), or any issue labeled
+  [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+  or [good first issue](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+  Each one says what is known, what isn't, and how to verify it with public files.
 - [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI contributors.
 - [Architecture](docs/ARCHITECTURE.md), [Releasing](docs/releasing.md), and [Triage](docs/triage.md).
 - Report a file that didn't convert on the [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml) form, with no design file. See [reporting versions and optional steps from report to fix](docs/testing-your-library.md#5-report-what-you-found). Questions: the [Discord](https://discord.gg/yTcseBEdeu).
 
-## Licence
+## License
 
 Dutchman is pure Rust, licensed under the [Apache License, Version 2.0](LICENSE). Native files are read by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps them onto [SolidCraft](https://github.com/tangency-labs/solidcraft).
 

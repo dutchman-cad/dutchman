@@ -126,29 +126,50 @@ fn a_debug_slow_part_emits_a_named_heartbeat_through_the_cli() {
         .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
     let local_input = dir.path().join("Bracket.f3d");
     std::fs::copy(input, &local_input).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_dutchman"))
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    use std::sync::mpsc;
+
+    let release = dir.path().join("release");
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_dutchman"))
         .args(["convert", "--json", "--no-verify"])
         .env("DUTCHMAN_TEST_SLOW_PART", "Bracket")
+        .env("DUTCHMAN_TEST_SLOW_PART_RELEASE", &release)
         .arg(local_input)
         .arg(dir.path().join("cube.sc"))
-        .output()
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let records: Vec<serde_json::Value> = String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect();
-    assert!(
-        records.iter().any(|v| v["heartbeat"] == true
-            && v["running"]["kind"] == "preparing"
-            && v["running"]["name"] == "Bracket"
-            && v["running"]["elapsed_ms"]
-                .as_u64()
-                .is_some_and(|ms| ms >= 4_000)),
-        "{records:?}"
-    );
+    let stderr = child.stderr.take().unwrap();
+    let (send, receive) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let mut lines = Vec::new();
+        for line in BufReader::new(stderr).lines() {
+            let line = line.unwrap();
+            if let Ok(record) = serde_json::from_str::<serde_json::Value>(&line) {
+                if record["heartbeat"] == true
+                    && record["running"]["kind"] == "preparing"
+                    && record["running"]["name"] == "Bracket"
+                    && record["running"]["elapsed_ms"]
+                        .as_u64()
+                        .is_some_and(|ms| ms >= 4_000)
+                {
+                    let _ = send.send(());
+                }
+            }
+            lines.push(line);
+        }
+        lines
+    });
+    // Wait for the event itself, keeping the named step alive for a delayed timer.
+    let heartbeat = receive.recv_timeout(Duration::from_secs(45));
+    std::fs::write(&release, b"release").unwrap();
+    if heartbeat.is_err() {
+        let _ = child.kill();
+    }
+    let status = child.wait().unwrap();
+    let lines = reader.join().unwrap();
+    assert!(heartbeat.is_ok(), "no named heartbeat: {lines:?}");
+    assert!(status.success(), "{lines:?}");
 }

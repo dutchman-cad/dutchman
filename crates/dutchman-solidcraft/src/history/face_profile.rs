@@ -119,12 +119,29 @@ pub(crate) struct Proof {
 /// Maps the faces `value` selects (a `historical_faces` profile) of `feature` to a sketch of
 /// their boundary, left in `ctx` for the history, and returns its key in `ctx.sketches` and
 /// the profile selection.
+///
+/// `section` is the position of a loft section the faces are, when they are one: such a section
+/// is one face with one outer loop (a loft section with several loops, or a hole, is not
+/// proven), and its sketch is kept apart from the other sections' of the same feature.
 pub(super) fn map(
     feature: &Value,
     value: &Value,
     ctx: &mut Context,
+    section: Option<usize>,
 ) -> Result<(String, Value), String> {
     let mut faces = boundaries(feature, value, ctx)?;
+    if section.is_some() {
+        let [face] = faces.as_slice() else {
+            return Err("a loft section of several faces is not mapped yet".to_owned());
+        };
+        if loops(&face.edges)?.len() != 1 {
+            return Err(
+                "a loft section that is a face with a hole is not mapped yet: whether the \
+                 inner loop is a hole in the lofted shape is not known"
+                    .to_owned(),
+            );
+        }
+    }
     let points: Vec<V3> = faces
         .iter()
         .flat_map(|face| &face.edges)
@@ -160,8 +177,9 @@ pub(super) fn map(
     };
     let (sketch, mapped) = proof.sketch(false)?;
     let key = format!(
-        "historical-face:{}",
-        feature.get("id").and_then(Value::as_str).unwrap_or("?")
+        "historical-face:{}{}",
+        feature.get("id").and_then(Value::as_str).unwrap_or("?"),
+        section.map_or(String::new(), |section| format!(":{section}"))
     );
     ctx.sketches.insert(key.clone(), mapped);
     ctx.extra.push(sketch);
@@ -283,7 +301,11 @@ fn points_on(
         let [face] = faces.as_slice() else {
             return Err(BAD.to_owned());
         };
-        points.push(point_in(face, planar_only)?);
+        points.push(point_in(
+            face,
+            planar_only,
+            planar_only && ctx.target_version >= crate::SolidCraftVersion::V0_45_0,
+        )?);
     }
     Ok(points)
 }
@@ -416,6 +438,16 @@ impl EntryFace {
 
     pub(super) fn pending(mut self, direction: V3, fixed: bool) -> super::blend::Pending {
         self.proof.entry = Some((direction, fixed));
+        self.into_pending()
+    }
+
+    /// A proof that exactly this bounded face exists before the feature, for a face the
+    /// hole ends at: it never changes the hole's direction.
+    pub(super) fn existing(self) -> super::blend::Pending {
+        self.into_pending()
+    }
+
+    fn into_pending(self) -> super::blend::Pending {
         super::blend::Pending {
             feature: 0,
             outcome: 0,
@@ -539,7 +571,7 @@ fn samples(face: &Boundary) -> Vec<V3> {
 }
 
 /// A point on one face: planar when its boundary is flat, else the cylinder it is part of.
-fn point_in(face: &Boundary, planar_only: bool) -> Result<V3, String> {
+fn point_in(face: &Boundary, planar_only: bool, deep: bool) -> Result<V3, String> {
     let samples: Vec<V3> = face
         .edges
         .iter()
@@ -553,7 +585,7 @@ fn point_in(face: &Boundary, planar_only: bool) -> Result<V3, String> {
         })
         .collect();
     match plane(std::slice::from_ref(face), &samples) {
-        Ok((origin, normal)) => planar_point(face, origin, normal),
+        Ok((origin, normal)) => planar_point_with_clearance(face, origin, normal, deep),
         Err(_) if planar_only => Err("a face that is not planar cannot be moved yet".to_owned()),
         Err(_) => cylinder_point(face),
     }
@@ -563,6 +595,18 @@ fn point_in(face: &Boundary, planar_only: bool) -> Result<V3, String> {
 /// its outline corners make that lie inside it, holes left out. If those all land in holes,
 /// try interval midpoints on bounded scan lines through the same loops.
 fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
+    planar_point_with_clearance(face, origin, normal, false)
+}
+
+/// Offset faces compare scan-line candidates even when a corner triangle fits.
+/// On circular trims those triangles hug the rim; subtract the maximum chord
+/// error from every candidate's clearance to prove room from the exact curves.
+fn planar_point_with_clearance(
+    face: &Boundary,
+    origin: V3,
+    normal: V3,
+    deep: bool,
+) -> Result<V3, String> {
     let helper = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
         .into_iter()
         .min_by(|a, b| dot(*a, normal).abs().total_cmp(&dot(*b, normal).abs()))
@@ -586,6 +630,18 @@ fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
             .fold(f64::INFINITY, f64::min)
     };
     let mut best: Option<([f64; 2], f64)> = None;
+    let chord_error = face.edges.iter().fold(0.0_f64, |error, edge| {
+        let sagitta = match edge {
+            Edge::Line { .. } => 0.0,
+            Edge::Arc { radius, .. } => {
+                radius * (1.0 - (edge_sweep(edge).abs() / f64::from(ARC_STEPS) / 2.0).cos())
+            }
+            Edge::Circle { radius, .. } => {
+                radius * (1.0 - (TAU / f64::from(CIRCLE_STEPS) / 2.0).cos())
+            }
+        };
+        error.max(sagitta)
+    });
     for ring in &rings {
         let n = ring.len();
         for i in 0..n {
@@ -600,37 +656,26 @@ fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
             if !inside_face(centre) {
                 continue;
             }
-            let room = clearance(centre);
+            let room = clearance(centre) - if deep { chord_error } else { 0.0 };
             if room > 1e-3 && best.is_none_or(|(_, most)| room > most) {
                 best = Some((centre, room));
             }
         }
     }
-    if best.is_none() {
+    if deep || best.is_none() {
         // Corner triangles can all land in holes (or the opening of a thin frame).
         // Intersections with every trim ring split a scan line into intervals; their
         // midpoints also find narrow strips that a uniform point grid would miss.
         // Keep the old picks when available, and apply the same containment and
         // clearance proof to every new candidate. Curve chords need extra room:
         // their sagitta bounds the difference from the actual circular boundary.
-        let chord_error = face.edges.iter().fold(0.0_f64, |error, edge| {
-            let sagitta = match edge {
-                Edge::Line { .. } => 0.0,
-                Edge::Arc { radius, .. } => {
-                    radius * (1.0 - (edge_sweep(edge).abs() / f64::from(ARC_STEPS) / 2.0).cos())
-                }
-                Edge::Circle { radius, .. } => {
-                    radius * (1.0 - (TAU / f64::from(CIRCLE_STEPS) / 2.0).cos())
-                }
-            };
-            error.max(sagitta)
-        });
         for centre in scan_candidates(&rings) {
             if !inside_face(centre) {
                 continue;
             }
-            let room = clearance(centre);
-            if room > 1e-3 + chord_error && best.is_none_or(|(_, most)| room > most) {
+            let room = clearance(centre) - if deep { chord_error } else { 0.0 };
+            let minimum = 1e-3 + if deep { 0.0 } else { chord_error };
+            if room > minimum && best.is_none_or(|(_, most)| room > most) {
                 best = Some((centre, room));
             }
         }
@@ -1065,20 +1110,35 @@ fn plane(faces: &[Boundary], points: &[V3]) -> Result<(V3, V3), String> {
     }
     .ok_or("its face boundary does not span a plane")?;
     let flat = NEAR * size;
-    if points
+    let off = points
         .iter()
-        .any(|p| dot(sub(*p, origin), normal).abs() > flat)
-        || faces
-            .iter()
-            .flat_map(|face| &face.edges)
-            .any(|edge| match edge {
-                Edge::Arc { axis, .. } | Edge::Circle { axis, .. } => {
-                    norm(cross(*axis, normal)) > ANGLE
-                }
-                Edge::Line { .. } => false,
-            })
+        .map(|p| dot(sub(*p, origin), normal).abs())
+        .fold(0.0, f64::max);
+    if off > flat {
+        // Say how far off, so a curved face (a cylinder wall has a boundary circle at each
+        // end, in two planes) is told apart from a boundary only a rounding error off.
+        return Err(format!(
+            "its face boundary is not planar: its edges lie up to {off:.4} mm off the plane \
+             through the first three (tolerance {flat:.5} mm), as on the wall of a cylinder \
+             or another curved face; only a flat face can be sketched"
+        ));
+    }
+    if faces
+        .iter()
+        .flat_map(|face| &face.edges)
+        .any(|edge| match edge {
+            Edge::Arc { axis, .. } | Edge::Circle { axis, .. } => {
+                norm(cross(*axis, normal)) > ANGLE
+            }
+            Edge::Line { .. } => false,
+        })
     {
-        return Err("its face boundary is not planar".to_owned());
+        return Err(
+            "its face boundary is not planar: its circles and arcs are not square to one \
+             plane (the two end circles of a cylinder wall face opposite ways), so it is a \
+             curved face; only a flat face can be sketched"
+                .to_owned(),
+        );
     }
     Ok((origin, normal))
 }
@@ -1531,6 +1591,129 @@ mod tests {
         edge(&r).unwrap()
     }
 
+    fn ring(at: V3, radius: f64, axis: V3, side: V3) -> Edge {
+        Edge::Circle {
+            start: add(at, scale(side, radius)),
+            mid: add(at, scale(side, -radius)),
+            center: at,
+            radius,
+            axis,
+        }
+    }
+
+    #[test]
+    fn planar_boundaries_far_from_the_origin_pass() {
+        // A circle on X = 240.80785, a circle of radius 3.933 on Y = -150, and a square
+        // at 600 mm: planar however far from the origin.
+        let x = ring(
+            [240.80785, 60.0, 150.0],
+            1.75,
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        );
+        let (_, normal) = plane(
+            &[Boundary {
+                edges: vec![x.clone()],
+                area: 0.0,
+            }],
+            &samples(&Boundary {
+                edges: vec![x],
+                area: 0.0,
+            }),
+        )
+        .unwrap();
+        assert!(normal[0].abs() > 1.0 - 1e-9, "{normal:?}");
+        let y = ring(
+            [140.0, -150.0, 30.0],
+            3.933,
+            [0.0, -1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        );
+        let boundary = Boundary {
+            edges: vec![y],
+            area: 0.0,
+        };
+        let (_, normal) = plane(std::slice::from_ref(&boundary), &samples(&boundary)).unwrap();
+        assert!(normal[1].abs() > 1.0 - 1e-9, "{normal:?}");
+        let corners = [
+            [600.0, 3.0, 1.0],
+            [610.0, 3.0, 1.0],
+            [610.0, 3.0, 9.0],
+            [600.0, 3.0, 9.0],
+        ];
+        let edges = (0..4)
+            .map(|k| Edge::Line {
+                start: corners[k],
+                end: corners[(k + 1) % 4],
+            })
+            .collect();
+        let boundary = Boundary { edges, area: 0.0 };
+        assert!(plane(std::slice::from_ref(&boundary), &samples(&boundary)).is_ok());
+    }
+
+    #[test]
+    fn a_boundary_a_little_off_its_plane_is_still_refused_with_the_distance() {
+        let mut corners = [
+            [0.0, 0.0, 240.0],
+            [10.0, 0.0, 240.0],
+            [10.0, 10.0, 240.0],
+            [0.0, 10.0, 240.0],
+        ];
+        corners[2][2] += 0.01;
+        let edges = (0..4)
+            .map(|k| Edge::Line {
+                start: corners[k],
+                end: corners[(k + 1) % 4],
+            })
+            .collect();
+        let boundary = Boundary { edges, area: 0.0 };
+        let reason = plane(std::slice::from_ref(&boundary), &samples(&boundary)).unwrap_err();
+        assert!(
+            reason.starts_with("its face boundary is not planar: its edges lie up to 0.0"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn a_cylinder_wall_boundary_is_refused_naming_the_curved_face() {
+        // The two end circles of a 398 mm shaft: planes 398 mm apart.
+        let edges = vec![
+            ring(
+                [140.0, 248.0, 30.0],
+                3.933,
+                [0.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ),
+            ring(
+                [140.0, -150.0, 30.0],
+                3.933,
+                [0.0, -1.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ),
+        ];
+        let boundary = Boundary { edges, area: 0.0 };
+        let reason = plane(std::slice::from_ref(&boundary), &samples(&boundary)).unwrap_err();
+        assert!(
+            reason.contains("not planar") && reason.contains("cylinder"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn offset_annulus_pick_stays_well_inside_both_exact_rims() {
+        // Concentric synthetic trims. The old corner-triangle candidate is
+        // barely inside the outer rim; the scan intervals reach the ring's middle.
+        let face = Boundary {
+            edges: vec![circle(10.0), circle(4.0)],
+            area: 0.0,
+        };
+        let old = point_in(&face, true, false).unwrap();
+        let p = point_in(&face, true, true).unwrap();
+        assert!(norm(old) > 9.9, "{old:?}");
+        assert!(norm(p) > 6.0 && norm(p) < 8.0, "{p:?}");
+        assert_eq!(p[2], 0.0);
+    }
+
     fn entry_from_rows(mut rows: Vec<Value>) -> Result<Option<EntryFace>, String> {
         for (k, row) in rows.iter_mut().enumerate() {
             row["edge"] = json!(format!("edge{k}"));
@@ -1587,6 +1770,22 @@ mod tests {
             why,
             "a hole entry face that is not planar is not supported yet"
         );
+    }
+
+    #[test]
+    fn a_curved_face_a_hole_ends_at_is_proven_without_a_direction() {
+        // A ring face with a circular outer and inner boundary.
+        let face = entry_from_rows(vec![
+            row((10.0, 0.0), (-10.0, 0.0), (10.0, 0.0), (0.0, 1.0)),
+            row((3.0, 0.0), (-3.0, 0.0), (3.0, 0.0), (0.0, 1.0)),
+        ])
+        .unwrap()
+        .unwrap();
+        assert!(face.contains([6.0, 0.0, 0.0]));
+        assert!(!face.contains([0.0, 0.0, 0.0]));
+        let proof = face.existing().face.unwrap();
+        assert!(proof.entry.is_none());
+        assert_eq!(proof.entry_direction(false).unwrap(), None);
     }
 
     #[test]
@@ -1790,7 +1989,7 @@ mod tests {
             line(quarter),
         ];
         let edges: Vec<Edge> = rows.iter().map(|r| edge(r).unwrap()).collect();
-        let p = point_in(&Boundary { edges, area: 1.0 }, false).unwrap();
+        let p = point_in(&Boundary { edges, area: 1.0 }, false, false).unwrap();
         let half = quarter / 2.0;
         assert!((p[0] - 5.0 * half.cos()).abs() < 1e-6, "{p:?}");
         assert!((p[1] - 5.0 * half.sin()).abs() < 1e-6, "{p:?}");
@@ -1821,7 +2020,7 @@ mod tests {
             radius: 0.35,
             axis: [0.0, 0.0, 1.0],
         }));
-        let p = point_in(&Boundary { edges, area: 0.0 }, true).unwrap();
+        let p = point_in(&Boundary { edges, area: 0.0 }, true, false).unwrap();
         assert_eq!(p[2], 0.0);
         assert!(
             p[0] > 0.001 && p[0] < 119.999 && p[1] > 0.001 && p[1] < 79.999,
@@ -1849,7 +2048,7 @@ mod tests {
                 .unwrap()
             })
             .collect();
-        let p = point_in(&Boundary { edges, area: 100.0 }, false).unwrap();
+        let p = point_in(&Boundary { edges, area: 100.0 }, false, false).unwrap();
         assert!(
             p[0] > 1.0 && p[0] < 9.0 && p[1] > 1.0 && p[1] < 9.0,
             "{p:?}"

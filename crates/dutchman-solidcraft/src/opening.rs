@@ -13,11 +13,16 @@ impl SolidCraftWriter {
         &self,
         mut bytes: Vec<u8>,
         report: &mut Report,
+        evaluator: Option<&std::sync::Arc<dyn crate::SolidCraftEvaluator>>,
     ) -> Result<Vec<u8>, Error> {
         if self.memory_refusal().is_some() {
             return Ok(bytes);
         }
-        let Ok(cli) = self.selected_evaluator(&self.verification) else {
+        let Ok(cli) = evaluator
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| self.selected_evaluator(&self.verification))
+        else {
             return Ok(bytes);
         };
         let started = dutchman_core::time::Instant::now();
@@ -173,15 +178,19 @@ impl SolidCraftWriter {
                                 .unwrap_or(0)
                                 == parent;
                             let standalone_original = parent == 0
-                                && feature.get("name").and_then(Value::as_str)
-                                    == Some(document::ORIGINAL);
+                                && feature
+                                    .get("name")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(document::is_original_name);
                             (in_parent || standalone_original)
                                 && feature.get("suppressed").and_then(Value::as_bool) != Some(true)
                         });
                         feature.get("type").and_then(Value::as_str) == Some("import")
                             && ((same_component
-                                && feature.get("name").and_then(Value::as_str)
-                                    == Some(document::ORIGINAL))
+                                && feature
+                                    .get("name")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(document::is_original_name))
                                 || (!same_component && visible_parent))
                     })
                     .and_then(|feature| feature.get("id"))
@@ -499,7 +508,7 @@ mod tests {
         let bytes = container.finish(&doc).unwrap();
         let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RepairableSheet));
         let mut report = Report::default();
-        let bytes = writer.check_opening(bytes, &mut report).unwrap();
+        let bytes = writer.check_opening(bytes, &mut report, None).unwrap();
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
         let repaired: Value =
             serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
@@ -535,7 +544,7 @@ mod tests {
         ], "components": [{"id": 10, "parent": if source_component == 30 { 0 } else { 20 }, "name": "Editable history (partial)", "history_hidden": true}]})).unwrap();
             let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RefusedImport));
             let mut report = Report::default();
-            let bytes = writer.check_opening(bytes, &mut report).unwrap();
+            let bytes = writer.check_opening(bytes, &mut report, None).unwrap();
             let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
             let doc: Value =
                 serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
@@ -552,6 +561,28 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_feature_before_the_rest_of_a_partial_history_keeps_the_imported_rest() {
+        let bytes = crate::container::Container::empty().finish(&json!({"features": [
+            {"id": 0, "name": "Stored base", "type": "import", "suppressed": false},
+            {"id": 1, "name": "Edit", "type": "offset_faces", "suppressed": false},
+            {"id": 2, "name": document::REMOVE, "type": "remove", "bodies": ["Body1"], "suppressed": false},
+            {"id": 3, "name": document::rest_name(Some("Hole 1")), "type": "import", "suppressed": false}
+        ]})).unwrap();
+        let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RefusedImport));
+        let mut report = Report::default();
+        let bytes = writer.check_opening(bytes, &mut report, None).unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let doc: Value =
+            serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        let features = doc["features"].as_array().unwrap();
+        assert_eq!(features.len(), 2);
+        assert_eq!(features[0]["name"], "Stored base");
+        assert_eq!(features[0]["suppressed"], true);
+        assert_eq!(features[1]["name"], "Rest of the design (from Hole 1)");
+        assert_eq!(features[1]["suppressed"], false);
+    }
+
+    #[test]
     fn a_failed_edit_without_source_keeps_and_rechecks_the_earlier_history() {
         let bytes = crate::container::Container::empty()
             .finish(&json!({"features": [
@@ -562,7 +593,7 @@ mod tests {
             .unwrap();
         let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RefusedImport));
         let mut report = Report::default();
-        let bytes = writer.check_opening(bytes, &mut report).unwrap();
+        let bytes = writer.check_opening(bytes, &mut report, None).unwrap();
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
         let doc: Value =
             serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
@@ -586,7 +617,7 @@ mod tests {
             .unwrap();
         let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RefusedImport));
         let error = writer
-            .check_opening(bytes, &mut Report::default())
+            .check_opening(bytes, &mut Report::default(), None)
             .unwrap_err();
         assert!(error.to_string().contains("no editable history remains"));
     }
@@ -608,9 +639,11 @@ mod tests {
             .unwrap();
         let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RefusedImport));
         let mut report = Report::default();
-        let bytes = writer.check_opening(bytes, &mut report).unwrap();
+        let bytes = writer.check_opening(bytes, &mut report, None).unwrap();
         assert_eq!(
-            writer.check_opening(bytes.clone(), &mut report).unwrap(),
+            writer
+                .check_opening(bytes.clone(), &mut report, None)
+                .unwrap(),
             bytes
         );
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();

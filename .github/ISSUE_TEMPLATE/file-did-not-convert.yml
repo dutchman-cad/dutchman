@@ -21,6 +21,7 @@ body:
         - Inventor part (.ipt)
         - Inventor assembly (.iam)
         - SolidWorks part (.sldprt)
+        - Solid Edge part, sheet metal or assembly (.par, .psm, .asm)
         - FreeCAD document (.FCStd)
         - Other
     validations:
@@ -85,6 +86,17 @@ body:
       description: |
         The desktop app's **Report anonymously on GitHub** copies this for you to paste. From the command line, run `dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d` with your file in place of `part.f3d`, read `report-anon.json`, and paste it here. See [the anonymous report](https://github.com/dutchman-cad/dutchman/blob/main/docs/report-anon.md) and [Testing Dutchman on your library](https://github.com/dutchman-cad/dutchman/blob/main/docs/testing-your-library.md). If you find a name in it, leave that line out and say so: it is a bug.
       render: json
+  - type: textarea
+    id: repro-pair
+    attributes:
+      label: A small shareable repro and its STEP (optional, best)
+      description: >-
+        The fastest fix comes from a small part you made yourself that shows the same problem, saved
+        in the same program, plus a STEP export of exactly that part. Attach both here only if you are
+        free to share them publicly (CC0 is ideal). See
+        [Make a minimum reproduction](https://github.com/dutchman-cad/dutchman/blob/main/docs/minimum-reproduction.md).
+        Never attach the original private design.
+      placeholder: "repro.f3d + repro.step attached, CC0; made in Fusion desktop 2.0.21000"
   - type: textarea
     id: notes
     attributes:

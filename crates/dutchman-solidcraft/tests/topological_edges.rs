@@ -27,12 +27,13 @@ fn model(wire: &Value) -> Model {
         source_file: None,
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     }
 }
 
 fn sample(edge: &str, start: [f64; 3], mid: [f64; 3], end: [f64; 3], tangent: [f64; 3]) -> Value {
     json!({"edge": edge, "start": xyz(start), "interior": xyz(mid), "end": xyz(end),
-        "tangent": xyz(tangent), "faces": []})
+        "supports": [], "tangent": xyz(tangent), "faces": []})
 }
 
 fn path_wire() -> Value {
@@ -69,7 +70,7 @@ fn path_wire() -> Value {
         "profiles": [[{"entity": "test:model:sketch-entity#1", "reversed": false}]]}]);
     m["sketch_entities"] = json!([{"id": "test:model:sketch-entity#1", "sketch": "test:model:sketch#1", "construction": false,
         "geometry": {"kind": "circle", "center": {"u": 0.0, "v": 0.0}, "radius": 0.5}, "endpoint_refs": []}]);
-    m["feature_input_topologies"] = json!([{"id": "test:model:feature-input#1", "input_of": "test:model:feature#3", "bodies": [], "faces": [], "vertices": [],
+    m["feature_input_topologies"] = json!([{"id": "test:model:feature-input#1", "input_of": "test:model:feature#3", "bodies": [], "faces": [], "face_owners": [], "vertices": [],
         "edges": ["upright", "top"], "edge_geometry": [
             sample("upright", [0.0;3], [0.0,0.0,5.0], [0.0,0.0,10.0], [0.0,0.0,1.0]),
             sample("top", [0.0,0.0,10.0], [5.0,0.0,10.0], [10.0,0.0,10.0], [1.0,0.0,0.0])]}]);
@@ -111,6 +112,8 @@ fn editable_copy(bytes: &[u8]) -> Vec<u8> {
     assert!(!features.is_empty());
     for feature in features {
         feature["component"] = json!(0);
+        // The hidden copy's body-building features are written suppressed (#940); turn them on.
+        feature["suppressed"] = json!(false);
     }
     document["components"] = json!([]);
     document["occurrences"] = json!([]);
@@ -647,6 +650,7 @@ fn topological_histories_keep_the_original_position_when_the_source_cannot_be_co
                     definitions: Vec::new(),
                     identities: Vec::new(),
                     placements: vec![dutchman_core::Placement {
+                        unproven: false,
                         hidden: false,
                         name: None,
                         part: 0,

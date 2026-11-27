@@ -19,6 +19,13 @@ sha2.workspace = true
 tempfile.workspace = true
 zip.workspace = true
 
+[features]
+# Reads a neutral design an Onshape feature references (`history/reference.rs`). That is a
+# whole `CadIr` parsed from JSON, which links cadmpeg-ir's serde `Deserialize` for the
+# value tree; only Onshape input produces such a reference, so a build without
+# dutchman-core's `onshape` feature (the SolidCraft plugin) leaves it out.
+onshape = []
+
 [dev-dependencies]
 dutchman-core = { workspace = true, features = ["formats", "freecad"] }
 tempfile.workspace = true

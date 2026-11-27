@@ -16,6 +16,7 @@ mod assembly;
 pub mod compare;
 mod container;
 mod document;
+pub mod drawing;
 mod evaluator;
 mod linked;
 mod opening;
@@ -62,7 +63,18 @@ pub use replay::replay_script;
 #[cfg(all(debug_assertions, not(target_family = "wasm")))]
 fn slow_part(name: &str) {
     if std::env::var("DUTCHMAN_TEST_SLOW_PART").ok().as_deref() == Some(name) {
-        std::thread::sleep(Duration::from_secs(6));
+        if let Some(release) = std::env::var_os("DUTCHMAN_TEST_SLOW_PART_RELEASE") {
+            // Let integration tests keep the step alive until they observe a heartbeat.
+            // Bound the wait even if the test process exits before releasing it.
+            let started = std::time::Instant::now();
+            while !std::path::Path::new(&release).exists()
+                && started.elapsed() < Duration::from_secs(60)
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        } else {
+            std::thread::sleep(Duration::from_secs(6));
+        }
     }
 }
 
@@ -70,7 +82,7 @@ fn slow_part(name: &str) {
 /// non-STEP source file whose geometry it keeps as restated STEP text. Every newer
 /// SolidCraft upgrades it on open. Keep this fixed for every target, including 0.28:
 /// its format 45 adds nested Browser groups, point cloud properties/filters and print
-/// faces, which this writer does not use. Likewise, 0.45 saves format 63 for drawings,
+/// faces, which this writer does not use. Likewise, 0.50 saves format 69 (drawing format 8),
 /// which this writer does not emit. Format 23 also keeps older targets readable.
 pub const FORMAT: &str = "solidcraft/23";
 
@@ -92,6 +104,8 @@ pub struct SolidCraftWriter {
     evaluator: Option<std::sync::Arc<dyn SolidCraftEvaluator>>,
     threads: usize,
     #[cfg(test)]
+    reuse_evaluations: bool,
+    #[cfg(test)]
     prepare_hook: Option<fn(&Model)>,
     #[cfg(test)]
     prepare_available: Option<u64>,
@@ -107,9 +121,13 @@ pub struct SolidCraftWriter {
     timeout: Duration,
     opening_timeout: Option<Duration>,
     hide_unverified: bool,
-    stand_up: Option<bool>,
+    orientation: dutchman_core::Orientation,
+    /// Whether the caller rotates the written design itself and says so in the report.
+    caller_orients: bool,
+    /// The orientation fixed for the design being written, once its report has been read.
+    stands_up: Option<bool>,
     memory_budget: Option<u64>,
-    memory_skip: OnceLock<(u64, u64)>,
+    memory_skip: std::sync::Arc<OnceLock<(u64, u64)>>,
 }
 
 impl Default for SolidCraftWriter {
@@ -117,6 +135,8 @@ impl Default for SolidCraftWriter {
         SolidCraftWriter {
             evaluator: None,
             threads: 0,
+            #[cfg(test)]
+            reuse_evaluations: true,
             #[cfg(test)]
             prepare_hook: None,
             #[cfg(test)]
@@ -133,9 +153,11 @@ impl Default for SolidCraftWriter {
             timeout: DEFAULT_TIMEOUT,
             opening_timeout: None,
             hide_unverified: false,
-            stand_up: None,
+            orientation: dutchman_core::Orientation::Auto,
+            caller_orients: false,
+            stands_up: None,
             memory_budget: None,
-            memory_skip: OnceLock::new(),
+            memory_skip: std::sync::Arc::new(OnceLock::new()),
         }
     }
 }
@@ -182,12 +204,32 @@ impl SolidCraftWriter {
         }
     }
 
+    /// Share only plain evaluation answers between checks of this written design.
+    /// The selected host (and therefore binary, version and evaluation options) is fixed
+    /// for this scope. Replay scripts and other proofs keep their own evaluator.
+    fn final_evaluator(&self) -> Option<std::sync::Arc<dyn SolidCraftEvaluator>> {
+        let evaluator = self.selected_evaluator(&self.verification).ok()?;
+        #[cfg(test)]
+        if !self.reuse_evaluations {
+            return Some(evaluator);
+        }
+        Some(std::sync::Arc::new(evaluator::Reusing::new(evaluator)))
+    }
+
     /// A design of sketches alone has no source bodies to compare with. Replaying it shows
     /// whether SolidCraft rebuilds every sketch: it must run without a feature error and,
     /// like its source, build no body.
-    fn check_sketches(&self, design: &[u8]) -> Check {
+    fn check_sketches(
+        &self,
+        design: &[u8],
+        evaluator: Option<&std::sync::Arc<dyn SolidCraftEvaluator>>,
+    ) -> Check {
         const NO_BODIES: &str = "the design contains sketches and no source bodies to compare";
-        let cli = match self.selected_evaluator(&self.verification) {
+        let cli = match evaluator
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| self.selected_evaluator(&self.verification))
+        {
             Ok(cli) => cli,
             Err(why) => return Check::NotApplicable(format!("{NO_BODIES}; not replayed: {why}")),
         };
@@ -293,21 +335,72 @@ impl SolidCraftWriter {
     }
 
     /// Whether to orient Y-up models (such as Fusion 360 designs) to SolidCraft's Z-up
-    /// coordinate system. By default (`None` or `false`), source axes are preserved.
-    pub fn stand_up(mut self, stand_up: Option<bool>) -> Self {
-        self.stand_up = stand_up;
+    /// coordinate system: `Some(true)` always, `Some(false)` never, `None` (the default) when
+    /// the source states that the design is Y-up.
+    pub fn stand_up(self, stand_up: Option<bool>) -> Self {
+        self.orientation(match stand_up {
+            Some(true) => dutchman_core::Orientation::StandUp,
+            Some(false) => dutchman_core::Orientation::KeepAxes,
+            None => dutchman_core::Orientation::Auto,
+        })
+    }
+
+    /// The orientation to give the design, as a person chose it.
+    pub fn orientation(mut self, orientation: dutchman_core::Orientation) -> Self {
+        self.orientation = orientation;
+        self.stands_up = None;
         self
     }
 
+    /// Leaves the rotation to the caller, who turns the written design and records it in the
+    /// report: the writer then neither rotates nor reports an orientation.
+    pub fn caller_orients(mut self) -> Self {
+        self.caller_orients = true;
+        self
+    }
+
+    /// Whether the design being written is stood up. Before a report has said what the
+    /// source states, only an explicit choice counts.
     pub(crate) fn should_stand_up(&self) -> bool {
-        self.stand_up.unwrap_or(false)
+        self.stands_up
+            .unwrap_or(self.orientation == dutchman_core::Orientation::StandUp)
+    }
+
+    /// This writer with the orientation fixed from what `report` says the source states, and
+    /// the report's note of what was done.
+    fn oriented(&self, report: &mut Report) -> Self {
+        if self.caller_orients {
+            let mut writer = self.clone();
+            writer.stands_up = Some(false);
+            return writer;
+        }
+        let found = report
+            .up_axis()
+            .map(|up| up.found.clone())
+            .unwrap_or_default();
+        let stands_up = self.orientation.stands_up(&found);
+        report.record_orientation(self.orientation, stands_up);
+        if report
+            .up_axis()
+            .is_some_and(dutchman_core::UpAxisReport::worth_stating)
+        {
+            report.push_at(
+                Stage::Write,
+                Severity::Info,
+                "orientation",
+                self.orientation.sentence(&found),
+            );
+        }
+        let mut writer = self.clone();
+        writer.stands_up = Some(stands_up);
+        writer
     }
 
     /// Additional memory estimated after reading the design. Recheck current free memory
     /// immediately before every geometry replay; a skipped check stays skipped for this design.
     pub fn history_check_memory(mut self, needed: u64, available: Option<u64>) -> Self {
         self.memory_budget = Some(needed);
-        self.memory_skip = OnceLock::new();
+        self.memory_skip = std::sync::Arc::new(OnceLock::new());
         if let Some(available) = available.filter(|free| needed > *free) {
             let _ = self.memory_skip.set((needed, available));
         }
@@ -339,6 +432,14 @@ impl SolidCraftWriter {
 
     fn keep_unverified_hidden(&self) -> bool {
         self.hide_unverified || self.memory_skip.get().is_some()
+    }
+
+    /// Whether a partial history is written as its features, a Remove of the bodies they
+    /// make, and the Import of the rest: when SolidCraft has the Remove feature and a replay
+    /// of the features gave the bodies' names.
+    fn writes_rest_visibly(&self, history: &history::History) -> bool {
+        history.replayed_bodies.is_some()
+            && VersionGate::RemoveBody.supported(self.resolved_version())
     }
 
     fn keep_unverified_history_hidden(&self, history: &history::History) -> bool {
@@ -593,17 +694,25 @@ impl SolidCraftWriter {
             self.resolved_version(),
             stand_up,
         );
-        if matches!(live, Live::Partial | Live::Unverified) {
+        if matches!(live, Live::Partial | Live::PartialHidden | Live::Unverified) {
             let mut looks = history::imported(model, step, report, false)?;
-            let mut taken: history::BodyNames = history
-                .features
-                .iter()
-                .filter_map(|feature| feature.get("body_names").and_then(Value::as_array))
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect();
-            taken.add_defaults(history.default_bodies.keys().cloned());
+            // The bodies of a partial history are removed before the import, so the import
+            // may keep every name; beside hidden history, its names must stay apart.
+            let mut taken: history::BodyNames = if live == Live::Partial {
+                history::BodyNames::default()
+            } else {
+                history
+                    .features
+                    .iter()
+                    .filter_map(|feature| feature.get("body_names").and_then(Value::as_array))
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            };
+            if live != Live::Partial {
+                taken.add_defaults(history.default_bodies.keys().cloned());
+            }
             looks.rename_bodies("Original geometry", &mut taken);
             document::original_looks(&mut doc, &looks);
         }
@@ -880,7 +989,7 @@ impl SolidCraftWriter {
             if let Some(why) = self.memory_refusal() {
                 return Ok(Check::Partial(format!("{summary}; {why}")));
             }
-            let (outcome, bodies) = verify::replay(cli.as_ref(), remaining, &design);
+            let (outcome, bodies, names) = verify::replay_named(cli.as_ref(), remaining, &design);
             match outcome {
                 verify::Outcome::Matches => {
                     let stored = history.stored_bodies_at_end();
@@ -888,6 +997,15 @@ impl SolidCraftWriter {
                     // A whole-sketch profile of several stays only when the source's bodies
                     // at this point are known and the replay holds them.
                     let confirmed = differs.is_none() && stored.is_some() && bodies.is_some();
+                    // The centres the source stores cannot tell a region chosen without proof
+                    // from the right one when both are centred alike. The final shape can,
+                    // where nothing after the prefix builds material.
+                    let conflict = if differs.is_none() {
+                        let budget = self.timeout.saturating_sub(started.elapsed());
+                        self.prefix_conflict(model, history, step, cli.as_ref(), budget)
+                    } else {
+                        None
+                    };
                     if !confirmed && unconfirmed_stop(mapping) {
                         continue;
                     }
@@ -900,6 +1018,25 @@ impl SolidCraftWriter {
                         );
                         Self::stop_geometry_difference(mapping, format!("replay differs ({why})"));
                         continue;
+                    }
+                    if let Some(why) = conflict {
+                        report.push_coded(
+                            Severity::Degraded,
+                            model.name.as_str(),
+                            "history/body-mismatch",
+                            &why,
+                        );
+                        Self::stop_geometry_difference(mapping, format!("replay differs ({why})"));
+                        continue;
+                    }
+                    let rest = mapping
+                        .features
+                        .iter()
+                        .find(|feature| feature.status == dutchman_core::FeatureStatus::Blocked)
+                        .and_then(|feature| feature.name.clone());
+                    if let Ok(history) = &mut mapping.result {
+                        history.replayed_bodies = names;
+                        history.rest_from = rest;
                     }
                     return Ok(Check::Partial(format!("{summary}; retained features replay in SolidCraft; the full history is not verified")));
                 }
@@ -920,6 +1057,32 @@ impl SolidCraftWriter {
             mapping.result = Err("retained history exceeded the replay repair limit".to_owned());
         }
         Ok(Check::Flattened("no replayable prefix remains".to_owned()))
+    }
+
+    /// Why the replay of the retained `history` cannot be the state before the source features
+    /// after it: its box or material falls short of the source's final shape, though none of
+    /// those features builds material. `None` when they might, or when it cannot be measured.
+    fn prefix_conflict(
+        &self,
+        model: &Model,
+        history: &history::History,
+        step: &str,
+        cli: &(impl SolidCraftEvaluator + ?Sized),
+        budget: Duration,
+    ) -> Option<String> {
+        let removes = history.unreachable_prefix()?;
+        if budget.is_zero() || self.memory_refusal().is_some() {
+            return None;
+        }
+        let source = self
+            .history_design(model, history, step, Live::Original, false)
+            .ok()?;
+        let prefix = self
+            .history_design(model, history, step, Live::History, false)
+            .ok()?;
+        let source = verify::extents(cli, budget, "original", &source)?;
+        let prefix = verify::extents(cli, budget, "prefix", &prefix)?;
+        verify::prefix_misses_source(&prefix, &source, removes)
     }
 
     /// A final-body difference does not identify the operation that introduced it.
@@ -1100,6 +1263,7 @@ impl SolidCraftWriter {
             verify::Expected {
                 solids: solid_bodies(model),
                 sheets: sheet_bodies(model),
+                single_body_regions: single_body_regions(model),
             },
             progress,
             model,
@@ -1153,6 +1317,7 @@ impl SolidCraftWriter {
             verify::Expected {
                 solids: solid_bodies(model),
                 sheets: sheet_bodies(model),
+                single_body_regions: single_body_regions(model),
             },
             progress,
             &model.name,
@@ -1482,6 +1647,20 @@ fn solid_bodies(model: &Model) -> usize {
         .count()
 }
 
+/// Only one solid body gives an unambiguous owner for all imported regions.
+/// Keep the ordinary per-piece comparison for mixed or multiple source bodies.
+fn single_body_regions(model: &Model) -> usize {
+    let geometry = &model.ir.geometry;
+    match geometry.bodies.as_slice() {
+        [body] if body.kind == cadmpeg_ir::topology::BodyKind::Solid => geometry
+            .regions
+            .iter()
+            .filter(|region| region.body == body.id)
+            .count(),
+        _ => 0,
+    }
+}
+
 impl SolidCraftWriter {
     /// Opens geometry written as an import in SolidCraft, when a SolidCraft CLI is found, and
     /// reports it as Degraded when SolidCraft shows less of it than the model holds: geometry
@@ -1492,14 +1671,17 @@ impl SolidCraftWriter {
         design: &[u8],
         report: &mut Report,
         progress: Option<&dutchman_core::Progress<'_>>,
+        evaluator: Option<&std::sync::Arc<dyn SolidCraftEvaluator>>,
     ) {
         let expected = verify::Expected {
-            solids: solid_bodies(model),
+            solids: solid_bodies(model).max(single_body_regions(model)),
             sheets: sheet_bodies(model),
+            single_body_regions: single_body_regions(model),
         };
-        self.check_geometry(design, expected, report, progress, &model.name);
+        self.check_geometry(design, expected, report, progress, &model.name, evaluator);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check_geometry(
         &self,
         design: &[u8],
@@ -1507,12 +1689,17 @@ impl SolidCraftWriter {
         report: &mut Report,
         progress: Option<&dutchman_core::Progress<'_>>,
         name: &str,
+        evaluator: Option<&std::sync::Arc<dyn SolidCraftEvaluator>>,
     ) {
         if let Some(why) = self.memory_refusal() {
             report.push(Severity::Info, HISTORY, why);
             return;
         }
-        let cli = match self.selected_evaluator(&self.verification) {
+        let cli = match evaluator
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| self.selected_evaluator(&self.verification))
+        {
             Ok(cli) => cli,
             // Report a CLI that was found but cannot check the design.
             Err(verify::NoCli::TooOld(why) | verify::NoCli::Blocked(why)) => {
@@ -1600,6 +1787,10 @@ impl Writer for SolidCraftWriter {
         report: &mut Report,
         progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<(), Error> {
+        if self.stands_up.is_none() {
+            let writer = self.oriented(report);
+            return writer.write_with_progress(model, out, report, progress);
+        }
         document::report_scoped_attributes(model, report);
         let _preparing = progress
             .filter(|_| model.assembly.is_none())
@@ -1626,15 +1817,23 @@ impl Writer for SolidCraftWriter {
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
         }
+        let final_evaluator = self.final_evaluator();
         if let Some(assembly) = &model.assembly {
             let bytes = assembly::write(self, model, assembly, report, progress)?;
-            let bytes = self.check_opening(bytes, report)?;
+            let bytes = self.check_opening(bytes, report, final_evaluator.as_ref())?;
             // Each part is placed any number of times, so only SolidCraft's own warnings count.
             let expected = verify::Expected {
                 sheets: placed_sheets(assembly, 0),
                 ..verify::Expected::default()
             };
-            self.check_geometry(&bytes, expected, report, progress, &model.name);
+            self.check_geometry(
+                &bytes,
+                expected,
+                report,
+                progress,
+                &model.name,
+                final_evaluator.as_ref(),
+            );
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
@@ -1677,10 +1876,10 @@ impl Writer for SolidCraftWriter {
             )?;
             report.set_outcome(Outcome {
                 mode: Mode::History,
-                check: self.check_sketches(&bytes),
+                check: self.check_sketches(&bytes, final_evaluator.as_ref()),
                 features: mapping.features,
             });
-            let bytes = self.check_opening(bytes, report)?;
+            let bytes = self.check_opening(bytes, report, final_evaluator.as_ref())?;
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
@@ -1803,11 +2002,16 @@ impl Writer for SolidCraftWriter {
                     if let Check::Partial(message) = &check {
                         report.push(Severity::Degraded, HISTORY, message);
                     }
+                    let live = if self.writes_rest_visibly(history) {
+                        Live::Partial
+                    } else {
+                        Live::PartialHidden
+                    };
                     let written = self.history_design_report(
                         model,
                         history,
                         &step,
-                        Live::Partial,
+                        live,
                         self.should_stand_up(),
                         report,
                     )?;
@@ -1815,7 +2019,7 @@ impl Writer for SolidCraftWriter {
                     // appear in SolidCraft's numerical eval result.
                     let original =
                         self.history_design(model, history, &step, Live::Original, false)?;
-                    self.check_import(model, &original, report, progress);
+                    self.check_import(model, &original, report, progress, final_evaluator.as_ref());
                     (
                         written,
                         Outcome {
@@ -1936,11 +2140,11 @@ impl Writer for SolidCraftWriter {
             (bytes, outcome)
         };
         if outcome.mode == Mode::Import {
-            self.check_import(model, &bytes, report, progress);
+            self.check_import(model, &bytes, report, progress, final_evaluator.as_ref());
         }
         state_tolerances(report, &outcome);
         report.set_outcome(outcome);
-        let bytes = self.check_opening(bytes, report)?;
+        let bytes = self.check_opening(bytes, report, final_evaluator.as_ref())?;
         out.write_all(&bytes)
             .map_err(|err| Error::Encode(format!("cannot write the design: {err}")))
     }
@@ -2161,6 +2365,7 @@ mod mesh_only_tests {
             source_file: Some("mesh.f3d".to_owned()),
             assembly: None,
             source_step: None,
+            merge_bodies: false,
         };
         let mut out = Vec::new();
         let result = SolidCraftWriter::default().write(&model, &mut out, &mut Report::default());
@@ -2168,3 +2373,6 @@ mod mesh_only_tests {
         assert!(out.is_empty());
     }
 }
+
+#[cfg(test)]
+mod reuse_tests;

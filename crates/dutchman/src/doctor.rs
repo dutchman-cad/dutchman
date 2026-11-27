@@ -79,7 +79,12 @@ pub fn run(
     if settings.diagnose.step_path.is_some() && plan.jobs.len() != 1 {
         return Err("--step needs a project with one design; put same-name STEP exports beside other designs.".into());
     }
-    batch::prepare(&mut plan.jobs, &settings.diagnose.options);
+    // The converted designs live in the check's own folder, which Dutchman made: a rerun resumes
+    // from its checkpoints and rewrites there, never into a folder of the user's.
+    batch::prepare_options(&mut plan.jobs, &settings.diagnose.options);
+    for job in &mut plan.jobs {
+        job.replace = true;
+    }
     let workers = concurrency(settings.jobs, settings.memory);
     let per_worker = settings.memory / workers as u64;
     let mut diagnose = settings.diagnose.clone();

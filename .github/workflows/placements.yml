@@ -32,6 +32,10 @@ jobs:
     outputs:
       run: ${{ steps.diff.outputs.run }}
       voron: ${{ steps.diff.outputs.voron }}
+      # Self-hosted 'flyer' runners: the merge queue and pushes to main only; pull requests run on
+      # GitHub-hosted runners. FLYER=off sends everything to GitHub. A direct dispatch
+      # stays on GitHub. The caller's event decides when this runs as part of ci.yml.
+      flyer: ${{ vars.FLYER != 'off' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -62,9 +66,28 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Bookworm matches the Docker runtime; host Ubuntu binaries may need a newer glibc.
       - name: Build Dutchman
-        run: >
-          cargo build --release --locked -p dutchman -p dutchman-web --bins
-          --config profile.release.lto=false --config profile.release.codegen-units=16
+        # Three compile jobs, not the runner's four: a cold build (new cadmpeg source or a
+        # version bump) twice lost the runner after ~49 min with no log (jobs 137216756243 and
+        # 137251151767), which points at memory. The profile overrides stay (no LTO, 16 codegen
+        # units); neither changes what the converter computes. The heartbeat prints memory and
+        # the biggest processes each minute, so a lost runner leaves its last reading in the log.
+        env:
+          CARGO_BUILD_JOBS: 3
+        run: |
+          awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {printf "total %d MB, available %d MB\n", t/1024, a/1024}' /proc/meminfo
+          (
+            while sleep 60; do
+              echo "heartbeat $(date -u +%H:%M:%S): $(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {printf "total %d MB, available %d MB\n", t/1024, a/1024}' /proc/meminfo)"
+              awk '/^Name:/ {n=$2} /^VmRSS:/ {print $2, n}' /proc/[0-9]*/status 2>/dev/null | sort -rn | head -3 | awk '{printf "  %d MB %s\n", $1/1024, $2}' || true
+            done
+          ) &
+          heartbeat=$!
+          status=0
+          cargo build --release --locked -p dutchman -p dutchman-web --bins \
+            --config profile.release.lto=false --config profile.release.codegen-units=16 || status=$?
+          kill "$heartbeat" 2>/dev/null || true
+          awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {printf "total %d MB, available %d MB\n", t/1024, a/1024}' /proc/meminfo
+          exit "$status"
       - run: target/release/dutchman --version
       - uses: actions/upload-artifact@v7
         with:
@@ -78,8 +101,9 @@ jobs:
 
   placements:
     name: placements (${{ matrix.name }})
-    needs: build
-    runs-on: ubuntu-latest
+    needs: [changes, build]
+    # The two small checks need only python3 and curl, no root: they run on 'flyer' under the rule above.
+    runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     strategy:
       fail-fast: false
@@ -99,6 +123,16 @@ jobs:
             url: https://raw.githubusercontent.com/Adriaeik/fusion2URDF/4411ffbdffc0364dc6f5922c40b3e14fd7b642f8/examples/Assem1_description/Assem1.f3z
             sha256: 3fd57697437949374b76df74dbc69342d286512f0ef8f4580b5dca7c1d6dfe44
     steps:
+      # A flyer runner's reused workspace can hold a clone missing objects it claims
+      # ("remote did not send all necessary objects"); start that workspace clean.
+      - name: Clear a corrupt reused workspace
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/.git" ] && ! git -C "$GITHUB_WORKSPACE" fsck --connectivity-only --no-progress >/dev/null 2>&1; then
+            echo "::warning::corrupt git workspace on $RUNNER_NAME; clearing it before checkout"
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
@@ -113,8 +147,13 @@ jobs:
         run: |
           chmod +x bin/dutchman
           mkdir out
+          # Exit 1 with the design written is expected when parts couldn't be placed; the placement
+          # check below still compares every placement. Any other failure stops here.
           bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}.sc \
-            --preset standard --part-positions "${{ matrix.positions }}" --no-verify 2> out/convert.log
+            --preset standard --part-positions "${{ matrix.positions }}" --no-verify --json \
+            > out/${{ matrix.name }}-report.json 2> out/convert.log \
+            || python3 scripts/unproven-placements.py --only-unplaced out/${{ matrix.name }}-report.json out/${{ matrix.name }}.sc \
+            || { tail -n 20 out/convert.log; exit 1; }
           python3 scripts/placements.py out/${{ matrix.name }}.sc \
             --out out/${{ matrix.name }}.json --check corpus/placements/${{ matrix.name }}.json
       - uses: actions/upload-artifact@v7
@@ -163,8 +202,12 @@ jobs:
           # The job has swap the memory stop does not count, so it runs past the stop. Its peak
           # memory is logged to calibrate the stop.
           /usr/bin/time -v bin/dutchman convert in/Voron_2.4r2_Assembly.f3d -o out/voron.sc \
-            --preset standard --no-verify --no-memory-check 2> out/convert.log || status=$?
+            --preset standard --no-verify --no-memory-check --json > out/voron-report.json 2> out/convert.log || status=$?
           grep -E 'Maximum resident|Elapsed' out/convert.log || true
+          # Exit 1 with the design written and only unplaced parts is a result, not a failure.
+          if [ "$status" -eq 1 ] && python3 scripts/unproven-placements.py --only-unplaced out/voron-report.json out/voron.sc; then
+            status=0
+          fi
           if [ "$status" -ne 0 ]; then
             tail -n 5 out/convert.log
             if [ "$status" -eq 137 ] || grep -qiE 'out of memory|memory allocation|needs about .* GB' out/convert.log; then

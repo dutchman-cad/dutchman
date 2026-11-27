@@ -261,7 +261,7 @@ fn a_part_that_fails_only_beside_its_neighbours_is_narrowed_there() {
         .iter()
         .all(|trial| trial.scope == Scope::Neighbours));
     let text = summary(&findings(&state), &state);
-    assert!(text.contains("only with its neighbours"), "{text}");
+    assert!(text.contains("only with its neighbors"), "{text}");
 }
 
 #[test]
@@ -374,6 +374,7 @@ fn assembly(names: &[&str]) -> Model {
     let parts: Vec<Model> = names.iter().map(|name| part(name, 8)).collect();
     let placements = (0..parts.len())
         .map(|at| Placement {
+            unproven: false,
             name: None,
             part: at,
             transform: [

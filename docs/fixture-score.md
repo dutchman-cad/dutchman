@@ -11,12 +11,16 @@ be on the default branch for scheduled runs.
 The workflow builds one release binary with the lockfile of the selected branch or tag.
 Its shard runner comes from the workflow commit. The build job downloads one
 manifest snapshot and keeps only the public score fields, and each shard takes every Nth file from that snapshot.
-SolidCraft 0.45 is downloaded with the existing release checksum check. Each
+SolidCraft 0.50 is downloaded with the existing release checksum check. Each
 file gets 900 seconds for conversion and reopen together. Reopen uses
 `document.inspect` with `measure: true` and the same result shape as the fixture
 history sweep. An HTTP error, byte-count mismatch, or SHA-256 mismatch produces
 a result with `exit: null` and a `skip_reason`; it does not stop other files.
 Conversion timeouts use exit 124 and a `failure_reason`.
+
+The release gate's `scripts/written-design-compare.py` comparison is covered by
+`scripts/tests/test_written_design_compare.py`, including a SolidCraft CLI test
+that passes an identical saved box and rejects a body that is 55 mm too short.
 
 The manifest is a JSON list, or an object with a `files` list. Each row requires
 `file` (a unique relative file key), `url` (HTTPS), `sha256`, `bytes`, and

@@ -67,6 +67,9 @@ pub(crate) fn repro_anonymous(
 
 /// The input file as the reports describe it.
 pub fn input(path: &Path) -> Value {
+    if crate::tool_library::is_library(path) {
+        return crate::tool_library::input(path);
+    }
     let format = Format::from_path(path);
     json!({
         "path": path.display().to_string(),
@@ -81,6 +84,11 @@ pub fn input(path: &Path) -> Value {
 /// A conversion's input capability, before its result.
 pub fn status_line(report: &Value) -> Option<String> {
     let input = report.get("input")?;
+    if crate::tool_library::is_report(report) {
+        return Some(crate::tool_library::status_text(
+            input.get("extension")?.as_str()?,
+        ));
+    }
     Some(format!(
         "{} .{}: {}",
         input.get("program")?.as_str()?,
@@ -129,10 +137,83 @@ pub fn fixtures_pitch<'a>(reports: impl IntoIterator<Item = &'a Value>) -> Optio
     Some(format!("Want to help Dutchman read {programs} better? If you have {programs}, you can make a few small test files from short recipes: {FIXTURES_URL} or type /volunteer in our Discord ({DISCORD_URL}). Got a file that converts wrong? Please drop it, with a STEP export of the exact same design, in a DM to Dutchy in our Discord."))
 }
 
-/// One loss of a report as the text reports print it, `LEVEL: SUBJECT: MESSAGE`, with the
-/// message cut to its first sentence unless `verbose`; and whether it was cut.
+/// What "unverified" means for an editable history, said next to the word in the app: not a
+/// quality warning, but what was and was not checked, and how to check it.
+pub const UNVERIFIED_MEANING_APP: &str = "Unverified means this history was written without SolidCraft replaying it and comparing the result with the original shape. It is not a warning that the history is wrong. To check it, turn on \"Check feature history in SolidCraft\" and use Add matching STEP with a STEP export of the same design.";
+
+/// [`UNVERIFIED_MEANING_APP`] as the command line says it.
+pub const UNVERIFIED_MEANING_CLI: &str = "Unverified means this history was written without SolidCraft replaying it and comparing the result with the original shape. It is not a warning that the history is wrong. To check it, run again without --no-verify, with a STEP export of the same design beside the file.";
+
+/// The explanation to print next to an editable history that was not checked, when `report`
+/// has one: a history kept whole or in part whose rebuild SolidCraft did not compare with the
+/// original shape.
+pub fn unverified_history(report: &Value, command_line: bool) -> Option<&'static str> {
+    let status = report
+        .pointer("/verification/status")
+        .and_then(Value::as_str);
+    let unchecked = match report.get("mode").and_then(Value::as_str) {
+        Some("history") => matches!(status, None | Some("unverified")),
+        Some("partial_history") => matches!(status, Some("unverified" | "partial")),
+        _ => false,
+    };
+    (unchecked && report.get("ok").and_then(Value::as_bool) == Some(true)).then_some(
+        if command_line {
+            UNVERIFIED_MEANING_CLI
+        } else {
+            UNVERIFIED_MEANING_APP
+        },
+    )
+}
+
+/// How a loss reads in the default view: its plain sentence (see `dutchman_core::PLAIN_NOTES`)
+/// and whether the default view shows it at all. A loss the table does not cover keeps its
+/// message and stays shown.
+pub fn plain_view(loss: &Value) -> dutchman_core::PlainView {
+    let field = |name: &str| loss.get(name).and_then(Value::as_str).unwrap_or("");
+    let severity = match field("level") {
+        "Dropped" => Severity::Dropped,
+        "Degraded" => Severity::Degraded,
+        _ => Severity::Info,
+    };
+    dutchman_core::plain_view(
+        severity,
+        loss.get("code").and_then(Value::as_str),
+        field("subject"),
+        field("message"),
+    )
+}
+
+/// Whether the default view shows a loss: everything except notes that change nothing the
+/// person sees.
+pub fn is_shown(loss: &Value) -> bool {
+    plain_view(loss).shown
+}
+
+/// A report's losses as the default text view lists them: all of them with `verbose`, else
+/// without the notes that change nothing.
+pub fn listed_losses(report: &Value, verbose: bool) -> Vec<Value> {
+    report
+        .get("losses")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|loss| verbose || is_shown(loss))
+        .cloned()
+        .collect()
+}
+
+/// One loss of a report as the text reports print it. With `verbose` it is the raw
+/// `LEVEL: SUBJECT: MESSAGE`; otherwise a note the table covers leads with its plain sentence,
+/// `LEVEL: SENTENCE`, and any other has its message cut to the first sentence. Also whether it
+/// was cut.
 pub fn loss_line(loss: &Value, verbose: bool) -> (String, bool) {
     let field = |name: &str| loss.get(name).and_then(Value::as_str).unwrap_or("");
+    if !verbose {
+        let view = plain_view(loss);
+        if view.rewritten {
+            return (format!("{}: {}", field("level"), view.summary), true);
+        }
+    }
     let (message, cut) = if verbose {
         (field("message").to_owned(), false)
     } else {
@@ -152,10 +233,14 @@ pub fn loss_lines(losses: &[Value], verbose: bool) -> Vec<(String, bool)> {
     }
     let mut groups: BTreeMap<(String, String, String), usize> = BTreeMap::new();
     let mut rows: Vec<(&Value, String, usize)> = Vec::new();
-    for loss in losses {
+    for loss in losses.iter().filter(|loss| is_shown(loss)) {
         let field = |name| loss.get(name).and_then(Value::as_str).unwrap_or("");
         let message = field("message");
-        let normalized = if field("subject").rsplit(": ").next() == Some("appearance") {
+        let view = plain_view(loss);
+        let view_rewritten = view.rewritten;
+        let normalized = if view.rewritten {
+            view.summary
+        } else if field("subject").rsplit(": ").next() == Some("appearance") {
             message
                 .strip_prefix("Appearance binding ")
                 .and_then(|binding| binding.split_once(" is left out: "))
@@ -164,9 +249,10 @@ pub fn loss_lines(losses: &[Value], verbose: bool) -> Vec<(String, bool)> {
         } else {
             message.to_owned()
         };
+        let subject = if view_rewritten { "" } else { field("subject") };
         let key = (
             field("level").to_owned(),
-            field("subject").to_owned(),
+            subject.to_owned(),
             normalized.clone(),
         );
         if let Some(row) = groups.get(&key).and_then(|index| rows.get_mut(*index)) {
@@ -180,6 +266,9 @@ pub fn loss_lines(losses: &[Value], verbose: bool) -> Vec<(String, bool)> {
         .map(|(loss, message, count)| {
             if count == 1 {
                 loss_line(loss, false)
+            } else if plain_view(loss).rewritten {
+                let level = loss.get("level").and_then(Value::as_str).unwrap_or("");
+                (format!("{level}: {message} ({count} notes)"), true)
             } else {
                 let mut summary = loss.clone();
                 if let Some(fields) = summary.as_object_mut() {
@@ -253,15 +342,25 @@ fn component_of(loss: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// A report's losses by component: the design's own first, then the components with the most
-/// that matters (Dropped, then Degraded), then by name.
+/// A report's losses by component, every note: the design's own first, then the components
+/// with the most that matters (Dropped, then Degraded), then by name.
 pub fn components(report: &Value) -> Vec<Component<'_>> {
+    components_of(report, true)
+}
+
+/// [`components`] without the notes the default view leaves out.
+pub fn shown_components(report: &Value) -> Vec<Component<'_>> {
+    components_of(report, false)
+}
+
+fn components_of(report: &Value, every_note: bool) -> Vec<Component<'_>> {
     let mut by_file: BTreeMap<Option<String>, Component<'_>> = BTreeMap::new();
     for loss in report
         .get("losses")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
+        .filter(|loss| every_note || is_shown(loss))
     {
         let file = component_of(loss);
         let component = by_file.entry(file.clone()).or_insert_with(|| Component {
@@ -337,7 +436,7 @@ const COMPONENTS_SHOWN: usize = 15;
 /// A report's losses in a few lines, by component: `the design: 2 Degraded`, then
 /// `pin.ipt: history flattened (…); 1 Dropped`, most that matters first.
 pub fn grouped_lines(report: &Value) -> Vec<String> {
-    let components = components(report);
+    let components = shown_components(report);
     let total: usize = components.iter().map(|c| c.losses.len()).sum();
     let mut lines = vec![format!(
         "losses: {total} in {} component{}",
@@ -378,7 +477,7 @@ pub fn full_log(report: &Value, line: &str) -> String {
 
 /// What the text reports say once when they cut a note short.
 pub const CUT_NOTE: &str =
-    "repeated notes are grouped and long notes shortened; --verbose prints every note in full";
+    "notes are summarized in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full";
 
 /// A report of a run that stopped with `message`, at the input stage (the file, or how it
 /// was asked for).
@@ -397,6 +496,9 @@ pub fn error(schema: &str, input: Value, error: &Error) -> Value {
     );
     if let Some(fields) = report.get_mut("error").and_then(Value::as_object_mut) {
         fields.insert("kind".into(), json!(error.kind()));
+        if let Some(cause) = error.cause() {
+            fields.insert("cause".into(), json!(cause));
+        }
         if let Error::Checks { facts, .. } = error {
             fields.insert("findings".into(), json!(facts.findings));
             fields.insert("curve_kinds".into(), json!(facts.curve_kinds));
@@ -422,12 +524,112 @@ pub fn failure_at(
     })
 }
 
+/// Makes a report that did not convert say why: a message, its stage, a kind and a reason
+/// code. A child that stopped without a report, an error whose message came out empty and a
+/// result with `ok` false and no error each get a named reason here, so a failure is never
+/// bare. An assembly with parts left out keeps its report, and gains a `reason`.
+pub fn ensure_reason(report: &mut Value) {
+    if report.get("ok") == Some(&Value::Bool(true)) {
+        return;
+    }
+    let unplaced = unplaced_message(report);
+    let Some(fields) = report.as_object_mut() else {
+        return;
+    };
+    let blank = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .is_none_or(|s| s.trim().is_empty())
+    };
+    if !fields.contains_key("error") {
+        if let Some(mut message) = unplaced {
+            let count = |key: &str| {
+                fields
+                    .get("completeness")
+                    .and_then(|c| c.get(key))
+                    .and_then(Value::as_u64)
+            };
+            if let (Some(placed), Some(placements)) = (count("placed"), count("placements")) {
+                message = format!("{placed} of {placements} parts placed: {message}");
+            }
+            fields.insert(
+                "reason".into(),
+                json!({"stage": "project", "kind": "incomplete", "code": "unplaced_parts",
+                       "message": message}),
+            );
+            return;
+        }
+        fields.insert("error".into(), json!({}));
+    }
+    if !fields.get("error").is_some_and(Value::is_object) {
+        fields.insert("error".into(), json!({}));
+    }
+    let Some(error) = fields.get_mut("error").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let stage = error
+        .get("stage")
+        .and_then(Value::as_str)
+        .unwrap_or("input")
+        .to_owned();
+    // A message that is empty, or only the label of a cause nobody filled in.
+    let text = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let empty_cause = text.ends_with(':');
+    if blank(error.get("message")) || empty_cause {
+        let prefix = if empty_cause {
+            format!("{text} ")
+        } else {
+            String::new()
+        };
+        let message = if stage == "decode" || stage == "project" {
+            format!(
+                "{prefix}the reader stopped at the {stage} stage and gave no reason; for an \
+                 archive, a design inside it could not be read"
+            )
+        } else {
+            format!("{prefix}the conversion stopped at the {stage} stage and gave no reason")
+        };
+        error.insert("message".into(), json!(message));
+        error.insert("empty_reason".into(), json!(true));
+    }
+    if blank(error.get("stage")) {
+        error.insert("stage".into(), json!(stage));
+    }
+    if blank(error.get("kind")) {
+        error.insert("kind".into(), json!("unknown"));
+    }
+    if blank(error.get("code")) {
+        let code = error
+            .get("cause")
+            .or_else(|| error.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned();
+        error.insert("code".into(), json!(code));
+    }
+}
+
 /// The fields every successful report shares: what was (or would be) written, and the losses.
 pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value> {
     let mut out = Map::new();
     out.insert("schema".to_owned(), json!(schema));
-    out.insert("ok".to_owned(), json!(true));
+    out.insert(
+        "ok".to_owned(),
+        json!(report
+            .completeness()
+            .is_none_or(|counts| counts.unplaced_count() == 0)),
+    );
     out.insert("input".to_owned(), input);
+    if let Some(version) = report.source_version() {
+        out.insert("source_version".to_owned(), json!(version));
+    }
+    if let Some(up_axis) = report.up_axis().filter(|up| up.worth_stating()) {
+        out.insert("up_axis".to_owned(), up_axis.json());
+    }
     if let Some((requested, used)) = report.threads() {
         out.insert(
             "threads".to_owned(),
@@ -461,8 +663,37 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
             }),
         );
     }
+    if let Some(message) = report.source_errors_message() {
+        out.insert(
+            "source_errors".to_owned(),
+            json!({
+                "program": "FreeCAD",
+                "count": report.source_error_total(),
+                "features": report.source_errors().iter().map(|error| json!({
+                    "name": error.name,
+                    "label": error.label,
+                    "error": error.message,
+                })).collect::<Vec<_>>(),
+                "message": message,
+            }),
+        );
+    }
     if let Some(completeness) = report.completeness() {
         out.insert("completeness".to_owned(), completeness_json(completeness));
+    }
+    if let Some(message) = report
+        .completeness()
+        .and_then(Completeness::unplaced_message)
+    {
+        // Designs missing from the file are the larger cause: say so first.
+        let reason = match report.missing_links_message() {
+            Some(why) => format!("{why} {message}"),
+            None => message,
+        };
+        out.insert(
+            "verification".to_owned(),
+            json!({"status": "partial", "reason": reason}),
+        );
     }
     if !report.joints().is_empty() {
         out.insert("joints".to_owned(), json!(report.joints()));
@@ -499,9 +730,40 @@ pub fn completeness_json(completeness: &Completeness) -> Value {
     json!({
         "placed": completeness.placed,
         "placed_empty": completeness.placed_empty,
+        "unplaced": completeness.unplaced,
         "placements": completeness.placements(),
         "left_out": left_out,
     })
+}
+
+/// The sentence saying a Fusion `.f3d` places components inserted from designs it doesn't
+/// contain, when its completeness records them as left out.
+pub fn inserted_designs_message(report: &Value) -> Option<String> {
+    report
+        .pointer("/completeness/left_out")?
+        .as_array()?
+        .iter()
+        .filter_map(|cause| cause.get("reason")?.as_str())
+        .find(|reason| reason.contains(" from other Fusion designs that this .f3d doesn't contain"))
+        .map(str::to_owned)
+}
+
+/// Plain explanation shared by CLI and app results.
+pub fn unplaced_message(report: &Value) -> Option<String> {
+    let unplaced = report.pointer("/completeness/unplaced")?.as_object()?;
+    let n = unplaced
+        .values()
+        .filter_map(Value::as_u64)
+        .fold(0u64, u64::saturating_add);
+    match n {
+        0 => None,
+        1 => {
+            Some("1 part couldn't be placed (its position in the archive couldn't be read).".into())
+        }
+        n => Some(format!(
+            "{n} parts couldn't be placed (their position in the archive couldn't be read)."
+        )),
+    }
 }
 
 /// What a report's assembly brought across, in words, when it is of an assembly: `41
@@ -540,7 +802,11 @@ pub fn assembly_line(report: &Value) -> Option<String> {
             .collect();
         format!("{total} joint{} ({})", plural(total), each.join(", "))
     };
-    Some(format!("{components}, {joints}"))
+    let mut line = format!("{components}, {joints}");
+    if let Some(message) = unplaced_message(report) {
+        line.push_str(&format!(". {message}"));
+    }
+    Some(line)
 }
 
 fn plural(n: u64) -> &'static str {
@@ -569,18 +835,24 @@ pub fn completeness_lines(report: &Value) -> Vec<String> {
         .flatten()
         .collect();
     let empty = count("placed_empty");
-    if causes.is_empty() && empty == 0 {
+    if causes.is_empty() && empty == 0 && unplaced_message(report).is_none() {
         return vec![format!("assembly: all {placements} placements placed")];
     }
     let mut summary = format!("assembly: {placed} of {placements} placements placed");
     if empty > 0 {
         summary.push_str(&format!("; {empty} placed empty"));
     }
-    let left_out = placements.saturating_sub(placed).saturating_sub(empty);
+    let left_out = causes
+        .iter()
+        .filter_map(|c| c.get("count").and_then(Value::as_u64))
+        .fold(0u64, u64::saturating_add);
     if !causes.is_empty() {
         summary.push_str(&format!("; {left_out} left out:"));
     }
     let mut lines = vec![summary];
+    if let Some(message) = unplaced_message(report) {
+        lines.push(message);
+    }
     for cause in causes.iter().take(CAUSES_SHOWN) {
         let field = |key: &str| cause.get(key).and_then(Value::as_str);
         let times = cause.get("count").and_then(Value::as_u64).unwrap_or(1);
@@ -743,11 +1015,17 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
         "verification".to_owned(),
         json!({"status": status, "reason": reason}),
     );
-    out.insert(
-        "history".to_owned(),
-        json!({"mapped": mapped, "total": total, "rebuilt": rebuilt, "needing": needing,
-            "reapplied": reapplied, "features": features}),
-    );
+    let mut history = json!({"mapped": mapped, "total": total, "rebuilt": rebuilt,
+        "needing": needing, "reapplied": reapplied, "features": features});
+    // The first feature not converted: from it on, the design is one imported body.
+    if let (Mode::PartialHistory, Some(rest), Some(fields)) = (
+        outcome.mode,
+        dutchman_core::RestImported::of(&outcome.features),
+        history.as_object_mut(),
+    ) {
+        fields.insert("rest_imported_from".to_owned(), json!(rest.from));
+    }
+    out.insert("history".to_owned(), history);
     out
 }
 
@@ -1022,6 +1300,13 @@ pub fn losses(report: &Report) -> Value {
         .losses()
         .iter()
         .map(|loss| {
+            let message = dutchman_core::clean_refusal(&loss.detail);
+            let view = dutchman_core::plain_view(
+                loss.severity,
+                loss.code.as_deref(),
+                &loss.subject,
+                &message,
+            );
             json!({
                 "level": match loss.severity {
                     Severity::Info => "Info",
@@ -1030,9 +1315,11 @@ pub fn losses(report: &Report) -> Value {
                 },
                 "code": loss.code,
                 "subject": loss.subject,
-                "message": dutchman_core::clean_refusal(&loss.detail),
+                "message": message,
                 "stage": loss.stage.id(),
                 "upstream": loss.upstream(),
+                "summary": view.summary,
+                "shown_by_default": view.shown,
             })
         })
         .collect()
@@ -1314,10 +1601,17 @@ pub fn onshape_fetch(result: &crate::onshape::Result<crate::onshape::FetchReport
     match result {
         Ok(report) => {
             json!({"schema": crate::onshape::SCHEMA, "ok": true, "output": report.output.display().to_string(),
+            "title": report.title,
             "microversion": report.microversion, "calls": report.calls, "cache_hits": report.cache_hits})
         }
-        Err(error) => json!({"schema": crate::onshape::SCHEMA, "ok": false,
-            "calls": error.calls, "error": {"code": error.kind.code(), "message": error.message}}),
+        Err(error) => {
+            let mut report = json!({"schema": crate::onshape::SCHEMA, "ok": false,
+            "calls": error.calls, "error": {"code": error.kind.code(), "message": error.message}});
+            if let (Some(estimate), Some(object)) = (error.estimate, report.as_object_mut()) {
+                object.insert("estimated_calls".into(), estimate.into());
+            }
+            report
+        }
     }
 }
 
@@ -1373,21 +1667,21 @@ mod tests {
     #[test]
     fn installed_version_notices_are_pure_and_non_blocking() {
         for (found, status, notice) in [
-            (Some("0.46.0"), "newer", Some("SolidCraft 0.46 is newer than this Dutchman knows. Designs are written for 0.45 and open fine in 0.46.")),
+            (Some("0.51.0"), "newer", Some("SolidCraft 0.51 is newer than this Dutchman knows. Designs are written for 0.50 and open fine in 0.51.")),
             (Some("0.17.9"), "too_old", Some("SolidCraft 0.17 is too old to open Dutchman's designs. Install a newer SolidCraft to open them.")),
             (Some("0.18.1"), "current", None),
-            (Some("0.45.9"), "current", None),
+            (Some("0.50.9"), "current", None),
             (Some("0.24.0"), "older_loses_history", Some("Designs are written for SolidCraft 0.24, the version you have. A newer SolidCraft keeps more of their history.")),
             (Some("0.25.1"), "older_loses_history", Some("Designs are written for SolidCraft 0.25, the version you have. A newer SolidCraft keeps more of their history.")),
             (Some("0.26.0"), "older_loses_history", Some("Designs are written for SolidCraft 0.26, the version you have. A newer SolidCraft keeps more of their history.")),
             (Some("0.27.1"), "older_loses_history", Some("Designs are written for SolidCraft 0.27, the version you have. A newer SolidCraft keeps more of their history.")),
-            (Some("0.45.0"), "current", None),
+            (Some("0.50.0"), "current", None),
             (Some("0.18.2"), "older_loses_history", Some("Designs are written for SolidCraft 0.18, the version you have. A newer SolidCraft keeps more of their history.")),
             (None, "none_found", None),
         ] {
             let mut report = json!({"solidcraft": solidcraft_values(None, found.map(str::to_owned))});
             assert_eq!(report["solidcraft"]["status"], status);
-            assert_eq!(report["solidcraft"]["known_newest"], "0.45");
+            assert_eq!(report["solidcraft"]["known_newest"], "0.50");
             assert_eq!(solidcraft_notice(&report).as_deref(), notice);
             report["error"] = json!({"message": "conversion failed"});
             assert!(solidcraft_notice(&report).is_none());
@@ -1400,7 +1694,7 @@ mod tests {
     #[test]
     fn cli_version_lines_are_normalized_like_the_writer() {
         for (line, version) in [
-            ("solidcraft-cli 0.45.0", Some("0.45.0")),
+            ("solidcraft-cli 0.50.0", Some("0.50.0")),
             ("solidcraft-cli v0.26.0-beta", Some("0.26.0")),
             ("solidcraft-cli 0.25", Some("0.25.0")),
             ("not a version", None),
@@ -1422,22 +1716,19 @@ mod tests {
         conversion_choices(&mut report, Path::new("missing.ipt"), &options);
         assert_eq!(
             report["solidcraft"],
-            json!({"target": "0.25", "found": null, "known_newest": "0.45", "status": "none_found"})
+            json!({"target": "0.25", "found": null, "known_newest": "0.50", "status": "none_found"})
         );
     }
 
     #[cfg(unix)]
     #[test]
     fn explicit_unverified_target_does_not_spawn_for_writer_or_reports() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let cli = dir.path().join("solidcraft-cli");
-        std::fs::write(
+        crate::worker::spawn_retry_tests::write_script(
             &cli,
             "#!/bin/sh\ntouch \"$0.spawned\"\necho 'solidcraft-cli 0.26.0'\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let target = "0.25.1".parse().unwrap();
         let options = crate::ConvertOptions {
             no_verify: true,
@@ -1451,7 +1742,7 @@ mod tests {
         assert_eq!(writer.resolved_version(), target);
         assert_eq!(
             solidcraft_info(&options).unwrap(),
-            json!({"target": "0.25", "found": null, "known_newest": "0.45", "status": "none_found"})
+            json!({"target": "0.25", "found": null, "known_newest": "0.50", "status": "none_found"})
         );
         assert!(options.reported_solidcraft_version().is_none());
         assert!(!dir.path().join("solidcraft-cli.spawned").exists());
@@ -1459,20 +1750,20 @@ mod tests {
 
     #[test]
     fn solidcraft_versions_report_target_found_and_absence() {
-        let target = "0.45.0".parse().unwrap();
+        let target = "0.50.0".parse().unwrap();
         for (found, line) in [
             (
                 Some("0.26.0".to_owned()),
-                "Target SolidCraft 0.45 (found 0.26.0)",
+                "Target SolidCraft 0.50 (found 0.26.0)",
             ),
             (
-                Some("0.45.1".to_owned()),
-                "Target SolidCraft 0.45 (found 0.45.1)",
+                Some("0.50.1".to_owned()),
+                "Target SolidCraft 0.50 (found 0.50.1)",
             ),
-            (None, "Target SolidCraft 0.45 (none found)"),
+            (None, "Target SolidCraft 0.50 (none found)"),
         ] {
             let report = json!({"solidcraft": solidcraft_values(Some(target), found.clone())});
-            assert_eq!(report["solidcraft"]["target"], "0.45");
+            assert_eq!(report["solidcraft"]["target"], "0.50");
             assert_eq!(report["solidcraft"]["found"], json!(found));
             assert_eq!(solidcraft_line(&report).as_deref(), Some(line));
             let mut refused = report.clone();
@@ -1483,7 +1774,7 @@ mod tests {
             solidcraft_values(None, Some("0.26.0".into()))["target"],
             "0.26"
         );
-        assert_eq!(solidcraft_values(None, None)["target"], "0.45");
+        assert_eq!(solidcraft_values(None, None)["target"], "0.50");
         for to in [
             crate::OutputFormat::Freecad,
             crate::OutputFormat::Fcstd,
@@ -1656,6 +1947,59 @@ mod tests {
     }
 
     #[test]
+    fn missing_inserted_designs_lead_the_report_and_every_summary() {
+        let mut source = Report::default();
+        source.set_completeness(Completeness {
+            placed: 1,
+            unplaced: [("Panel".into(), 1)].into(),
+            ..Completeness::default()
+        });
+        source.record_missing_inserted_designs(&["Washer".into(), "Nut".into()]);
+        let report = Value::Object(success(CONVERT, json!({"path":"assembly.f3d"}), &source));
+        let sentence = "2 inserted components come from other Fusion designs that this .f3d \
+                        doesn't contain; convert the whole export folder (or its zip) so the \
+                        inserted designs come along, or export the assembly as a Fusion \
+                        Archive (.f3z) from Fusion's File > Export.";
+        assert!(report["verification"]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with(sentence));
+        assert_eq!(report["completeness"]["left_out"][0]["reason"], sentence);
+        assert!(completeness_lines(&report)
+            .iter()
+            .any(|line| line.contains(sentence)));
+        assert!(crate::present::incomplete(&report));
+        let view = crate::present::FileView::from_report(&report);
+        assert_eq!(view.status_word, "Incomplete");
+        assert!(view
+            .outcome
+            .contains("export the assembly as a Fusion Archive (.f3z)"));
+    }
+
+    #[test]
+    fn unproven_positions_make_reports_partial_and_summaries_plain() {
+        let mut source = Report::default();
+        source.set_completeness(Completeness {
+            placed: 1,
+            unplaced: [("Panel".into(), 2)].into(),
+            ..Completeness::default()
+        });
+        let report = Value::Object(success(CONVERT, json!({"path":"assembly.f3z"}), &source));
+        let message =
+            "2 parts couldn't be placed (their position in the archive couldn't be read).";
+        assert_eq!(report["verification"]["status"], "partial");
+        assert_eq!(report["completeness"]["placed"], 1);
+        assert_eq!(report["completeness"]["unplaced"]["Panel"], 2);
+        assert_eq!(report["completeness"]["placements"], 3);
+        assert!(completeness_lines(&report).contains(&message.to_owned()));
+        assert!(crate::batch::line(&report).starts_with("incomplete"));
+        assert!(crate::batch::line(&report).contains(message));
+        let view = crate::present::FileView::from_report(&report);
+        assert_eq!(view.status_word, "Incomplete");
+        assert!(view.outcome.contains(message));
+    }
+
+    #[test]
     fn losses_are_grouped_by_the_part_they_belong_to() {
         let report = json!({"losses": [
             {"level": "Info", "subject": "history", "message": "flattened: the design carries no feature history"},
@@ -1701,6 +2045,7 @@ mod tests {
         let completeness = Completeness {
             placed: 18,
             placed_empty: 0,
+            unplaced: Default::default(),
             left_out: vec![dutchman_core::LeftOutGroup {
                 file: Some("pin.ipt".to_owned()),
                 reason: "pin.ipt: not found at its stored path".to_owned(),
@@ -1721,6 +2066,7 @@ mod tests {
         let whole = Completeness {
             placed: 3,
             placed_empty: 0,
+            unplaced: Default::default(),
             left_out: Vec::new(),
         };
         assert_eq!(
@@ -1731,10 +2077,23 @@ mod tests {
     }
 
     #[test]
+    fn unproven_positions_do_not_report_ok_after_writing() {
+        let mut report = Report::default();
+        report.set_completeness(Completeness {
+            unplaced: std::collections::BTreeMap::from([("Local components".to_owned(), 3)]),
+            ..Completeness::default()
+        });
+        let fields = success("dutchman.convert/1", json!({}), &report);
+        assert_eq!(fields["ok"], false);
+        assert_eq!(fields["completeness"]["unplaced"]["Local components"], 3);
+    }
+
+    #[test]
     fn empty_placements_are_separate_from_geometry_and_left_out() {
         let counts = Completeness {
             placed: 67,
             placed_empty: 13,
+            unplaced: Default::default(),
             left_out: vec![dutchman_core::LeftOutGroup {
                 file: Some("pin.ipt".into()),
                 reason: "not found".into(),
@@ -1775,6 +2134,29 @@ mod tests {
             final_body: false,
             inferred: None,
         }
+    }
+
+    #[test]
+    fn a_partial_history_names_the_first_feature_not_converted() {
+        let mut blocked = feature("hole", FeatureStatus::Blocked);
+        blocked.name = Some("Hole 1".to_owned());
+        let rows = vec![feature("sketch", FeatureStatus::Mapped), blocked];
+        let history = |mode| {
+            let fields = outcome_fields(&Outcome {
+                mode,
+                check: Check::Partial("x".to_owned()),
+                features: rows.clone(),
+            });
+            Value::Object(fields)
+        };
+        assert_eq!(
+            history(Mode::PartialHistory).pointer("/history/rest_imported_from"),
+            Some(&json!("Hole 1"))
+        );
+        assert_eq!(
+            history(Mode::History).pointer("/history/rest_imported_from"),
+            None
+        );
     }
 
     #[test]
@@ -1852,6 +2234,16 @@ mod tests {
                 {"name": "Rail", "status": "not_applicable", "reason": "the design carries no feature history", "mapped": 0, "total": 0, "rebuilt": 0, "needing": 0, "reapplied": 0},
             ])
         );
+    }
+
+    #[test]
+    fn source_version_is_reported_only_when_the_file_records_it() {
+        let mut report = Report::default();
+        let none = Value::Object(success(CONVERT, json!({}), &report));
+        assert!(none.get("source_version").is_none());
+        report.record_source_version("25.2.1".to_owned());
+        let some = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(some["source_version"], "25.2.1");
     }
 
     #[test]
@@ -2229,6 +2621,150 @@ mod output_link_tests {
             for key in ["schema", "ok", "input", "mode", "verification", "history"] {
                 assert_eq!(fields[key], expected[index][key]);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod plain_note_tests {
+    use super::*;
+
+    fn note(level: &str, code: Option<&str>, subject: &str, message: &str) -> Value {
+        json!({"level": level, "code": code, "subject": subject, "message": message})
+    }
+
+    fn issue_926_report() -> Value {
+        json!({"ok": true, "losses": [
+            note("Degraded", Some("inventor/source.kernel-history-unclosed"),
+                "inventor/source.kernel-history-unclosed",
+                "The kernel carrier's delta_state chain does not frame or close; features have no history states."),
+            note("Degraded", Some("inventor/rse.segment-pair-untyped"),
+                "inventor/rse.segment-pair-untyped",
+                "Retained 1 structurally paired RSe segment(s) without record semantics."),
+            note("Info", None, "part positions",
+                "0 parts placed as last shown in the original program (0 directly bound, 0 holders derived from displayed children), 0 at current poses, 0 as first placed (smart); first-placement reasons: 0 without a current pose, 0 ambiguous, 0 unsupported, 0 joint checks, 0 bounds checks, 0 inserted-design checks; 0 holder conflicts"),
+            note("Info", Some("step/native.source-record-omitted"),
+                "step/native.source-record-omitted",
+                "67 source-native record(s) were not represented in STEP"),
+            note("Info", Some("f3d/new.thing"), "f3d/new.thing", "Words nobody has translated."),
+        ]})
+    }
+
+    #[test]
+    fn the_default_text_view_leads_with_plain_sentences_and_leaves_out_no_effect_notes() {
+        let report = issue_926_report();
+        let lines: Vec<String> = loss_lines(report["losses"].as_array().unwrap(), false)
+            .into_iter()
+            .map(|(line, _)| line)
+            .collect();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("Degraded: This part's feature history couldn't be read"));
+        assert!(!lines[0].contains("delta_state"));
+        // A note the table does not cover keeps its own text.
+        assert_eq!(
+            lines[1],
+            "Info: f3d/new.thing: Words nobody has translated."
+        );
+        assert_eq!(listed_losses(&report, false).len(), 2);
+    }
+
+    #[test]
+    fn verbose_prints_every_note_raw() {
+        let report = issue_926_report();
+        let losses = listed_losses(&report, true);
+        assert_eq!(losses.len(), 5);
+        let lines: Vec<String> = loss_lines(&losses, true)
+            .into_iter()
+            .map(|(line, _)| line)
+            .collect();
+        assert!(lines[0].contains(
+            "inventor/source.kernel-history-unclosed: The kernel carrier's delta_state chain"
+        ));
+        assert!(lines[3].contains("step/native.source-record-omitted: 67 source-native"));
+    }
+
+    #[test]
+    fn the_json_report_keeps_every_note_and_adds_a_summary() {
+        let mut report = Report::default();
+        report.push_coded(
+            Severity::Degraded,
+            "inventor/source.kernel-history-unclosed",
+            "inventor/source.kernel-history-unclosed",
+            "The kernel carrier's delta_state chain does not frame or close",
+        );
+        report.push_coded(
+            Severity::Info,
+            "step/native.source-record-omitted",
+            "step/native.source-record-omitted",
+            "67 source-native record(s) were not represented in STEP",
+        );
+        report.push(Severity::Info, "joints", "3 joints kept");
+        let rows = losses(&report);
+        let rows = rows.as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        // The existing fields are unchanged.
+        assert_eq!(
+            rows[0]["message"],
+            "The kernel carrier's delta_state chain does not frame or close"
+        );
+        assert_eq!(rows[0]["code"], "inventor/source.kernel-history-unclosed");
+        assert_eq!(rows[0]["level"], "Degraded");
+        assert!(rows[0]["summary"]
+            .as_str()
+            .unwrap()
+            .starts_with("This part's feature history couldn't be read"));
+        assert_eq!(rows[0]["shown_by_default"], true);
+        assert_eq!(rows[1]["shown_by_default"], false);
+        // No row covers it: the summary is its own message.
+        assert_eq!(rows[2]["summary"], "3 joints kept");
+        assert_eq!(rows[2]["shown_by_default"], true);
+    }
+
+    #[test]
+    fn many_notes_group_by_component_without_the_hidden_ones() {
+        let mut list: Vec<Value> = (0..14)
+            .map(|n| {
+                note(
+                    "Info",
+                    Some("step/native.source-record-omitted"),
+                    "x",
+                    &format!("{n} records"),
+                )
+            })
+            .collect();
+        list.push(note(
+            "Degraded",
+            Some("f3d/new.thing"),
+            "f3d/new.thing",
+            "Words.",
+        ));
+        let report = json!({"ok": true, "losses": list});
+        assert_eq!(listed_losses(&report, false).len(), 1);
+        assert_eq!(listed_losses(&report, true).len(), 15);
+        assert_eq!(grouped_lines(&report)[0], "losses: 1 in 1 component");
+        assert_eq!(components(&report)[0].losses.len(), 15);
+    }
+
+    #[test]
+    fn an_unchecked_history_says_what_unverified_means_and_how_to_check() {
+        let unchecked =
+            json!({"ok": true, "mode": "history", "verification": {"status": "unverified"}});
+        let app = unverified_history(&unchecked, false).unwrap();
+        assert!(app.contains("Check feature history in SolidCraft"));
+        assert!(app.contains("not a warning that the history is wrong"));
+        assert!(app.contains("STEP export of the same design"));
+        let cli = unverified_history(&unchecked, true).unwrap();
+        assert!(cli.contains("--no-verify") && cli.contains("STEP export"));
+        // No status at all is unchecked too.
+        assert!(unverified_history(&json!({"ok": true, "mode": "history"}), false).is_some());
+        for report in [
+            json!({"ok": true, "mode": "history", "verification": {"status": "verified"}}),
+            json!({"ok": true, "mode": "history", "verification": {"status": "differs"}}),
+            json!({"ok": true, "mode": "import"}),
+            json!({"ok": false, "mode": "history"}),
+        ] {
+            assert!(unverified_history(&report, false).is_none(), "{report}");
         }
     }
 }

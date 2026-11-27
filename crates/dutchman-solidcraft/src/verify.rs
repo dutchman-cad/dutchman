@@ -6,6 +6,7 @@
 use crate::SolidCraftEvaluator;
 
 mod evidence;
+mod regions;
 use dutchman_core::time::Instant;
 pub(crate) use evidence::{compare_report, record_unavailable};
 use std::path::{Path, PathBuf};
@@ -413,15 +414,18 @@ pub fn chosen_cli(chosen: &Path) -> Result<PathBuf, String> {
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
 /// The newest minor known at build time. Patch releases need no constant update.
-pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 45];
+pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 50];
 
 /// The oldest SolidCraft release published in the 14 days before the tag, never below
 /// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
 pub const WINDOW_OLDEST: [u64; 3] = [0, 40, 0];
 
 /// Writer capabilities whose output depends on the target release.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VersionGate {
+    /// Rigid moves of resolved earlier bodies. This feature-specific gate does not
+    /// count towards an installed release's general history notice.
+    MoveBody,
     /// Linked Insert Design with cached bodies and a source file.
     LinkedDesign,
     /// Thin walls verified against the current SolidCraft document format.
@@ -459,11 +463,17 @@ pub enum VersionGate {
     ClosedCircleBlend,
     /// Complete spatial hole entries represented by an editable location sketch.
     SpatialHoleLocations,
+    /// Thread features named by an inch Unified designation such as `1/4-20 UNC-2A`
+    /// (solidcraft#20136). No release carries it yet, so it has no minimum version and no
+    /// known target supports it. When a release does, give it that release here.
+    UnifiedThread,
 }
 
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::UnifiedThread => SolidCraftVersion::V0_50_0,
+            Self::MoveBody => SolidCraftVersion::V0_45_0,
             Self::LinkedDesign => SolidCraftVersion::V0_44_0,
             Self::ThinExtrude => SolidCraftVersion::V0_44_0,
             Self::TopologicalEdges => SolidCraftVersion::V0_44_0,
@@ -551,6 +561,9 @@ pub fn solidcraft_minor(line: &str) -> Option<String> {
 pub struct SolidCraftVersion([u64; 3]);
 
 impl SolidCraftVersion {
+    /// First release with inch Unified (UNC, UNF) thread designations.
+    pub const V0_50_0: Self = Self([0, 50, 0]);
+
     /// Release used to prove profiles from resolved sketch features.
     pub const V0_45_0: Self = Self([0, 45, 0]);
 
@@ -576,6 +589,10 @@ impl SolidCraftVersion {
 
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
+
+    /// Stands for a release that does not exist yet: above every real version, so a gate set to
+    /// it is never supported.
+    pub const UNRELEASED: Self = Self([u64::MAX, 0, 0]);
 
     /// First release that stores a tapped hole's `thread_class`.
     pub const V0_43_0: Self = Self([0, 43, 0]);
@@ -1175,6 +1192,10 @@ fn compare_measurements(
             return Outcome::Unverified(format!("cannot evaluate the original geometry: {why}"))
         }
     };
+    let (expected, replayed) = match regions::normalize(expected, replayed, bodies) {
+        Ok(pair) => pair,
+        Err(outcome) => return outcome,
+    };
     if let Some(evidence) = evidence {
         *evidence = evidence::measurements(&expected, &replayed);
     }
@@ -1200,9 +1221,20 @@ pub(crate) fn replay(
     timeout: Duration,
     design: &[u8],
 ) -> (Outcome, Option<Vec<Placed>>) {
+    let (outcome, placed, _) = replay_named(cli, timeout, design);
+    (outcome, placed)
+}
+
+/// As [`replay`], also giving the names of the bodies the replay holds, in the order of the
+/// placed bodies; `None` when SolidCraft did not replay, or did not name every body.
+pub(crate) fn replay_named(
+    cli: &(impl SolidCraftEvaluator + ?Sized),
+    timeout: Duration,
+    design: &[u8],
+) -> (Outcome, Option<Vec<Placed>>, Option<Vec<String>>) {
     match evaluate(cli, timeout, "prefix", design) {
         Ok(Evaluation::Done(eval)) => match timeline_outcome(&eval) {
-            Some(outcome) => (outcome, None),
+            Some(outcome) => (outcome, None, None),
             None => {
                 let placed = eval
                     .bodies
@@ -1212,12 +1244,124 @@ pub(crate) fn replay(
                         size: body.size,
                     })
                     .collect();
-                (Outcome::Matches, Some(placed))
+                let names = eval
+                    .raw
+                    .get("bodies")
+                    .and_then(Value::as_array)
+                    .and_then(|bodies| {
+                        bodies
+                            .iter()
+                            .map(|body| {
+                                body.get("name")
+                                    .and_then(Value::as_str)
+                                    .filter(|name| !name.is_empty())
+                                    .map(str::to_owned)
+                            })
+                            .collect::<Option<Vec<String>>>()
+                    });
+                (Outcome::Matches, Some(placed), names)
             }
         },
-        Ok(Evaluation::Failed(why)) => (Outcome::Unverified(why), None),
-        Err(why) => (Outcome::Unverified(why), None),
+        Ok(Evaluation::Failed(why)) => (Outcome::Unverified(why), None, None),
+        Err(why) => (Outcome::Unverified(why), None, None),
     }
+}
+
+/// One body's volume and box as SolidCraft measures it, for comparing a retained prefix with
+/// the source's final shape.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Extent {
+    pub(crate) volume: f64,
+    pub(crate) bounds: ([f64; 3], [f64; 3]),
+}
+
+/// Every body of a design that SolidCraft evaluated without error, with its box. `None` when
+/// the design does not evaluate or any body lacks a box: an unmeasured body proves nothing.
+pub(crate) fn extents(
+    cli: &(impl SolidCraftEvaluator + ?Sized),
+    timeout: Duration,
+    label: &str,
+    design: &[u8],
+) -> Option<Vec<Extent>> {
+    let Ok(Evaluation::Done(eval)) = evaluate(cli, timeout, label, design) else {
+        return None;
+    };
+    if !eval.errors.is_empty() {
+        return None;
+    }
+    eval.bodies
+        .iter()
+        .map(|body| {
+            Some(Extent {
+                volume: body.volume,
+                bounds: body.bounds?,
+            })
+        })
+        .collect()
+}
+
+/// Why the replay of a retained prefix cannot be the state before the features the source has
+/// after it, when none of those can build beyond it: the source's final shape reaches past the
+/// prefix's box, or, when they only remove material (`removes`), holds over 5% more material than the
+/// prefix (SolidCraft measures volumes from meshes, which agree to about 1%). Those features would have to build what the prefix lacks, so the prefix is a
+/// different body: a profile region chosen without proof is the usual cause.
+pub(crate) fn prefix_misses_source(
+    prefix: &[Extent],
+    source: &[Extent],
+    removes: bool,
+) -> Option<String> {
+    if prefix.is_empty() || source.is_empty() {
+        return None;
+    }
+    let union = |bodies: &[Extent]| {
+        let mut bounds = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for body in bodies {
+            for ((low, high), (body_low, body_high)) in bounds
+                .0
+                .iter_mut()
+                .zip(bounds.1.iter_mut())
+                .zip(body.bounds.0.iter().zip(body.bounds.1.iter()))
+            {
+                *low = low.min(*body_low);
+                *high = high.max(*body_high);
+            }
+        }
+        bounds
+    };
+    let (kept_low, kept_high) = union(prefix);
+    let (final_low, final_high) = union(source);
+    let diagonal = final_low
+        .iter()
+        .zip(final_high.iter())
+        .map(|(low, high)| (high - low).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    // The larger of half a millimetre and 1% of the final shape's diagonal.
+    let slack = (diagonal * 0.01).max(0.5);
+    let axes = kept_low
+        .iter()
+        .zip(kept_high.iter())
+        .zip(final_low.iter().zip(final_high.iter()));
+    for (((kept_low, kept_high), (final_low, final_high)), name) in axes.zip(["X", "Y", "Z"]) {
+        let short = (kept_low - final_low).max(final_high - kept_high);
+        if short.is_finite() && short > slack {
+            return Some(format!(
+                "the retained features' body ends {short:.1} mm inside the source's final \
+                 shape along {name}, and no feature after them builds material"
+            ));
+        }
+    }
+    if removes {
+        let kept: f64 = prefix.iter().map(|body| body.volume).sum();
+        let wanted: f64 = source.iter().map(|body| body.volume).sum();
+        if wanted.is_finite() && kept.is_finite() && wanted - kept > wanted.abs() * 0.05 {
+            return Some(format!(
+                "the retained features' bodies hold {kept:.0} mm3 where the source's final shape \
+                 holds {wanted:.0} mm3, and no feature after them builds material"
+            ));
+        }
+    }
+    None
 }
 
 /// The source's solid and a candidate's replay compared directly in one SolidCraft session:
@@ -1421,6 +1565,8 @@ pub(crate) struct Expected {
     pub solids: usize,
     /// Its sheet bodies: open by design, so neither a volume nor an open shell is a fault.
     pub sheets: usize,
+    /// Connected regions when the entire source is one solid body; zero otherwise.
+    pub single_body_regions: usize,
 }
 
 /// A body volume, in cubic millimetres, below which SolidCraft gives the body none.
@@ -2195,6 +2341,50 @@ pub(crate) fn run_script(
     }
 }
 
+/// Runs `script` on `design` and saves the result to `save`, returning the raw
+/// `--results` JSON: the list of results, or `{results, error}` when a step failed (nothing
+/// is saved then).
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_and_save(
+    cli: &Path,
+    deadline: Instant,
+    dir: &Path,
+    design: &Path,
+    save: &Path,
+    script: &[Value],
+) -> Result<Value, String> {
+    let path = dir.join("drawing-script.json");
+    let output = dir.join("drawing-out.json");
+    let text =
+        serde_json::to_string(script).map_err(|err| format!("cannot write the script: {err}"))?;
+    std::fs::write(&path, text).map_err(|err| format!("cannot stage the script: {err}"))?;
+    let mut child = spawn(cli, |command| {
+        command
+            .arg("run")
+            .arg(&path)
+            .arg("--in")
+            .arg(design)
+            .arg("--save")
+            .arg(save)
+            .arg("--results")
+            .arg("--json-out")
+            .arg(&output)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    })
+    .map_err(|err| launch_failure(cli, err))?;
+    let status = wait(&mut child, cli, deadline)?;
+    let text = std::fs::read_to_string(&output);
+    match text {
+        Ok(text) => serde_json::from_str(&text).map_err(|err| format!("{CLI_NAME} result: {err}")),
+        Err(err) if status.success() => Err(format!("{CLI_NAME} wrote no result: {err}")),
+        Err(_) => {
+            Err(blocked_failure(cli).unwrap_or_else(|| format!("{CLI_NAME} exited with {status}")))
+        }
+    }
+}
+
 /// Starts the CLI, retrying while the system says it is busy being written.
 /// Keeps a console program this one starts from opening a window of its own, as it does when
 /// this one has no console: the desktop app, and the children it converts in. Attached to a
@@ -2321,6 +2511,11 @@ fn wait(
     }
 }
 
+/// A reusable answer must also pass the geometry reader's existing schema checks.
+pub(crate) fn reusable_evaluation(value: &Value) -> bool {
+    parse(value).is_ok_and(|eval| timeline_outcome(&eval).is_none())
+}
+
 /// The bodies and timeline errors and warnings in a SolidCraft `eval` result.
 fn parse(value: &Value) -> Result<Eval, String> {
     let bodies = value
@@ -2410,6 +2605,53 @@ fn parse(value: &Value) -> Result<Eval, String> {
 
 #[cfg(test)]
 mod tests {
+    fn cube(side: f64) -> super::Extent {
+        super::Extent {
+            volume: side * side * side,
+            bounds: ([0.0; 3], [side; 3]),
+        }
+    }
+
+    #[test]
+    fn a_prefix_inside_the_final_shape_is_not_a_step_towards_it() {
+        // A 6.5 mm tube centred like the 15 mm block it was taken for: only rounds follow.
+        let tube = super::Extent {
+            volume: 353.0,
+            bounds: ([4.25, 4.25, 0.0], [10.75, 10.75, 15.0]),
+        };
+        let why = super::prefix_misses_source(&[tube], &[cube(15.0)], false).unwrap();
+        assert!(why.contains("inside the source's final shape"), "{why}");
+        // The same prefix is fine when the source's final shape is no bigger than it.
+        assert_eq!(
+            super::prefix_misses_source(&[cube(15.0)], &[cube(15.0)], false),
+            None
+        );
+        // A prefix larger than the final shape is what cuts and rounds leave behind.
+        assert_eq!(
+            super::prefix_misses_source(&[cube(15.0)], &[cube(10.0)], false),
+            None
+        );
+    }
+
+    #[test]
+    fn a_prefix_short_of_material_is_refused_only_when_later_features_remove() {
+        let hollow = super::Extent {
+            volume: 600.0,
+            bounds: ([0.0; 3], [10.0; 3]),
+        };
+        assert!(super::prefix_misses_source(&[hollow], &[cube(10.0)], true)
+            .unwrap()
+            .contains("mm3"));
+        // Rounds can fill concave edges, so volume alone says nothing about them.
+        assert_eq!(
+            super::prefix_misses_source(&[hollow], &[cube(10.0)], false),
+            None
+        );
+        // Nothing measured, nothing proven.
+        assert_eq!(super::prefix_misses_source(&[], &[cube(10.0)], true), None);
+        assert_eq!(super::prefix_misses_source(&[hollow], &[], true), None);
+    }
+
     #[test]
     fn circular_edge_measurements_require_the_plane_and_an_analytic_length() {
         let full = 10.0 * std::f64::consts::PI;
@@ -3139,6 +3381,7 @@ mod tests {
         let six = Expected {
             solids: 1,
             sheets: 0,
+            ..Expected::default()
         };
         assert_eq!(shown(&eval(6, None), six), Shown::Whole);
         let original = eval(6, None);
@@ -3162,6 +3405,7 @@ mod tests {
         let one_sheet = Expected {
             solids: 1,
             sheets: 1,
+            ..Expected::default()
         };
         assert_eq!(shown(&merged, one_sheet), Shown::Whole);
         for (volume, area, measure) in [(900.0, 600.0, "volume"), (1000.0, 500.0, "area")] {
@@ -3207,6 +3451,7 @@ mod tests {
         let two = Expected {
             solids: 2,
             sheets: 0,
+            ..Expected::default()
         };
         assert_eq!(shown(&eval(&[1000.0, 8.0]), two), Shown::Whole);
         assert_eq!(
@@ -3268,7 +3513,7 @@ mod cli_tests {
             ),
             (
                 "SolidCraft 2.app",
-                Some("0.45.0"),
+                Some("0.48.0"),
                 "io.tangencylabs.solidcraft",
             ),
             ("SolidCraft old.app", None, "ai.storyteller.solidcraft"),
@@ -3322,14 +3567,14 @@ mod cli_tests {
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("dutchman");
         assert_eq!(beside(&program), None);
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.0");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.48.0");
         assert_eq!(beside(&program), Some(cli));
     }
 
     #[test]
     fn a_chosen_cli_must_answer_as_solidcraft() {
         let dir = tempfile::tempdir().unwrap();
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.0");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.48.0");
         assert_eq!(chosen_cli(&cli), Ok(cli));
         let other = version_script(dir.path(), "other-tool", "other-tool 1.2.3");
         assert!(chosen_cli(&other)
@@ -3362,7 +3607,7 @@ mod cli_tests {
         .unwrap();
         std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(chosen_cli(&app).unwrap_err().contains("portable ZIP"));
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.1");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.48.1");
         assert_eq!(chosen_cli(&app), Ok(cli));
         assert!(!started.exists());
     }
@@ -3621,6 +3866,7 @@ mod cli_tests {
             Expected {
                 solids: 0,
                 sheets: 0,
+                ..Expected::default()
             },
         )
     }
@@ -3681,7 +3927,8 @@ mod cli_tests {
         let dir = tempfile::tempdir().unwrap();
         for version in [
             "0.18.2", "0.20.0", "0.25.1", "0.27.1", "0.40.0", "0.41.0", "0.42.0", "0.43.0",
-            "0.44.0", "0.44.1", "0.44.9", "0.45.0", "0.45.9", "0.46.0", "nonsense", "0.17.0",
+            "0.44.0", "0.44.1", "0.44.9", "0.45.0", "0.45.9", "0.46.0", "0.46.9", "0.47.0",
+            "0.47.9", "0.48.0", "0.48.9", "0.49.0", "0.49.9", "0.50.0", "nonsense", "0.17.0",
         ] {
             let cli = dir.path().join(version);
             std::fs::write(
@@ -3761,6 +4008,28 @@ mod cli_tests {
     }
 
     #[test]
+    fn unified_threads_are_supported_from_050() {
+        for (minor, patch, supported) in [
+            (18, 2, false),
+            (45, 0, false),
+            (49, 0, false),
+            (49, 1, false),
+            (49, 99, false),
+            (50, 0, true),
+            (50, 1, true),
+            (51, 0, true),
+        ] {
+            let target = SolidCraftVersion([0, minor, patch]);
+            assert_eq!(
+                VersionGate::UnifiedThread.supported(target),
+                supported,
+                "0.{minor}.{patch}"
+            );
+        }
+        assert!(VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
+    }
+
+    #[test]
     fn sheets_are_not_reported_as_inside_out_or_open() {
         let eval = |volumes: &[f64], warnings: &[&str]| Eval {
             raw: Value::Null,
@@ -3773,6 +4042,7 @@ mod cli_tests {
         let one_sheet = Expected {
             solids: 1,
             sheets: 1,
+            ..Expected::default()
         };
         assert_eq!(
             shown(&eval(&[1000.0, -2629.0], &[open]), one_sheet),
@@ -3924,6 +4194,114 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
+        assert!(!VersionGate::MoveBody.supported(previous));
+        assert!(VersionGate::MoveBody.supported(target));
+        assert!(!target_loses_history(previous));
+        assert!(!target_loses_history(target));
+    }
+
+    #[test]
+    fn target_046_keeps_045_writer_capabilities() {
+        let target: SolidCraftVersion = "0.46.2".parse().unwrap();
+        let previous: SolidCraftVersion = "0.45.0".parse().unwrap();
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+            VersionGate::HistoryBody,
+            VersionGate::SplitFaces,
+            VersionGate::ScopedBodies,
+            VersionGate::ClosedCircleBlend,
+            VersionGate::MoveBody,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
+        assert!(!target_loses_history(target));
+    }
+
+    #[test]
+    fn target_047_keeps_046_writer_capabilities() {
+        let target: SolidCraftVersion = "0.47.0".parse().unwrap();
+        let previous: SolidCraftVersion = "0.46.2".parse().unwrap();
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+            VersionGate::HistoryBody,
+            VersionGate::SplitFaces,
+            VersionGate::ScopedBodies,
+            VersionGate::ClosedCircleBlend,
+            VersionGate::MoveBody,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
+        assert!(!target_loses_history(target));
+    }
+
+    #[test]
+    fn target_048_keeps_047_writer_capabilities() {
+        let target: SolidCraftVersion = "0.48.0".parse().unwrap();
+        let previous: SolidCraftVersion = "0.47.0".parse().unwrap();
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+            VersionGate::HistoryBody,
+            VersionGate::SplitFaces,
+            VersionGate::ScopedBodies,
+            VersionGate::ClosedCircleBlend,
+            VersionGate::MoveBody,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
+        assert!(!target_loses_history(target));
+    }
+
+    #[test]
+    fn target_049_keeps_048_writer_capabilities() {
+        let target: SolidCraftVersion = "0.49.0".parse().unwrap();
+        let previous: SolidCraftVersion = "0.48.0".parse().unwrap();
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+            VersionGate::HistoryBody,
+            VersionGate::SplitFaces,
+            VersionGate::ScopedBodies,
+            VersionGate::ClosedCircleBlend,
+            VersionGate::MoveBody,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
+        assert!(!target_loses_history(target));
+    }
+
+    #[test]
+    fn target_050_keeps_049_writer_capabilities() {
+        let target: SolidCraftVersion = "0.50.0".parse().unwrap();
+        let previous: SolidCraftVersion = "0.49.0".parse().unwrap();
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+            VersionGate::HistoryBody,
+            VersionGate::SplitFaces,
+            VersionGate::ScopedBodies,
+            VersionGate::ClosedCircleBlend,
+            VersionGate::MoveBody,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
         assert!(!target_loses_history(target));
     }
 
@@ -3940,7 +4318,17 @@ mod version_tests {
             ("0.44.9", "current"),
             ("0.45.0", "current"),
             ("0.45.9", "current"),
-            ("0.46.0", "newer"),
+            ("0.46.0", "current"),
+            ("0.46.9", "current"),
+            ("0.47.0", "current"),
+            ("0.47.9", "current"),
+            ("0.48.0", "current"),
+            ("0.48.9", "current"),
+            ("0.49.0", "current"),
+            ("0.49.9", "current"),
+            ("0.50.0", "current"),
+            ("0.50.9", "current"),
+            ("0.51.0", "newer"),
             ("0.17.99", "too_old"),
         ] {
             assert_eq!(

@@ -33,6 +33,7 @@ fn placed_twice() -> Model {
         name: "pair".to_owned(),
         source_file: Some("pair.iam".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: Some(Assembly {
             own_part: None,
             joints: Vec::new(),
@@ -45,12 +46,14 @@ fn placed_twice() -> Model {
             parts: vec![part.clone()],
             placements: vec![
                 Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 0,
                     transform: at(0.0),
                 },
                 Placement {
+                    unproven: false,
                     hidden: false,
                     name: Some("Moved".to_owned()),
                     part: 0,
@@ -88,6 +91,25 @@ fn written(model: &Model) -> (Vec<u8>, Report) {
 fn document(bytes: &[u8]) -> Value {
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap()
+}
+
+#[test]
+fn unproven_positions_survive_writing_without_counting_as_placed() {
+    let mut model = placed_twice();
+    let assembly = model.assembly.as_mut().unwrap();
+    assembly.placements[0].unproven = true;
+    assembly.placements[0].name = Some("Panel".into());
+    let (bytes, report) = written(&model);
+    let counts = report.completeness().unwrap();
+    assert_eq!(counts.placed, 1);
+    assert_eq!(counts.unplaced.get("Panel"), Some(&1));
+    assert_eq!(counts.placements(), 2);
+    assert!(matches!(
+        report.outcome().unwrap().check,
+        dutchman_core::Check::Partial(_)
+    ));
+    // The change reports the existing fallback; it does not change written geometry.
+    assert_eq!(document(&bytes)["occurrences"].as_array().unwrap().len(), 2);
 }
 
 #[test]
@@ -259,7 +281,8 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
     assembly.parts.push(part);
     assembly.placements[1].part = 1;
     for target in [
-        "0.29.0", "0.30.0", "0.40.0", "0.41.0", "0.42.0", "0.43.0", "0.44.0", "0.45.0",
+        "0.29.0", "0.30.0", "0.40.0", "0.41.0", "0.42.0", "0.43.0", "0.44.0", "0.45.0", "0.46.0",
+        "0.47.0", "0.48.0", "0.49.0", "0.50.0",
     ] {
         let mut report = Report::default();
         let mut bytes = Vec::new();
@@ -309,8 +332,10 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
         assert!(report.losses().iter().any(|note| note
             .detail
             .contains("unverified: verification turned off; kept hidden")));
+        // The hidden history's body-building features are written suppressed, so only the two
+        // visible parts evaluate to bodies (an export holds one body per part).
         if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
-            assert_eq!(evaluate(&cli, &bytes).len(), 3);
+            assert_eq!(evaluate(&cli, &bytes).len(), 2);
         }
     }
 }
@@ -329,6 +354,7 @@ fn root_bodies_and_sketches_share_a_folder_only_when_contiguous() {
             placement.part = 1 - own_index;
         }
         assembly.placements.push(Placement {
+            unproven: false,
             hidden: false,
             name: None,
             part: own_index,
@@ -633,6 +659,7 @@ fn nested() -> Model {
         name: "top".to_owned(),
         source_file: Some("top.iam".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: Some(Assembly {
             own_part: None,
             joints: Vec::new(),
@@ -645,18 +672,21 @@ fn nested() -> Model {
             parts: vec![pair, cube.clone()],
             placements: vec![
                 Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 0,
                     transform: at(0.0, 0.0),
                 },
                 Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 0,
                     transform: at(0.0, 50.0),
                 },
                 Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 1,
@@ -768,30 +798,47 @@ fn with_components(nested: bool) -> Model {
         {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body], "bom_properties": {}, "sketches": []},
         {"id": "f3d:model:component#root", "kind": "part", "label": "Top", "bodies": [], "bom_properties": {}, "sketches": []},
     ]);
-    let placed = |key: u32, definition: &str, x: f64, parent: Value| {
+    let definitions = wire["model"]["product_definitions"].as_array_mut().unwrap();
+    for definition in definitions.iter_mut() {
+        definition["storage"] = serde_json::json!({"kind":"embedded"});
+        for field in [
+            "tessellations",
+            "occurrences",
+            "instance_bodies",
+            "representations",
+        ] {
+            definition[field] = serde_json::json!([]);
+        }
+    }
+    if nested {
+        definitions[1]["occurrences"] =
+            serde_json::json!(["f3d:model:occurrence#0", "f3d:model:occurrence#1"]);
+    }
+    let mut file = definitions[1].clone();
+    file["id"] = serde_json::json!("f3d:model:product-definition#root");
+    file["storage"] = serde_json::json!({"kind":"file", "document":{}});
+    file["occurrences"] = if nested {
+        serde_json::json!(["f3d:model:occurrence#9"])
+    } else {
+        serde_json::json!(["f3d:model:occurrence#0", "f3d:model:occurrence#1"])
+    };
+    definitions.push(file);
+    let placed = |key: u32, definition: &str, x: f64| {
         serde_json::json!({
             "id": format!("f3d:model:occurrence#{key}"),
-            "prototype": {"kind": "local", "definition": format!("f3d:model:component#{definition}")},
-            "parent": parent,
-            "ordinal": key,
+            "prototype": format!("f3d:model:component#{definition}"),
+            "overrides": [],
             "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
-            "scale": [1.0, 1.0, 1.0],
         })
     };
-    let root = serde_json::json!({"kind": "root"});
     wire["model"]["occurrences"] = if nested {
-        let inside =
-            serde_json::json!({"kind": "occurrence", "occurrence": "f3d:model:occurrence#9"});
         serde_json::json!([
-            placed(9, "root", 100.0, root),
-            placed(0, "block", 0.0, inside.clone()),
-            placed(1, "block", 30.0, inside),
+            placed(9, "root", 100.0),
+            placed(0, "block", 0.0),
+            placed(1, "block", 30.0),
         ])
     } else {
-        serde_json::json!([
-            placed(0, "block", 0.0, root.clone()),
-            placed(1, "block", 30.0, root)
-        ])
+        serde_json::json!([placed(0, "block", 0.0), placed(1, "block", 30.0)])
     };
     let mut model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -970,7 +1017,7 @@ fn with_sketch_of_a_component_without_bodies() -> Model {
         .collect::<Vec<_>>());
     let definitions = wire["model"]["product_definitions"].as_array_mut().unwrap();
     definitions[1]["sketches"] = serde_json::json!([ids[0]]);
-    definitions.push(serde_json::json!({"id": "f3d:model:component#ghost", "kind": "part", "label": "Ghost", "bodies": [], "sketches": [ids[1]], "bom_properties": {}}));
+    definitions.push(serde_json::json!({"id": "f3d:model:component#ghost", "kind": "part", "label": "Ghost", "bodies": [], "sketches": [ids[1]], "bom_properties": {}, "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}));
     let mut model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -1788,6 +1835,39 @@ fn a_placement_the_source_hides_is_written_hidden() {
     assert!(placed_twice_shows_nothing_hidden());
 }
 
+#[test]
+fn an_import_only_write_keeps_a_hidden_placement_with_its_stored_body_hidden() {
+    // Import-only writes no history; the hidden occurrence still holds its stored body.
+    let mut model = placed_twice();
+    if let Some(assembly) = &mut model.assembly {
+        assembly.placements[1].hidden = true;
+    }
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .import_only(true)
+        .sketches(false)
+        .verification(Verification::Off)
+        .write(&model, &mut bytes, &mut Report::default())
+        .unwrap();
+    let document = document(&bytes);
+    let occurrences = document["occurrences"].as_array().unwrap();
+    assert_eq!(occurrences.len(), 2, "{occurrences:?}");
+    let moved = occurrences.iter().find(|o| o["name"] == "Moved").unwrap();
+    assert_eq!(
+        document["visibility"]["hidden_occurrences"],
+        serde_json::json!([[moved["id"]]])
+    );
+    for occurrence in occurrences {
+        let imports = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|feature| feature["component"] == occurrence["component"])
+            .count();
+        assert_eq!(imports, 1, "{occurrence:?}");
+    }
+}
+
 fn placed_twice_shows_nothing_hidden() -> bool {
     document_of(&placed_twice())
         .get("visibility")
@@ -2036,6 +2116,7 @@ fn mixed_histories() -> Model {
         .iter()
         .enumerate()
         .map(|(index, _)| Placement {
+            unproven: false,
             hidden: false,
             name: None,
             part: index,
@@ -2737,6 +2818,7 @@ fn composed_written_placements_equal_the_assemblys_world_placements() {
             placements: [(0, turned), (0, moved), (1, turned)]
                 .into_iter()
                 .map(|(part, transform)| Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part,
@@ -2794,6 +2876,7 @@ fn frame_with_cube_at(name: &str, y: f64) -> Model {
             definitions: Vec::new(),
             parts: vec![cube.clone()],
             placements: vec![Placement {
+                unproven: false,
                 hidden: false,
                 name: None,
                 part: 0,
@@ -2839,6 +2922,7 @@ fn layout_variants_and_a_mirrored_instance_write_at_their_world_placements() {
             placements: [(0, turned), (1, moved), (1, reflected)]
                 .into_iter()
                 .map(|(part, transform)| Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part,
@@ -2888,6 +2972,7 @@ fn layout_variants_and_a_mirrored_instance_write_at_their_world_placements() {
 
 fn placement(part: usize, name: &str, x: f64) -> Placement {
     Placement {
+        unproven: false,
         hidden: false,
         name: Some(name.to_owned()),
         part,
@@ -2911,6 +2996,7 @@ fn holder(
         name: name.to_owned(),
         source_file: Some("repeats.f3d".to_owned()),
         source_step: None,
+        merge_bodies: false,
         assembly: Some(Assembly {
             own_part: None,
             joints: Vec::new(),

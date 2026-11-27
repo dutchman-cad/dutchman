@@ -40,6 +40,7 @@ fn model(kind: &str) -> Model {
         name: "Synthetic".to_owned(),
         source_file: None,
         source_step: None,
+        merge_bodies: false,
         assembly: None,
     };
     if kind == "partial" {
@@ -85,6 +86,7 @@ fn two_bodies(second: &str) -> Model {
         name: "Synthetic".to_owned(),
         source_file: None,
         source_step: None,
+        merge_bodies: false,
         assembly: None,
     }
 }
@@ -420,6 +422,7 @@ fn a_dimension_named_by_a_parameter_gets_the_parameters_value() {
 fn assembly_occurrences_keep_nested_placements_and_independent_bodies() {
     let part = model("pad");
     let placement = dutchman_core::Placement {
+        unproven: false,
         hidden: false,
         name: Some("Placed part".to_owned()),
         part: 0,
@@ -505,12 +508,14 @@ fn joint_model() -> Model {
             parts: vec![part.clone()],
             placements: vec![
                 dutchman_core::Placement {
+                    unproven: false,
                     hidden: false,
                     name: Some("Base".to_owned()),
                     part: 0,
                     transform: IDENTITY,
                 },
                 dutchman_core::Placement {
+                    unproven: false,
                     hidden: false,
                     name: Some("Arm".to_owned()),
                     part: 0,
@@ -549,15 +554,23 @@ fn raw_joint_model(definition: Value) -> Model {
     let mut model = joint_model();
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let identity = dutchman_core::placement::IDENTITY;
-    wire["model"]["product_definitions"] = json!([{"id": "synthetic:test:product#part", "kind": "part", "bom_properties": {}, "bodies": [], "sketches": []}]);
-    wire["model"]["occurrences"] = json!([
-        {"id": "synthetic:test:occurrence#base", "ordinal": 0, "name": "Base",
-         "prototype": {"kind": "local", "definition": "synthetic:test:product#part"},
-         "parent": {"kind": "root"}, "transform": identity, "scale": [1.0, 1.0, 1.0]},
-        {"id": "synthetic:test:occurrence#arm", "ordinal": 1, "name": "Arm",
-         "prototype": {"kind": "local", "definition": "synthetic:test:product#part"},
-         "parent": {"kind": "root"}, "transform": identity, "scale": [1.0, 1.0, 1.0]}
+    wire["model"]["product_definitions"] = json!([
+        {"id": "synthetic:test:product#part", "kind": "part", "bom_properties": {}, "bodies": [], "sketches": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]},
+        {"id": "synthetic:test:product#root", "kind": "assembly", "bom_properties": {}, "bodies": [], "sketches": [], "storage":{"kind":"file", "document":{}}, "tessellations":[], "occurrences":["synthetic:test:occurrence#base", "synthetic:test:occurrence#arm"], "instance_bodies":[], "representations":[]}
     ]);
+    wire["model"]["occurrences"] = json!([
+        {"id": "synthetic:test:occurrence#base", "name": "Base",
+         "prototype": "synthetic:test:product#part",
+         "transform": identity, "overrides": []},
+        {"id": "synthetic:test:occurrence#arm", "name": "Arm",
+         "prototype": "synthetic:test:product#part",
+         "transform": identity, "overrides": []}
+    ]);
+    // Arena order is independent of the file definition's placement order.
+    wire["model"]["occurrences"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
     let joint = &model.assembly.as_ref().unwrap().joints[0];
     let connector = |name: &str, frame| {
         json!({
@@ -1098,6 +1111,7 @@ fn nested_model() -> Model {
         [0.0, 0.0, -1.0, 0.0],
     ];
     let placement = |name: &str, part: usize, transform| dutchman_core::Placement {
+        unproven: false,
         hidden: false,
         name: Some(name.to_owned()),
         part,

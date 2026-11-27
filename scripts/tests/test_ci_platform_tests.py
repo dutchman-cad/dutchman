@@ -100,12 +100,17 @@ class PlatformTests(unittest.TestCase):
                 for job in ('test-macos', 'solidcraft-roundtrip'):
                     block = workflow.split('  ' + job + ':\n', 1)[1]
                     condition = next(line[8:] for line in block.splitlines() if line.startswith('    if: '))
-                    self.assertEqual(evaluate(condition), event == 'push' or (event == 'pull_request' and selected))
+                    # The merge queue replays code changes in SolidCraft; macOS runs only after merge.
+                    queued = job == 'solidcraft-roundtrip' and event == 'merge_group'
+                    self.assertEqual(evaluate(condition),
+                                     event == 'push' or queued or (event == 'pull_request' and selected))
                 test = workflow.split('  test:\n', 1)[1].split('  test-arm:', 1)[0]
                 expression = re.search(r'fromJSON\((.*)\)', test).group(1)
                 self.assertEqual('windows-latest' in evaluate(expression),
                                  event == 'push' or (event == 'pull_request' and selected))
                 roundtrip = workflow.split('  solidcraft-roundtrip:\n', 1)[1].split('  placements:', 1)[0]
-                expression = re.search(r'fromJSON\((.*)\)', roundtrip).group(1)
+                # The runner choice is a fromJSON too; the version matrix is the other one.
+                expression = next(m.group(1) for m in re.finditer(r'fromJSON\((.*)\)', roundtrip)
+                                  if 'self-hosted' not in m.group(1))
                 self.assertIn('0.18.2', evaluate(expression))
-                self.assertEqual('newest' in evaluate(expression), event == 'push')
+                self.assertEqual('newest' in evaluate(expression), event in ('push', 'merge_group'))

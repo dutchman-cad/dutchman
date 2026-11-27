@@ -901,6 +901,7 @@ fn report_handles_non_utf8_output_paths_without_panicking() {
     let output = std::path::PathBuf::from(std::ffi::OsString::from_vec(vec![b'x', 0xff]));
     let result = Ok(FetchReport {
         output,
+        title: None,
         microversion: MID.into(),
         calls: 0,
         cache_hits: 0,
@@ -961,30 +962,6 @@ fn same_document_two_part_revolute_assembly_includes_referenced_partstudio_once(
         .by_name(&format!("partstudios/{PS}/export.step"))
         .is_ok());
     assert_eq!(mock.sent.iter().filter(|(m, _, _)| m == "POST").count(), 1);
-}
-#[test]
-fn workspace_budget_must_cover_the_final_consistency_check() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut mock = partstudio_mock(MID, "1");
-    let error = workspace_run(&mut mock, &dir, 11).err().unwrap();
-    assert_eq!(error.kind, ErrorKind::Budget);
-    assert_eq!(error.calls, 11);
-    assert!(!dir.path().join("test.onshape-bundle").exists());
-    let mut retry = Mock::default();
-    retry
-        .replies
-        .push_back(response(200, json!({"microversion":MID})));
-    let mut workspace_responses = partstudio_replies(MID, "2");
-    for _ in 0..5 {
-        workspace_responses.pop_front();
-    }
-    // The sketch-information response uses a pinned /m/ path and is already cached.
-    workspace_responses.pop_back();
-    retry.replies.extend(workspace_responses);
-    retry
-        .replies
-        .push_back(response(200, json!({"microversion":MID})));
-    assert_eq!(workspace_run(&mut retry, &dir, 50).unwrap().calls, 6);
 }
 #[test]
 fn workspace_refetch_uses_the_same_total_call_budget() {
@@ -2092,4 +2069,741 @@ fn assert_face_sketch_refused(model: &dutchman_core::Model, report: &dutchman_co
     assert!(report.losses().iter().any(|loss| loss.subject == "Sketch"
         && loss.code.as_deref() == Some("onshape/history.not-supported")
         && loss.detail.contains("kept the final STEP geometry")));
+}
+
+/// Answers each endpoint from the fixtures, so a document of any size can be fetched.
+struct Router {
+    creators: usize,
+    sent: u32,
+}
+impl HttpClient for Router {
+    fn send(&mut self, request: &Request) -> Result<Response> {
+        self.sent += 1;
+        let path = request.path.as_str();
+        let fixture = |text: &str| response(200, serde_json::from_str(text).unwrap());
+        Ok(if path.ends_with("/currentmicroversion") {
+            response(200, json!({"microversion": MID}))
+        } else if path.ends_with(&format!("/documents/{DID}")) {
+            response(200, json!({"name": "Synthetic document"}))
+        } else if path.ends_with("/elements") {
+            response(
+                200,
+                json!([{"id": PS, "elementType": "PARTSTUDIO", "name": "Synthetic tab"}]),
+            )
+        } else if path.ends_with("/features") {
+            let mut features: Value =
+                serde_json::from_str(include_str!("fixtures/onshape/partstudio.json")).unwrap();
+            let list = features["features"].as_array_mut().unwrap();
+            let mut extrude = list
+                .iter()
+                .find(|f| f["featureType"] == "extrude")
+                .unwrap()
+                .clone();
+            extrude["parameters"].as_array_mut().unwrap().push(
+                json!({"btType":"BTMParameterEnum-145","parameterId":"operationType","value":"NEW"}),
+            );
+            for i in 0..self.creators {
+                extrude["featureId"] = json!(format!("part-{i}"));
+                list.push(extrude.clone());
+            }
+            response(200, features)
+        } else if path.ends_with("/bodydetails") {
+            fixture(include_str!("fixtures/onshape/bodydetails.json"))
+        } else if path.ends_with("/configuration") {
+            fixture(include_str!("fixtures/onshape/configuration.json"))
+        } else if path.ends_with("/variables") {
+            fixture(include_str!("fixtures/onshape/variables.json"))
+        } else if path.ends_with("/sketches") {
+            response(200, sketch_information(MID))
+        } else if request.method == "POST" && path.ends_with("/export/step") {
+            response(
+                200,
+                json!({"id":"export-job","requestState":"DONE","documentId":DID,"resultDocumentId":DID,"requestElementId":PS,"resultExternalDataIds":["step-file"]}),
+            )
+        } else if path.contains("/externaldata/") {
+            Response {
+                status: 200,
+                headers: BTreeMap::new(),
+                body: include_bytes!("fixtures/onshape/export.step").to_vec(),
+            }
+        } else {
+            panic!("unexpected request {path}");
+        })
+    }
+    fn now(&self) -> SystemTime {
+        httpdate::parse_http_date("Wed, 11 Nov 2026 12:00:00 GMT").unwrap()
+    }
+    fn nonce(&self) -> Result<String> {
+        Ok("fixedNONCE".into())
+    }
+    fn sleep(&mut self, _delay: Duration) {}
+}
+
+fn fetch_by_default(creators: usize) -> (Result<FetchReport>, u32) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router { creators, sent: 0 };
+    let result = fetch_with_document_budget(
+        &mut router,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+    );
+    (result, router.sent)
+}
+
+#[test]
+fn a_document_needing_more_than_fifty_calls_fetches_with_the_default_budget() {
+    let (result, sent) = fetch_by_default(60);
+    let report = result.unwrap();
+    assert!(report.calls > 50, "{}", report.calls);
+    assert_eq!(report.calls, sent);
+}
+
+#[test]
+fn the_default_budget_still_stops_a_runaway_document() {
+    // Thousands of part-making features would need thousands of calls.
+    let (result, sent) = fetch_by_default(3000);
+    let error = result.err().unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(error.calls, 2000);
+    assert_eq!(sent, 2000);
+}
+
+#[test]
+fn an_explicit_budget_is_never_raised_by_the_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 60,
+        sent: 0,
+    };
+    let error = fetch(
+        &mut router,
+        &credentials(),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        50,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(router.sent, 50);
+}
+
+fn listing_mock(tabs: Value) -> Mock {
+    Mock {
+        replies: VecDeque::from([
+            response(200, json!({"microversion": MID})),
+            response(200, json!({"name": "Synthetic mechanism"})),
+            response(200, tabs),
+        ]),
+        ..Mock::default()
+    }
+}
+
+fn big_assembly_tabs() -> Value {
+    json!([
+        {"id": AS, "elementType": "ASSEMBLY", "name": "Assembly"},
+        {"id": PS, "elementType": "PARTSTUDIO", "name": "First"},
+        {"id": "666666666666666666666666", "elementType": "PARTSTUDIO", "name": "Second"},
+        {"id": "777777777777777777777777", "elementType": "BLOB", "name": "Drawing"},
+    ])
+}
+
+#[test]
+fn the_estimate_counts_the_listing_calls_and_the_elements_and_skips_cached_replies() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache");
+    let auth = FetchAuth::ApiKeys(credentials());
+    let mut mock = listing_mock(big_assembly_tabs());
+    let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
+    // Three listing calls, then 30 for each of the assembly and its two studios.
+    assert_eq!(mock.sent.len(), 3);
+    assert_eq!(estimate.listing_calls, 3);
+    assert_eq!(estimate.elements, 3);
+    assert_eq!(estimate.calls, 93);
+    assert!(estimate.needs_approval());
+    assert!(estimate.question().contains("about 93"));
+    assert!(estimate.question().contains("2,500"));
+    // The listing is cached, so a second estimate makes no request and counts none.
+    let mut idle = Mock::default();
+    let again = estimate_calls(&mut idle, &auth, &source(AS), &cache).unwrap();
+    assert!(idle.sent.is_empty());
+    assert_eq!(again.listing_calls, 0);
+    assert_eq!(again.calls, 90);
+}
+
+#[test]
+fn a_part_studio_is_estimated_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let estimate = estimate_calls(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("cache"),
+    )
+    .unwrap();
+    assert_eq!((estimate.elements, estimate.calls), (1, 33));
+    assert!(!estimate.needs_approval());
+}
+
+#[test]
+fn a_large_fetch_without_a_go_stops_with_the_estimate_and_spends_only_the_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let error = fetch_gated(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(AS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        false,
+    )
+    .err()
+    .unwrap();
+    // The mock panics on a fourth request, so the listing was all it spent.
+    assert_eq!(mock.sent.len(), 3);
+    assert_eq!(error.kind, ErrorKind::Approval);
+    assert_eq!((error.calls, error.estimate), (3, Some(93)));
+    assert!(!dir.path().join("test.onshape-bundle").exists());
+    let report = dutchman::json::onshape_fetch(&Err(error));
+    assert_eq!(report["error"]["code"], "onshape/approval");
+    assert_eq!(report["estimated_calls"], 93);
+    assert_eq!(report["calls"], 3);
+    let message = report["error"]["message"].as_str().unwrap();
+    assert!(message.contains("--yes") && message.contains("max_calls"));
+}
+
+#[test]
+fn the_command_line_asks_on_a_terminal_and_stops_off_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let big = estimate_calls(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(AS),
+        &dir.path().join("cache"),
+    )
+    .unwrap();
+    let off_terminal = approval(&big, false, false, |_| panic!("must not ask")).unwrap_err();
+    assert_eq!(off_terminal.kind, ErrorKind::Approval);
+    assert!(off_terminal.message.contains("--yes"));
+    assert!(off_terminal.message.contains("--max-calls"));
+    assert!(approval(&big, true, false, |_| panic!("must not ask")).is_ok());
+    assert!(approval(&big, false, true, |_| true).is_ok());
+    let declined = approval(&big, false, true, |_| false).unwrap_err();
+    assert_eq!(declined.message, APPROVAL_DECLINED);
+    let small_dir = tempfile::tempdir().unwrap();
+    let mut mock = listing_mock(big_assembly_tabs());
+    let small = estimate_calls(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &small_dir.path().join("cache"),
+    )
+    .unwrap();
+    assert!(approval(&small, false, false, |_| panic!("must not ask")).is_ok());
+}
+
+#[test]
+fn a_gated_fetch_under_the_limit_counts_the_listing_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 60,
+        sent: 0,
+    };
+    let report = fetch_gated(
+        &mut router,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        false,
+    )
+    .unwrap();
+    assert!(report.calls > 50);
+    assert_eq!(report.calls, router.sent);
+}
+
+#[test]
+fn an_explicit_max_calls_is_the_ceiling_and_the_consent_with_no_estimate() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 60,
+        sent: 0,
+    };
+    let error = fetch_gated(
+        &mut router,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        Some(40),
+        false,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(router.sent, 40);
+}
+
+#[test]
+fn cached_replies_cost_no_calls_and_do_not_count_against_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 3,
+        sent: 0,
+    };
+    let fetched = |router: &mut Router, max: u32| {
+        fetch_gated(
+            router,
+            &FetchAuth::ApiKeys(credentials()),
+            &source(PS),
+            &dir.path().join("test.onshape-bundle"),
+            &dir.path().join("cache"),
+            Some(max),
+            false,
+        )
+    };
+    let first = fetched(&mut router, 500).unwrap();
+    assert!(first.calls > 0);
+    let sent = router.sent;
+    // Everything is cached now, so even a limit of zero fetches it again.
+    let second = fetched(&mut router, 0).unwrap();
+    assert_eq!((second.calls, router.sent), (0, sent));
+    assert!(second.cache_hits > 0);
+}
+
+#[test]
+fn call_counts_group_thousands_from_one_thousand() {
+    use dutchman::onshape::calls_text;
+    assert_eq!(calls_text(0), "0");
+    assert_eq!(calls_text(999), "999");
+    assert_eq!(calls_text(1000), "1,000");
+    assert_eq!(calls_text(2500), "2,500");
+    assert_eq!(calls_text(1234567), "1,234,567");
+}
+
+#[derive(Default)]
+struct Counted(Vec<(u32, Option<u32>)>);
+impl FetchProgress for Counted {
+    fn calls(&mut self, sent: u32, needed: Option<u32>) {
+        self.0.push((sent, needed));
+    }
+}
+#[test]
+fn progress_counts_each_call_and_estimates_after_the_feature_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = partstudio_mock(MID, "1");
+    let mut counted = Counted::default();
+    let report = fetch_watched(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut counted),
+    )
+    .unwrap();
+    assert_eq!(report.calls, 11);
+    let sent: Vec<u32> = counted.0.iter().map(|(sent, _)| *sent).collect();
+    assert_eq!(sent, (1..=11).collect::<Vec<_>>());
+    // Microversion, document, tabs and features come before the estimate.
+    assert!(counted.0[..4].iter().all(|(_, needed)| needed.is_none()));
+    assert!(counted.0[4..].iter().all(|(_, needed)| *needed == Some(11)));
+}
+
+#[derive(Default)]
+struct Titles(Vec<String>);
+impl FetchProgress for Titles {
+    fn calls(&mut self, _: u32, _: Option<u32>) {}
+    fn named(&mut self, title: &str) {
+        self.0.push(title.to_owned());
+    }
+}
+#[test]
+fn the_title_comes_from_the_document_and_tab_names_without_extra_calls() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = partstudio_mock(MID, "1");
+    let mut titles = Titles::default();
+    let report = fetch_watched(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut titles),
+    )
+    .unwrap();
+    // The same eleven calls as a fetch nobody names.
+    assert_eq!(report.calls, 11);
+    assert_eq!(titles.0, ["Synthetic Part Studio - Synthetic tab"]);
+    assert_eq!(
+        report.title.as_deref(),
+        Some("Synthetic Part Studio - Synthetic tab")
+    );
+}
+#[test]
+fn a_resumed_fetch_names_the_design_from_the_cache() {
+    let whole = workspace_replies();
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = Mock {
+        replies: whole.clone().into(),
+        ..Mock::default()
+    };
+    let mut stop = StopAfter { after: 3, sent: 0 };
+    fetch_watched(
+        &mut first,
+        &FetchAuth::ApiKeys(credentials()),
+        &workspace_source(),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut stop),
+    )
+    .err()
+    .unwrap();
+    let mut again = Mock {
+        replies: whole[3..].to_vec().into(),
+        ..Mock::default()
+    };
+    let mut titles = Titles::default();
+    let report = fetch_watched(
+        &mut again,
+        &FetchAuth::ApiKeys(credentials()),
+        &workspace_source(),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut titles),
+    )
+    .unwrap();
+    assert_eq!(report.calls, u32::try_from(whole.len()).unwrap() - 3);
+    assert_eq!(titles.0.len(), 1);
+    assert_eq!(report.title.as_deref(), Some(titles.0[0].as_str()));
+}
+#[test]
+fn bundle_titles_join_names_and_drop_unsafe_characters() {
+    use dutchman::onshape::bundle_title;
+    assert_eq!(
+        bundle_title("Bracket", Some("Part Studio 1")).as_deref(),
+        Some("Bracket - Part Studio 1")
+    );
+    for tab in [None, Some(""), Some("  "), Some("Bracket")] {
+        assert_eq!(bundle_title("Bracket", tab).as_deref(), Some("Bracket"));
+    }
+    assert_eq!(
+        bundle_title("A/B: \"C\"?", Some("x\ty|z*<>")).as_deref(),
+        Some("A B C - x y z")
+    );
+    assert_eq!(
+        bundle_title("  many   spaces. ", Some("tab...")).as_deref(),
+        Some("many spaces. - tab")
+    );
+    assert_eq!(
+        bundle_title("", Some("Only tab")).as_deref(),
+        Some("Only tab")
+    );
+    assert_eq!(bundle_title("///", Some("..")), None);
+    let long = bundle_title(&"é".repeat(300), Some("tab")).unwrap();
+    assert_eq!(long.chars().count(), 100);
+}
+#[test]
+fn retitling_replaces_a_bundle_of_the_same_design_only() {
+    use dutchman::onshape::retitle;
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let bundle = |name: &str, document: &str, element: &str| {
+        let path = dir.path().join(name);
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        zip.start_file("manifest.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(
+            serde_json::to_vec(&json!({"document": {"id": document}, "root_element": element}))
+                .unwrap()
+                .as_slice(),
+        )
+        .unwrap();
+        zip.finish().unwrap();
+        path
+    };
+    let title = "Bracket - Part Studio 1";
+    let first = retitle(&bundle("e1.onshape-bundle", "d1", "e1"), title).unwrap();
+    assert_eq!(first, dir.path().join(format!("{title}.onshape-bundle")));
+    // The same design fetched again replaces its bundle.
+    let again = retitle(&bundle("e1.onshape-bundle", "d1", "e1"), title).unwrap();
+    assert_eq!(again, first);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    // Another design with the same title keeps both.
+    let other = retitle(&bundle("e2.onshape-bundle", "d2", "e2"), title).unwrap();
+    assert_eq!(
+        other,
+        dir.path().join(format!("{title} (2).onshape-bundle"))
+    );
+    assert!(first.exists());
+}
+#[test]
+fn retitling_never_overwrites_a_bundle_that_is_there() {
+    use dutchman::onshape::retitle;
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        path
+    };
+    let first = write("id1.onshape-bundle", "one");
+    let moved = retitle(&first, "Bracket - Part Studio 1").unwrap();
+    assert_eq!(
+        moved,
+        dir.path().join("Bracket - Part Studio 1.onshape-bundle")
+    );
+    assert!(!first.exists());
+    let second = write("id1.onshape-bundle", "two");
+    let moved = retitle(&second, "Bracket - Part Studio 1").unwrap();
+    assert_eq!(
+        moved,
+        dir.path()
+            .join("Bracket - Part Studio 1 (2).onshape-bundle")
+    );
+    let third = write("id1.onshape-bundle", "three");
+    let moved = retitle(&third, "Bracket - Part Studio 1").unwrap();
+    assert_eq!(
+        moved,
+        dir.path()
+            .join("Bracket - Part Studio 1 (3).onshape-bundle")
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("Bracket - Part Studio 1.onshape-bundle")).unwrap(),
+        "one"
+    );
+}
+
+/// Asks to stop once `after` calls have been sent.
+struct StopAfter {
+    after: u32,
+    sent: u32,
+}
+impl FetchProgress for StopAfter {
+    fn calls(&mut self, sent: u32, _: Option<u32>) {
+        self.sent = sent;
+    }
+    fn stop_requested(&mut self) -> bool {
+        self.sent >= self.after
+    }
+}
+#[test]
+fn a_requested_stop_ends_the_fetch_and_the_next_fetch_sends_only_the_missing_calls() {
+    let whole = workspace_replies();
+    let total = u32::try_from(whole.len()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = Mock {
+        replies: whole.clone().into(),
+        ..Mock::default()
+    };
+    let mut stop = StopAfter { after: 3, sent: 0 };
+    let error = fetch_watched(
+        &mut first,
+        &FetchAuth::ApiKeys(credentials()),
+        &workspace_source(),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut stop),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Stopped);
+    assert_eq!(error.kind.code(), "onshape/stopped");
+    assert_eq!(error.calls, 3);
+    assert_eq!(first.sent.len(), 3);
+    assert!(!dir.path().join("test.onshape-bundle").exists());
+    let mut again = Mock {
+        replies: whole[3..].to_vec().into(),
+        ..Mock::default()
+    };
+    let report = workspace_run(&mut again, &dir, 50).unwrap();
+    assert_eq!(report.calls, total - 3);
+    assert!(dir.path().join("test.onshape-bundle").exists());
+}
+
+fn bundle_files(dir: &tempfile::TempDir) -> BTreeMap<String, Vec<u8>> {
+    let mut zip = open_bundle(dir);
+    let names: Vec<String> = zip.file_names().map(|n| n.unwrap().into_owned()).collect();
+    names
+        .into_iter()
+        .filter(|name| name != "manifest.json")
+        .map(|name| {
+            let mut bytes = Vec::new();
+            zip.by_name(&name).unwrap().read_to_end(&mut bytes).unwrap();
+            (name, bytes)
+        })
+        .collect()
+}
+
+/// Every reply of an uninterrupted workspace fetch, in order: the microversion, the Part
+/// Studio's ten replies, and the closing microversion check.
+fn workspace_replies() -> Vec<Response> {
+    let mut mock = partstudio_mock(MID, "1");
+    mock.replies
+        .push_back(response(200, json!({"microversion":MID})));
+    mock.replies.into()
+}
+
+#[test]
+fn a_stopped_workspace_fetch_continues_with_only_the_calls_it_is_missing() {
+    let whole = workspace_replies();
+    let total = u32::try_from(whole.len()).unwrap();
+    let reference = tempfile::tempdir().unwrap();
+    let mut mock = Mock {
+        replies: whole.clone().into(),
+        ..Mock::default()
+    };
+    assert_eq!(
+        workspace_run(&mut mock, &reference, 50).unwrap().calls,
+        total
+    );
+    for stop in 0..total {
+        let dir = tempfile::tempdir().unwrap();
+        let mut first = Mock {
+            replies: whole.clone().into(),
+            ..Mock::default()
+        };
+        let error = workspace_run(&mut first, &dir, stop).err().unwrap();
+        assert_eq!(error.kind, ErrorKind::Budget, "stop at {stop}");
+        assert!(!dir.path().join("test.onshape-bundle").exists());
+        // A new client stands in for a relaunch: only the cache folder carries over.
+        let mut again = Mock {
+            replies: whole[stop as usize..].to_vec().into(),
+            ..Mock::default()
+        };
+        let report = workspace_run(&mut again, &dir, 50)
+            .unwrap_or_else(|error| panic!("stop at {stop}: {error:?}, sent {:?}", again.sent));
+        assert_eq!(report.calls, total - stop, "stop at {stop}");
+        assert!(again.replies.is_empty(), "stop at {stop}");
+        assert_eq!(
+            bundle_files(&dir),
+            bundle_files(&reference),
+            "stop at {stop}"
+        );
+    }
+}
+
+#[test]
+fn stopping_one_call_short_continues_with_exactly_that_call() {
+    let whole = workspace_replies();
+    let total = u32::try_from(whole.len()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = Mock {
+        replies: whole.clone().into(),
+        ..Mock::default()
+    };
+    let error = workspace_run(&mut first, &dir, total - 1).err().unwrap();
+    assert_eq!((error.kind, error.calls), (ErrorKind::Budget, total - 1));
+    let mut again = Mock::default();
+    again
+        .replies
+        .push_back(response(200, json!({"microversion":MID})));
+    let report = workspace_run(&mut again, &dir, 50).unwrap();
+    assert_eq!(report.calls, 1);
+    assert_eq!(again.sent.len(), 1);
+    assert!(again.sent[0].1.ends_with("/currentmicroversion"));
+    assert_sources(&mut open_bundle(&dir), MID, "m");
+}
+
+#[test]
+fn a_stopped_version_fetch_continues_with_exactly_the_missing_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut whole = Mock::default();
+    whole
+        .replies
+        .push_back(response(200, json!({"microversion":MID})));
+    whole.replies.extend(partstudio_replies(MID, "1"));
+    let replies: Vec<Response> = whole.replies.into();
+    let total = u32::try_from(replies.len()).unwrap();
+    let mut first = Mock {
+        replies: replies.clone().into(),
+        ..Mock::default()
+    };
+    let error = run(&mut first, &dir, PS, total - 1).err().unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    let mut again = Mock {
+        replies: replies[replies.len() - 1..].to_vec().into(),
+        ..Mock::default()
+    };
+    assert_eq!(run(&mut again, &dir, PS, 50).unwrap().calls, 1);
+    assert_eq!(again.sent.len(), 1);
+}
+
+#[test]
+fn continuing_after_the_workspace_changed_starts_over_at_its_new_state() {
+    const MID2: &str = "888888888888888888888888";
+    let whole = workspace_replies();
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = Mock {
+        replies: whole.clone().into(),
+        ..Mock::default()
+    };
+    // Stop after the variables reply, a workspace reply saved for MID.
+    workspace_run(&mut first, &dir, 6).err().unwrap();
+    let mut again = Mock::default();
+    // The rest of the MID fetch, then a check that finds the workspace moved on.
+    again
+        .replies
+        .extend(whole[6..whole.len() - 1].iter().cloned());
+    again
+        .replies
+        .push_back(response(200, json!({"microversion":MID2})));
+    again.replies.extend(partstudio_replies(MID2, "2"));
+    again
+        .replies
+        .push_back(response(200, json!({"microversion":MID2})));
+    workspace_run(&mut again, &dir, 50).unwrap();
+    assert!(again.replies.is_empty());
+    let mut zip = open_bundle(&dir);
+    assert_sources(&mut zip, MID2, "m");
+    let vars = zip_value(&mut zip, &format!("partstudios/{PS}/variables.json"));
+    assert_eq!(vars[0]["variables"][0]["value"], "2");
+}
+
+#[test]
+fn a_continued_fetch_estimates_only_the_calls_it_has_left() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut whole = Mock::default();
+    whole
+        .replies
+        .push_back(response(200, json!({"microversion":MID})));
+    whole.replies.extend(partstudio_replies(MID, "1"));
+    let replies: Vec<Response> = whole.replies.into();
+    let mut first = Mock {
+        replies: replies.clone().into(),
+        ..Mock::default()
+    };
+    // Stop after the variables: the STEP export (3 calls) and the sketches are left.
+    run(&mut first, &dir, PS, 7).err().unwrap();
+    let mut again = Mock {
+        replies: replies[7..].to_vec().into(),
+        ..Mock::default()
+    };
+    let mut counted = Counted::default();
+    let report = fetch_watched(
+        &mut again,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut counted),
+    )
+    .unwrap();
+    assert_eq!(report.calls, 4);
+    assert_eq!(
+        counted.0,
+        (1..=4).map(|sent| (sent, Some(4))).collect::<Vec<_>>()
+    );
 }

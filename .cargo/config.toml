@@ -3,4 +3,8 @@
 # These rustflags apply to every `cargo build --target wasm32-unknown-unknown` in the
 # workspace, not only dutchman-plugin.
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "opt-level=z", "-C", "lto=fat", "-C", "embed-bitcode=yes", "-C", "codegen-units=1", "-C", "strip=symbols"]
+# The module also declares the guest's 2 GiB memory limit and reserves a 16 MiB stack in
+# linear memory, so a host that cannot impose its own limit (a web browser) enforces the
+# same ceiling the SolidCraft host and the component harness use.
+rustflags = ["-C", "opt-level=z", "-C", "lto=fat", "-C", "embed-bitcode=yes", "-C", "codegen-units=1", "-C", "strip=symbols",
+  "-C", "link-arg=--max-memory=2147483648", "-C", "link-arg=-zstack-size=16777216"]

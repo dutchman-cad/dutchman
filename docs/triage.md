@@ -41,6 +41,15 @@ synthetic files. Every step needs their agreement; their own designs stay local.
    Never ask for their original design or library; only a synthetic file rebuilt from
    scratch is shared in this flow.
 
+## Work for contributors
+
+Larger work, such as a new format, gets a parent issue with phases and a checklist, and each item
+is its own issue that anyone, or anyone's AI agent, can take. Write each item in the same shape as
+cadmpeg's: **Part of** the parent issue, **Depends on** the cadmpeg issue it needs, then **Known**,
+**Unknown** and **How to verify** with public CC0 repro files and their STEP exports. Label it
+`help wanted`, and `good first issue` when it needs no format knowledge. A parent issue for a
+format starts with the cadmpeg issue that reads it: reading happens there first.
+
 ## Taking a cause upstream
 
 For `upstream:cadmpeg`:

@@ -141,9 +141,12 @@ pub(crate) fn write(
             ),
         );
     }
-    let prepared = prepare_parts(writer, assembly, &repeats, report, progress).into_iter();
+    let source_losses = report.losses().to_vec();
+    let prepared =
+        prepare_parts(writer, assembly, &repeats, &source_losses, report, progress).into_iter();
     let mut builder = Builder {
         progress,
+        source_losses,
         writer,
         prepared,
         container: Container::empty(),
@@ -311,6 +314,20 @@ pub(crate) fn write(
     crate::state_tolerances(builder.report, &result);
     builder.report.set_outcome(result);
     builder.container.finish(&doc)
+}
+
+/// The body names an import feature lists.
+fn body_names_of(feature: &Value) -> Vec<String> {
+    feature
+        .get("body_names")
+        .and_then(Value::as_array)
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(|name| name.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Every path from the design to a hidden occurrence, as SolidCraft hides occurrences: the
@@ -526,7 +543,7 @@ fn plan_parts(
             &mut part_report,
             writer.resolved_version(),
             writer.sketches,
-            &[],
+            &own_losses(&part.name, report.losses()),
             writer.plan_deadline,
         );
         writer.plan_blends(&mut mapping);
@@ -653,10 +670,13 @@ fn outcome(histories: &[Check], features: Vec<FeatureOutcome>) -> Outcome {
 }
 
 /// What became of a part's history in its component.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum Replay {
     /// No history is live: the part's geometry is its live Import.
     None,
+    /// The history is live, a Remove takes away the bodies it makes, and the Import of the
+    /// rest of the design follows it under this name.
+    Rest(String),
     /// The history is live, and the original geometry follows it, suppressed.
     BesideOriginal,
     /// The history is live and is the original geometry itself.
@@ -678,14 +698,26 @@ struct PreparedHistory {
     partial_check: Option<Check>,
 }
 
+/// The decode losses the source reported for `part`'s own design. cadmpeg prefixes a loss from
+/// a referenced design with `xref <design name>: `; another design's loss is never evidence here.
+fn own_losses(name: &str, losses: &[dutchman_core::Loss]) -> Vec<dutchman_core::Loss> {
+    let prefix = format!("xref {name}: ");
+    losses
+        .iter()
+        .filter(|loss| loss.detail.starts_with(&prefix))
+        .cloned()
+        .collect()
+}
+
 fn prepare_history(
     writer: &SolidCraftWriter,
     part: &Model,
     step: &str,
+    source_losses: &[dutchman_core::Loss],
     progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<PreparedHistory, Error> {
     let mut part_report = Report::default();
-    let mut mapping = history::map_with_profile_check(
+    let mut mapping = history::map_with_source_profile_check(
         part,
         &mut part_report,
         writer.resolved_version(),
@@ -697,6 +729,7 @@ fn prepare_history(
             progress,
         },
         progress,
+        &own_losses(&part.name, source_losses),
     );
     if let Ok(history) = &mut mapping.result {
         if let Err(why) = history::base::restate(history, part) {
@@ -733,7 +766,7 @@ fn prepare_history(
     if let Ok(history) = &mapping.result {
         if history.stop.is_some() {
             let original = writer.history_design(part, history, step, Live::Original, false)?;
-            writer.check_import(part, &original, &mut part_report, progress);
+            writer.check_import(part, &original, &mut part_report, progress, None);
         }
     }
     Ok(PreparedHistory {
@@ -747,6 +780,7 @@ fn prepare_history(
 fn prepare_part(
     writer: &SolidCraftWriter,
     part: &Model,
+    source_losses: &[dutchman_core::Loss],
     progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<PreparedPart, Error> {
     let _preparing = progress.map(|p| {
@@ -766,7 +800,13 @@ fn prepare_part(
         Some(step::restate(part, &mut report)?)
     };
     let history = match &step {
-        Some(step) if !writer.import_only => Some(prepare_history(writer, part, step, progress)?),
+        Some(step) if !writer.import_only => Some(prepare_history(
+            writer,
+            part,
+            step,
+            source_losses,
+            progress,
+        )?),
         _ => None,
     };
     let references = if step.is_some() && writer.import_only && writer.sketches {
@@ -788,6 +828,7 @@ fn prepare_parts(
     writer: &SolidCraftWriter,
     assembly: &Assembly,
     repeats: &BTreeMap<PartPath, PartPath>,
+    source_losses: &[dutchman_core::Loss],
     report: &mut Report,
     progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Vec<Option<PreparedPart>> {
@@ -854,13 +895,15 @@ fn prepare_parts(
         if let Some(hook) = writer.prepare_hook {
             hook(part);
         }
-        prepare_part(writer, part, progress)
+        prepare_part(writer, part, source_losses, progress)
     })
 }
 
 /// The design's components, occurrences and Import features as they are built.
 struct Builder<'r> {
     progress: Option<&'r dutchman_core::Progress<'r>>,
+    /// The source's decode losses: evidence for each part's history, never written.
+    source_losses: Vec<dutchman_core::Loss>,
     prepared: std::vec::IntoIter<Option<PreparedPart>>,
     writer: &'r SolidCraftWriter,
     container: Container,
@@ -1290,16 +1333,16 @@ impl Builder<'_> {
                 }
                 let blob = self.container.add_step(step.as_bytes())?;
                 let id = self.id();
-                let (label, suppressed) = if replayed == Replay::BesideOriginal {
-                    (ORIGINAL.to_owned(), true)
-                } else {
-                    (feature_name(part), false)
+                let (label, suppressed) = match &replayed {
+                    Replay::BesideOriginal => (ORIGINAL.to_owned(), true),
+                    Replay::Rest(label) => (label.clone(), false),
+                    _ => (feature_name(part), false),
                 };
                 let mut imported =
                     import_feature(part, id, &label, Some(component), suppressed, &blob);
-                if replayed == Replay::None {
+                if matches!(replayed, Replay::None | Replay::Rest(_)) {
                     let mut looks =
-                        history::imported(part, &step, self.report, self.has_appearances)?;
+                        history::imported_restated(part, &step, self.report, self.has_appearances)?;
                     looks.rename_bodies(&name, &mut self.bodies);
                     if let (Some(names), Some(fields)) = (
                         looks
@@ -1313,7 +1356,31 @@ impl Builder<'_> {
                     self.looks.append(&mut looks.looks);
                     self.face_looks.append(&mut looks.face_looks);
                 }
+                let pieces = if part.merge_bodies && replayed == Replay::None {
+                    body_names_of(&imported)
+                } else {
+                    Vec::new()
+                };
                 self.features.push(imported);
+                if let Some((target, tools)) = pieces.split_first().filter(|(_, t)| !t.is_empty()) {
+                    // The pieces share no face, so SolidCraft keeps them in the first one's body.
+                    let id = self.id();
+                    let label = self.unique(format!("{name} (one body)"));
+                    self.features.push(json!({
+                        "id": id,
+                        "type": "combine",
+                        "name": label,
+                        "suppressed": false,
+                        "target": target,
+                        "tools": tools,
+                        "operation": "join",
+                        "keep_tools": false,
+                    }));
+                    // The joined pieces are no bodies of their own: they keep no look.
+                    for tool in tools {
+                        self.looks.remove(tool);
+                    }
+                }
             }
             (None, None) => unwritten_appearances(part, self.report),
         }
@@ -1367,7 +1434,7 @@ impl Builder<'_> {
             partial_check,
         } = match prepared {
             Some(prepared) => prepared,
-            None => prepare_history(self.writer, part, step, self.progress)?,
+            None => prepare_history(self.writer, part, step, &self.source_losses, self.progress)?,
         };
         let outcome_start = self.outcomes.len();
         self.outcomes
@@ -1511,8 +1578,9 @@ impl Builder<'_> {
             self.histories.push(check);
             return Ok(Replay::None);
         }
-        let hidden = partial || unverified_hidden;
-        let whole = !hidden && history::base::whole(&history, part);
+        let rest = partial && self.writer.writes_rest_visibly(&history);
+        let hidden = (partial && !rest) || unverified_hidden;
+        let whole = !hidden && !rest && history::base::whole(&history, part);
         let component = if hidden {
             let child = self.id();
             let occurrence = self.id();
@@ -1545,6 +1613,15 @@ impl Builder<'_> {
         }
         history.relocate(self.next_id - 1, component, &prefix(name), &mut self.taken);
         history.rename_bodies(name, &mut self.bodies);
+        if rest {
+            // The bodies it made are removed before the import, which takes their names.
+            history.looks.clear();
+            history.face_looks.clear();
+            history.hidden_bodies.clear();
+        } else if hidden {
+            // The visible Import already is the part: the hidden copy builds no second body.
+            history::suppress_bodies(&mut history.features);
+        }
         self.mark_written(part);
         self.unused_sketches.extend(history.hidden_sketches());
         self.hidden_bodies.extend(
@@ -1555,6 +1632,21 @@ impl Builder<'_> {
         );
         self.next_id = history.next_id;
         self.features.append(&mut history.features);
+        if let Some(bodies) = history
+            .replayed_bodies
+            .take()
+            .filter(|bodies| rest && !bodies.is_empty())
+        {
+            let id = self.id();
+            self.features.push(json!({
+                "id": id,
+                "name": crate::document::REMOVE,
+                "type": "remove",
+                "suppressed": false,
+                "component": component,
+                "bodies": bodies,
+            }));
+        }
         self.params.append(&mut history.params);
         for rule in history.sheet_rules.drain(..) {
             if !self
@@ -1572,6 +1664,9 @@ impl Builder<'_> {
         self.histories.push(check);
         Ok(match (hidden, whole) {
             (true, _) => Replay::None,
+            (false, _) if rest => {
+                Replay::Rest(crate::document::rest_name(history.rest_from.as_deref()))
+            }
             (false, true) => Replay::IsOriginal,
             (false, false) => Replay::BesideOriginal,
         })
@@ -1735,6 +1830,24 @@ fn sketch_owners(model: &Model) -> BTreeMap<String, String> {
 
 #[cfg(test)]
 #[test]
+fn a_part_keeps_only_the_decode_losses_of_its_own_design() {
+    let mut report = Report::default();
+    for design in ["Panel", "Panel Copy", "Other"] {
+        report.push_coded(
+            Severity::Degraded,
+            "source",
+            "f3d/feature.extrude-profile-sketch-absent",
+            format!("xref {design}: Extrude scope record 950 names an absent Sketch"),
+        );
+    }
+    let own = own_losses("Panel", report.losses());
+    assert_eq!(own.len(), 1);
+    assert!(own[0].detail.starts_with("xref Panel: "));
+    assert!(own_losses("Missing", report.losses()).is_empty());
+}
+
+#[cfg(test)]
+#[test]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none() {
     let mut wire = serde_json::to_value(cadmpeg_ir::CadIr::empty()).unwrap();
@@ -1743,8 +1856,8 @@ fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none(
     let listed = "test:model:sketch#listed";
     let feature_only = "test:model:sketch#feature";
     wire["model"]["product_definitions"] = json!([
-        {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed], "bom_properties": {}},
-        {"id": owner_b, "kind": "part", "bodies": [], "bom_properties": {}, "sketches": []}
+        {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed], "bom_properties": {}, "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]},
+        {"id": owner_b, "kind": "part", "bodies": [], "bom_properties": {}, "sketches": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}
     ]);
     wire["model"]["features"] = json!([
         {"id": "test:model:feature#listed", "ordinal": 0, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": listed}}}}, "dependencies": [], "source_properties": {}, "source_content": []},
@@ -1758,6 +1871,7 @@ fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none(
         source_file: None,
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     };
     assert_eq!(
         sketch_owners(&model),
@@ -1877,12 +1991,14 @@ mod prepare_tests {
             parts: vec![part, second],
             placements: vec![
                 dutchman_core::Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 0,
                     transform: IDENTITY,
                 },
                 dutchman_core::Placement {
+                    unproven: false,
                     hidden: false,
                     name: None,
                     part: 1,

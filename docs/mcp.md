@@ -1,5 +1,12 @@
 # The MCP server
 
+Component catalogs follow assembly nesting, including repeated insertions.
+Assembly files claim their referenced parts, so a project converts its roots
+and then its unused parts. Nested placement, visibility, and suppression
+overrides apply separately to each insertion.
+Alternate representations and instance bodies are not supported yet;
+the report names that limitation rather than treating the design as empty.
+
 The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
 Folder and selection summaries use the highest per-file memory estimate and sum the displayed
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
@@ -139,7 +146,7 @@ Feature names are private local text and are excluded from anonymous diagnostics
 For SolidCraft 0.44 and newer, extrude joins, cuts and intersections can keep a
 selected body scope at the final body-building feature when the reader names
 modified bodies and replay matches the final source geometry. The Info note `history/body-scope-confirmed`
-records this confirmation. Intermediate body centres cannot confirm body scope,
+records this confirmation. Intermediate body centers cannot confirm body scope,
 so intermediate features keep the previous mapping. Without confirmation the
 previous mapping applies; older targets keep their existing output.
 
@@ -147,7 +154,7 @@ On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
 keeps a name only when its identity is proved: the source retains exactly one
 history body with `produced_by` matching its single-output producer, or the
 complete replay matches the final source geometry. Replay candidates keep
-their names only after that check passes; intermediate body centres cannot
+their names only after that check passes; intermediate body centers cannot
 confirm them. An output ID alone is not proof. Without proof, selecting the
 tool stops editable history with "it selects a body that an earlier feature
 has not named". Older targets keep the previous mapping.
@@ -223,9 +230,9 @@ lists them. These external commands provide their own interfaces; the conversion
 and JSON reports described here retain their existing schemas.
 
 The full CLI also accepts `dutchman part.f3d` (or `dutchman convert part.f3d`) and derives
-the output beside the input from `--to`. An existing derived output is kept with exit 2;
-choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
-Explicit outputs retain their replacement behaviour. MCP output paths remain required except for `convert` with `dry_run: true`.
+the output beside the input from `--to`. An existing file is never replaced: the design is
+written to the next free name (`part (2).sc`), and `--replace` (or `--force`) replaces it.
+`--force` conflicts with `--no-clobber`, which does nothing now. MCP output paths remain required except for `convert` with `dry_run: true`.
 
 `dutchman-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server. It lets
 an AI assistant convert CAD files with Dutchman on your machine: it provides conversion and diagnosis
@@ -283,10 +290,19 @@ bbox or volume separately from the final imported shape. Cosmetic metric thread 
 require resolved cylindrical face geometry; a historical face ID alone is reported as
 having no resolved input surface geometry.
 
+
+Body moves require SolidCraft 0.45 or newer. This requirement applies only to designs
+with a body move; it does not trigger a general history-loss notice for older targets.
+Dutchman keeps resolved translations
+and axis-angle rotations, including explicit pivots, when every selected body has
+a proven earlier name. CADIR supplies millimeters and radians; the writer never
+infers a transform from final geometry. Unresolved body selections, unresolved
+point-to-point motion, and copied body result identities remain blockers. Bodies
+available only as final geometry also require a captured pre-move body. Older
+targets keep the original final geometry with a named version refusal.
+
 When a feature blocks SolidCraft history conversion, earlier editable features and
-resolved sketches are kept in a hidden **Editable history (partial)** component. The
-original final shape remains visible as an Import after the kept history. Show the
-hidden component to continue editing it. The report names the blocker and counts
+resolved sketches are kept live in the part's own timeline, followed by a **Remove** feature that takes away the bodies they make and one **Import** named "Rest of the design (from <first feature not converted>)" that holds the source's final shape. The visible result is exactly the original shape, with one body per source body. Roll the timeline marker back before **Remove** to see and edit the body the converted features build; to keep modeling from them, delete or suppress the last two features. SolidCraft needs the CLI to name the bodies the features make; without it the kept features stay in a hidden **Editable history (partial)** component beside the visible Import, as before. The report names the blocker and counts
 retained source features; `mode: partial_history` and verification `partial` distinguish
 this from full verified history. The reason says whether retained features replayed or
 remain unverified. Later sketches with unresolved planes or external geometry are
@@ -331,7 +347,7 @@ Fast keeps shape only and skips the memory guard. Standard keeps history, sketch
 and joints, leaving history out when its estimate exceeds free memory and
 the history-free estimate fits. Full never drops history for memory. Reference sketches
 are controlled by `sketches`; sketches needed by retained history stay. Disabling
-joints retains the selected placements and adds an Info report line. FreeCAD output honours
+joints retains the selected placements and adds an Info report line. FreeCAD output honors
 history only; sketch and joint choices do not control that writer.
 
 An estimate above free memory doesn't stop a conversion; a dry run's `fits` reports it. `convert`
@@ -358,13 +374,30 @@ and retained editable history stays unverified. This applies to `convert` and ea
 off; `no_memory_check: true` forces requested checks. Automatic part work uses at most two
 workers and budgets each detailed part's temporary peak and the retained preparation queue.
 
+For a source consisting of one solid body with disconnected lumps, verification can
+compare the imported pieces together against one replayed body. Every source region
+must remain present; their summed volume and area and combined bounds must agree.
+Single-lump and multiple-source-body comparisons retain their existing checks. See
+[How a history is checked](history.md#how-a-history-is-checked).
+
 Conversion results share the CLI's additive `verification_checks` array. It records final
 history comparisons per part and body, including measurement evidence and replayed named
 parameter values and quantity kinds compared with the source. Geometric, closure and
-parameter checks say `pass`, `fail` or `not_checked` with reasons. Face, edge and shell counts use informational `info` or `differs` statuses and
-never reject a history. Omitted or renamed parameters are `not_checked`.
+parameter checks say `pass`, `fail` or `not_checked` with reasons. Raw kernel face, edge and shell counts use informational `info` or `differs`
+statuses and never reject a history by themselves. Omitted or renamed parameters are `not_checked`.
 Missing evidence is never a pass; closure alone does not prove manifoldness.
 See [source comparison evidence](json.md#source-comparison-evidence) for the field contract.
+
+Final SolidCraft history verification also requires matching available merged face
+counts per body (`merged_faces` in `verification_checks`). Merged edge counts
+(`merged_edges`) are informational: mirror and full-turn revolve operations can split
+edges differently across SolidCraft releases while preserving the faces and shape.
+Face counts merge adjacent pieces of one surface and periodic seams. Bodies with
+free-form or mesh surfaces skip merged totals, since equivalent pieces can have different
+surface records. Available analytic surface-kind counts (`analytic_faces`) must still
+match for planes, cylinders, cones and spheres; mesh bodies skip that check too. A mismatch
+retains the imported final shape, even when volume and area pass. Raw kernel counts remain
+informational.
 
 Use `convert` with `dry_run: true` for a quick estimate without decoding or writing;
 `output` is optional:
@@ -472,7 +505,7 @@ default material: the decoded model does not establish that no source appearance
 
 Appearance or attribute bindings for one placed instance or an evaluation state are
 left out with a specific loss: Dutchman has no per-occurrence override for them.
-Definition-level appearance bindings still colour every placement of that definition.
+Definition-level appearance bindings still color every placement of that definition.
 
 A Dropped definition-level appearance binding names its body or face target.
 “Its target is absent from the decoded model” means no decoded geometry can receive it; “its target exists in the decoded
@@ -481,13 +514,13 @@ Bindings to consumed or removed Fusion geometry have a separate explanation. “
 no geometry the STEP writer can write” means the decoded target exists, but its shape cannot
 be carried through STEP. Compare the named part with the source design when reviewing these losses.
 
-`formats` lists all recognised formats, their status `words`,
+`formats` lists all recognized formats, their status `words`,
 and what Dutchman converts. Inputs without geometry support or a codec in this build
 return a failure describing the reader's current capability. Creo and NX `.prt` inputs
-are distinguished by contents. CATIA, NX, Creo View, Rhino, ACIS and STEP use the geometry
+are distinguished by contents. CATIA, Creo, NX, Creo View, Rhino, ACIS and STEP use the geometry
 path. Each conversion report's `input` also carries `words`, `program` and `extension`.
 Status words are `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`,
-or `open it in SolidCraft directly` for IGES (`.igs`, `.iges`). IGES is recognised and
+or `open it in SolidCraft directly` for IGES (`.igs`, `.iges`). IGES is recognized and
 refused before decoding by `inspect`, `convert` and `convert_all`, with `error.message`:
 `Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).`
 Batch results retain that refusal; IGES does not trigger the CLI or GUI fixtures invitation.
@@ -499,6 +532,8 @@ and is absent from MCP and `--json` output.
 
 For `inspect`, `ok: true` means the file was read. Check `conversion.possible` and
 `conversion.reason` before converting: inspection can succeed even when conversion cannot.
+Unreadable occurrence positions return `ok: false` with partial verification and
+completeness counts even when the file was read successfully.
 
 `contents` lists a file's bodies (kind, name, hidden), its feature timeline (kind, name,
 suppressed) and its parameters (name, value, unit, expression, owning feature), and gives each
@@ -547,12 +582,15 @@ once. Grounding and supported Assembly-workbench joints map like other assembly 
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
 targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
-stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
-only that body supplies replay candidates, even when another body has a coincident rim.
-Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
-refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+circle that the feature's input topology stores beside the edge, with center, axis, radius and a
+full-turn parameter range. Its input topology must hold a single body that is one earlier named
+body; only that body supplies replay candidates, even when another body has a coincident rim.
+A missing carrier or owner, and ellipses, remain refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's center, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
+A missing source carrier reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
+This means the source geometry needed for selection is unavailable; it does not establish
+that the curve is noncircular. The editable prefix and original final shape are retained.
 Use `--solidcraft-version 0.44.1` to select this patch release. The exact target stays in
 effect through input preparation and geometry-only fallbacks; JSON displays its minor, `0.44`.
 Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
@@ -600,8 +638,8 @@ map to sketch-profile coils when targeting SolidCraft 0.25 patch 1 or newer. Old
 the helix with `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the
 original geometry. The CLI equivalent is `--solidcraft-version x.y.z` on `convert`,
 `convert-all`, and `watch` (default: found CLI version, even with `--no-verify`, else
-the newest release known at build time, currently 0.45). The rolling 14-day window
-is currently 0.40–0.45; older targets down to 0.18.2 get simplified features.
+the newest release known at build time, currently 0.50). The rolling 14-day window
+is currently 0.40–0.50; older targets down to 0.18.2 get simplified features.
 Pitch/height/turn laws, handedness, axis, reversed travel, and Boolean operation carry across. Feature parameter
 bindings are retained when available, otherwise dimensions use resolved values. Conical
 and spiral sweeps report the missing SolidCraft cone-angle/radial-growth option.
@@ -617,9 +655,12 @@ filled face, and outward drilling use the existing blocked feature reason; the o
 geometry remains available.
 This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
 original geometry with a named reason.
-Entry recesses with drill points map on targets that support their tip angle. Older
-targets report "SolidCraft holes take a drill point only on a plain drilled hole"
-and retain the original geometry.
+Through-all holes omit the drill-point angle because no bottom forms, for every entry form and
+every target down to SolidCraft 0.18.2. This preserves the geometry without a loss note. Blind
+and to-face counterbores, countersinks, and chamfered entries retain their point on SolidCraft
+0.22.1 and newer; older targets retain the existing refusal and original geometry. Older
+targets report "SolidCraft holes take a drill point only on a plain drilled hole" for bounded
+entry recesses.
 
 Holes ending at a proven earlier planar cap can retain both an entry countersink and
 a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
@@ -627,13 +668,26 @@ the tip extends beyond it. An unproven target still blocks body-building history
 
 Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
 secondary numeric values. ISO metric table designations tolerate decimal rounding and
-floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
-separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
+floating-point unit-conversion noise. UNC/UNF values in millimeters or TPI are checked, and a Unified thread is written for
+SolidCraft 0.50 and newer; earlier targets report it. See
 [cosmetic threads](history.md) for details.
+
+Separate modeled Thread features keep their helical shape in the imported final geometry
+and stop editable history. When reached in the timeline, a Degraded `history/modeled-thread-retained` loss
+preserves the designation when available and explains that CADIR does not resolve hand, tolerance class or the exact
+groove profile. SolidCraft 0.45's modeled option does not recover those missing facts.
+The designation remains in the report; no cosmetic face selection is guessed on the
+threaded final body. See [thread history](history.md).
 
 Offset datum planes need no building feature when their support resolves or all their
 consumers carry independent resolved sketch placements. Otherwise the history reason
 names the unresolved plane reference; resolved skipped planes count as `not_needed`.
+
+Offset faces targeting SolidCraft 0.45 or newer bind their historical face points to the
+unique earlier named body in the part's history. Circular boundaries use points clear of
+both outer trims and holes. An offset-face body blocker means ownership is not proven;
+selecting among several input bodies is not supported yet. The original geometry is kept.
+Older targets keep the previous point-only representation.
 
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face
@@ -676,10 +730,10 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `import_only` | boolean | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `verify` | boolean | Check a converted history in SolidCraft. Default `true`; skipped, and the history marked unverified, when no `solidcraft-cli` is found. |
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
-| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.45), including when `verify` is false. |
+| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.50), including when `verify` is false. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
-| `stand_up` | boolean | Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis (+90° about +X). Default false. |
-| `no_stand_up` | boolean | Keep source axes without standing Y-up models up along +Z (default). |
+| `stand_up` | boolean | Always rotate so +Y becomes SolidCraft's +Z axis (+90° about +X). By default a design is stood up only when its source states that it is Y-up. |
+| `no_stand_up` | boolean | Keep the file's axes and never rotate (the CLI's `--keep-axes`). |
 | `overwrite` | boolean | Replace an existing `.sc` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
 | `project` | string | Absolute path of the project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an Inventor `.ipj`, else two folders up; for `convert_all`, each folder given. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `search` | array of strings | Absolute paths of more folders to search, with their subfolders, for part files the project folder does not hold. |
@@ -788,7 +842,7 @@ Convert one file:
 
 SolidCraft history checks compare each body's position, box, area, and volume. Position
 and box checks allow the larger of 0.01 mm and 0.02% of the larger box diagonal
-for the centre distance and each minimum/maximum coordinate. Volume and area retain their
+for the center distance and each minimum/maximum coordinate. Volume and area retain their
 measuring mesh tolerances. A pair without boxes is compared by area and volume alone.
 Face-count differences alone produce no geometry loss, nor do open-shell warnings when the
 compared measurements agree. Evaluation errors, unmeshable faces, bodies inside out, solids
@@ -894,7 +948,7 @@ retain point and radius associations; driving count and span parameters still pr
 constraint loss.
 
 Whole-sketch hole placements exclude construction entities; explicit entity selections
-can still use construction points or circle centres.
+can still use construction points or circle centers.
 
 For mirror-containing composite patterns and repeated full-turn endpoints, an attempted
 replay that cannot finish keeps the original geometry and reports why. Turning verification
@@ -967,10 +1021,10 @@ reports are unchanged.
 FreeCAD TechDraw drawing output is available from the CLI:
 `dutchman convert part.FCStd --to dxf [--page NAME]`. It writes one
 `part-PageName.dxf` per page; `-o` accepts an existing directory or a file base
-(an exact file path with `--page`). Defaults require `--force` to overwrite;
-explicit outputs replace unless `--no-clobber` is set. Page names are FreeCAD
+(an exact file path with `--page`). An existing page file is never replaced:
+the page takes the next free name (`part-Page (2).dxf`) unless `--replace` is set. Page names are FreeCAD
 object names. Pages keep neutral view curves, dimension labels, annotations, template frames, and
-resolved title-block text in millimetre page space. Unsupported content is reported
+resolved title-block text in millimeter page space. Unsupported content is reported
 in per-page JSON `pages` results. No page is an error. See [FreeCAD coverage](freecad.md#techdraw-to-dxf).
 DXF conversion is not supported yet by convert-all, the MCP convert tool, desktop,
 or web. The MCP formats report includes the additive `drawings` capability list.
@@ -1003,9 +1057,9 @@ SolidCraft reports also include `solidcraft.known_newest` (a version string) and
 fields require no network check. See [JSON reports](json.md).
 
 SolidCraft version presentation uses minors: `solidcraft.target` and
-`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.45"`), changing their
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.50"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
-`"0.44.0"`). Status comparisons use minors, so all 0.45 patches are current; 0.46 is newer
+`"0.44.0"`). Status comparisons use minors, so all 0.50 patches are current; 0.51 is newer
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.
@@ -1071,7 +1125,14 @@ See the [paste-in prompt](troubleshooting.md#diagnose-with-an-assistant).
 ### Local folder and STEP checks
 
 Assembly completeness separates `placed` (geometry or child holders) from
-`placed_empty` (leaf parts with no bodies), with both included in `placements`.
+`placed_empty` (leaf parts with no bodies) and `unplaced` (part names mapped to counts
+whose archive positions could not be read). All are included in `placements`;
+`unplaced` is excluded from `placed`. Unreadable local and xref positions, including assumed
+identity positions and their dependent children, mark the result incomplete and
+`verification.status` partial and JSON `ok: false`, even when output was written.
+This includes single designs whose local components stay flattened because their
+occurrence poses could not be read. Decoded bodies absent from all written component
+occurrences are counted in `completeness.left_out` with their cause.
 The summary and desktop and web cards show empty placements separately and mark the
 assembly incomplete. Empty leaves add Degraded losses naming their anonymous part
 numbers; child holders do not. Solid regions reduced to open sheets add a counted
@@ -1105,7 +1166,7 @@ for the observed false-positive rate and coverage. Optional local snapshot
 pairs never enter the tool result.
 
 <a id="report-preview-and-sending"></a>
-Converted files are reportable too. For lost features, wrong placement or missing colours,
+Converted files are reportable too. For lost features, wrong placement or missing colors,
 call `report_preview` with a fresh `folder`, the file's diagnostic `report_id`, its
 `source_format` (for example `f3d`) and `signature: "converted-with-problem"`. This prepares
 an anonymous summary without opening or sending the design. Review the returned `metadata`
@@ -1194,8 +1255,8 @@ losses for meshes it could not decode.
 The desktop report panel stays visible below output controls in wide windows. Narrow
 windows pin **Report a problem…** (or **Report this design…** with a result selected) above
 **Convert**; it scrolls to the full numbered cards in the page. Discord comes first, with
-a small **GitHub issue** backup link (a public issue under the user's GitHub name).
-**Anonymous report**, under **More**, opens review before direct cloud upload.
+a **File a GitHub issue ↗** backup button (a public issue under the user's GitHub name).
+**Review and send report**, beside it, opens review before direct cloud upload.
 Partial history says **Partly converted**; geometry-only or flattened results say
 **Converted, no history**, in amber. Full history keeps **Converted** in green unless
 degraded content needs review. Report fields
@@ -1211,7 +1272,7 @@ containment and closed-form line/conic intersections, never area or finite sampl
 
 `onshape_fetch` accepts `document_url` (required), `out` (optional file path),
 `version` (optional immutable Onshape version ID), `bearer_token_file` (optional private
-local OAuth token file path), and `max_calls` (optional HTTP attempt budget, default 50). It advertises input and output JSON schemas and returns
+local OAuth token file path), and `max_calls` (optional hard ceiling on real HTTP calls, which also allows the fetch; cached replies cost none). The tool never prompts. Omit `max_calls` and it first lists the document and estimates the calls the fetch needs; at 50 or fewer it fetches (the limit grows with the document up to 2000), and above 50 it stops before fetching with error `onshape/approval` and `estimated_calls` in the result. Onshape's Free plan allows 2,500 calls a year, so the calling agent should ask its user, then call again with `max_calls` set. It advertises input and output JSON schemas and returns
 `dutchman.onshape-fetch/1` in text and structured content, with `isError` on failure.
 API keys remain the default and come from the server's local environment or saved
 connection. Alternatively, use `bearer_token_file` or the server process environment's
@@ -1254,8 +1315,8 @@ newer as the target; older targets retain a named loss and the final geometry.
 Unsupported expressions and unresolved external origin references retain named losses;
 see [Onshape](onshape.md).
 
-The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
-and **GitHub issue** (a public issue under the user’s GitHub name).
+The desktop secondary buttons are **Review and send report** (review before direct cloud upload)
+and **File a GitHub issue ↗** (a public issue under the user’s GitHub name).
 
 Meeting 3D curve endpoints do not create relations without a decoded source relation.
 
@@ -1275,10 +1336,6 @@ reduce repeated relations and convert again; the original shape is retained.
 The [SolidCraft plugin component](plugin.md) is a separate streaming importer front end.
 It does not add or change MCP tools. Its evaluator uses the host's existing
 command surface through the `evaluate` import, subject to host permissions.
-
-The optional SolidCraft [conditional options package](plugin.md#conditional-options-package-031-draft)
-filters dialog controls only. It adds no CLI or MCP arguments or report fields; the normal
-plugin package retains its existing options for SolidCraft 0.44/0.45.
 
 The plugin aborts on host input failures before writing output. Its bounded loss report
 prioritizes dropped and degraded losses and includes an explicit truncation notice and
@@ -1365,6 +1422,17 @@ says the design is too large to open inside SolidCraft, use the
 `.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
 "Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
 See [the plugin guide](plugin.md).
+
+For a local summary of an entire completed folder run, use the CLI
+`dutchman batch-report <output-folder>`, or `convert-all --batch-report` during
+conversion. After a folder run finishes, the desktop app's **Batch report**
+button appears in the bottom bar beside the result counts. It writes the same
+Markdown and CSV files, then says `<converted> converted, <failed> failed · Report saved to <output folder name>/`.
+The command reads saved per-file reports, not CAD inputs, and writes `dutchman-batch-report.md` and `dutchman-batch-report.csv` locally.
+Markdown includes totals for all four outcomes, including zero counts, beneath
+its heading. CSV keeps a header and one row per file, without totals.
+Columns contain relative input path, output path, outcome, and first reason.
+These summaries contain names and paths. Existing MCP tool reports are unchanged.
 
 The [public fixture score workflow](fixture-score.md) runs the CLI on public
 fixtures and collects scoreboard evidence. It does not require an MCP server.

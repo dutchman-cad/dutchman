@@ -1,7 +1,8 @@
-//! Evidence for final history comparisons. Counts describe the evaluated representation;
-//! they do not prove surface equivalence or manifoldness.
+//! Evidence for final history comparisons. Analytic topology and surface-kind counts
+//! supplement continuous measurements without rejecting periodic seams or free-form
+//! patch splits. Raw counts do not prove surface equivalence or manifoldness.
 use super::*;
-use cadmpeg_ir::features::ParameterValue;
+use cadmpeg_ir::features::parameters::ParameterValue;
 use dutchman_core::{Model, Report};
 use serde_json::json;
 
@@ -21,6 +22,9 @@ fn unavailable(reason: &str) -> Value {
         "faces",
         "edges",
         "shells",
+        "merged_faces",
+        "merged_edges",
+        "analytic_faces",
         "closed_shell",
         "manifold",
         "centroid",
@@ -54,7 +58,7 @@ fn numeric(source: Option<f64>, written: Option<f64>, tolerance: f64) -> Value {
     }
 }
 
-fn vector(value: Option<&Value>) -> Option<[f64; 3]> {
+pub(super) fn vector(value: Option<&Value>) -> Option<[f64; 3]> {
     let array = value?.as_array()?;
     if array.len() != 3 {
         return None;
@@ -79,8 +83,8 @@ fn body_check(want: &Measured, got: &Measured, source: &Value, written: &Value) 
         "volume": numeric(source.get("volume_mm3").and_then(Value::as_f64), written.get("volume_mm3").and_then(Value::as_f64), volume_tolerance),
         "surface_area": numeric(want.area.filter(|v| *v >= 0.0), got.area.filter(|v| *v >= 0.0),
             AREA_TOLERANCE * want.area.unwrap_or(0.0).abs().max(got.area.unwrap_or(0.0).abs())),
-        "bounding_box": skipped("Source or replay bounds or box centre is unavailable"),
-        "centroid": skipped("Source or replay centre of mass or box size is unavailable"),
+        "bounding_box": skipped("Source or replay bounds or box center is unavailable"),
+        "centroid": skipped("Source or replay center of mass or box size is unavailable"),
         "closed_shell": skipped("Source or replay closure is unavailable"),
         "manifold": skipped("The evaluator does not expose a manifold check")
     }).as_object().cloned().unwrap_or_default();
@@ -136,6 +140,66 @@ fn body_check(want: &Measured, got: &Measured, source: &Value, written: &Value) 
         };
         checks.insert(name.to_owned(), check);
     }
+    // inspect.measure's top-level counts merge adjacent pieces of one surface,
+    // periodic seams. Edge chains can still split differently after mirror or full-turn
+    // revolve operations, so merged edges remain informational, like raw counts.
+    // No geometric tolerance can safely substitute for these discrete checks:
+    // missing small holes can fit inside the measuring mesh's volume allowance.
+    // Free-form pieces can use different surface records on import and replay,
+    // so their merged totals are not comparable. Analytic surface-kind counts
+    // below still expose missing cylindrical holes in a body with free-form faces.
+    let freeform = [source, written].iter().any(|body| {
+        ["other", "mesh"].into_iter().any(|kind| {
+            body.get("face_types")
+                .and_then(|kinds| kinds.get(kind))
+                .and_then(Value::as_u64)
+                .is_some_and(|count| count > 0)
+        })
+    });
+    for (name, field) in [("merged_faces", "faces"), ("merged_edges", "edges")] {
+        let check = if freeform {
+            skipped("Free-form or mesh surface pieces do not have comparable merged totals")
+        } else {
+            match (
+                source.get(field).and_then(Value::as_u64),
+                written.get(field).and_then(Value::as_u64),
+            ) {
+                (Some(a), Some(b)) => json!({
+                    "status": if field == "edges" {
+                        if a == b { "info" } else { "differs" }
+                    } else if a == b { "pass" } else { "fail" },
+                    "source": a, "written": b
+                }),
+                _ => skipped("Source or replay merged topology count is unavailable"),
+            }
+        };
+        checks.insert(name.to_owned(), check);
+    }
+    let analytic = |body: &Value| -> Option<Value> {
+        let kinds = body.get("face_types")?.as_object()?;
+        if kinds
+            .get("mesh")
+            .and_then(Value::as_u64)
+            .is_some_and(|n| n > 0)
+        {
+            return None;
+        }
+        let mut counts = serde_json::Map::new();
+        for kind in ["plane", "cylinder", "cone", "sphere"] {
+            let count = match kinds.get(kind) {
+                Some(value) => value.as_u64()?,
+                None => 0,
+            };
+            counts.insert(kind.to_owned(), json!(count));
+        }
+        Some(Value::Object(counts))
+    };
+    let analytic_check = match analytic(source).zip(analytic(written)) {
+        Some((a, b)) => json!({"status": if a == b {"pass"} else {"fail"},
+            "source":a, "written":b}),
+        None => skipped("Source or replay analytic surface-kind counts are unavailable"),
+    };
+    checks.insert("analytic_faces".to_owned(), analytic_check);
     if let (Some(a), Some(b)) = (
         source.get("closed").and_then(Value::as_bool),
         written.get("closed").and_then(Value::as_bool),
@@ -195,6 +259,9 @@ pub(super) fn measurements(source: &Eval, written: &Eval) -> Value {
                 "faces",
                 "edges",
                 "shells",
+                "merged_faces",
+                "merged_edges",
+                "analytic_faces",
                 "closed_shell",
                 "manifold",
             ] {
@@ -301,7 +368,8 @@ fn failed(value: &Value) -> bool {
         Value::Object(fields) => {
             fields.get("status").and_then(Value::as_str) == Some("fail")
                 || fields.iter().any(|(name, value)| {
-                    !matches!(name.as_str(), "faces" | "edges" | "shells") && failed(value)
+                    !matches!(name.as_str(), "faces" | "edges" | "shells" | "merged_edges")
+                        && failed(value)
                 })
         }
         Value::Array(rows) => rows.iter().any(failed),
@@ -335,7 +403,9 @@ fn failure_reason(evidence: &Value) -> String {
         for body in bodies {
             if let Some(checks) = body.get("checks").and_then(Value::as_object) {
                 for (name, check) in checks {
-                    if !matches!(name.as_str(), "faces" | "edges" | "shells") && is_failure(check) {
+                    if !matches!(name.as_str(), "faces" | "edges" | "shells" | "merged_edges")
+                        && is_failure(check)
+                    {
                         let index = body
                             .get("source_index")
                             .and_then(Value::as_u64)
@@ -468,7 +538,7 @@ mod tests {
         json!({"bodies":[{"volume_mm3":1000.0,"area_mm2":600.0,
             "bbox":{"min":[0,0,0],"max":[10,10,10]},
             "center_of_mass":[5,5,5],"closed":true,
-            "kernel":{"faces":6,"edges":12,"shells":1}}],"timeline":[]})
+            "faces":6,"edges":12,"kernel":{"faces":6,"edges":12,"shells":1}}],"timeline":[]})
     }
 
     fn compare(written: Value) -> Value {
@@ -657,6 +727,7 @@ mod tests {
             name: "Cube".to_owned(),
             source_file: None,
             source_step: None,
+            merge_bodies: false,
             assembly: None,
         }
     }
@@ -836,6 +907,7 @@ mod tests {
                 Expected {
                     solids: 1,
                     sheets: 0,
+                    ..Expected::default()
                 },
                 None,
                 &model,
@@ -868,6 +940,7 @@ mod tests {
                 Expected {
                     solids: 1,
                     sheets: 0,
+                    ..Expected::default()
                 },
                 None,
                 &model(),
@@ -878,11 +951,251 @@ mod tests {
             let geometry = &report.verification_checks()[0]["geometry"];
             assert_eq!(status(geometry, count), "differs");
             assert_eq!(geometry["bodies"][0]["checks"][count]["written"], value);
+            assert_eq!(status(geometry, "merged_faces"), "pass");
+            assert_eq!(status(geometry, "merged_edges"), "info");
             assert!(!failed(geometry));
         }
         // Topology counts cannot reject even if a producer supplies a fail status.
         assert!(!failed(&json!({"checks":{"faces":{"status":"fail"},
-            "edges":{"status":"fail"},"shells":{"status":"fail"}}})));
+            "edges":{"status":"fail"},"shells":{"status":"fail"},
+            "merged_edges":{"status":"fail"}}})));
+    }
+
+    #[test]
+    fn two_small_through_holes_cannot_hide_in_mesh_allowances() {
+        // Synthetic 400 x 200 x 5 mm plate, with two radius-2 mm holes.
+        // Removing both holes changes volume by only 0.0314%, without moving bounds.
+        let plate = |holes: bool| {
+            let radius: f64 = 2.0;
+            let removed = 2.0 * std::f64::consts::PI * radius.powi(2) * 5.0;
+            let extra_area =
+                2.0 * std::f64::consts::PI * (2.0 * radius * 5.0 - 2.0 * radius.powi(2));
+            json!({"bodies":[{
+                "volume_mm3":400000.0 - if holes {removed} else {0.0},
+                "area_mm2":166000.0 + if holes {extra_area} else {0.0},
+                "bbox":{"min":[0,0,0],"max":[400,200,5]},
+                "center_of_mass":[200,100,2.5],"closed":true,
+                "faces":if holes {8} else {6}, "edges":if holes {16} else {12},
+                "kernel":{"faces":if holes {10} else {6},"edges":if holes {24} else {12},"shells":1}
+            }],"timeline":[]})
+        };
+        #[derive(Debug)]
+        struct Plates {
+            source: Value,
+            written: Value,
+        }
+        impl SolidCraftEvaluator for Plates {
+            fn evaluate(&self, _: &[u8], _: Duration, label: &str) -> Result<Value, String> {
+                Ok(if label == "original" {
+                    &self.source
+                } else {
+                    &self.written
+                }
+                .clone())
+            }
+            fn run(
+                &self,
+                _: &[u8],
+                _: &[Value],
+                _: Duration,
+                _: &str,
+            ) -> Result<Vec<Value>, String> {
+                Ok(vec![])
+            }
+        }
+        let host = Plates {
+            source: plate(true),
+            written: plate(false),
+        };
+        let mut report = Report::default();
+        let outcome = compare_report(
+            &host,
+            DEFAULT_TIMEOUT,
+            b"written",
+            b"source",
+            Expected {
+                solids: 1,
+                sheets: 0,
+                single_body_regions: 1,
+            },
+            None,
+            &model(),
+            "check",
+            &mut report,
+        );
+        assert!(
+            matches!(outcome, Outcome::Differs(ref why) if why.contains("merged")),
+            "{outcome:?}"
+        );
+        let geometry = &report.verification_checks()[0]["geometry"];
+        for check in ["volume", "surface_area", "bounding_box", "centroid"] {
+            assert_eq!(status(geometry, check), "pass", "{check}");
+        }
+        assert_eq!(status(geometry, "merged_faces"), "fail");
+        assert_eq!(status(geometry, "merged_edges"), "differs");
+    }
+
+    #[test]
+    fn faces_reject_but_split_edges_are_informational_and_missing_counts_are_unchecked() {
+        for field in ["faces", "edges"] {
+            let mut written = cube();
+            written["bodies"][0][field] = json!(99);
+            let geometry = compare(written);
+            let expected = if field == "faces" { "fail" } else { "differs" };
+            assert_eq!(status(&geometry, &format!("merged_{field}")), expected);
+            assert_eq!(failed(&geometry), field == "faces");
+        }
+        let mut written = cube();
+        for field in ["faces", "edges"] {
+            written["bodies"][0].as_object_mut().unwrap().remove(field);
+        }
+        let geometry = compare(written);
+        for check in ["merged_faces", "merged_edges"] {
+            assert_eq!(status(&geometry, check), "not_checked");
+        }
+        assert!(!failed(&geometry));
+    }
+
+    #[test]
+    fn mirror_and_full_turn_edge_splits_preserve_matching_face_evidence() {
+        let mut source = cube();
+        source["bodies"][0]["edges"] = json!(27);
+        source["bodies"][0]["face_types"] = json!({"plane":4,"cylinder":2});
+        let mut written = source.clone();
+        written["bodies"][0]["edges"] = json!(18);
+        let geometry = measurements(&parse(&source).unwrap(), &parse(&written).unwrap());
+        assert_eq!(status(&geometry, "merged_faces"), "pass");
+        assert_eq!(status(&geometry, "analytic_faces"), "pass");
+        assert_eq!(status(&geometry, "merged_edges"), "differs");
+        assert!(!failed(&geometry));
+        // Edge evidence cannot substitute for unavailable face evidence.
+        for body in [&mut source, &mut written] {
+            body["bodies"][0].as_object_mut().unwrap().remove("faces");
+            body["bodies"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("face_types");
+        }
+        let geometry = measurements(&parse(&source).unwrap(), &parse(&written).unwrap());
+        assert_eq!(status(&geometry, "merged_faces"), "not_checked");
+        assert_eq!(status(&geometry, "analytic_faces"), "not_checked");
+        assert!(!failed(&geometry));
+    }
+
+    #[test]
+    fn freeform_splits_do_not_hide_missing_analytic_hole_faces() {
+        let mut source = cube();
+        source["bodies"][0]["face_types"] = json!({"plane":2,"cylinder":2,"other":4});
+        source["bodies"][0]["faces"] = json!(8);
+        source["bodies"][0]["edges"] = json!(20);
+        let mut written = source.clone();
+        written["bodies"][0]["faces"] = json!(5);
+        written["bodies"][0]["edges"] = json!(9);
+        written["bodies"][0]["face_types"]["other"] = json!(1);
+        let compare_pair =
+            |written: &Value| measurements(&parse(&source).unwrap(), &parse(written).unwrap());
+        let geometry = compare_pair(&written);
+        assert!(!failed(&geometry));
+        for check in ["merged_faces", "merged_edges"] {
+            assert_eq!(status(&geometry, check), "not_checked");
+        }
+        assert_eq!(status(&geometry, "analytic_faces"), "pass");
+        written["bodies"][0]["face_types"]["cylinder"] = json!(0);
+        let geometry = compare_pair(&written);
+        assert_eq!(status(&geometry, "analytic_faces"), "fail");
+        assert!(failed(&geometry));
+    }
+
+    #[test]
+    fn multi_region_final_comparison_rejects_a_small_missing_hole() {
+        #[derive(Debug)]
+        struct Regions {
+            source: Value,
+            written: Value,
+        }
+        impl SolidCraftEvaluator for Regions {
+            fn evaluate(&self, _: &[u8], _: Duration, label: &str) -> Result<Value, String> {
+                Ok(if label == "original" {
+                    &self.source
+                } else {
+                    &self.written
+                }
+                .clone())
+            }
+            fn run(
+                &self,
+                _: &[u8],
+                _: &[Value],
+                _: Duration,
+                _: &str,
+            ) -> Result<Vec<Value>, String> {
+                Err("This comparison has no parameters".to_owned())
+            }
+        }
+        let mut first = cube()["bodies"][0].clone();
+        first["faces"] = json!(6);
+        first["edges"] = json!(12);
+        first["face_types"] = json!({"plane":6});
+        let mut second = first.clone();
+        second["bbox"] = json!({"min":[30,0,0],"max":[40,10,10]});
+        second["center_of_mass"] = json!([35, 5, 5]);
+        let mut joined = first.clone();
+        joined["volume_mm3"] = json!(2000);
+        joined["area_mm2"] = json!(1200);
+        joined["bbox"] = json!({"min":[0,0,0],"max":[40,10,10]});
+        joined["center_of_mass"] = json!([20, 5, 5]);
+        joined["faces"] = json!(12);
+        joined["edges"] = json!(24);
+        joined["face_types"] = json!({"plane":12});
+        let mut model = model();
+        model.ir.model.parameters.clear();
+        for missing_hole in [false, true] {
+            let mut drilled = second.clone();
+            if missing_hole {
+                drilled["volume_mm3"] = json!(999.9);
+                drilled["area_mm2"] = json!(600.1);
+                drilled["faces"] = json!(7);
+                drilled["face_types"]["cylinder"] = json!(1);
+            }
+            let host = Regions {
+                source: json!({"bodies":[first,drilled]}),
+                written: json!({"bodies":[joined]}),
+            };
+            let mut report = Report::default();
+            let outcome = compare_report(
+                &host,
+                DEFAULT_TIMEOUT,
+                b"written",
+                b"source",
+                Expected {
+                    solids: 1,
+                    single_body_regions: 2,
+                    ..Expected::default()
+                },
+                None,
+                &model,
+                "check",
+                &mut report,
+            );
+            if missing_hole {
+                assert!(
+                    matches!(&outcome, Outcome::Differs(why) if why.contains("faces")),
+                    "{outcome:?}"
+                );
+            } else {
+                assert_eq!(outcome, Outcome::Matches);
+            }
+            let geometry = &report.verification_checks()[0]["geometry"];
+            for check in ["volume", "surface_area", "bounding_box", "centroid"] {
+                assert_eq!(status(geometry, check), "pass", "{geometry}");
+            }
+            for check in ["merged_faces", "analytic_faces"] {
+                assert_eq!(
+                    status(geometry, check),
+                    if missing_hole { "fail" } else { "pass" }
+                );
+            }
+        }
     }
 
     #[test]
@@ -906,6 +1219,7 @@ mod tests {
                 Expected {
                     solids: 1,
                     sheets: 0,
+                    ..Expected::default()
                 },
                 None,
                 &model(),
@@ -941,6 +1255,7 @@ mod tests {
             Expected {
                 solids: 1,
                 sheets: 0,
+                ..Expected::default()
             },
             None,
             &model(),
@@ -985,6 +1300,7 @@ mod tests {
             Expected {
                 solids: 1,
                 sheets: 0,
+                ..Expected::default()
             },
             None,
             &model(),
@@ -1003,6 +1319,53 @@ mod tests {
         assert!(report.verification_checks()[0]["geometry"]["checks"]
             .get("parameters")
             .is_none());
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn native_replay_rejects_two_small_missing_holes() {
+        let Ok(path) = find_cli(&Verification::Auto) else {
+            eprintln!("No evaluator available for native comparison");
+            return;
+        };
+        let evaluator = crate::CliEvaluator::new(path);
+        let box_command = json!({"command":"solid.box", "params":{
+            "length":400,"width":200,"height":5,"body_name":"Plate"}});
+        let replay = serde_json::to_vec(&json!([box_command])).unwrap();
+        let source = serde_json::to_vec(&json!([
+            box_command,
+            {"command":"solid.cylinder","params":{"radius":2,"height":7,
+                "base":[100,100,-1],"operation":"cut","targets":["Plate"]}},
+            {"command":"solid.cylinder","params":{"radius":2,"height":7,
+                "base":[300,100,-1],"operation":"cut","targets":["Plate"]}}
+        ]))
+        .unwrap();
+        let mut report = Report::default();
+        let outcome = compare_report(
+            &evaluator,
+            DEFAULT_TIMEOUT,
+            &replay,
+            &source,
+            Expected {
+                solids: 1,
+                sheets: 0,
+                single_body_regions: 1,
+            },
+            None,
+            &model(),
+            "check",
+            &mut report,
+        );
+        assert!(
+            matches!(outcome, Outcome::Differs(ref why) if why.contains("merged") || why.contains("analytic faces")),
+            "{outcome:?}"
+        );
+        let geometry = &report.verification_checks()[0]["geometry"];
+        for check in ["volume", "surface_area", "bounding_box", "centroid"] {
+            assert_eq!(status(geometry, check), "pass", "{check}");
+        }
+        assert_eq!(status(geometry, "merged_faces"), "fail");
+        assert_eq!(status(geometry, "merged_edges"), "differs");
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -1035,6 +1398,7 @@ mod tests {
             Expected {
                 solids: 1,
                 sheets: 0,
+                ..Expected::default()
             },
             None,
             &model(),
@@ -1046,11 +1410,16 @@ mod tests {
             status(&report.verification_checks()[0]["geometry"], "faces"),
             "differs"
         );
-        for check in ["closed_shell", "surface_area"] {
-            assert_eq!(
-                status(&report.verification_checks()[0]["geometry"], check),
-                "fail"
-            );
+        let geometry = &report.verification_checks()[0]["geometry"];
+        assert_eq!(status(geometry, "surface_area"), "fail");
+        let closure = &geometry["bodies"][0]["checks"]["closed_shell"];
+        // Older evaluators expose no closure measurement. Keep that evidence
+        // explicitly unchecked; the measured area still rejects this open box.
+        if closure.get("source").is_some() {
+            assert_eq!(closure["status"], "fail");
+        } else {
+            assert_eq!(closure["status"], "not_checked");
+            assert_eq!(closure["reason"], "Source or replay closure is unavailable");
         }
         for (scale, depth, differs, check) in [
             (1.0, 10.0, false, "volume"),
@@ -1066,6 +1435,7 @@ mod tests {
                 Expected {
                     solids: 1,
                     sheets: 0,
+                    ..Expected::default()
                 },
                 None,
                 &model(),

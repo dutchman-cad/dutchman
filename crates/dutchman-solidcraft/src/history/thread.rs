@@ -13,7 +13,25 @@ pub(super) fn map(
     report: &mut Report,
 ) -> Result<Value, String> {
     if definition.get("modeled").and_then(Value::as_bool) == Some(true) {
-        return Err("a modeled thread is not supported yet".to_owned());
+        // A nominal designation is not a helical construction recipe. In particular,
+        // CADIR's CosmeticThread does not carry hand, class or the actual groove profile.
+        // SolidCraft's modeled option cannot recover those facts. Do not turn this into
+        // an annotation on the unthreaded prefix: that would discard real geometry.
+        let designation = definition
+            .get("designation")
+            .and_then(Value::as_str)
+            .filter(|text| text.len() <= 128)
+            .map(|text| format!(" {text:?}"))
+            .unwrap_or_default();
+        report.push_coded(
+            Severity::Degraded,
+            describe(feature),
+            "history/modeled-thread-retained",
+            format!(
+                "Modeled thread{designation} kept in the imported final geometry; its hand, tolerance class and exact groove profile are not resolved in CADIR, so an exact editable thread is not supported yet"
+            ),
+        );
+        return Err("a modeled thread's hand, tolerance class and exact groove profile are not resolved; an exact editable thread is not supported yet".to_owned());
     }
     let diameter = number(definition.get("diameter")).filter(|v| *v > 0.0);
     let pitch = number(definition.get("pitch")).filter(|v| *v > 0.0);
@@ -45,25 +63,54 @@ pub(super) fn map(
             ));
         }
         if inch || unified {
-            return Err(format!(
-                "its thread designation {source:?} agrees with its numbers, but a UNC/UNF cosmetic Thread feature is not supported yet by SolidCraft"
-            ));
+            unified_gate(ctx)?;
+            unified_name(source, major)?
+        } else {
+            // Write the table's nominal size, never the rounded secondary numbers.
+            format!("M{major}x{lead}")
         }
-        // Write the table's nominal size, never the rounded secondary numbers.
-        format!("M{major}x{lead}")
     } else {
         if unified {
-            return Err("a UNC/UNF cosmetic thread requires a designation and is not supported yet by SolidCraft".to_owned());
+            unified_gate(ctx)?;
+            return Err(
+                "a UNC/UNF cosmetic thread requires a designation that names its size".to_owned(),
+            );
         }
         if pitch >= diameter {
             return Err("cosmetic threads require a resolved diameter and pitch".to_owned());
         }
         format!("M{diameter}x{pitch}")
     };
-    let face = cylinder_point(
+    let (face, radius, axis, radial) = cylinder_point(
         ctx,
         definition.get("face").ok_or("its thread face is missing")?,
     )?;
+    let nominal = definition
+        .get("designation")
+        .and_then(Value::as_str)
+        .and_then(|source| designation_size(source).ok())
+        .map_or(diameter, |(major, _, _)| major);
+    if let Some(sketched) = resized_by_thread(ctx, axis, radius, nominal) {
+        // Fusion sizes the face to the thread class's diameter (the middle of its
+        // tolerance range), where the sketch kept the nominal size. A SolidCraft cosmetic
+        // thread changes nothing, so the same resize is written as its own offset-face
+        // feature on the sketched cylinder, just before the annotation.
+        let offset = ((radius - sketched) * 1e9).round() / 1e9;
+        let nominal_point = [
+            face[0] + radial[0] * (-offset),
+            face[1] + radial[1] * (-offset),
+            face[2] + radial[2] * (-offset),
+        ];
+        let body = single_live_body(ctx);
+        let id = ctx.id();
+        let mut resize = json!({"id": id, "type": "offset_face", "suppressed": false,
+            "name": format!("{} size", name(feature).unwrap_or("Thread")),
+            "faces": [nominal_point], "distance": format!("{offset} mm")});
+        if let (Some(body), Some(fields)) = (body, resize.as_object_mut()) {
+            fields.insert("body".to_owned(), json!(body));
+        }
+        ctx.extra.push(resize);
+    }
     let length = match definition.pointer("/extent/kind").and_then(Value::as_str) {
         Some("through") => None,
         Some("blind") => Some(
@@ -130,15 +177,19 @@ fn designation_size(source: &str) -> Result<(f64, f64, bool), String> {
                 "its cosmetic thread designation does not resolve a nominal size".to_owned()
             });
     }
+    let (upper, _) = split_class(&upper);
     let unified = upper
         .strip_suffix(" UNC")
-        .or_else(|| upper.strip_suffix(" UNF"));
+        .or_else(|| upper.strip_suffix(" UNF"))
+        .or_else(|| upper.strip_suffix(" UNEF"));
     let parsed = unified.and_then(|size| {
         let (diameter, tpi) = size.trim().split_once('-')?;
         let inches = if let Some((n, d)) = diameter.split_once('/') {
             let n = n.parse::<f64>().ok()?;
             let d = d.parse::<f64>().ok()?;
             (d > 0.0).then_some(n / d)?
+        } else if let Some(gauge) = numbered_size(diameter) {
+            gauge
         } else {
             diameter.parse::<f64>().ok()?
         };
@@ -151,10 +202,70 @@ fn designation_size(source: &str) -> Result<(f64, f64, bool), String> {
     parsed.ok_or_else(|| "its cosmetic thread designation is not supported yet".to_owned())
 }
 
+/// Refuses a Unified thread on a target without Unified thread support.
+fn unified_gate(ctx: &Context) -> Result<(), String> {
+    if crate::VersionGate::UnifiedThread.supported(ctx.target_version) {
+        return Ok(());
+    }
+    Err("Unified threads need SolidCraft 0.50 or newer".to_owned())
+}
+
+/// Splits a trailing ASME B1.1 class (`-2A` external, `-2B` internal) off an upper-case
+/// designation such as `1/4-20 UNC-2A`.
+fn split_class(upper: &str) -> (&str, Option<&str>) {
+    if let Some((rest, class)) = upper.rsplit_once('-') {
+        let series = rest.rsplit(char::is_whitespace).next().unwrap_or_default();
+        if matches!(series, "UNC" | "UNF" | "UNEF")
+            && matches!(class, "1A" | "2A" | "3A" | "1B" | "2B" | "3B")
+        {
+            return (rest, Some(class));
+        }
+    }
+    (upper, None)
+}
+
+/// A Unified designation in SolidCraft's spelling (solidcraft#20136): `<size>-<TPI> <series>`
+/// with a leading hash on a numbered size and the source's class, when it states one. A
+/// source with no class gives none; SolidCraft takes the side from the face.
+fn unified_name(source: &str, major: f64) -> Result<String, String> {
+    let upper = source.trim().to_ascii_uppercase();
+    let (body, class) = split_class(&upper);
+    let parts = body
+        .rsplit_once(char::is_whitespace)
+        .and_then(|(size, series)| {
+            let (diameter, tpi) = size.trim().split_once('-')?;
+            Some((diameter.trim(), tpi.trim(), series))
+        });
+    let (diameter, tpi, series) =
+        parts.ok_or("its cosmetic thread designation is not supported yet")?;
+    let size = match numbered_size(diameter) {
+        Some(inches) if (inches * 25.4 - major).abs() < 1e-6 => {
+            format!("#{}", diameter.trim_start_matches('#'))
+        }
+        _ => diameter.to_owned(),
+    };
+    Ok(match class {
+        Some(class) => format!("{size}-{tpi} {series}-{class}"),
+        None => format!("{size}-{tpi} {series}"),
+    })
+}
+
+/// Unified numbered screw sizes #0 to #12 give a gauge number, not inches: the major
+/// diameter is 0.060 + 0.013 x N inches. A bare integer 0..=12 or one with a leading
+/// hash is a gauge; fractions, decimals and inch marks are not.
+fn numbered_size(text: &str) -> Option<f64> {
+    let digits = text.trim().strip_prefix('#').unwrap_or(text.trim());
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let gauge = digits.parse::<u32>().ok().filter(|n| *n <= 12)?;
+    Some(0.060 + 0.013 * f64::from(gauge))
+}
+
 /// A cosmetic annotation does not change topology. Its final face can therefore supply a
 /// pick, unlike a cut or blend. Require a complete cylindrical band between two circular
 /// rims, so the midpoint is proven inside the selected face, away from its boundaries.
-fn cylinder_point(ctx: &Context, selection: &Value) -> Result<V3, String> {
+fn cylinder_point(ctx: &Context, selection: &Value) -> Result<(V3, f64, V3, V3), String> {
     if selection.get("kind").and_then(Value::as_str) == Some("historical") {
         return Err(
             "its historical thread face has no resolved input surface geometry yet".to_owned(),
@@ -187,7 +298,7 @@ fn cylinder_point(ctx: &Context, selection: &Value) -> Result<V3, String> {
     })
 }
 
-fn band_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<V3> {
+fn band_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<(V3, f64, V3, V3)> {
     let origin = v3(geometry.get("origin"))?;
     let axis = unit(v3(geometry.get("axis"))?)?;
     let radial = unit(v3(geometry.get("ref_direction"))?)?;
@@ -250,7 +361,57 @@ fn band_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<V3> {
     for (i, coordinate) in point.iter_mut().enumerate() {
         *coordinate = origin.get(i)? + axis.get(i)? * ((a + b) * 0.5) + radial.get(i)? * radius;
     }
-    Some(point)
+    Some((point, radius, axis, radial))
+}
+
+/// The one earlier body a pick can be scoped to (SolidCraft 0.45 and later); none when
+/// there are several or the target does not scope picks.
+fn single_live_body(ctx: &Context) -> Option<String> {
+    if ctx.target_version < crate::SolidCraftVersion::V0_45_0 {
+        return None;
+    }
+    let live: std::collections::BTreeSet<_> = ctx
+        .named_bodies
+        .iter()
+        .map(|(_, name)| name)
+        .chain(ctx.generated_bodies.iter().map(|(_, name)| name))
+        .collect();
+    let mut live = live.into_iter();
+    match (live.next(), live.next()) {
+        (Some(name), None) => Some(name.clone()),
+        _ => None,
+    }
+}
+
+/// Fusion can store a cosmetic thread's face at the thread class's diameter (Ø9.85 for an M10
+/// thread) while the sketch that made the cylinder keeps the nominal size (Ø10). A SolidCraft
+/// cosmetic thread changes nothing, so the sketch's size, not the stored face's, would be rebuilt
+/// unless the resize is written too.
+/// The sketch's radius when an earlier mapped sketch along the thread's axis has a circle of
+/// the nominal size and the stored face is slightly smaller (within a class allowance of 3 %).
+fn resized_by_thread(ctx: &Context, axis: V3, radius: f64, nominal: f64) -> Option<f64> {
+    let wanted = nominal / 2.0;
+    let shrink = wanted - radius;
+    if !(shrink > 1e-4 && shrink <= 0.03 * wanted) {
+        return None;
+    }
+    ctx.sketches
+        .iter()
+        .filter(|(_, mapped)| dot(mapped.normal, axis).abs() >= 1.0 - 1e-9)
+        .find_map(|(id, _)| {
+            ctx.arena("sketch_entities")
+                .iter()
+                .filter(|entity| {
+                    entity.get("sketch").and_then(Value::as_str) == Some(id.as_str())
+                        && entity.get("construction").and_then(Value::as_bool) != Some(true)
+                        && entity.pointer("/geometry/kind").and_then(Value::as_str)
+                            == Some("circle")
+                })
+                .find_map(|entity| {
+                    number(entity.pointer("/geometry/radius"))
+                        .filter(|sketched| (sketched - wanted).abs() <= 1e-6)
+                })
+        })
 }
 
 #[cfg(test)]
@@ -330,29 +491,136 @@ mod tests {
         }
     }
 
-    #[test]
-    fn unified_table_units_agree_but_the_target_thread_feature_is_not_supported() {
+    fn unified_definition(designation: &str, diameter: f64, pitch: f64) -> Value {
+        let mut d = definition();
+        d["standard"] = json!("ANSI Unified Screw Threads");
+        d["designation"] = json!(designation);
+        d["diameter"] = json!(diameter);
+        d["pitch"] = json!(pitch);
+        d
+    }
+
+    fn unified_result(designation: &str, diameter: f64, pitch: f64) -> Result<Value, String> {
         let model = model();
-        for (designation, diameter, pitch) in [
-            ("1/4-20 UNC", 6.35, 1.27),
-            ("1/4-28 UNF", 6.35, 0.907),
-            ("5/16-18 UNC", 7.94, 18.0),
-        ] {
-            let mut d = definition();
-            d["standard"] = json!("ANSI Unified Screw Threads");
-            d["designation"] = json!(designation);
-            d["diameter"] = json!(diameter);
-            d["pitch"] = json!(pitch);
-            let reason = map(
-                &json!({}),
-                &d,
-                &mut Context::testing(&model),
-                &mut Report::default(),
-            )
-            .unwrap_err();
-            assert!(reason.contains("agrees with its numbers"), "{reason}");
-            assert!(reason.contains("not supported yet by SolidCraft"));
+        map(
+            &json!({}),
+            &unified_definition(designation, diameter, pitch),
+            &mut Context::testing(&model),
+            &mut Report::default(),
+        )
+    }
+
+    const UNIFIED_CASES: [(&str, f64, f64); 8] = [
+        ("2-56 UNC", 2.1844, 0.4536),
+        ("#2-56 UNC", 2.1844, 0.4536),
+        ("#10-32 UNF", 4.826, 0.79375),
+        ("#0-80 UNF", 1.524, 0.3175),
+        ("12-24 UNC", 5.4864, 1.0583),
+        ("1/4-20 UNC", 6.35, 1.27),
+        ("1/4-28 UNF", 6.35, 0.907),
+        ("1/4-20 UNC-2B", 6.35, 1.27),
+    ];
+
+    fn unified_result_for(
+        target: &str,
+        designation: &str,
+        diameter: f64,
+        pitch: f64,
+    ) -> Result<Value, String> {
+        let model = model();
+        let mut ctx = Context::testing(&model);
+        ctx.target_version = target.parse().unwrap();
+        map(
+            &json!({}),
+            &unified_definition(designation, diameter, pitch),
+            &mut ctx,
+            &mut Report::default(),
+        )
+    }
+
+    #[test]
+    fn unified_threads_are_refused_before_050() {
+        for (designation, diameter, pitch) in UNIFIED_CASES {
+            let reason = unified_result_for("0.49.1", designation, diameter, pitch).unwrap_err();
+            assert_eq!(
+                reason, "Unified threads need SolidCraft 0.50 or newer",
+                "{designation}"
+            );
         }
+        for minor in 19..=49 {
+            let reason =
+                unified_result_for(&format!("0.{minor}.0"), "1/4-20 UNC", 6.35, 1.27).unwrap_err();
+            assert!(reason.contains("0.50 or newer"), "0.{minor}: {reason}");
+        }
+        let model = model();
+        let mut ctx = Context::testing(&model);
+        ctx.target_version = "0.49.1".parse().unwrap();
+        let mut d = unified_definition("1/4-20 UNC", 6.35, 1.27);
+        d.as_object_mut().unwrap().remove("designation");
+        let reason = map(&json!({}), &d, &mut ctx, &mut Report::default()).unwrap_err();
+        assert!(reason.contains("0.50 or newer"), "{reason}");
+    }
+
+    #[test]
+    fn a_quarter_twenty_unc_thread_is_a_thread_feature_on_050_and_falls_back_on_049() {
+        let written = unified_result_for("0.50.0", "1/4-20 UNC", 6.35, 1.27).unwrap();
+        assert_eq!(written["type"], "thread");
+        assert_eq!(written["designation"], "1/4-20 UNC");
+        let newer = unified_result_for("0.51.0", "1/4-20 UNC", 6.35, 1.27).unwrap();
+        assert_eq!(newer["type"], "thread");
+        let reason = unified_result_for("0.49.1", "1/4-20 UNC", 6.35, 1.27).unwrap_err();
+        assert!(reason.contains("0.50 or newer"), "{reason}");
+    }
+
+    #[test]
+    fn a_supporting_target_gets_solidcrafts_unified_designation() {
+        for (designation, diameter, pitch, expected) in [
+            ("2-56 UNC", 2.1844, 0.4536, "#2-56 UNC"),
+            ("#2-56 UNC-2A", 2.1844, 0.4536, "#2-56 UNC-2A"),
+            ("#10-32 UNF", 4.826, 0.79375, "#10-32 UNF"),
+            ("1/4-20 UNC", 6.35, 1.27, "1/4-20 UNC"),
+            ("1/4-20 unc-2a", 6.35, 1.27, "1/4-20 UNC-2A"),
+            ("1/4-28 UNF-3A", 6.35, 0.907, "1/4-28 UNF-3A"),
+            ("1/4-20 UNC-2B", 6.35, 1.27, "1/4-20 UNC-2B"),
+            ("5/16-18 UNC-1B", 7.94, 1.411, "5/16-18 UNC-1B"),
+        ] {
+            let out = unified_result(designation, diameter, pitch)
+                .unwrap_or_else(|reason| panic!("{designation}: {reason}"));
+            assert_eq!(out["type"], "thread");
+            assert_eq!(out["designation"], expected, "{designation}");
+        }
+        // A wrong size is still refused.
+        let reason = unified_result("#2-56 UNC-2A", 6.35, 0.4536).unwrap_err();
+        assert!(reason.contains("specifies diameter 2.18"), "{reason}");
+    }
+
+    #[test]
+    fn numbered_unified_sizes_use_the_gauge_diameter() {
+        for (designation, diameter, pitch) in UNIFIED_CASES {
+            let (major, lead, inch) = designation_size(designation).unwrap();
+            assert!(inch && (major - diameter).abs() < 1e-9, "{designation}");
+            assert!((lead - pitch).abs() < 1e-3, "{designation}");
+        }
+        assert!(designation_size("13-20 UNC").is_ok_and(|(major, _, _)| major > 300.0));
+        assert!(designation_size("#13-20 UNC").is_err());
+    }
+
+    #[test]
+    fn a_wrong_size_for_a_numbered_thread_is_still_refused() {
+        let model = model();
+        let mut d = definition();
+        d["standard"] = json!("ANSI Unified Screw Threads");
+        d["designation"] = json!("2-56 UNC");
+        d["diameter"] = json!(50.8);
+        d["pitch"] = json!(0.4536);
+        let reason = map(
+            &json!({}),
+            &d,
+            &mut Context::testing(&model),
+            &mut Report::default(),
+        )
+        .unwrap_err();
+        assert!(reason.contains("specifies diameter 2.18"), "{reason}");
     }
 
     #[test]
@@ -388,6 +656,65 @@ mod tests {
         assert!(!rounded_value_agrees(4.0, 3.5));
     }
 
+    fn class_sized_model(face_radius: f64, sketch_radius: f64) -> Value {
+        let mut model = model();
+        model["surfaces"][0]["geometry"]["value"]["radius"] = json!(face_radius);
+        for curve in model["curves"].as_array_mut().unwrap() {
+            curve["geometry"]["value"]["radius"] = json!(face_radius);
+        }
+        model["sketch_entities"] = json!([{"id": "e", "sketch": "s", "construction": false,
+            "geometry": {"kind": "circle", "center": {"u": 0.0, "v": 0.0}, "radius": sketch_radius}}]);
+        model
+    }
+
+    fn flat_sketch() -> super::super::sketch::Mapped {
+        super::super::sketch::Mapped {
+            feature: 1,
+            normal: [0.0, 0.0, 1.0],
+            origin: [0.0, 0.0, 0.0],
+            x_dir: [1.0, 0.0, 0.0],
+            y_dir: [0.0, 1.0, 0.0],
+            points: Vec::new(),
+            point_displacement: 0.0,
+            shapes: Default::default(),
+        }
+    }
+
+    #[test]
+    fn a_thread_whose_face_is_smaller_than_the_nominal_sketch_resizes_the_face_first() {
+        // An M10 thread: the sketch is the nominal 10 mm, Fusion's stored face the class's 9.85 mm.
+        let mut d = definition();
+        d["designation"] = json!("M10x1.5");
+        d["diameter"] = json!(10.0);
+        d["pitch"] = json!(1.5);
+        let model = class_sized_model(4.925, 5.0);
+        let mut ctx = Context::testing(&model);
+        ctx.sketches.insert("s".to_owned(), flat_sketch());
+        let out = map(&json!({}), &d, &mut ctx, &mut Report::default()).unwrap();
+        assert_eq!(out["type"], "thread");
+        assert_eq!(out["designation"], "M10x1.5");
+        assert_eq!(ctx.extra.len(), 1);
+        let resize = &ctx.extra[0];
+        assert_eq!(resize["type"], "offset_face");
+        // The pick lies on the sketched 10 mm cylinder; the move is inward to the stored size.
+        let pick = resize["faces"][0][0].as_f64().unwrap();
+        assert!((pick - 5.0).abs() < 1e-9, "{pick}");
+        assert_eq!(resize["faces"][0][2], 4.0);
+        assert_eq!(resize["distance"], "-0.075 mm");
+        // A face that matches the sketch, no such sketch, or a tapped hole's much smaller
+        // face (not a class allowance) needs no resize.
+        for (face, sketch, with_sketch) in [(5.0, 5.0, true), (4.925, 5.0, false), (4.2, 5.0, true)]
+        {
+            let model = class_sized_model(face, sketch);
+            let mut ctx = Context::testing(&model);
+            if with_sketch {
+                ctx.sketches.insert("s".to_owned(), flat_sketch());
+            }
+            assert!(map(&json!({}), &d, &mut ctx, &mut Report::default()).is_ok());
+            assert!(ctx.extra.is_empty());
+        }
+    }
+
     #[test]
     fn unspecified_construction_keeps_an_annotation_and_reports_the_gap() {
         let model = model();
@@ -402,18 +729,45 @@ mod tests {
     }
 
     #[test]
+    fn modeled_thread_keeps_its_designation_in_a_degraded_loss_without_picking_a_face() {
+        let model = json!({});
+        for designation in [Some("M3x0.5"), None] {
+            let mut d = definition();
+            d["modeled"] = json!(true);
+            d["designation"] = json!(designation);
+            let mut report = Report::default();
+            let reason =
+                map(&json!({}), &d, &mut Context::testing(&model), &mut report).unwrap_err();
+            assert!(reason.contains("exact groove profile"));
+            let loss = &report.losses()[0];
+            assert_eq!(loss.severity, Severity::Degraded);
+            assert_eq!(
+                loss.code.as_deref(),
+                Some("history/modeled-thread-retained")
+            );
+            assert!(loss.detail.contains("imported final geometry"));
+            if let Some(designation) = designation {
+                assert!(loss.detail.contains(designation));
+            }
+        }
+    }
+
+    #[test]
     fn cosmetic_thread_refuses_unproven_or_conflicting_data() {
         let model = model();
         let mut ctx = Context::testing(&model);
         for (field, value, reason) in [
-            ("modeled", json!(true), "modeled thread"),
             ("pitch", Value::Null, "resolved diameter and pitch"),
             (
                 "designation",
                 json!("M3x0.6"),
                 "specifies diameter 3 mm and pitch 0.6 mm",
             ),
-            ("standard", json!("UNC"), "not supported yet by SolidCraft"),
+            (
+                "standard",
+                json!("UNC"),
+                "requires a designation that names its size",
+            ),
             ("standard", json!("Trapezoidal metric"), "ISO metric"),
             ("designation", json!("M3x0.5-LH"), "class or hand"),
             ("extent", Value::Null, "extent is not resolved"),

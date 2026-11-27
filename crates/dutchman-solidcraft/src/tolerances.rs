@@ -105,14 +105,14 @@ pub fn report() -> Value {
             "mesh_chord_relative": MESH_CHORD_RELATIVE,
             "mesh_chord_floor_mm": MESH_CHORD_FLOOR_MM,
             "face_count": "not compared: SolidCraft merges faces that share a surface",
-            "centre": "the centre of each body's box, not its centre of mass",
+            "centre": "the center of each body's box, not its center of mass",
         },
         "source_comparison": {
             "parameter_relative": PARAMETER_RELATIVE,
             "parameter_scale_floor": 1.0,
             "centroid_min_mm": POSITION_MIN_MM,
             "centroid_diagonal_relative": POSITION_DIAGONAL_RELATIVE,
-            "counts": "informational: evaluated kernel face, edge and shell counts may differ for equivalent geometry",
+            "counts": "raw kernel counts are informational; available merged analytic face and edge counts must match; free-form or mesh totals are not compared; analytic surface-kind counts must match when available",
             "manifold": "not checked: no explicit evaluator result",
         },
         "stored_bodies": {
