@@ -69,3 +69,33 @@ pub(super) fn vector(value: &Value) -> Option<[f64; 3]> {
 pub(super) fn xyz(v: [f64; 3]) -> Value {
     json!({"x": v[0], "y": v[1], "z": v[2]})
 }
+
+/// The literal whole number of a count dimension, at least one.
+pub(super) fn count(dimension: &Value) -> Result<u64, String> {
+    match literal(dimension) {
+        Some(value) => value
+            .as_u64()
+            .filter(|count| *count >= 1)
+            .ok_or_else(|| "a count is not a positive whole number".to_owned()),
+        None => Err("a count is bound to a parameter, which is not projected yet".to_owned()),
+    }
+}
+
+/// The vector a construction resolved to, `None` when it states none.
+pub(super) fn resolved_vector(construction: &Value) -> Option<[f64; 3]> {
+    vector(construction.get("resolved")?)
+}
+
+/// The vector turned around.
+pub(super) fn reversed(v: [f64; 3]) -> [f64; 3] {
+    [-v[0], -v[1], -v[2]]
+}
+
+/// The midpoint of two points.
+pub(super) fn midpoint(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        f64::midpoint(a[0], b[0]),
+        f64::midpoint(a[1], b[1]),
+        f64::midpoint(a[2], b[2]),
+    ]
+}

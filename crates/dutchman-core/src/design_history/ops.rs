@@ -1,20 +1,60 @@
-//! The operations projected so far: extrusions and revolutions of whole sketches.
+//! The operations projected: extrusions and revolutions of whole sketches, holes, patterns,
+//! sheet-metal walls, and fillets and chamfers of witnessed straight edges.
 
 use serde_json::{json, Map, Value};
 
 use super::json::{kind, literal, number, payload, vector, xyz};
 use super::sketch::Sketches;
-use super::{extent, Plan};
+use super::{blend, extent, hole, pattern, sheet, Plan};
 
-type Projection = Result<(Value, Vec<String>), String>;
+/// What the projection of one operation writes.
+pub(super) struct Built {
+    /// The model-history operation.
+    pub definition: Value,
+    /// The ids of the feature rows the operation reads.
+    pub dependencies: Vec<String>,
+    /// The `model.feature_input_topologies` rows its edge selections name.
+    pub topologies: Vec<Value>,
+    /// What the projection leaves out of the operation, to report once the row stands.
+    pub notes: Vec<Note>,
+}
+
+impl Built {
+    pub(super) fn new(definition: Value, dependencies: Vec<String>) -> Self {
+        Self {
+            definition,
+            dependencies,
+            topologies: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+}
+
+/// A coded report entry for a projected feature.
+pub(super) struct Note {
+    pub code: &'static str,
+    pub message: String,
+}
+
+type Projection = Result<Built, String>;
 
 /// The model-history operation of a design operation, with the ids of the feature rows it
 /// reads. An operation outside the projected kinds, or one stating an operand not projected
-/// yet, is an `Err` naming what stops it.
-pub(super) fn project(operation: &Value, plan: &Plan, sketches: &Sketches<'_>) -> Projection {
+/// yet, is an `Err` naming what stops it. `feature` is the id of the feature that states it.
+pub(super) fn project(
+    feature: &str,
+    operation: &Value,
+    plan: &Plan,
+    sketches: &Sketches<'_>,
+) -> Projection {
     match kind(operation) {
         Some("extrude") => extrude(payload(operation), plan, sketches),
         Some("revolve") => revolve(payload(operation), plan, sketches),
+        Some("hole") => hole::project(payload(operation)),
+        Some("pattern") => pattern::project(payload(operation), plan),
+        Some("sheet_metal") => sheet::project(payload(operation), plan, sketches),
+        Some("fillet") => blend::fillet(feature, payload(operation)),
+        Some("chamfer") => blend::chamfer(feature, payload(operation)),
         Some("unresolved") => Err("the source states only its family".to_owned()),
         Some("native") => Err("the source states only its own kind".to_owned()),
         Some(other) => Err(format!("a {other} is not projected yet")),
@@ -23,7 +63,7 @@ pub(super) fn project(operation: &Value, plan: &Plan, sketches: &Sketches<'_>) -
 }
 
 /// The whole sketch a profile names, and the feature row that carries it.
-fn profile<'a>(
+pub(super) fn profile<'a>(
     selection: Option<&'a Value>,
     plan: &'a Plan,
     sketches: &Sketches<'_>,
@@ -127,6 +167,9 @@ pub(super) fn refuse_stated(
     known: &[&str],
     named: &[(&str, &str)],
 ) -> Result<(), String> {
+    if operation.is_null() {
+        return Ok(());
+    }
     let Some(fields) = operation.as_object() else {
         return Err("its operation is malformed".to_owned());
     };
@@ -256,7 +299,7 @@ fn extrude(operation: &Value, plan: &Plan, sketches: &Sketches<'_>) -> Projectio
     if !row.contains_key("extent") {
         return Err("it states no extent".to_owned());
     }
-    Ok((
+    Ok(Built::new(
         json!({"kind": "extrude", "value": row}),
         vec![carrier.to_owned()],
     ))
@@ -309,7 +352,7 @@ fn revolve(operation: &Value, plan: &Plan, sketches: &Sketches<'_>) -> Projectio
         json!({"kind": "resolved", "value": construction}),
     );
     row.insert("op".to_owned(), json!(required_op(output)?));
-    Ok((
+    Ok(Built::new(
         json!({"kind": "revolve", "value": row}),
         vec![carrier.to_owned()],
     ))

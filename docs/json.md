@@ -282,9 +282,12 @@ claiming that the decoder completed more work. Final report schemas remain uncha
 MCP and the web app return their final reports without a progress stream.
 
 A CADIR v11 history stated only in the design layer is projected into model history
-before the history is written: sketches and extrudes and revolves of whole sketches
-become history features, each marked with the source property `projected_from=design`.
-The reader adds five loss codes, all at stage `map` and subject `design history` or the
+before the history is written: sketches and extrudes and revolves of whole sketches,
+holes, linear, circular and mirror patterns, sheet-metal walls, and fillets and chamfers of
+straight edges named by a witness become history features, each marked with the source
+property `projected_from=design`. A witnessed edge also writes one row of the model's feature
+input topologies, with the end points and direction the witness states and no faces. The
+reader adds eight loss codes, all at stage `map` and subject `design history` or the
 feature's name: `design-history/projected` (Info) says the history was read from the design
 layer; `design-history/feature-not-projected` (Degraded) names a feature, or an operand of
 one, that is not projected yet, and the history stops there; `design-history/not-projected`
@@ -294,8 +297,15 @@ a root that is not one timeline), so conversion keeps the final geometry.
 rolled-back features are written as active features.
 `design-history/construction-unstated` (Info, subject the sketch's name) says the source did
 not state which entities of that sketch are construction geometry and they were read as
-profile geometry; the sketch's history row carries `source_properties.construction_stated=false`. This adds no report fields or schema
-version. See [the port audit](cadir-v11.md).
+profile geometry; the sketch's history row carries `source_properties.construction_stated=false`.
+`design-history/thread-not-projected` (Degraded, subject the hole's name) says a hole's thread
+states no pitch, hand, standard or modeled state, or a length that is not read yet, so the hole
+is read as a plain hole of its bore diameter. `design-history/sheet-metal-rule-not-projected`
+(Degraded, subject the wall's name) says a wall names a sheet-metal rule whose bend radius and
+bend allowance are not read; its thickness is. `design-history/chamfer-faces-unstated`
+(Degraded, subject the chamfer's name) says the faces an unequal or angled chamfer measures
+its setbacks on are not stated, so they are read from the rebuilt body. This adds no report
+fields or schema version. See [the port audit](cadir-v11.md).
 
 ## Exit codes
 

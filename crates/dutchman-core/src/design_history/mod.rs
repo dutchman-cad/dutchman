@@ -14,9 +14,13 @@
 //! `source_properties.projected_from = "design"`, and the report says the history came from the
 //! design layer.
 
+mod blend;
 mod extent;
+mod hole;
 mod json;
 mod ops;
+mod pattern;
+mod sheet;
 mod sketch;
 mod timeline;
 
@@ -45,6 +49,13 @@ pub const CODE_DECLINED: &str = "design-history/not-projected";
 pub const CODE_ROLLED_BACK: &str = "design-history/rolled-back";
 /// The loss code of a sketch whose entities the design does not state as construction or not.
 pub const CODE_CONSTRUCTION: &str = "design-history/construction-unstated";
+
+/// The loss code of a thread left out of a projected hole.
+pub const CODE_THREAD: &str = "design-history/thread-not-projected";
+/// The loss code of a sheet-metal rule that a projected wall does not carry.
+pub const CODE_SHEET_RULE: &str = "design-history/sheet-metal-rule-not-projected";
+/// The loss code of chamfer setback faces the design leaves unstated.
+pub const CODE_REFERENCE_FACES: &str = "design-history/chamfer-faces-unstated";
 
 /// What the projection wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,7 +215,7 @@ impl Plan {
         }
         let built = match refusal {
             Some(reason) => Err(reason),
-            None => ops::project(operation, self, sketches),
+            None => ops::project(id, operation, self, sketches),
         };
         out.operation_feature(header, operation, built, report);
     }
@@ -258,6 +269,7 @@ struct Rows {
     features: Vec<Value>,
     sketches: Vec<Value>,
     entities: Vec<Value>,
+    topologies: Vec<Value>,
     unprojected: usize,
     rolled_back: usize,
 }
@@ -272,7 +284,7 @@ struct Header {
 }
 
 type BuiltSketch = Result<(Value, Value, Vec<Value>, bool), String>;
-type BuiltOperation = Result<(Value, Vec<String>), String>;
+type BuiltOperation = Result<ops::Built, String>;
 
 impl Rows {
     fn row(&self, header: &Header) -> Value {
@@ -357,13 +369,22 @@ impl Rows {
     ) {
         let label = kind(operation).unwrap_or("unknown");
         let reason = match built {
-            Ok((definition, dependencies)) => {
+            Ok(built) => {
                 let mut row = self.row(&header);
-                set_dependencies(&mut row, &dependencies);
-                set_operation(&mut row, definition);
-                if admits(&row) {
+                set_dependencies(&mut row, &built.dependencies);
+                set_operation(&mut row, built.definition);
+                if admits(&row) && built.topologies.iter().all(admits_topology) {
+                    for note in built.notes {
+                        report.push_coded(
+                            Severity::Degraded,
+                            &header.name,
+                            note.code,
+                            note.message,
+                        );
+                    }
                     self.rolled_back += usize::from(header.rolled_back);
                     self.features.push(row);
+                    self.topologies.extend(built.topologies);
                     return;
                 }
                 "its row is not accepted".to_owned()
@@ -440,6 +461,14 @@ impl Rows {
                 Err(_) => return decline(ir, report, "a projected sketch entity was not accepted"),
             }
         }
+        for row in self.topologies {
+            match serde_json::from_value(row) {
+                Ok(topology) => model.feature_input_topologies.push(topology),
+                Err(_) => {
+                    return decline(ir, report, "a projected input topology was not accepted")
+                }
+            }
+        }
         if self.rolled_back > 0 {
             report.push_coded(
                 Severity::Degraded,
@@ -475,6 +504,11 @@ fn admits(row: &Value) -> bool {
     serde_json::from_value::<cadmpeg_ir::features::Feature>(row.clone()).is_ok()
 }
 
+fn admits_topology(row: &Value) -> bool {
+    serde_json::from_value::<cadmpeg_ir::features::evaluation::FeatureInputTopology>(row.clone())
+        .is_ok()
+}
+
 fn admits_sketch(row: &Value, sketch: &Value, entities: &[Value]) -> bool {
     admits(row)
         && serde_json::from_value::<cadmpeg_ir::sketches::Sketch>(sketch.clone()).is_ok()
@@ -488,6 +522,7 @@ fn decline(ir: &mut CadIr, report: &mut Report, reason: &str) -> Option<Projecte
     ir.model.features.clear();
     ir.model.sketches.clear();
     ir.model.sketch_entities.clear();
+    ir.model.feature_input_topologies.clear();
     report.push_coded(
         Severity::Degraded,
         SUBJECT,

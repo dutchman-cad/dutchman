@@ -3250,4 +3250,109 @@ mod tests {
             &vec![("Other".to_owned(), after[0].1.clone())]
         ));
     }
+
+    /// The example cube with a design-only history: a 10 mm block, then a round that selects
+    /// the block's edge along X at y = 0, z = 10 by `witness`. The history is projected the way
+    /// a decode does, and the round's model row and its input topology come back.
+    fn projected_round(witness: Value) -> Value {
+        let ir = cadmpeg_ir::examples::unit_cube().unwrap();
+        let mut wire = serde_json::to_value(&ir).unwrap();
+        let corners = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        let entities: Vec<Value> = (0..4)
+            .map(|k| {
+                let (a, b) = (corners[k], corners[(k + 1) % 4]);
+                json!({"id": format!("test:design:sketch-entity#{k}"),
+                    "sketch": "test:design:sketch#1",
+                    "definition": {"kind": "free", "value": {"kind": "line", "value": {
+                        "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}}},
+                    "roles": [], "native_options": {}, "source_settings": {}})
+            })
+            .collect();
+        let design = &mut wire["design"];
+        design["scopes"] = json!([{"definition": "test:design:product-definition#1",
+            "roots": ["test:design:container#1"], "active_arrangements": [], "occurrences": {},
+            "current": [], "unproduced": []}]);
+        design["containers"] = json!([{"kind": "ordered", "value": {
+            "id": "test:design:container#1", "kind": "timeline", "folders": [],
+            "members": [{"kind": "feature", "value": "test:design:feature#1"},
+                {"kind": "feature", "value": "test:design:feature#2"}],
+            "rollback": {"kind": "end"}}}]);
+        design["sketches"] = json!([{"id": "test:design:sketch#1", "owner": "test:design:feature#1",
+            "name": "Sketch", "solve": {"status": "current"}, "native_options": {},
+            "source_settings": {},
+            "plane": {"kind": "placed", "inputs": [], "after": [], "resolved_in": {}, "resolved": {
+                "origin": {"x": 0.0, "y": 0.0, "z": 0.0}, "x_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+                "y_axis": {"x": 0.0, "y": 1.0, "z": 0.0}, "z_axis": {"x": 0.0, "y": 0.0, "z": 1.0}}}}]);
+        design["sketch_entities"] = Value::Array(entities);
+        design["features"] = json!([
+            {"id": "test:design:feature#1", "name": "Block", "definition": {"operation": {
+                "kind": "extrude", "value": {
+                    "profile": {"at": {"kind": "input"}, "picks": {"kind": "named", "value": [
+                        {"target": {"kind": "sketch", "value": "test:design:sketch#1"}}]}},
+                    "direction": {"kind": "profile_normal"}, "origin": {"kind": "profile_plane"},
+                    "span": {"kind": "between", "start": {"kind": "at_origin"}, "end": {
+                        "kind": "amount", "value": {"kind": "literal", "value": 10.0}}},
+                    "output": {"body": {"kind": "solid"}, "boolean": {"kind": "new_body"}},
+                    "native_options": {}, "source_settings": {}}}}},
+            {"id": "test:design:feature#2", "name": "Round", "definition": {"operation": {
+                "kind": "fillet", "value": {"sets": [{"kind": "edges",
+                    "edges": {"at": {"kind": "input"}, "picks": {"kind": "named", "value": [
+                        {"target": {"kind": "native", "value": {}}, "witness": witness}]}},
+                    "section": {"size": {"kind": "radius", "value": {"kind": "literal", "value": 1.0}}},
+                    "hold": [null, null]}],
+                    "controls": {"corners": [], "limits": [], "transitions": []},
+                    "native_options": {}, "source_settings": {}}}}},
+        ]);
+        let mut ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        dutchman_core::design_history::project(&mut ir, &mut dutchman_core::Report::default())
+            .unwrap();
+        serde_json::to_value(&ir).unwrap()["model"].clone()
+    }
+
+    fn round_inputs(model: &Value) -> Result<(Vec<super::Input>, Vec<super::V3>), String> {
+        let ctx = Context::testing(model);
+        let round = model["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|feature| feature["name"] == "Round")
+            .unwrap();
+        let selection = round
+            .pointer("/definition/value/value/groups/0/edges")
+            .unwrap();
+        super::historical(round, selection, &ctx, false)
+    }
+
+    #[test]
+    fn a_witnessed_straight_box_edge_is_accepted_as_an_input_edge() {
+        let model = projected_round(json!({
+            "endpoints": [{"x": 0.0, "y": 0.0, "z": 10.0}, {"x": 10.0, "y": 0.0, "z": 10.0}],
+            "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "curves": []}));
+        let (inputs, points) = round_inputs(&model).unwrap();
+        assert_eq!(points, vec![[5.0, 0.0, 10.0]]);
+        let [input] = inputs.as_slice() else {
+            panic!("one input edge");
+        };
+        assert!(input.straight);
+        assert!(input.circle.is_none());
+        assert_eq!(input.ends, ([0.0, 0.0, 10.0], [10.0, 0.0, 10.0]));
+        assert!((input.length - 10.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_witness_that_is_not_a_straight_edge_is_refused_by_the_mapper() {
+        // The direction does not run along the end points.
+        let model = projected_round(json!({
+            "endpoints": [{"x": 0.0, "y": 0.0, "z": 10.0}, {"x": 10.0, "y": 0.0, "z": 10.0}],
+            "direction": {"x": 0.0, "y": 1.0, "z": 0.0}, "curves": []}));
+        assert!(round_inputs(&model).is_err());
+        // No direction: the row states no tangent.
+        let model = projected_round(json!({
+            "endpoints": [{"x": 0.0, "y": 0.0, "z": 10.0}, {"x": 10.0, "y": 0.0, "z": 10.0}],
+            "curves": []}));
+        assert_eq!(
+            round_inputs(&model).unwrap_err(),
+            "its input edge tangent is missing"
+        );
+    }
 }

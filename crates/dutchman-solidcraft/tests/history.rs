@@ -1976,6 +1976,32 @@ fn a_symmetric_through_all_extent_is_mapped() {
     );
 }
 
+#[test]
+fn a_two_sided_extent_through_everything_both_ways_is_a_symmetric_one() {
+    let through = json!({"termination": {"kind": "through_all"}});
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let two_sided = json!({"kind": "two_sided", "first": through.clone(), "second": through});
+    let model = cube_with_history(10.0, whole_sketch(), Some(two_sided));
+    let (document, _) = convert(&model, &writer);
+    assert_eq!(
+        document["features"][1]["extent"],
+        json!({"direction": "symmetric", "convention": "total_distance",
+               "distance": "0 mm", "through_all": true})
+    );
+    // Through everything one way and a blind distance the other has no SolidCraft form yet.
+    let mixed = json!({"kind": "two_sided",
+        "first": {"termination": {"kind": "blind", "length": 4.0}},
+        "second": {"termination": {"kind": "through_all"}}});
+    let model = cube_with_history(10.0, whole_sketch(), Some(mixed));
+    let (document, report) = convert(&model, &writer);
+    assert_ne!(document["features"][1]["type"], "extrude");
+    assert!(
+        history_line(&report).contains("non-blind extrude end against the sketch normal"),
+        "{}",
+        history_line(&report)
+    );
+}
+
 /// The final cube with a blocked feature between two otherwise mapped sketch features.
 /// The wire row of the feature with this id. cadmpeg writes every arena sorted by id, so a
 /// fixture that edits a feature after serializing a model finds it by id, never by position.
@@ -22528,4 +22554,501 @@ fn a_prefix_that_holds_the_source_shape_stays_when_only_a_blend_follows() {
             .any(|f| f["type"] == "extrude"),
         "{document}"
     );
+}
+
+// Parity: the history a design states and the same history stated as model rows by hand map
+// to the same SolidCraft features.
+
+fn design_feature_id(n: u32) -> String {
+    format!("se:design:feature#{n}")
+}
+
+fn design_sketch_id(n: u32) -> String {
+    format!("se:design:sketch#{n}")
+}
+
+/// The id of the history row that carries the sketch `n` of the feature `owner`.
+fn carried_sketch_id(owner: u32, n: u32) -> String {
+    format!("{}/sketch/{n}", design_feature_id(owner))
+}
+
+/// One history row stated by hand: its id, name, operation and the rows it reads.
+fn legacy_row(
+    id: String,
+    name: &str,
+    operation: Value,
+    dependencies: &[String],
+) -> (String, String, Value, Vec<String>) {
+    (id, name.to_owned(), operation, dependencies.to_vec())
+}
+
+fn legacy_sketch_row(owner: u32, n: u32) -> (String, String, Value, Vec<String>) {
+    legacy_row(
+        carried_sketch_id(owner, n),
+        &format!("Sketch {n}"),
+        json!({"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": design_sketch_id(n)}}}),
+        &[],
+    )
+}
+
+/// The example cube with `rows` as its model history and the 10 mm square sketches `sketches`
+/// on XY, stated the way `design_cube` states them.
+fn legacy_cube(
+    sketches: &[u32],
+    rows: Vec<(String, String, Value, Vec<String>)>,
+    topologies: Vec<Value>,
+) -> Model {
+    let ir = cadmpeg_ir::examples::unit_cube().unwrap();
+    let mut wire = serde_json::to_value(&ir).unwrap();
+    let mut sketch_rows = Vec::new();
+    let mut entities = Vec::new();
+    for &n in sketches {
+        sketch_rows.push(
+            json!({"id": design_sketch_id(n), "name": format!("Sketch {n}"),
+            "placement": {"kind": "resolved", "frame": {
+                "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}}},
+            "profiles": []}),
+        );
+        let corners = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        for k in 0..4 {
+            let (a, b) = (corners[k], corners[(k + 1) % 4]);
+            entities.push(json!({"id": format!("se:design:sketch-entity#{n}{k}"),
+                "sketch": design_sketch_id(n), "construction": false, "endpoint_refs": [],
+                "geometry": {"kind": "line", "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}}));
+        }
+    }
+    let features: Vec<Value> = rows
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, (id, name, operation, dependencies))| {
+            json!({"id": id, "ordinal": ordinal, "name": name, "dependencies": dependencies,
+                "source_properties": {}, "source_content": [], "outputs": [],
+                "definition": {"kind": "operation", "value": operation}})
+        })
+        .collect();
+    let model = &mut wire["model"];
+    model["sketches"] = Value::Array(sketch_rows);
+    model["sketch_entities"] = Value::Array(entities);
+    model["features"] = Value::Array(features);
+    model["feature_input_topologies"] = Value::Array(topologies);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        fidelity: None,
+        name: "cube".to_owned(),
+        source_file: Some("cube.par".to_owned()),
+        source_step: None,
+        assembly: None,
+        merge_bodies: false,
+    }
+}
+
+fn legacy_extrude(sketch: u32, length: f64, op: &str) -> Value {
+    json!({"kind": "extrude", "value": {
+        "profile": {"kind": "planar", "value": {"kind": "sketch", "value": design_sketch_id(sketch)}},
+        "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"},
+        "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": length}}},
+        "op": op, "solid": true}})
+}
+
+/// The rows of a 10 mm block built by feature 1 from its own sketch 1.
+fn legacy_block() -> Vec<(String, String, Value, Vec<String>)> {
+    vec![
+        legacy_sketch_row(1, 1),
+        legacy_row(
+            design_feature_id(1),
+            "Block",
+            legacy_extrude(1, 10.0, "new_body"),
+            &[carried_sketch_id(1, 1)],
+        ),
+    ]
+}
+
+/// A design of the block of `legacy_block` followed by `more` features.
+fn design_block_then(more: Vec<Value>, extra_sketches: &[(u32, u32)]) -> Model {
+    let mut features = vec![design_feature(
+        1,
+        "Block",
+        design_extrude(
+            1,
+            design_span(json!({"kind": "at_origin"}), design_amount(10.0)),
+            json!({"kind": "new_body"}),
+        ),
+    )];
+    features.extend(more);
+    let mut sketches = vec![(1, 1)];
+    sketches.extend_from_slice(extra_sketches);
+    design_cube(features, &sketches, None)
+}
+
+fn features_rebuilt(report: &Report) -> String {
+    history_line(report)
+        .split(" features")
+        .next()
+        .unwrap()
+        .to_owned()
+}
+
+/// Maps both documents without a replay and requires the same SolidCraft features and the
+/// same account of the history. A blend waits on SolidCraft's replay to find its edges, so the
+/// history stops there with that reason for both documents.
+fn assert_same_history_until_replay(legacy: &Model, design: Model) {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (expected, legacy_report) = convert(legacy, &writer);
+    let (document, report) = projected(design);
+    assert_eq!(expected["features"], document["features"]);
+    assert_eq!(history_line(&legacy_report), history_line(&report));
+    assert!(
+        history_line(&report).contains("found only on SolidCraft's replay"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+/// Maps both documents and requires the same SolidCraft features, every one rebuilt.
+fn assert_same_history(legacy: &Model, design: Model) {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (expected, legacy_report) = convert(legacy, &writer);
+    let (document, report) = projected(design);
+    assert_eq!(expected["features"], document["features"]);
+    assert_eq!(features_rebuilt(&legacy_report), features_rebuilt(&report));
+    let rebuilt = features_rebuilt(&report);
+    let (done, total) = rebuilt.split_once(" of ").unwrap();
+    assert_eq!(done, total, "{}", history_line(&report));
+    assert!(!history_line(&report).is_empty());
+}
+
+fn design_point(p: [f64; 3]) -> Value {
+    json!({"inputs": [], "after": [], "resolved_in": {},
+        "resolved": {"x": p[0], "y": p[1], "z": p[2]}})
+}
+
+fn design_literal(value: Value) -> Value {
+    json!({"kind": "literal", "value": value})
+}
+
+fn design_hole(head: Value, extent: Value) -> Value {
+    json!({"kind": "hole", "value": {
+        "positions": {"kind": "placed", "value": [design_point([5.0, 5.0, 10.0])]},
+        "direction": design_point([0.0, 0.0, -1.0]),
+        "shape": {"kind": "bore", "diameter": design_literal(json!(4.0)), "head": head},
+        "extent": extent, "series": [], "native_options": {}, "source_settings": {}}})
+}
+
+fn legacy_hole(form: Value, extent: Value) -> Value {
+    json!({"kind": "hole", "value": {
+        "placements": [{"kind": "directed",
+            "position": {"x": 5.0, "y": 5.0, "z": 10.0},
+            "direction": {"x": 0.0, "y": 0.0, "z": -1.0}}],
+        "shape": {"construction": {"kind": "form", "value": {"kind": form}}, "diameter": 4.0},
+        "extent": extent}})
+}
+
+#[test]
+fn a_design_cut_and_revolve_map_like_the_same_model_rows() {
+    let at = json!({"kind": "at_origin"});
+    let pocket = design_feature(
+        2,
+        "Pocket",
+        design_extrude(
+            2,
+            design_span(at, design_amount(2.0)),
+            json!({"kind": "apply", "op": {"kind": "cut"}}),
+        ),
+    );
+    let mut rows = legacy_block();
+    rows.push(legacy_sketch_row(2, 2));
+    rows.push(legacy_row(
+        design_feature_id(2),
+        "Pocket",
+        legacy_extrude(2, 2.0, "cut"),
+        &[carried_sketch_id(2, 2)],
+    ));
+    assert_same_history(
+        &legacy_cube(&[1, 2], rows, Vec::new()),
+        design_block_then(vec![pocket], &[(2, 2)]),
+    );
+
+    let ring = json!({"kind": "revolve", "value": {"construction": {"kind": "resolved", "value": {
+        "profile": {"kind": "sketch", "value": design_sketch_id(1)},
+        "axis": {"origin": {"x": 0.0, "y": 0.0, "z": 0.0}, "direction": {"x": 0.0, "y": 1.0, "z": 0.0}},
+        "extent": {"kind": "one_sided", "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_3}},
+        "solid": true}}, "op": "new_body"}});
+    let rows = vec![
+        legacy_sketch_row(1, 1),
+        legacy_row(
+            design_feature_id(1),
+            "Ring",
+            ring,
+            &[carried_sketch_id(1, 1)],
+        ),
+    ];
+    assert_same_history(
+        &legacy_cube(&[1], rows, Vec::new()),
+        design_cube(
+            vec![design_feature(
+                1,
+                "Ring",
+                design_revolve(1, std::f64::consts::FRAC_PI_3),
+            )],
+            &[(1, 1)],
+            None,
+        ),
+    );
+}
+
+#[test]
+fn a_design_hole_maps_like_the_same_model_row() {
+    let counterbore = |diameter: f64, depth: f64| {
+        json!({"kind": "counterbore", "value": {"diameter": design_literal(json!(diameter)),
+            "depth": design_literal(json!(depth))}})
+    };
+    let cases = [
+        (
+            json!({"kind": "plain"}),
+            json!({"kind": "through_all"}),
+            json!({"kind": "simple"}),
+            json!({"kind": "through_all"}),
+        ),
+        (
+            json!({"kind": "plain"}),
+            json!({"kind": "amount", "value": design_literal(json!(6.0))}),
+            json!({"kind": "simple"}),
+            json!({"kind": "blind", "length": 6.0}),
+        ),
+        (
+            counterbore(8.0, 2.0),
+            json!({"kind": "through_all"}),
+            json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
+            json!({"kind": "through_all"}),
+        ),
+        (
+            json!({"kind": "countersink", "value": {"diameter": design_literal(json!(8.0)),
+                "angle": design_literal(json!(std::f64::consts::FRAC_PI_2))}}),
+            json!({"kind": "through_all"}),
+            json!({"kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
+            json!({"kind": "through_all"}),
+        ),
+    ];
+    for (head, limit, form, extent) in cases {
+        let mut rows = legacy_block();
+        rows.push(legacy_row(
+            design_feature_id(2),
+            "Hole",
+            legacy_hole(form, extent),
+            &[],
+        ));
+        assert_same_history(
+            &legacy_cube(&[1], rows, Vec::new()),
+            design_block_then(
+                vec![design_feature(2, "Hole", design_hole(head, limit))],
+                &[],
+            ),
+        );
+    }
+}
+
+fn design_linear_pattern() -> Value {
+    let run = |count: u32, pitch: f64| {
+        json!({"spacing": {"kind": "pitch", "value": {"count": design_literal(json!(count)),
+            "pitch": design_literal(json!(pitch))}}, "sides": {"kind": "one"}, "increments": []})
+    };
+    json!({"kind": "linear", "value": {
+        "first": {"direction": design_point([1.0, 0.0, 0.0]), "run": run(3, 2.0)},
+        "second": {"direction": design_point([0.0, 1.0, 0.0]), "run": run(2, 3.0)},
+        "seed_only": design_literal(json!(false))}})
+}
+
+fn design_pattern(layout: Value) -> Value {
+    json!({"kind": "pattern", "value": {
+        "seeds": {"kind": "features", "features": {"at": {"kind": "input"}, "picks": {
+            "kind": "named", "value": [{"target": {"kind": "feature_result",
+                "value": design_feature_id(2)}}]}}},
+        "layout": layout, "instances": {"kind": "implicit", "value": []},
+        "native_options": {}, "source_settings": {}}})
+}
+
+#[test]
+fn a_design_pattern_maps_like_the_same_model_row() {
+    let axis = json!({"inputs": [], "after": [], "resolved_in": {}, "resolved": {
+        "origin": {"x": 5.0, "y": 5.0, "z": 0.0}, "direction": {"x": 0.0, "y": 0.0, "z": 1.0}}});
+    let run = |count: u32, pitch: f64| {
+        json!({"spacing": {"kind": "pitch", "value": {"count": design_literal(json!(count)),
+            "pitch": design_literal(json!(pitch))}}, "sides": {"kind": "one"}, "increments": []})
+    };
+    let plane = json!({"inputs": [], "after": [], "resolved_in": {}, "resolved": {
+        "origin": {"x": 20.0, "y": 0.0, "z": 0.0}, "normal": {"x": 1.0, "y": 0.0, "z": 0.0},
+        "x_axis": {"x": 0.0, "y": 1.0, "z": 0.0}}});
+    let cases = [
+        (
+            design_linear_pattern(),
+            json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 2.0,
+                "count": 3, "omitted_instances": [], "symmetric": false,
+                "second": {"direction": {"x": 0.0, "y": 1.0, "z": 0.0}, "spacing": 3.0, "count": 2,
+                    "symmetric": false}}),
+        ),
+        (
+            json!({"kind": "circular", "value": {"axis": axis.clone(),
+                "angular": run(3, std::f64::consts::FRAC_PI_4)}}),
+            json!({"kind": "circular", "axis_origin": {"x": 5.0, "y": 5.0, "z": 0.0},
+                "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0},
+                "angle": std::f64::consts::FRAC_PI_2, "count": 3}),
+        ),
+        (
+            json!({"kind": "circular", "value": {"axis": axis,
+                "angular": run(4, std::f64::consts::FRAC_PI_2)}}),
+            json!({"kind": "circular", "axis_origin": {"x": 5.0, "y": 5.0, "z": 0.0},
+                "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0},
+                "angle": std::f64::consts::TAU, "count": 4}),
+        ),
+        (
+            json!({"kind": "mirror", "value": {"plane": plane}}),
+            json!({"kind": "mirror", "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+                "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}),
+        ),
+    ];
+    for (layout, legacy) in cases {
+        let mut rows = legacy_block();
+        rows.push(legacy_row(
+            design_feature_id(2),
+            "Hole",
+            legacy_hole(json!({"kind": "simple"}), json!({"kind": "through_all"})),
+            &[],
+        ));
+        rows.push(legacy_row(
+            design_feature_id(3),
+            "Copies",
+            json!({"kind": "pattern", "value": {"seeds": [
+                {"kind": "feature", "value": design_feature_id(2)}], "pattern": legacy}}),
+            &[design_feature_id(2)],
+        ));
+        assert_same_history(
+            &legacy_cube(&[1], rows, Vec::new()),
+            design_block_then(
+                vec![
+                    design_feature(
+                        2,
+                        "Hole",
+                        design_hole(json!({"kind": "plain"}), json!({"kind": "through_all"})),
+                    ),
+                    design_feature(3, "Copies", design_pattern(layout)),
+                ],
+                &[],
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_design_sheet_wall_maps_like_the_same_base_flange_row() {
+    for (side, legacy_side) in [("along", "forward"), ("against", "reverse")] {
+        let wall = json!({"kind": "sheet_metal", "value": {"kind": {"kind": "wall", "value": {
+            "profile": {"at": {"kind": "input"}, "picks": {"kind": "named", "value": [
+                {"target": {"kind": "sketch", "value": design_sketch_id(1)}}]}},
+            "thickness": design_literal(json!(2.0)), "side": side}},
+            "native_options": {}, "source_settings": {}}});
+        let rows = vec![
+            legacy_sketch_row(1, 1),
+            legacy_row(
+                design_feature_id(1),
+                "Base tab",
+                json!({"kind": "sheet_metal_base_flange", "value": {
+                    "profile": {"kind": "sketch", "value": design_sketch_id(1)},
+                    "thickness": 2.0, "side": legacy_side}}),
+                &[carried_sketch_id(1, 1)],
+            ),
+        ];
+        assert_same_history(
+            &legacy_cube(&[1], rows, Vec::new()),
+            design_cube(vec![design_feature(1, "Base tab", wall)], &[(1, 1)], None),
+        );
+    }
+}
+
+/// The edge of the block along X at y = 0 and z = 10, as a witnessed design pick.
+fn design_top_edge() -> Value {
+    json!({"target": {"kind": "native", "value": {}}, "witness": {
+        "endpoints": [{"x": 0.0, "y": 0.0, "z": 10.0}, {"x": 10.0, "y": 0.0, "z": 10.0}],
+        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "curves": []}})
+}
+
+fn legacy_top_edge_state() -> (String, Value) {
+    let id = format!("{}/edge/0", design_feature_id(2));
+    let row = json!({"id": id, "input_of": design_feature_id(2), "bodies": [], "faces": [], "face_owners": [],
+        "edges": [id], "vertices": [], "edge_geometry": [{"edge": id,
+            "start": {"x": 0.0, "y": 0.0, "z": 10.0}, "end": {"x": 10.0, "y": 0.0, "z": 10.0},
+            "interior": {"x": 5.0, "y": 0.0, "z": 10.0}, "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "faces": [], "supports": []}]});
+    (id, row)
+}
+
+fn design_edges(pick: Value) -> Value {
+    json!({"at": {"kind": "input"}, "picks": {"kind": "named", "value": [pick]}})
+}
+
+#[test]
+fn a_design_fillet_and_chamfer_map_like_the_same_model_rows() {
+    let controls = json!({"corners": [], "limits": [], "transitions": []});
+    let (state, topology) = legacy_top_edge_state();
+    let selection = json!({"kind": "historical", "value": {
+        "state": state, "edges": [state], "native": state}});
+    let fillet = json!({"kind": "fillet", "value": {"sets": [{"kind": "edges",
+        "edges": design_edges(design_top_edge()),
+        "section": {"size": {"kind": "radius", "value": design_literal(json!(1.5))}},
+        "hold": [null, null]}], "controls": controls.clone(),
+        "native_options": {}, "source_settings": {}}});
+    let chamfer = json!({"kind": "chamfer", "value": {"sets": [{
+        "edges": design_edges(design_top_edge()),
+        "size": {"kind": "distance", "value": design_literal(json!(1.0))}}],
+        "controls": controls, "native_options": {}, "source_settings": {}}});
+    let cases = [
+        (
+            fillet,
+            json!({"kind": "fillet", "value": {"groups": [{"edges": selection.clone(),
+                "radius": {"kind": "constant", "radius": 1.5}}]}}),
+        ),
+        (
+            chamfer,
+            json!({"kind": "chamfer", "value": {"groups": [{"edges": selection,
+                "spec": {"kind": "distance", "distance": 1.0}}], "flip_direction": false}}),
+        ),
+    ];
+    for (design, legacy) in cases {
+        let mut rows = legacy_block();
+        rows.push(legacy_row(
+            design_feature_id(2),
+            "Edge treatment",
+            legacy,
+            &[],
+        ));
+        assert_same_history_until_replay(
+            &legacy_cube(&[1], rows, vec![topology.clone()]),
+            design_block_then(vec![design_feature(2, "Edge treatment", design)], &[]),
+        );
+    }
+}
+
+#[test]
+fn a_design_witness_without_both_end_points_is_refused_before_the_mapper_sees_a_blend() {
+    let mut pick = design_top_edge();
+    pick["witness"].as_object_mut().unwrap().remove("endpoints");
+    let fillet = json!({"kind": "fillet", "value": {"sets": [{"kind": "edges",
+        "edges": design_edges(pick),
+        "section": {"size": {"kind": "radius", "value": design_literal(json!(1.5))}},
+        "hold": [null, null]}], "controls": {"corners": [], "limits": [], "transitions": []},
+        "native_options": {}, "source_settings": {}}});
+    let (_, report) = projected(design_block_then(
+        vec![design_feature(2, "Round", fillet)],
+        &[],
+    ));
+    assert!(
+        history_line(&report).contains("Round"),
+        "{}",
+        history_line(&report)
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.subject == "Round" && loss.detail.contains("both edge end points")));
 }

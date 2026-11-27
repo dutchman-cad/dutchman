@@ -124,7 +124,10 @@ SolidWorks' history projection, and FreeCAD's `design.rs` still populate
 switched to design-only history. A design-only history is read by
 `dutchman-core`'s `design_history` projection, which fills the model-history arenas
 from the design layer once after decoding (sketches, extrudes and revolves of whole
-sketches; other features stay unmapped and stop the history).
+sketches, holes, linear, circular and mirror patterns, sheet-metal walls, and fillets and
+chamfers of straight edges named by a witness; other features stay unmapped and stop the
+history). A witnessed edge becomes one row of `model.feature_input_topologies` per
+selection, with the end points and direction the witness states and no faces.
 
 The JSON-read audit of core and SolidCraft found changed appearance-target reads
 in `assembly/slicing.rs` and `history/faces.rs`, both ported above. Neither crate
@@ -180,7 +183,10 @@ SolidWorks' history projection, and FreeCAD's `design.rs` still populate
 switched to design-only history. A design-only history is read by
 `dutchman-core`'s `design_history` projection, which fills the model-history arenas
 from the design layer once after decoding (sketches, extrudes and revolves of whole
-sketches; other features stay unmapped and stop the history).
+sketches, holes, linear, circular and mirror patterns, sheet-metal walls, and fillets and
+chamfers of straight edges named by a witness; other features stay unmapped and stop the
+history). A witnessed edge becomes one row of `model.feature_input_topologies` per
+selection, with the end points and direction the witness states and no faces.
 
 The JSON-read audit of core and SolidCraft found changed appearance-target reads
 in `assembly/slicing.rs` and `history/faces.rs`, both ported above. Neither crate

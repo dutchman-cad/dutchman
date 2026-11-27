@@ -89,11 +89,13 @@ fn entity_row(entity: &Value, sketch: &str) -> Result<Value, String> {
             "the entity {id} is defined by another entity, and defined entities are not projected yet"
         ));
     }
+    let geometry =
+        curve(payload(definition)).map_err(|reason| format!("the entity {id}: {reason}"))?;
     let mut row = json!({
         "id": id,
         "sketch": sketch,
-        "endpoint_refs": [],
-        "geometry": curve(payload(definition)).map_err(|reason| format!("the entity {id}: {reason}"))?,
+        "endpoint_refs": endpoint_refs(entity, &geometry),
+        "geometry": geometry,
     });
     // The model row cannot leave construction unstated; a design that does not state it
     // states an ordinary entity.
@@ -105,6 +107,31 @@ fn entity_row(entity: &Value, sketch: &str) -> Result<Value, String> {
         object.insert("construction".to_owned(), json!(construction));
     }
     Ok(row)
+}
+
+/// The entities a line or an arc takes its end points from, in the order the row reads them:
+/// the start, then the end. Two entities that name the same end point entity share the point.
+/// An end named without a start has no place in the row's ordered list and is left out.
+fn endpoint_refs(entity: &Value, geometry: &Value) -> Vec<String> {
+    if !matches!(kind(geometry), Some("line" | "arc")) {
+        return Vec::new();
+    }
+    let role = |name: &str| {
+        entity
+            .get("roles")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|role| role.pointer("/role/kind").and_then(Value::as_str) == Some(name))
+            .and_then(|role| text(role, "of"))
+    };
+    let Some(start) = role("start") else {
+        return Vec::new();
+    };
+    std::iter::once(start)
+        .chain(role("end"))
+        .map(str::to_owned)
+        .collect()
 }
 
 fn point(value: &Value) -> Result<Value, String> {

@@ -397,16 +397,24 @@ fn extent(
             } else {
                 (second, first)
             };
-            let Side::Blind(negative) = negative else {
-                return Err(
-                    "a non-blind extrude end against the sketch normal on a two-sided extent \
-                     is not supported yet"
-                        .to_owned(),
-                );
-            };
-            out.insert("direction".to_owned(), json!("positive"));
-            put(&mut out, positive, "distance");
-            out.insert("distance2".to_owned(), json!(mm(negative)));
+            if matches!((&positive, &negative), (Side::ThroughAll, Side::ThroughAll)) {
+                // Both ends run through everything: the same solid as a symmetric extent
+                // through everything.
+                out.insert("direction".to_owned(), json!("symmetric"));
+                out.insert("convention".to_owned(), json!("total_distance"));
+                put(&mut out, Side::ThroughAll, "distance");
+            } else {
+                let Side::Blind(negative) = negative else {
+                    return Err(
+                        "a non-blind extrude end against the sketch normal on a two-sided extent \
+                         is not supported yet"
+                            .to_owned(),
+                    );
+                };
+                out.insert("direction".to_owned(), json!("positive"));
+                put(&mut out, positive, "distance");
+                out.insert("distance2".to_owned(), json!(mm(negative)));
+            }
         }
         Some(other) => return Err(format!("its extent is {other}")),
         None => return Err("its extent is malformed".to_owned()),
