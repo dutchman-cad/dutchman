@@ -1941,7 +1941,9 @@ mod output_kept_tests {
             "printf finished > \"$3\"\necho 'dutchman-stage: write' >&2\n\
              sleep 30",
         );
-        let report = run(&program, &job(&input, &output), &limits(1500, None));
+        // The limit only has to outlast the shell starting and printing the stage, which a
+        // busy machine can delay past a second or two.
+        let report = run(&program, &job(&input, &output), &limits(8000, None));
         assert_eq!(report["ok"], false);
         assert_eq!(report["error"]["stage"], "write");
         assert_eq!(std::fs::read_to_string(&output).unwrap(), "finished");
@@ -1955,7 +1957,7 @@ mod output_kept_tests {
         std::fs::write(&input, "x").unwrap();
         std::fs::write(&output, "someone else's").unwrap();
         let program = fake_child(dir.path(), "echo 'dutchman-stage: write' >&2\nsleep 30");
-        let report = run(&program, &job(&input, &output), &limits(1500, None));
+        let report = run(&program, &job(&input, &output), &limits(8000, None));
         assert_eq!(report["error"]["stage"], "write");
         assert_eq!(std::fs::read_to_string(&output).unwrap(), "someone else's");
     }
