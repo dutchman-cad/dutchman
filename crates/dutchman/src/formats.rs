@@ -43,6 +43,12 @@ pub fn converts(format: Format) -> &'static str {
             "geometry; feature history waits on cadmpeg binding sketches and extrude profiles"
         }
         Format::CreoPart => "geometry; solids and surfaces SolidCraft can import",
+        Format::SolidEdgePart | Format::SolidEdgeSheetMetal => {
+            "geometry; the feature history isn't read yet, so no history is written"
+        }
+        Format::SolidEdgeAssembly => {
+            "the bodies the file holds; component placements aren't read yet, so none are written"
+        }
         _ => "geometry through STEP; solids and surfaces SolidCraft can import",
     }
 }

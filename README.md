@@ -143,6 +143,9 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 | DWG drawing | `.dwg` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
 | DXF drawing | `.dxf` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
 | Solid Edge drawing | `.dft` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
+| Solid Edge part | `.par` | Reads geometry | L2 | Geometry; the feature history isn't read yet, so no history is written |
+| Solid Edge sheet-metal part | `.psm` | Reads geometry | L2 | Geometry; the feature history isn't read yet, so no history is written |
+| Solid Edge assembly | `.asm` | Reads geometry | L2 | The bodies the file holds; component placements aren't read yet, so none are written |
 
 FreeCAD TechDraw pages are written into the converted SolidCraft design as a drawing (sheets and views), and also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
 

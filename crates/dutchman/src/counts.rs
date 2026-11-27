@@ -41,6 +41,9 @@ words!(SourceFormat {
     DwgDrawing => "dwg_drawing",
     DxfDrawing => "dxf_drawing",
     SolidEdgeDrawing => "solid_edge_drawing",
+    SolidEdgePart => "solid_edge_part",
+    SolidEdgeSheetMetal => "solid_edge_sheet_metal",
+    SolidEdgeAssembly => "solid_edge_assembly",
     Unknown => "unknown"
 });
 words!(Kind {

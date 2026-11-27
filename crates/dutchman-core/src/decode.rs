@@ -339,6 +339,28 @@ pub(crate) fn onshape_step(
     })
 }
 
+/// Whether `format` is one of the Solid Edge document kinds read through cadmpeg.
+fn solid_edge(format: Format) -> bool {
+    matches!(
+        format,
+        Format::SolidEdgePart | Format::SolidEdgeSheetMetal | Format::SolidEdgeAssembly
+    )
+}
+
+/// Says in the report that a Solid Edge document's bodies arrive as geometry only, when cadmpeg
+/// reads no feature history from it.
+fn solid_edge_history_note(format: Format, ir: &cadmpeg_ir::CadIr, report: &mut Report) {
+    if !solid_edge(format) || !ir.model.features.is_empty() || !ir.design.features.is_empty() {
+        return;
+    }
+    let detail = if format == Format::SolidEdgeAssembly {
+        "the bodies the assembly file holds are written as geometry; Solid Edge feature history and component placements are not read yet, so neither is written"
+    } else {
+        "the bodies are written as geometry; Solid Edge feature history is not read yet, so no history, sketches or parameters are written"
+    };
+    report.push_at(Stage::Decode, Severity::Degraded, "feature history", detail);
+}
+
 /// What to say when cadmpeg read a file but found no body in it. Creo parts keep much of their
 /// geometry in features cadmpeg does not resolve yet, so they point to a STEP export.
 pub(crate) fn no_geometry_message(format: Format) -> String {
@@ -346,6 +368,15 @@ pub(crate) fn no_geometry_message(format: Format) -> String {
     if format == Format::CreoPart {
         message.push_str(
             "; Dutchman reads only the Creo features it can resolve to a solid. Export a STEP file from Creo and convert that instead",
+        );
+    }
+    if format == Format::SolidEdgeAssembly {
+        message.push_str(
+            "; an assembly holds its parts in their own files and Dutchman does not read Solid Edge component placements yet. Convert the part files (.par, .psm) instead",
+        );
+    } else if solid_edge(format) {
+        message.push_str(
+            "; Dutchman reads the bodies a Solid Edge file stores, not its feature history, which is not supported yet",
         );
     }
     message
@@ -553,6 +584,7 @@ fn decode_unguarded(
         return Err(Error::Decode(no_geometry_message(format)));
     }
     report.extend_from_cadmpeg(&decode_report.losses);
+    solid_edge_history_note(format, &ir, report);
     if format == Format::FreeCadDocument {
         crate::source_errors::record(&ir, report);
     }

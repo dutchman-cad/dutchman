@@ -30,7 +30,7 @@ zip.workspace = true
 default = ["formats", "source-reader"]
 # Capability-based reader API for sandboxed front ends.
 source-reader = []
-formats = ["fusion", "inventor", "solidworks", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz", "onshape"]
+formats = ["fusion", "inventor", "solidworks", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz", "solidedge", "onshape"]
 onshape = ["step", "dep:base64", "dep:flate2"]
 fusion = ["cadmpeg-registry/f3d"]
 inventor = ["cadmpeg-registry/inventor"]
@@ -43,6 +43,7 @@ step = ["cadmpeg-registry/step"]
 iges = ["cadmpeg-registry/iges"]
 sat = ["cadmpeg-registry/sat"]
 pvz = ["cadmpeg-registry/pvz"]
+solidedge = ["cadmpeg-registry/solidedge"]
 # FreeCAD documents (.FCStd), through cadmpeg's fcstd codec. `dutchman` and `dutchman-gui`
 # turn it on by default; a build without it says FreeCAD files do not convert in that build.
 freecad = ["cadmpeg-registry/fcstd"]
