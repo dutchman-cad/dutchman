@@ -20369,7 +20369,7 @@ fn intermediate_coincident_join() -> Model {
 /// `after` after the join.
 fn counted_intermediate_join(before: &str, after: &str) -> Model {
     let mut model = scoped_extrude("join");
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][2]["source_properties"] = json!({"body_centers": before});
     wire["model"]["features"][3]["source_properties"] = json!({"body_centers": after});
     let mut later = wire["model"]["features"][2].clone();
@@ -20382,7 +20382,7 @@ fn counted_intermediate_join(before: &str, after: &str) -> Model {
         .as_array_mut()
         .unwrap()
         .push(later);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
