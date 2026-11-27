@@ -1341,6 +1341,7 @@ mod missing_links_tests {
                 &source,
                 &mut Report::default(),
                 None,
+                module::CopperLayers::Outer,
             )
             .unwrap();
             // Save the assembly under the name its own root component carries (a placed

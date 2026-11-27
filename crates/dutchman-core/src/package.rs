@@ -2516,7 +2516,7 @@ mod tests {
         let losses = report.losses();
         let note = losses
             .iter()
-            .find(|l| l.message.contains("not top, bottom or inner"))
+            .find(|l| l.detail.contains("not top, bottom or inner"))
             .expect("a note names the unknown side");
         assert_eq!(note.severity, Severity::Degraded);
         assert!(losses.iter().all(|l| l.severity != Severity::Dropped));

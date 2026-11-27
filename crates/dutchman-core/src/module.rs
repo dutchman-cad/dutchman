@@ -715,7 +715,7 @@ cat "$out/manifest.json""#
         let note = report
             .losses()
             .iter()
-            .find(|l| l.message.contains("does not support `--copper all`"))
+            .find(|l| l.detail.contains("does not support `--copper all`"))
             .expect("a note says the module cannot read inner copper");
         assert_eq!(note.severity, Severity::Degraded);
     }
