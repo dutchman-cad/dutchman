@@ -40,7 +40,7 @@ pub const MAX_MANIFEST_BYTES: usize = 16 << 20;
 /// The most STEP bytes one package may bring in, counting each model file once.
 pub const MAX_PACKAGE_BYTES: u64 = 4 << 30;
 /// The most overlays one package may carry.
-pub const MAX_OVERLAYS: usize = 16;
+pub const MAX_OVERLAYS: usize = 64;
 /// The most areas one overlay may carry.
 pub const MAX_AREAS: usize = 100_000;
 /// The most points all the areas of one package may carry.
@@ -65,6 +65,8 @@ const BARE_COPPER: [f64; 3] = [0.83, 0.64, 0.22];
 /// White, the default for silkscreen.
 const SILKSCREEN: [f64; 3] = [1.0, 1.0, 1.0];
 /// Solder mask green, the default for a mask overlay.
+/// Board laminate (FR-4), the default for a laminate overlay.
+const LAMINATE: [f64; 3] = [0.76, 0.69, 0.45];
 const SOLDER_MASK: [f64; 3] = [0.05, 0.45, 0.22];
 
 #[derive(Deserialize)]
@@ -110,6 +112,9 @@ struct PartEntry {
     roughness: Option<f64>,
     #[serde(default)]
     notes: Vec<Value>,
+    /// The folder the part goes in, when it names one.
+    #[serde(default)]
+    group: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -122,6 +127,12 @@ struct OverlayEntry {
     part: Option<String>,
     #[serde(default)]
     side: Option<String>,
+    /// The board layer an `inner` overlay is, such as `In1.Cu`.
+    #[serde(default)]
+    layer: Option<String>,
+    /// The folder the overlay goes in, when it names one.
+    #[serde(default)]
+    group: Option<Value>,
     #[serde(default)]
     z: Option<f64>,
     #[serde(default)]
@@ -272,6 +283,8 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
         stored_placements: Vec::new(),
     };
     let mut names = Names::default();
+    // The folder each placement (by index) goes in; a placement not listed is at the top level.
+    let mut groups: BTreeMap<usize, String> = BTreeMap::new();
     let mut read: BTreeMap<String, Option<usize>> = BTreeMap::new();
     let mut total_bytes = 0u64;
     // The part each placed name became, with its transform, for the overlays.
@@ -476,6 +489,13 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
         }
         // The first part of a name is the one an overlay on that name follows.
         placed.entry(entry.name.clone()).or_insert(transform);
+        if let Some(group) = group_of(
+            entry.group.as_ref(),
+            &format!("part \"{}\"", clip(&entry.name, 64)),
+            report,
+        ) {
+            groups.insert(assembly.placements.len(), group);
+        }
         assembly.placements.push(Placement {
             unproven: false,
             name: Some(name),
@@ -492,10 +512,12 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
         &dropped_parts,
         &mut names,
         &mut assembly,
+        &mut groups,
         report,
     );
 
     drop_unplaced_parts(&mut assembly);
+    put_in_folders(&mut assembly, &groups, report);
     if assembly.placements.is_empty() {
         return Err(refuse(
             "the package places no parts Dutchman could read".to_owned(),
@@ -519,6 +541,144 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
         source_step: None,
         merge_bodies: false,
     })
+}
+
+/// The most folders one package may make.
+const MAX_GROUPS: usize = 64;
+
+/// The folder a part or overlay names: its `group` text, trimmed. A missing or blank group is
+/// the top level; one that is not text is the top level too, with a `Degraded` note.
+fn group_of(group: Option<&Value>, subject: &str, report: &mut Report) -> Option<String> {
+    match group? {
+        Value::Null => None,
+        Value::String(text) => {
+            let text = text.trim();
+            (!text.is_empty()).then(|| clip(text, 200))
+        }
+        _ => {
+            report.push_at(
+                Stage::Input,
+                Severity::Degraded,
+                subject.to_owned(),
+                "its group is not text; it is placed at the top level".to_owned(),
+            );
+            None
+        }
+    }
+}
+
+/// Puts the placements of each group in a folder: a sub-assembly named after the group, placed
+/// at the origin, holding those placements with their own transforms. Placements with no group
+/// stay at the top level, in their order; a folder sits where its first placement was.
+fn put_in_folders(assembly: &mut Assembly, groups: &BTreeMap<usize, String>, report: &mut Report) {
+    if groups.is_empty() {
+        return;
+    }
+    let mut order: Vec<&String> = Vec::new();
+    for group in groups.values() {
+        if !order.contains(&group) {
+            order.push(group);
+        }
+    }
+    let old = std::mem::take(&mut assembly.placements);
+    let mut folders: Vec<(String, Assembly, BTreeMap<usize, usize>)> = Vec::new();
+    let mut slots: Vec<Option<Placement>> = Vec::new();
+    for (at, placement) in old.into_iter().enumerate() {
+        let group = groups.get(&at).filter(|group| {
+            let known = order.iter().position(|g| g == group).unwrap_or(usize::MAX);
+            if known >= MAX_GROUPS {
+                report.push_at(
+                    Stage::Input,
+                    Severity::Degraded,
+                    format!("group \"{}\"", clip(group, 64)),
+                    format!("the package has more than {MAX_GROUPS} groups; this one is placed at the top level"),
+                );
+            }
+            known < MAX_GROUPS
+        });
+        let Some(group) = group else {
+            slots.push(Some(placement));
+            continue;
+        };
+        let folder = match folders.iter().position(|(name, _, _)| name == group) {
+            Some(folder) => folder,
+            None => {
+                folders.push((
+                    group.clone(),
+                    Assembly {
+                        own_part: None,
+                        parts: Vec::new(),
+                        definitions: Vec::new(),
+                        identities: Vec::new(),
+                        placements: Vec::new(),
+                        joints: Vec::new(),
+                        left_out: Vec::new(),
+                        held: Vec::new(),
+                        joint_notes: Vec::new(),
+                        stored_placements: Vec::new(),
+                    },
+                    BTreeMap::new(),
+                ));
+                slots.push(None);
+                // The folder's slot is the first one it took; remember it by its index.
+                folders.len() - 1
+            }
+        };
+        let Some((_, inner, copied)) = folders.get_mut(folder) else {
+            slots.push(Some(placement));
+            continue;
+        };
+        let part = match copied.get(&placement.part) {
+            Some(part) => *part,
+            None => {
+                let Some(source) = assembly.parts.get(placement.part) else {
+                    slots.push(Some(placement));
+                    continue;
+                };
+                inner.parts.push(source.clone());
+                inner
+                    .definitions
+                    .push(assembly.definitions.get(placement.part).cloned().flatten());
+                inner
+                    .identities
+                    .push(assembly.identities.get(placement.part).cloned().flatten());
+                copied.insert(placement.part, inner.parts.len() - 1);
+                inner.parts.len() - 1
+            }
+        };
+        inner.placements.push(Placement { part, ..placement });
+    }
+    // Folders take the slots left empty, in the order they were made.
+    let mut folders = folders.into_iter();
+    for slot in slots.iter_mut().filter(|slot| slot.is_none()) {
+        let Some((name, inner, _)) = folders.next() else {
+            break;
+        };
+        assembly.parts.push(Model {
+            ir: cadmpeg_ir::CadIr::empty(),
+            fidelity: None,
+            name: name.clone(),
+            source_file: None,
+            assembly: Some(inner),
+            source_step: None,
+            merge_bodies: false,
+        });
+        assembly.definitions.push(None);
+        assembly.identities.push(None);
+        *slot = Some(Placement {
+            unproven: false,
+            name: Some(name),
+            part: assembly.parts.len() - 1,
+            transform: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            hidden: false,
+        });
+    }
+    assembly.placements = slots.into_iter().flatten().collect();
+    drop_unplaced_parts(assembly);
 }
 
 /// Removes the parts no placement uses, such as a model every placement painted with its own
@@ -924,6 +1084,7 @@ impl Notes {
 // ---------------------------------------------------------------------------------------------
 
 /// Adds each overlay as a sheet part placed with the part it names.
+#[allow(clippy::too_many_arguments)]
 fn overlays(
     list: &[Value],
     scale: f64,
@@ -931,13 +1092,14 @@ fn overlays(
     dropped_parts: &BTreeSet<String>,
     names: &mut Names,
     assembly: &mut Assembly,
+    groups: &mut BTreeMap<usize, String>,
     report: &mut Report,
 ) {
     let mut points_left = MAX_OVERLAY_POINTS;
     let mut work_left = MAX_RING_WORK;
     let mut faces_left = MAX_SOLID_FACES;
     for value in list {
-        let entry: OverlayEntry = match serde_json::from_value(value.clone()) {
+        let mut entry: OverlayEntry = match serde_json::from_value(value.clone()) {
             Ok(entry) => entry,
             Err(err) => {
                 report.push_at(
@@ -949,7 +1111,36 @@ fn overlays(
                 continue;
             }
         };
+        // An inner overlay carries the board layer it is: "Inner copper (In1.Cu)".
+        if entry.side.as_deref() == Some("inner") {
+            if let Some(layer) = entry
+                .layer
+                .as_deref()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+            {
+                if !entry.name.contains(layer) {
+                    entry.name = format!("{} ({layer})", entry.name);
+                }
+            }
+        }
         let subject = format!("overlay \"{}\"", clip(&entry.name, 64));
+        if let Some(side) = entry
+            .side
+            .as_deref()
+            .filter(|side| !matches!(*side, "top" | "bottom" | "inner"))
+        {
+            report.push_at(
+                Stage::Input,
+                Severity::Degraded,
+                subject.clone(),
+                format!(
+                    "its side `{}` is not top, bottom or inner; it is left out",
+                    clip(side, 32)
+                ),
+            );
+            continue;
+        }
         let dropped = |report: &mut Report, why: String| {
             report.push_at(Stage::Input, Severity::Dropped, subject.clone(), why);
         };
@@ -960,11 +1151,12 @@ fn overlays(
             },
             "silkscreen" => SILKSCREEN,
             "mask" => SOLDER_MASK,
+            "laminate" => LAMINATE,
             other => {
                 dropped(
                     report,
                     format!(
-                        "its kind `{}` is not copper, silkscreen or mask; it is left out",
+                        "its kind `{}` is not copper, silkscreen, mask or laminate; it is left out",
                         clip(other, 32)
                     ),
                 );
@@ -1201,6 +1393,9 @@ fn overlays(
                         subject.clone(),
                         format!("its name is already a part's; it is placed as \"{name}\""),
                     );
+                }
+                if let Some(group) = group_of(entry.group.as_ref(), &subject, report) {
+                    groups.insert(assembly.placements.len(), group);
                 }
                 assembly.placements.push(Placement {
                     unproven: false,
@@ -2296,6 +2491,225 @@ mod tests {
             .losses()
             .iter()
             .all(|l| l.severity != Severity::Dropped));
+    }
+
+    #[test]
+    fn inner_overlays_keep_their_layer_name_and_unknown_sides_are_left_out() {
+        let dir = package("inner");
+        write_models(&dir);
+        let area = json!([{"outer": square(2.0), "holes": []}]);
+        let mut inner = overlay("Inner copper", area.clone());
+        inner["side"] = json!("inner");
+        inner["layer"] = json!("In1.Cu");
+        inner["z"] = json!(0.4);
+        inner["thickness"] = json!(0.035);
+        let mut inner2 = inner.clone();
+        inner2["layer"] = json!("In2.Cu");
+        inner2["z"] = json!(1.2);
+        let mut odd = overlay("Odd", area);
+        odd["side"] = json!("sideways");
+        let (model, report) = read(&dir, &manifest(json!({"overlays": [inner, inner2, odd]})));
+        let assembly = model.unwrap().assembly.unwrap();
+        let names: Vec<_> = assembly.parts.iter().map(|p| p.name.clone()).collect();
+        assert!(
+            names.contains(&"Inner copper (In1.Cu)".to_owned()),
+            "{names:?}"
+        );
+        assert!(
+            names.contains(&"Inner copper (In2.Cu)".to_owned()),
+            "{names:?}"
+        );
+        assert!(!names.iter().any(|n| n == "Odd"), "{names:?}");
+        let step_of = |name: &str| {
+            let part = assembly.parts.iter().find(|p| p.name == name).unwrap();
+            part.source_step.clone().unwrap()
+        };
+        // Placed by z and thickness: a prism from 0.4 up to 0.435.
+        let step = step_of("Inner copper (In1.Cu)");
+        assert!(step.contains("0.4") && step.contains("0.43"), "{step}");
+        assert!(step_of("Inner copper (In2.Cu)").contains("1.2"));
+        let losses = report.losses();
+        let note = losses
+            .iter()
+            .find(|l| l.detail.contains("not top, bottom or inner"))
+            .expect("a note names the unknown side");
+        assert_eq!(note.severity, Severity::Degraded);
+        assert!(losses.iter().all(|l| l.severity != Severity::Dropped));
+    }
+
+    fn grouped(group_c1: Value, group_c2: Value, group_overlay: Value) -> Value {
+        let mut m = manifest(json!({}));
+        m["parts"][1]["group"] = group_c1;
+        m["parts"][2]["group"] = group_c2;
+        let mut copper = overlay("Copper top", json!([{"outer": square(2.0), "holes": []}]));
+        copper["group"] = group_overlay;
+        m["overlays"] = json!([copper]);
+        m
+    }
+
+    fn top_names(assembly: &Assembly) -> Vec<String> {
+        assembly
+            .placements
+            .iter()
+            .map(|p| p.name.clone().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn groups_become_folders_holding_their_parts_with_their_own_transforms() {
+        let dir = package("groups");
+        write_models(&dir);
+        let m = grouped(
+            json!("Components top"),
+            json!("Components top"),
+            json!("Layers"),
+        );
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        // Board stays at the top level; the two folders follow.
+        assert_eq!(top_names(&assembly), ["Board", "Components top", "Layers"]);
+        let folder = |name: &str| {
+            assembly
+                .parts
+                .iter()
+                .find(|p| p.name == name)
+                .and_then(|p| p.assembly.as_ref())
+                .unwrap()
+        };
+        let components = folder("Components top");
+        let names: Vec<_> = components
+            .placements
+            .iter()
+            .map(|p| p.name.clone().unwrap())
+            .collect();
+        assert_eq!(names, ["C1", "C2"]);
+        // The cube is one part inside the folder, placed twice with the transforms it had.
+        assert_eq!(components.parts.len(), 1);
+        assert_eq!(components.placements[0].transform[0][3], 10.0);
+        assert_eq!(components.placements[1].transform[1][3], 5.0);
+        let layers = folder("Layers");
+        assert_eq!(layers.placements.len(), 1);
+        assert_eq!(layers.placements[0].name.as_deref(), Some("Copper top"));
+        let board = &assembly.placements[0];
+        assert_eq!(layers.placements[0].transform, board.transform);
+        // The folders sit at the origin.
+        assert_eq!(assembly.placements[1].transform[0][3], 0.0);
+        assert!(report
+            .losses()
+            .iter()
+            .all(|l| l.severity != Severity::Dropped));
+    }
+
+    #[test]
+    fn without_groups_nothing_is_folded() {
+        let dir = package("no-groups");
+        write_models(&dir);
+        let (model, _) = read(&dir, &manifest(json!({})));
+        let assembly = model.unwrap().assembly.unwrap();
+        assert_eq!(top_names(&assembly).len(), 3);
+        assert!(assembly.parts.iter().all(|p| p.assembly.is_none()));
+    }
+
+    #[test]
+    fn a_blank_or_unusable_group_stays_at_the_top_level() {
+        let dir = package("odd-groups");
+        write_models(&dir);
+        let m = grouped(json!("  "), json!(7), json!(null));
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert_eq!(assembly.placements.len(), 4);
+        assert!(assembly.parts.iter().all(|p| p.assembly.is_none()));
+        assert!(mentions(
+            &report,
+            Severity::Degraded,
+            "its group is not text"
+        ));
+    }
+
+    #[test]
+    fn laminate_is_an_opaque_body_and_an_unknown_kind_is_skipped_with_a_note() {
+        let dir = package("laminate");
+        write_models(&dir);
+        let area = json!([{"outer": square(2.0), "holes": []}]);
+        let mut top = overlay("Laminate top", area.clone());
+        top["kind"] = json!("laminate");
+        top.as_object_mut().unwrap().remove("finish");
+        top["z"] = json!(1.6);
+        top["thickness"] = json!(0.1);
+        let mut bottom = top.clone();
+        bottom["name"] = json!("Laminate bottom");
+        bottom["side"] = json!("bottom");
+        bottom["z"] = json!(0.0);
+        let mut odd = overlay("Odd", area.clone());
+        odd["kind"] = json!("hologram");
+        let mut mask = overlay("Mask top", area);
+        mask["kind"] = json!("mask");
+        mask["opacity"] = json!(0.6);
+        let (model, report) = read(
+            &dir,
+            &manifest(json!({"overlays": [top, bottom, odd, mask]})),
+        );
+        let assembly = model.unwrap().assembly.unwrap();
+        let names: Vec<_> = assembly.parts.iter().map(|p| p.name.clone()).collect();
+        assert!(names.contains(&"Laminate top".to_owned()), "{names:?}");
+        assert!(names.contains(&"Laminate bottom".to_owned()), "{names:?}");
+        assert!(names.contains(&"Mask top".to_owned()));
+        assert!(!names.contains(&"Odd".to_owned()));
+        let step_of = |name: &str| {
+            let part = assembly.parts.iter().find(|p| p.name == name).unwrap();
+            part.source_step.clone().unwrap()
+        };
+        assert!(step_of("Laminate top").contains("COLOUR_RGB('',0.76,0.69,0.45)"));
+        // The mask's opacity is the module's own value, passed through as transparency 0.4.
+        assert!(step_of("Mask top").contains("0.4"));
+        assert!(mentions(&report, Severity::Dropped, "hologram"));
+    }
+
+    #[test]
+    fn a_standard_body_and_its_leads_land_in_one_folder_with_their_own_colors() {
+        let dir = package("leads");
+        write_models(&dir);
+        let mut m = manifest(json!({}));
+        m["parts"] = json!([
+            {"name": "Board", "model": "board"},
+            {"name": "U1", "model": "cube", "color": "#202020", "group": "Components top",
+             "transform": [[1,0,0,10],[0,1,0,5],[0,0,1,1.6]]},
+            {"name": "U1 leads", "model": "cube", "color": "#c0c0c0", "group": "Components top",
+             "transform": [[1,0,0,10],[0,1,0,5],[0,0,1,1.6]]},
+        ]);
+        let (model, _) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert_eq!(assembly.placements.len(), 2, "the board and one folder");
+        let folder = assembly
+            .parts
+            .iter()
+            .find(|p| p.name == "Components top")
+            .and_then(|p| p.assembly.as_ref())
+            .unwrap();
+        let names: Vec<_> = folder
+            .placements
+            .iter()
+            .map(|p| p.name.clone().unwrap())
+            .collect();
+        assert_eq!(names, ["U1", "U1 leads"]);
+        // Two colors, so two colored copies of the model.
+        assert_eq!(folder.parts.len(), 2);
+        // A colored copy is written from its geometry with the color bound to its bodies, so it
+        // carries no STEP text; its identity names the color.
+        let identity = |name: &str| {
+            let placement = folder
+                .placements
+                .iter()
+                .find(|p| p.name.as_deref() == Some(name))
+                .unwrap();
+            folder.identities[placement.part].clone().unwrap()
+        };
+        assert!(identity("U1").contains("202020"), "{}", identity("U1"));
+        assert!(identity("U1 leads").contains("c0c0c0"));
+        for part in &folder.parts {
+            assert!(part.source_step.is_none());
+            assert!(!part.ir.geometry.bodies.is_empty());
+        }
     }
 
     #[test]

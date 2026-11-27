@@ -17,8 +17,13 @@ Dutchman talks to a module with three commands, each with `--json`:
    for that file. Dutchman runs it for a file whose extension `info` lists, and treats `no` as
    "not a board" with a note. Detection needs the extension as well as the contents, so a board
    renamed to another extension is not read.
-3. `read <file> --out <folder> --json` writes a placed-parts package (below) into a temporary
+3. `read <file> --out <folder> [--copper all] --json` writes a placed-parts package (below) into a temporary
    folder and prints the manifest. Dutchman reads the package and deletes the folder.
+
+   Dutchman adds `--copper all` only when the person asks for inner copper layers (`--copper all` on the
+   command line, the `copper` option of the MCP tools, or **Inner copper layers** under Advanced in the app).
+   A module that rejects the option is run again without it, and the report carries a `Degraded` note that only
+   the outer layers were read.
 
 The conversion then goes on like any other: Results card, report, `--json`.
 
@@ -53,6 +58,15 @@ A model used by a hundred parts is one STEP file and one definition in the desig
 identity: converting the same package twice gives the same names, so a part that only moves stays the same part.
 Names must be unique; a repeated name gets ` (2)` and a note.
 
+### Groups (folders)
+
+A part or an overlay may carry `"group"`, a text such as `"Components top"` or `"Layers"`. Dutchman makes one folder for
+each distinct group (a sub-assembly of that name, placed at the origin) and puts the parts and overlays of that group in
+it, each keeping its own transform, so the design's browser shows the folders and nothing moves. A part or overlay with
+no `group`, a blank one, or one that is not text (that one gets a `Degraded` note) stays at the top level, in its
+place. A folder sits where its first member was. A package makes at most 64 folders; members of the rest stay at the
+top level, with a note. Overlays still follow the part they are drawn on, whatever folder either is in.
+
 ### Overlays
 
 An overlay is a flat layer drawn on one part, such as copper or silkscreen on a board. The module does all the
@@ -71,8 +85,15 @@ geometry and hands over finished areas.
 }
 ```
 
-- `kind` is `copper`, `silkscreen` or `mask`. `finish` (`masked` or `bare`) tells the two kinds of copper apart and
-  appears only on copper. `side` (`top` or `bottom`) is information.
+- `kind` is `copper`, `silkscreen`, `mask` or `laminate`. `finish` (`masked` or `bare`) tells the two kinds of copper apart and
+  appears only on copper. `side` (`top`, `bottom` or `inner`) says which way a thick overlay grows (down for `bottom`, up otherwise). An
+  overlay with any other `side` is left out, with a `Degraded` note, and the rest converts. An `inner` overlay is
+  inner copper (a board's `read --copper all`): it also carries `layer`, the board's name for that layer such as
+  `In1.Cu`, and its body is named `<name> (<layer>)`, for example `Inner copper (In1.Cu)`. It is placed by its `z`
+  and `thickness` like any other overlay.
+- A `laminate` overlay is the opaque board material at one face (`side` `top` or `bottom`), drawn under the copper and
+  the mask like any other overlay, with `z` and `thickness`; without `color` it is FR-4 tan. A `kind` Dutchman does not
+  know leaves that overlay out with a `Dropped` note, and the rest converts.
 - A `mask` overlay is the solder mask on one face: the board outline minus the mask openings (the pads) and minus the
   drills, as holes. The module draws it between the copper and the silkscreen, at `z` = thickness + 0.005 on top and
   -0.005 below.
@@ -117,6 +138,6 @@ Color and opacity apply to every face of either.
 ### Limits and safety
 
 The package is treated as untrusted. Dutchman refuses a whole package for a manifest over 16 MiB or not valid, another
-schema, more than 1,000 models, 100,000 parts or 16 overlays, or any model `file` that is absolute, uses `..`, or
+schema, more than 1,000 models, 100,000 parts or 64 overlays, or any model `file` that is absolute, uses `..`, or
 leaves the folder through a link. A STEP file that is missing, over 1 GiB, or that does not decode is a `Dropped`
 note naming the model, and every part that uses it is left out; the rest converts.

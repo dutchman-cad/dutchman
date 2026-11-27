@@ -355,6 +355,11 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
                 dutchman_core::PartPositions::Smart
             }
         });
+    options.copper = settings
+        .get("copper")
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_default();
     options.stored_placements = false;
     options.no_joints = settings
         .get("no_joints")
@@ -446,6 +451,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
         "no_verify": options.no_verify,
         "part_positions": options.effective_part_positions().name(),
+        "copper": options.copper.name(),
         "up_axis": orientation_of(options).name(),
     })
 }
@@ -3076,7 +3082,7 @@ impl App {
             .spacing([theme::SPACE_2, theme::SPACE_1])
                 .num_columns(2)
                 .min_col_width(LABEL_COLUMN)
-                .show(ui, |ui| self.advanced_rows(ui));
+                .show(ui, |ui| self.advanced_rows(ui, p));
         });
         egui::Grid::new("options-output")
             .spacing([theme::SPACE_2, theme::SPACE_1])
@@ -3086,7 +3092,7 @@ impl App {
         self.inventor_project_row(ui, ctx, p);
     }
 
-    fn advanced_rows(&mut self, ui: &mut egui::Ui) {
+    fn advanced_rows(&mut self, ui: &mut egui::Ui, p: &Palette) {
         let last_shown = last_shown_label(&self.inputs);
         let label = |mode| match mode {
             dutchman_core::PartPositions::Smart => "Smart".to_owned(),
@@ -3156,6 +3162,46 @@ impl App {
             set_choices(&mut self.options, history, sketches, joints);
             self.custom = true;
         }
+        // The circuit board choice has its own place in every layout; it only applies to a
+        // board, so it is off, with a hint, until one is in the list.
+        let board = self.may_hold_board();
+        let mut inner = self.options.copper == dutchman_core::CopperLayers::All;
+        ui.label("Circuit boards");
+        ui.horizontal_wrapped(|ui| {
+            let response = ui
+                .add_enabled(board, egui::Checkbox::new(&mut inner, "Inner copper layers"))
+                .on_hover_text(
+                    "Circuit boards: also read each inner copper layer. Needs a recent electronics module; without it only the top and bottom copper is read.",
+                );
+            if !board {
+                ui.label(
+                    RichText::new("Add a circuit board to use this.")
+                        .small()
+                        .color(p.tide),
+                );
+            }
+            if response.changed() {
+                self.options.copper = if inner {
+                    dutchman_core::CopperLayers::All
+                } else {
+                    dutchman_core::CopperLayers::Outer
+                };
+            }
+        });
+        ui.end_row();
+    }
+
+    /// Whether the list may hold a circuit board: a board file, or a folder or ZIP that could
+    /// hold one. Inner copper only matters for these.
+    fn may_hold_board(&self) -> bool {
+        self.inputs.iter().any(|path| {
+            path.is_dir()
+                || path.extension().and_then(|e| e.to_str()).is_some_and(|ext| {
+                    ["pcbdoc", "schdoc", "kicad_pcb", "brd", "zip"]
+                        .iter()
+                        .any(|known| ext.eq_ignore_ascii_case(known))
+                })
+        })
     }
 
     fn output_rows(&mut self, ui: &mut egui::Ui, p: &Palette) {

@@ -1281,6 +1281,7 @@ fn run_cli() -> ExitCode {
                 part_positions: dutchman_core::PartPositions::Smart,
                 project,
                 also: search,
+                copper: Default::default(),
             },
             json,
             verbose,
@@ -1894,6 +1895,7 @@ fn contents_command(command: &Command, quiet: bool, verbose: bool) -> ExitCode {
         part_positions: dutchman_core::PartPositions::Smart,
         project: project.clone(),
         also: search.clone(),
+        copper: Default::default(),
     };
     contents(input, &search, *json, quiet, verbose)
 }

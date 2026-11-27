@@ -5146,6 +5146,70 @@ mod tests {
     }
 
     #[test]
+    fn a_component_carries_the_input_and_result_states_of_its_own_features() {
+        let model = with_history(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let block = wire["model"]["features"][0]["id"].clone();
+        let other = json!("synthetic:copy:feature#other");
+        let result = |id: &str, of: &Value| {
+            json!({"id": format!("synthetic:result:state#{id}"),
+            "output_of": of, "members": [{"kind": "body", "id": "1"}]})
+        };
+        let input = |id: &str, of: &Value| {
+            json!({"id": format!("synthetic:input:state#{id}"),
+            "input_of": of, "bodies": [], "faces": [], "edges": [], "vertices": [],
+            "edge_geometry": [], "face_owners": []})
+        };
+        // Nothing points at these rows: each names only its feature.
+        wire["model"]["feature_result_topologies"] =
+            json!([result("block", &block), result("other", &other)]);
+        wire["model"]["feature_input_topologies"] =
+            json!([input("block", &block), input("other", &other)]);
+        let model = Model {
+            ir: crate::test_products::read(&wire),
+            ..model
+        };
+        let states = |part: &Model| -> (Vec<String>, Vec<String>) {
+            let m = &part.ir.model;
+            (
+                m.feature_result_topologies
+                    .iter()
+                    .map(|row| row.id.as_str().to_owned())
+                    .collect(),
+                m.feature_input_topologies
+                    .iter()
+                    .map(|row| row.id.as_str().to_owned())
+                    .collect(),
+            )
+        };
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        assert_eq!(
+            states(&assembly.parts[0]),
+            (
+                vec!["synthetic:result:state#block".to_owned()],
+                vec!["synthetic:input:state#block".to_owned()]
+            )
+        );
+        // The expanded and the compact row index carry the same.
+        let expanded = placed_document(&model);
+        let text = serde_json::to_string(&model.ir).unwrap();
+        let packed = slicing::Packed::read(&text).unwrap();
+        let mut document = packed.document().unwrap();
+        products::project(&mut document["model"]).unwrap();
+        let index = slicing::Index::packed(&packed, &document).unwrap();
+        let bodies: Vec<&str> = model.ir.model.product_definitions[0]
+            .bodies
+            .iter()
+            .map(|id| id.as_str())
+            .collect();
+        let owner = HistoryOwner::Definition(model.ir.model.product_definitions[0].id.as_str());
+        let value = only(&model, &expanded, &bodies, owner, "part".to_owned()).unwrap();
+        let compact = only_indexed(&model, &index, &bodies, owner, "part".to_owned()).unwrap();
+        assert_eq!(states(&value), states(&assembly.parts[0]));
+        assert_eq!(states(&compact), states(&value));
+    }
+
+    #[test]
     fn a_component_keeps_the_history_that_builds_it() {
         let assembly = local_assembly(&with_history(true)).unwrap().unwrap();
         let block = &assembly.parts[0];

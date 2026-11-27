@@ -355,6 +355,29 @@ fn the_main_screen_has_three_numbered_steps_with_labels_before_controls() {
 }
 
 #[test]
+fn inner_copper_waits_for_a_circuit_board_in_the_same_place() {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 1400.0))
+        .build_eframe(|cc| test_app(cc));
+    h.state_mut()
+        .add_inputs([fixture("generated_unit_cube.f3d")]);
+    h.run_steps(12);
+    h.get_by_label("Advanced");
+    let spot = h.get_by_label("Inner copper layers").rect();
+    assert!(h.get_by_label("Circuit boards").rect().right() <= spot.left());
+    h.get_by_label("Add a circuit board to use this.");
+    assert!(h.get_by_label("Inner copper layers").is_disabled());
+    let work = tempfile::tempdir().unwrap();
+    let board = work.path().join("controller-board.PcbDoc");
+    std::fs::copy(fixture("synthetic_cube.ipt"), &board).unwrap();
+    h.state_mut().add_inputs([board]);
+    h.run_steps(12);
+    assert!(h.query_by_label("Add a circuit board to use this.").is_none());
+    assert!(!h.get_by_label("Inner copper layers").is_disabled());
+    assert!((h.get_by_label("Inner copper layers").rect().left() - spot.left()).abs() < 1.0);
+}
+
+#[test]
 fn header_controls_share_one_height_and_the_buttons_one_shape() {
     let mut h = Harness::builder()
         .with_size(egui::vec2(1280.0, 800.0))
@@ -7269,4 +7292,59 @@ fn up_axis_screenshots() {
             "Up axis choices listed: Automatic, Stand up, Keep the file's axes.",
         );
     }
+}
+
+/// The Advanced section with the "Inner copper layers" choice at 1280x800: English, and with a
+/// long German design name (the app has no German text yet, so the name is the long string).
+/// Neutral paths under /tmp/demo.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn inner_copper_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let demo = PathBuf::from("/tmp/demo");
+    let designs = demo.join("Designs");
+    std::fs::create_dir_all(&designs).unwrap();
+    let mut index = String::new();
+    for (language, name) in [
+        ("english", "Controller board.PcbDoc"),
+        (
+            "german",
+            "Leiterplatte Hauptsteuerung Erweiterungsmodul Entwurf Zwei.PcbDoc",
+        ),
+    ] {
+        let input = designs.join(name);
+        std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+        for (theme, label) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().preview_solidcraft(Some("0.50.0"));
+            harness.state_mut().set_checker_for_test(true);
+            harness.state_mut().add_inputs([input.clone()]);
+            harness.state_mut().set_out_dir(demo.join("out"));
+            harness.state_mut().set_verify(false);
+            wait_for_estimate(&mut harness);
+            harness.get_by_label("Advanced").click_accesskit();
+            harness.run_steps(8);
+            harness
+                .get_by_label("Inner copper layers")
+                .click_accesskit();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("inner-copper-{language}"),
+                label,
+                "Advanced open with Inner copper layers ticked.",
+            );
+        }
+    }
+    std::fs::write(dir.join("inner-copper.md"), index).unwrap();
 }

@@ -758,6 +758,7 @@ fn plan_with_limit(
                     part_positions: dutchman_core::PartPositions::Smart,
                     project: root.is_dir().then(|| root.to_path_buf()),
                     also: Vec::new(),
+                    copper: Default::default(),
                 },
             });
         }
