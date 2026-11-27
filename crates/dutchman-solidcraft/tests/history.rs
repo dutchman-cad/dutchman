@@ -7275,14 +7275,15 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
         let model = if file == "P08b.FCStd" {
             assert_eq!(document["features"][4]["pattern"]["count"], "7");
             assert_eq!(document["features"][4]["pattern"]["angle"], "360 deg");
-            // The pinned decoder resolves Z_Axis as -Y and includes a duplicate endpoint
-            // where the recipe has eight distinct holes. Never repair native decoding
-            // in the mapper: expose both gaps and isolate them in this neutral test model.
+            // The pinned decoder resolves Z_Axis as +Z now (it resolved it as -Y before cadmpeg
+            // main 4062d266) and still includes a duplicate endpoint where the recipe has eight
+            // distinct holes. Never repair native decoding in the mapper: expose the gap and
+            // isolate it in this neutral test model.
             assert!(
-                (document["features"][4]["pattern"]["axis"][1]
+                (document["features"][4]["pattern"]["axis"][2]
                     .as_f64()
                     .unwrap()
-                    + 1.0)
+                    - 1.0)
                     .abs()
                     < 1e-9
             );
