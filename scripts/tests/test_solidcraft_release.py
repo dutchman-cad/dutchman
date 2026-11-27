@@ -25,6 +25,24 @@ class Releases(unittest.TestCase):
                  {"tag_name": "v0.27.13", "prerelease": True}]
         self.assertEqual(release.newest("0.27", rows), "0.27.10")
 
+    def test_only_a_named_prerelease_is_taken(self):
+        rows = [{"tag_name": "v0.50.0", "prerelease": True},
+                {"tag_name": "v0.50.1-nightly", "prerelease": True},
+                {"tag_name": "v0.50.2", "prerelease": True},
+                {"tag_name": "v0.49.1"}]
+        accepted = release.ACCEPTED_PRERELEASES
+        try:
+            release.ACCEPTED_PRERELEASES = ["0.50.0"]
+            self.assertEqual(release.newest("0.50", rows), "0.50.0")
+            release.ACCEPTED_PRERELEASES = []
+            with self.assertRaises(ValueError):
+                release.newest("0.50", rows)
+            release.ACCEPTED_PRERELEASES = ["0.50.0"]
+            rows.append({"tag_name": "v0.50.0", "draft": True})
+            self.assertEqual(release.newest("0.50", rows[-1:] + rows[:1]), "0.50.0")
+        finally:
+            release.ACCEPTED_PRERELEASES = accepted
+
     def test_missing_minor_fails(self):
         with self.assertRaises(ValueError):
             release.newest("0.27", [{"tag_name": "v0.26.9"}])

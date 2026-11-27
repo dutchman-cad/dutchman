@@ -118,37 +118,54 @@ fn loss(report: &mut Report, subject: &str, reason: &str, has_step: bool, code: 
 /// assembly whose parts hold none of that history. Parts that are each placed once, at the
 /// identity, become the design's own bodies, unless anything else names those placements.
 fn part_studio_bodies(model: &mut Model) {
-    use cadmpeg_ir::products::{OccurrenceParent, PrototypeReference};
+    use cadmpeg_ir::products::Storage;
     let rows = &model.ir.model;
     if rows.occurrences.len() < 2 || !rows.assembly_joints.is_empty() {
         return;
     }
+    let mut roots = rows.product_definitions.iter().filter(|d| d.is_root());
+    let Some(root) = roots.next() else {
+        return;
+    };
+    if roots.next().is_some()
+        || !root.bodies.is_empty()
+        || !root.sketches.is_empty()
+        || !root.tessellations.is_empty()
+        || !root.instance_bodies.is_empty()
+        || !root.representations.is_empty()
+        || root.active == Some(false)
+        || root.occurrences.len() != rows.occurrences.len()
+    {
+        return;
+    }
     let mut placed = std::collections::BTreeSet::new();
     for occurrence in &rows.occurrences {
-        let PrototypeReference::Local { definition } = &occurrence.prototype else {
-            return;
-        };
-        if !matches!(occurrence.parent, OccurrenceParent::Root {})
-            || occurrence.transform != cadmpeg_ir::transform::Transform::identity()
-            || occurrence.scale.iter().any(|s| s.get() != 1.0)
-            || occurrence.linked_prototype.is_some()
-            || occurrence.link.is_some()
+        if !root.occurrences.contains(&occurrence.id)
+            || occurrence.transform != Some(cadmpeg_ir::transform::Transform::identity())
+            || occurrence.suppressed == Some(true)
             || occurrence.visible == Some(false)
-            || !placed.insert(definition.as_str())
+            || occurrence.representation.is_some()
+            || !occurrence.overrides.is_empty()
+            || !placed.insert(occurrence.prototype.as_str())
         {
             return;
         }
     }
-    if rows.product_definitions.len() != placed.len()
-        || rows
-            .product_definitions
-            .iter()
-            .any(|definition| !placed.contains(definition.id.as_str()))
+    if rows.product_definitions.len() != placed.len().saturating_add(1)
+        || rows.product_definitions.iter().any(|definition| {
+            definition.id != root.id
+                && (!placed.contains(definition.id.as_str())
+                    || !matches!(definition.storage, Storage::Embedded)
+                    || !definition.occurrences.is_empty()
+                    || !definition.instance_bodies.is_empty()
+                    || !definition.representations.is_empty()
+                    || definition.active == Some(false))
+        })
     {
         return;
     }
-    // Each placement is named only by its own row; any other mention keeps the product
-    // structure as decoded. The products themselves stay, with their names and bodies.
+    // Each placement is named by its row and its owner; any other mention keeps the
+    // product structure as decoded. The file wrapper must also have no other users.
     let Ok(text) = serde_json::to_string(&model.ir) else {
         return;
     };
@@ -156,11 +173,18 @@ fn part_studio_bodies(model: &mut Model) {
     if rows
         .occurrences
         .iter()
-        .any(|occurrence| named(occurrence.id.as_str()) != 1)
+        .any(|occurrence| named(occurrence.id.as_str()) != 2)
+        || named(root.id.as_str()) != 1
     {
         return;
     }
+    let root_id = root.id.clone();
     model.ir.model.occurrences.clear();
+    model
+        .ir
+        .model
+        .product_definitions
+        .retain(|definition| definition.id != root_id);
     // The STEP export names each part on its product. A body that is its product's only
     // body and has no name of its own takes the part's name, which the written body keeps.
     let names: std::collections::BTreeMap<String, String> = model
@@ -973,7 +997,13 @@ fn read_studio(
             .iter()
             .map(|feature| feature.id.clone())
             .collect();
-        if let Err(reason) = thin::install_scope(&mut model.ir, report) {
+        if let Err(reason) = thin::install_scope(ctx, &mut model.ir, report) {
+            if let Some(resource) = ctx.resource_refusal() {
+                return Err(Error::Decode(format!(
+                    "{reason} during {}",
+                    resource.operation
+                )));
+            }
             model.ir.design = Default::default();
             for feature in &mut model.ir.model.features {
                 if refused.contains(&feature.id)
@@ -988,7 +1018,9 @@ fn read_studio(
                         json!({"kind":format!("Onshape design scope: {reason}"),"parameters":{}}),
                     )) {
                         feature.evaluation =
-                            cadmpeg_ir::features::FeatureEvaluation::from_definition(native);
+                            cadmpeg_ir::features::evaluation::FeatureEvaluation::from_definition(
+                                native,
+                            );
                     }
                     feature.dependencies = Default::default();
                     loss(

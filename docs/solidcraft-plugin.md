@@ -6,9 +6,12 @@ the file with the same code as the `dutchman` command and opens the result as a 
 design with its editable history. SolidCraft shows what could not be carried over in its
 Import report window, one line per kind of loss.
 
-It needs SolidCraft 0.44 or newer, on the desktop. SolidCraft's browser version does not run
-plugins yet. Older SolidCraft releases refuse to install it: they cannot run importers or grant
-the input folder it reads assembly parts from.
+It needs a SolidCraft release that includes plugin importer support (the file-first dialog,
+folder access, a plugin's minimum version, and per-user settings), on the desktop. SolidCraft's
+browser version does not run plugins yet. This plugin needs SolidCraft 0.50.0 or newer. SolidCraft 0.49.1 and older refuse to install it and
+say which capability or field they lack (0.49.1 says it needs `folders 0.1`): the plugin asks for
+folder access and per-user settings, which they do not have. Update SolidCraft to 0.50.0 or newer,
+or keep the plugin from an earlier Dutchman release, which those versions install.
 
 ## Install
 
@@ -28,8 +31,9 @@ the input folder it reads assembly parts from.
    **Install** approves the package's memory and folder access; **Cancel** installs nothing.
 
 Installing never runs the plugin. After that, **File > Open** offers the Dutchman file types, and
-Dutchman is listed in the Plugins menu, where its dialog shows the options before it asks for the
-file. To update, install the newer zip over the old one; to remove it, use **Remove** on its card
+Dutchman is listed in the Plugins menu. The dialog asks for the file first and then shows the
+options, so the options are the ones for that file; **File > Open** and drag-and-drop already have
+the file and go straight to the options. **Change file...** keeps the options open. To update, install the newer zip over the old one; to remove it, use **Remove** on its card
 in **Preferences > Plugins**. Designs you made with it stay as they are.
 
 The package includes a small Dutchman ship icon in SolidCraft's vector icon format,
@@ -52,10 +56,12 @@ is enough:
 | 1 | **Preferences > Plugins > Max plugin memory (MiB)**, only if SolidCraft refuses the memory request | at least 2048 | Room for the decoded model. |
 | 2 | **Install plugin...** and approve | memory and "read access to the input folder" | Assembly parts are read from the folder of the file you open. |
 
-The plugin cannot open a dialog or change SolidCraft's preferences, so these are SolidCraft's
+The plugin cannot change SolidCraft's preferences, so these are SolidCraft's
 settings, not something Dutchman can do for you. What Dutchman does itself: when you open a
 `.iam` or `.sldasm` and the folder was not granted, it stops before reading anything and says
-which grant is missing and what it is for, instead of failing on the first missing part. A
+which grant is missing and what it is for, instead of failing on the first missing part.
+The same goes for the folder you pick in the dialog (below): if SolidCraft has not granted it,
+the message names the **Folder with the parts** field. A
 design above the plugin's estimate is sent to the Dutchman app before any work is done.
 A design that needs more work than the plugin's 100,000,000,000 fuel is not attempted; open it
 in the Dutchman app instead.
@@ -65,10 +71,12 @@ in the Dutchman app instead.
 | Asks for | Why |
 |---|---|
 | Read access to the folder of the file you open | An assembly names its part files; the plugin reads them from that folder. Without it, only the file you open is read. |
+| Read access to a folder you pick, for one file | **Folder with the parts**: an assembly whose parts are somewhere else, such as a Fusion export folder. SolidCraft grants it only when you pick the folder in the dialog, only for that file, and the plugin never writes there. |
+| Your own settings | The three options below, kept in SolidCraft's per-user settings and nowhere else. |
 | 2048 MiB of memory | Real CAD files need it; see below. |
 | 100,000,000,000 fuel | The work budget; SolidCraft's default ceiling. Larger designs go to the Dutchman app. |
 
-It has no network access, no clock or settings access, and no permission to write files. It
+It has no network access and no clock, and no permission to write files. It
 cannot change the design you have open: it only produces a new one.
 
 ## The memory ceiling
@@ -105,17 +113,27 @@ what the design needs, what the plugin has, and sends you to the Dutchman app.
 
 ## Options
 
-The dialog shows three options:
+The dialog shows three options, and a folder field:
 
 - **Keep editable history** (on): keep the features Dutchman could map next to the original
   geometry. Turn it off for geometry only.
 - **Up axis**: **As in the file** keeps the file's coordinates. **Stand up (Y-up to Z-up)**
   turns a Y-up design to Z-up.
 - **Include hidden bodies** (off): also bring in hidden or consumed bodies.
+- **Folder with the parts** (empty, optional): for an assembly whose parts are not beside it, pick
+  the folder that holds them with **Browse...**. Pick the export folder itself, with the parts
+  where the assembly expects them. Leave it empty to use the folder that holds the file. A
+  folder you type or paste counts as picked; a folder SolidCraft remembered from earlier does
+  not, so you choose it each time. Scripts and the command line cannot grant it and use the
+  install approval for the file's own folder.
 
+Dutchman remembers your last three options in your SolidCraft user settings, saved when
+SolidCraft accepts an import, and offers them as the defaults for the next file. A conversion
+that fails or is canceled saves nothing. The parts folder is never remembered. Removing the
+plugin asks whether to keep these settings (it keeps them by default).
 ## Limits
 
-- SolidCraft 0.44 or newer, desktop only for now.
+- A SolidCraft release with plugin importer support, desktop only for now.
 - SolidCraft defaults to a ceiling of 100,000,000,000 fuel and the plugin asks for exactly that.
   A package runs with the fuel its manifest declares; raising **Max plugin fuel** does not give
   it more.

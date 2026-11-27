@@ -6,12 +6,22 @@ import sys
 from pathlib import Path
 
 
+# Announced SolidCraft releases that GitHub still marks as pre-release. Only a version named here
+# may be taken while GitHub calls it a pre-release; nightlies and any other pre-release stay
+# refused. Once upstream publishes the version as a full release its entry changes nothing, and
+# it is removed.
+ACCEPTED_PRERELEASES = ["0.50.0"]
+
+
 def newest(minor, releases):
     if not re.fullmatch(r"[0-9]+\.[0-9]+", minor):
         raise ValueError("Use a newest minor in x.y form")
     candidates = []
     for release in releases:
-        if release.get("draft") or release.get("prerelease"):
+        tag = release.get("tag_name", "")
+        if release.get("draft"):
+            continue
+        if release.get("prerelease") and tag.removeprefix("v") not in ACCEPTED_PRERELEASES:
             continue
         match = re.fullmatch(r"v([0-9]+\.[0-9]+)\.([0-9]+)", release.get("tag_name", ""))
         if match and match[1] == minor:

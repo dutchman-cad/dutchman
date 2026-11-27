@@ -5,13 +5,22 @@ normal CADIR → SolidCraft conversion pipeline. It reads Fusion `.f3d` and `.f3
 Inventor `.ipt` and `.iam`, SolidWorks `.sldprt` and `.sldasm`, and FreeCAD `.FCStd`.
 The result contains ordinary SolidCraft features and geometry and works without the plugin.
 
-It implements SolidCraft's importer interface: the `craft:plugin@0.1.0` package, world
-`importer-plugin` (capabilities `formats@0.1` and `evaluate@0.1`). It needs SolidCraft 0.44 or
-newer. SolidCraft's manifest has no minimum host version field; 0.43 and older serve only
-`commands@0.1`, so they refuse the manifest's capabilities at install, before any code runs. SolidCraft opens the result as a new unsaved
+It implements SolidCraft's importer interface: the `craft:plugin@0.2.0` package, in the world
+`dutchman-importer` (`wit/dutchman.wit`), which is SolidCraft's `importer-dialog-plugin` plus
+`user-storage` and `folders`. The manifest requires the capabilities `formats@0.2`,
+`evaluate@0.2`, `dialog@0.1`, `folders@0.1` and `user-storage@0.1`, and states
+`min_host_version`. It needs a SolidCraft release that includes plugin importer support
+(SolidCraft #20425: file first, folder access, minimum version, per-user settings). SolidCraft opens the result as a new unsaved
 design; the plugin never modifies the active design. `wit/craft-plugin.wit` is a copy of
-SolidCraft's `crates/craft-plugin/wit/plugin.wit`. No host checkout is needed to build or
-test this component.
+SolidCraft's `crates/craft-plugin/wit/plugin.wit` (change it there first). No host checkout is
+needed to build or test this component, or to run its unit tests.
+
+Released SolidCraft refuses this package at install: a component's WIT imports are static, so
+`folders` and `user-storage` cannot be optional, and a release without them (and without the
+`min_host_version` and `file_first` manifest fields) reports the capability or field it lacks.
+`min_host_version` is the oldest release that serves all of them, 0.50.0, the first release that
+includes #20425; the previous package, built against
+`craft:plugin@0.1.0`, is what SolidCraft 0.44 to 0.49.1 can install.
 
 Open Fusion, Inventor, SolidWorks or FreeCAD files with **File > Open**. Before reading
 native geometry, the plugin checks bounded archive indexes and the desktop app's measured
@@ -95,7 +104,9 @@ this timing uses the already compiled component. No GUI step is needed for these
 The manifest supplies native host forms: Keep editable history (true), Up axis
 (Automatic, `auto`, the default: stand up only when the source states Y-up, otherwise keep the
 file's axes; As in the file, `as_is`, never rotates; or Stand up (Y-up to Z-up), `stand_up`), Include
-hidden bodies (false). The up axis lists its options as `oneOf` entries of `const` and
+hidden bodies (false), and an optional Folder with the parts (see below).
+The entry sets `"file_first": true`: SolidCraft picks the file before it shows the form, and
+File > Open and drag-and-drop, which already have a path, go straight to the form. The up axis lists its options as `oneOf` entries of `const` and
 `title`, so the host's dropdown shows the titles and sends the value. The schemas use the
 #2829 command contract field shapes and reject unknown fields.
 Defaults retain the CLI's history and visibility behavior; the automatic up axis keeps the file's axes unless the source states Y-up, which the plugin's host-read files do not yet. Include
@@ -106,8 +117,43 @@ These two opt-in controls are plugin options; they do not add CLI flags.
 
 There is no plugin UI code. The host draws the form, loss report, Open and Cancel controls
 and asks for read access to the selected input's folder (`input_folder`) for assembly
-parts. There is no network or clock permission and no write grant. The plugin resolves relative part paths and relocates stored absolute paths by their
-longest safe suffix, trying folders nearest the referring assembly first, within the
+parts.
+
+Two ways to give the plugin an assembly's parts:
+
+- `input_folder`, approved once at install: the parts are in the folder of the file.
+- The `parts_folder` property (`"format": "directory"`, `"x-solidcraft-grant": "read"`), which
+  shows a folder field with **Browse...** in the form. The person picks the folder that holds
+  the parts, such as a Fusion export folder, and SolidCraft grants read access to it for that
+  one import. The grant is the property key, so the guest reads parts with
+  `folders.read("parts_folder", path, ...)`, `folders.size` and `folders.resolve`, relative to the
+  picked folder; the main file is still read through `source`. The value in the options is only
+  a switch: the plugin never opens that path. A default or saved value grants nothing, and a
+  script, `solidcraft-cli` or MCP call that names a folder gets no grant either: SolidCraft
+  allows a non-empty folder value there only when an install approval already covers it, and an
+  importer manifest cannot declare one (`runtime.permissions.files` is refused for importers).
+  So scripts keep using `input_folder`.
+
+The folder field only changes where parts come from; everything else (limits, budgets, the
+resolver's suffix search, the case-insensitive lookup) is the same. The parts are looked up
+from the root of the picked folder, so pick the folder that holds the assembly's parts at the
+paths the assembly stores (the export folder itself, not a folder above it).
+With the field set, the plugin first asks for the grant (`folders.resolve("parts_folder", "")`)
+before reading anything. A refusal names the missing grant, the field to use and what it is
+for (`notice::parts_folder_access`); when `input_folder` is the one missing, the message names
+that instead (`notice::folder_access`).
+
+Per-user settings (`user-storage@0.1`) keep the three dialog options. After an import,
+`adapter.rs` sets the key `options` to `{"editable_history", "up_axis", "include_hidden_bodies"}`
+(`settings::encode`); SolidCraft publishes it only when it accepts the design, so a failed or
+canceled import saves nothing. The dialog hook (`dialog@0.1`, `dialog-provider.update-fields`) reads
+that key when a file is chosen and replies with a `default` for each option the stored value
+holds validly (`settings::field_defaults`); nothing stored, a damaged value or a value the form
+does not offer leaves the manifest's defaults. The parts folder is never stored. The hook reads
+only its own settings, runs no conversion and gets no folder grant. Scripts and MCP pass options
+directly and never run the hook, but an accepted scripted import still saves the options it
+used. There is no network or clock permission and no write grant. The plugin resolves relative part paths and relocates stored absolute paths by their
+longest safe suffix (a suffix through a hidden name such as `.shortcut-targets-by-id` is skipped, because SolidCraft refuses hidden names in a folder read), trying folders nearest the referring assembly first, within the
 granted input folder. SolidWorks and FreeCAD prefer a copy beside the referring assembly.
 It never searches outside the granted folder, Inventor project libraries or the saving
 machine's absolute paths. The host must enforce the folder capability and symlink rules;
@@ -174,7 +220,15 @@ clock that never advances on `wasm32-unknown-unknown`; cadmpeg's Fusion codec do
 The plugin uses one worker and no progress heartbeat thread.
 
 The host tests are opt-in so the Wasmtime test compiler does not raise the normal
-workspace's Rust 1.88 requirement. Use a toolchain supported by Wasmtime 50 for them.
+workspace's Rust 1.88 requirement. `tests/solidcraft_host.rs` runs the package on a real
+SolidCraft instead of this crate's stand-in host: `plugin check` (registration), `plugin test`
+cases (a file handed over directly, an assembly with and without the `input_folder` approval,
+a folder named by a script) and `exec file.import` with a settings folder (settings saved by
+an accepted import only). It needs `SOLIDCRAFT_CLI` (a build from a commit with SolidCraft #20425)
+and `DUTCHMAN_PLUGIN_COMPONENT`, and fails when either is missing. The picked folder itself is granted
+only by the desktop dialog, which no command line can answer, so `tests/component.rs` covers
+it with its stand-in host: parts read through `folders`, a refusal without the grant, and the
+saved and offered settings. Use a toolchain supported by Wasmtime 50 for them.
 They require an actual component and fail if it is absent:
 
 ```sh
@@ -202,6 +256,9 @@ All generated guest and harness bindings are in `src/adapter.rs`, from
 
 - The export `importer.import-file(entry, file: {name, size}, options)` converts. `entry`
   is the manifest entry (`convert`); `options` is JSON matching its `input_schema`.
+- `dialog-provider.update-fields(entry, context)` returns `{"fields": {...}}` with the person's
+  saved defaults (see above); `user-storage.get/set` and `folders.read/size/resolve` are the
+  other additions to this contract.
 - `source.read(path, offset, len)` returns at most 1 MiB; path `""` is the selected file,
   any other path is relative to its folder. `source.size(path)` gives member sizes and
   `source.resolve(path)` the folder's case-preserving name for a member.
@@ -231,7 +288,7 @@ its budgets, cancellation and fresh-instance behavior after traps.
 ## Verification in the host
 
 The plugin checks its history in SolidCraft itself, through the host's `evaluate` import
-(capability `evaluate@0.1`, SolidCraft's importer PR follow-up). `HostEvaluator` in
+(capability `evaluate@0.2`, SolidCraft's importer PR follow-up). `HostEvaluator` in
 `crates/dutchman-plugin/src/evaluator.rs` implements #580's `SolidCraftEvaluator` over it:
 for each check `adapter.rs` stages the design (`evaluate.stage`, 1 MiB at a time), runs the
 writer's commands one at a time (`evaluate.run`: `inspect.measure`, `document.inspect`,

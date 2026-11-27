@@ -1800,7 +1800,12 @@ fn finish_painted(
 }
 
 /// The most faces the thick overlays of one package may add together.
+#[cfg(not(test))]
 const MAX_SOLID_FACES: usize = 250_000;
+/// The unit tests' budget: passing it takes a hundred areas, not the 42,000 the real one needs,
+/// which kept the budget test running for minutes.
+#[cfg(test)]
+const MAX_SOLID_FACES: usize = 600;
 
 /// The faces one area costs as a prism: top, bottom, and one side for each edge of every loop.
 fn prism_faces(area: &Area) -> usize {
@@ -2918,8 +2923,9 @@ mod tests {
     fn over_the_face_budget_an_overlay_is_a_sheet_with_a_note() {
         let dir = package("thick-budget");
         write_models(&dir);
-        // Each square prism costs 6 faces: 42,000 of them pass 250,000.
-        let areas: Vec<Value> = (0..42_000u32)
+        // Each square prism costs 6 faces: one more square than fits passes the budget.
+        let squares = u32::try_from(MAX_SOLID_FACES / 6 + 1).unwrap();
+        let areas: Vec<Value> = (0..squares)
             .map(|i| {
                 let (x, y) = (f64::from(i % 200) * 2.0, f64::from(i / 200) * 2.0);
                 json!({"outer": [[x, y], [x + 1.0, y], [x + 1.0, y + 1.0], [x, y + 1.0]], "holes": []})

@@ -2,7 +2,7 @@
 //! supplement continuous measurements without rejecting periodic seams or free-form
 //! patch splits. Raw counts do not prove surface equivalence or manifoldness.
 use super::*;
-use cadmpeg_ir::features::ParameterValue;
+use cadmpeg_ir::features::parameters::ParameterValue;
 use dutchman_core::{Model, Report};
 use serde_json::json;
 
