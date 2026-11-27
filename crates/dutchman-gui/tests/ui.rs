@@ -757,7 +757,7 @@ fn replace_existing_files_screenshots() {
     std::env::set_var("DUTCHMAN_NO_TRASH", "1");
     let mut index = String::new();
     for (set, design) in [
-        ("en", "Toob v2"),
+        ("en", "bracket"),
         (
             "de",
             "Gehäuse-Rückwand für das Mehrzweck-Fräsgerät, Fassung 2",
