@@ -95,12 +95,16 @@ struct Design {
     source: PathBuf,
 }
 
-/// What a check needs besides the design.
-struct Context {
-    program: PathBuf,
-    limits: worker::Limits,
-    no_verify: bool,
-    solidcraft: Option<PathBuf>,
+/// What converting a design again needs besides the design.
+pub struct Context {
+    /// The program each conversion runs in, as a child within `limits`; `None` converts in
+    /// this process, without limits.
+    pub program: Option<PathBuf>,
+    pub limits: worker::Limits,
+    /// Write history without checking it in SolidCraft.
+    pub no_verify: bool,
+    /// The SolidCraft CLI that checks a written history.
+    pub solidcraft: Option<PathBuf>,
 }
 
 /// Runs once over the folder, or until a signal with `--watch`. `Ok(false)` when a design
@@ -111,9 +115,11 @@ pub fn run(command: &Command) -> Result<bool, String> {
         return Err(format!("{} is not a folder", command.folder.display()));
     }
     let context = Context {
-        program: batch::Settings::isolated()?
-            .worker
-            .ok_or("cannot find converter worker")?,
+        program: Some(
+            batch::Settings::isolated()?
+                .worker
+                .ok_or("cannot find converter worker")?,
+        ),
         limits: worker::Limits {
             timeout: Duration::from_secs(command.timeout.max(1)),
             max_memory: (command.max_memory > 0)
@@ -213,34 +219,35 @@ fn load(record_path: &Path) -> Result<Design, String> {
     })
 }
 
-/// Looks at one design and converts it again when its source changed.
-fn check_record(record_path: &Path, context: &Context, stop: Option<&AtomicBool>) -> Outcome {
-    let design = match load(record_path) {
-        Ok(design) => design,
-        Err(why) => return Outcome::new(Event::Failed, why),
-    };
+/// How a design's source stands against its record.
+enum Standing {
+    /// The source has the recorded bytes.
+    Current,
+    /// The source differs; what it is now.
+    Changed(link::Source),
+    Missing,
+    /// The source could not be read.
+    Unreadable(String),
+}
+
+/// Compares a design's source with its record, converting nothing.
+fn inspect(design: &Design) -> Standing {
     let meta = match std::fs::metadata(&design.source) {
         Ok(meta) if meta.is_file() => meta,
-        Ok(_) => return missing(&design),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return missing(&design),
+        Ok(_) => return Standing::Missing,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Standing::Missing,
         Err(e) => {
-            return Outcome::new(
-                Event::Failed,
-                format!("cannot read {}: {e}", design.source.display()),
-            )
+            return Standing::Unreadable(format!("cannot read {}: {e}", design.source.display()));
         }
     };
     let has_output = design.output.is_file();
     if has_output && link::stamp_unchanged(&design.record, &meta) {
-        return Outcome::new(Event::Unchanged, "");
+        return Standing::Current;
     }
     let digest = match watch::hash(&design.source) {
         Ok(digest) => digest,
         Err(e) => {
-            return Outcome::new(
-                Event::Failed,
-                format!("cannot read {}: {e}", design.source.display()),
-            )
+            return Standing::Unreadable(format!("cannot read {}: {e}", design.source.display()));
         }
     };
     let recorded = design
@@ -248,21 +255,120 @@ fn check_record(record_path: &Path, context: &Context, stop: Option<&AtomicBool>
         .pointer("/source/sha256")
         .and_then(Value::as_str);
     if has_output && recorded == Some(digest.as_str()) {
-        return Outcome::new(Event::Unchanged, "");
+        return Standing::Current;
     }
+    Standing::Changed(link::Source::with_metadata(digest, &meta))
+}
+
+/// Looks at one design and converts it again when its source changed.
+fn check_record(record_path: &Path, context: &Context, stop: Option<&AtomicBool>) -> Outcome {
+    let design = match load(record_path) {
+        Ok(design) => design,
+        Err(why) => return Outcome::new(Event::Failed, why),
+    };
+    match inspect(&design) {
+        Standing::Current => Outcome::new(Event::Unchanged, ""),
+        Standing::Missing => missing(&design),
+        Standing::Unreadable(why) => Outcome::new(Event::Failed, why),
+        Standing::Changed(source) => match reconvert(&design, &source, context, stop, &|_| {}) {
+            Ok(report) => Outcome {
+                event: Event::Updated,
+                message: String::new(),
+                report: Some(report),
+            },
+            Err((message, report)) => Outcome {
+                event: Event::Failed,
+                message,
+                report,
+            },
+        },
+    }
+}
+
+/// How a design found by [`scan`] stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// The source has the recorded bytes.
+    Current,
+    /// The source changed since the design was converted.
+    Changed,
+    /// The source file is not there.
+    Missing,
+    /// The record or the source could not be read, and why.
+    Unreadable(String),
+}
+
+/// One design with a link record.
+#[derive(Clone, Debug)]
+pub struct Entry {
+    /// The link record (`<design>.link.json`).
+    pub record: PathBuf,
+    /// The converted design, when the record names it; else the record.
+    pub output: PathBuf,
+    /// The source file the design was converted from; empty when the record is unreadable.
+    pub source: PathBuf,
+    /// The program the source comes from (Fusion, Inventor, ...); empty when not known.
+    pub program: String,
+    pub status: Status,
+}
+
+/// Looks at every design with a link record under `folder`, in path order, and says how it
+/// stands. Converts nothing and writes nothing.
+pub fn scan(folder: &Path) -> Vec<Entry> {
+    find_records(folder)
+        .into_iter()
+        .map(|record| match load(&record) {
+            Err(why) => Entry {
+                output: record.clone(),
+                record,
+                source: PathBuf::new(),
+                program: String::new(),
+                status: Status::Unreadable(why),
+            },
+            Ok(design) => {
+                let status = match inspect(&design) {
+                    Standing::Current => Status::Current,
+                    Standing::Changed(_) => Status::Changed,
+                    Standing::Missing => Status::Missing,
+                    Standing::Unreadable(why) => Status::Unreadable(why),
+                };
+                Entry {
+                    program: dutchman_core::Format::from_path(&design.source)
+                        .map(|format| format.family().to_owned())
+                        .unwrap_or_default(),
+                    output: design.output,
+                    source: design.source,
+                    record,
+                    status,
+                }
+            }
+        })
+        .collect()
+}
+
+/// Converts the source of `entry` again and replaces its design and record, with the options the
+/// record holds. Returns the conversion's `dutchman.convert/1` report, naming the design. On
+/// failure the design and record are as they were; the message says why, with the conversion's
+/// report when it made one.
+pub fn update(
+    entry: &Entry,
+    context: &Context,
+    stop: Option<&AtomicBool>,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Result<Value, (String, Option<Value>)> {
+    let design = load(&entry.record).map_err(|why| (why, None))?;
+    let meta = std::fs::metadata(&design.source)
+        .ok()
+        .filter(std::fs::Metadata::is_file)
+        .ok_or_else(|| (format!("{} not found", design.source.display()), None))?;
+    let digest = watch::hash(&design.source).map_err(|e| {
+        (
+            format!("cannot read {}: {e}", design.source.display()),
+            None,
+        )
+    })?;
     let source = link::Source::with_metadata(digest, &meta);
-    match reconvert(&design, &source, context, stop) {
-        Ok(report) => Outcome {
-            event: Event::Updated,
-            message: String::new(),
-            report: Some(report),
-        },
-        Err((message, report)) => Outcome {
-            event: Event::Failed,
-            message,
-            report,
-        },
-    }
+    reconvert(&design, &source, context, stop, on_progress)
 }
 
 fn missing(design: &Design) -> Outcome {
@@ -280,6 +386,7 @@ fn reconvert(
     source: &link::Source,
     context: &Context,
     stop: Option<&AtomicBool>,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Result<Value, (String, Option<Value>)> {
     let fail = |message: String| (message, None);
     let mut options = link::options_from_record(&design.record, &design.folder).map_err(fail)?;
@@ -306,11 +413,24 @@ fn reconvert(
     batch::prepare(std::slice::from_mut(&mut job), &options);
     job.output.clone_from(&staged);
     job.replace = false;
-    let report = match options.part {
-        Some(part) => convert_part(context, &job, &options, part),
-        None => {
-            batch::convert_isolated_job(&context.program, &job, &options, &context.limits, stop)
-        }
+    let report = match (&context.program, options.part) {
+        (None, _) => crate::convert_options_with_progress(
+            &job.input,
+            &job.output,
+            &options,
+            false,
+            &job.search,
+            on_progress,
+        ),
+        (Some(program), Some(part)) => convert_part(program, &job, &options, part),
+        (Some(program), None) => batch::convert_isolated_job_with_progress(
+            program,
+            &job,
+            &options,
+            &context.limits,
+            stop,
+            on_progress,
+        ),
     };
     if report.get("ok").and_then(Value::as_bool) != Some(true) {
         let message = report
@@ -331,6 +451,11 @@ fn reconvert(
     })?;
     let written = link::record(&design.source, &design.output, &options, &report, source)
         .and_then(|record| link::write_file(&link::path_for(&design.output), &record));
+    let mut report = report;
+    // The conversion wrote to its staging file; the design is where the record says.
+    if let Some(path) = report.pointer_mut("/output/path") {
+        *path = Value::String(design.output.display().to_string());
+    }
     match written {
         Ok(()) => Ok(report),
         Err(why) => Err((
@@ -342,7 +467,7 @@ fn reconvert(
 
 /// One part of a design is converted by `dutchman convert --part`, in a child of its own.
 fn convert_part(
-    context: &Context,
+    program: &Path,
     job: &batch::Job,
     options: &ConvertOptions,
     part: dutchman_core::PartSelection,
@@ -354,7 +479,7 @@ fn convert_part(
             message,
         )
     };
-    let mut command = std::process::Command::new(&context.program);
+    let mut command = std::process::Command::new(program);
     command.args(["convert", "--json"]);
     command.args(options.to_args());
     command.args(worker::search_args(&job.search));

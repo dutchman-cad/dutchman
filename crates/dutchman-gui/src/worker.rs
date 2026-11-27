@@ -54,6 +54,11 @@ pub enum Message {
     Progress(Event),
     /// The run is over: every job finished, or it was stopped.
     Done,
+    /// What a look at the designs with link records under `folder` found.
+    SyncScanned {
+        folder: PathBuf,
+        entries: Vec<dutchman::sync::Entry>,
+    },
 }
 
 /// The size of the file at `input`, read here so the window never waits on a slow disk.
@@ -163,7 +168,10 @@ impl Run {
                         .and_then(|path| Path::new(path).file_name())
                     {
                         save_report(
-                            &out_dir.join(name).with_extension(writer.extension()),
+                            &dutchman::resolve_output(
+                                &out_dir.join(name).with_extension(writer.extension()),
+                                options.replace,
+                            ),
                             report,
                             &send,
                         );
@@ -210,6 +218,8 @@ impl Run {
         messages: Sender<Message>,
         ctx: egui::Context,
     ) -> Self {
+        // `job.replace` and `job.output` were settled by the window: the file this session wrote
+        // at that name is replaced only while it is unchanged, else the job has a free name.
         let stop = Arc::new(AtomicBool::new(false));
         let writer = options.writer();
         let options = options.clone();
@@ -247,10 +257,93 @@ impl Run {
         Run { stop }
     }
 
+    /// Converts the designs of `entries` again, one after another, with the options their link
+    /// records hold (`dutchman sync`'s update). Each is a job of the run, so the results show a
+    /// card for it; one that fails keeps its previous design.
+    pub fn update_changed(
+        entries: Vec<dutchman::sync::Entry>,
+        options: &ConvertOptions,
+        messages: Sender<Message>,
+        ctx: egui::Context,
+    ) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let context = dutchman::sync::Context {
+            program: converter_program(),
+            limits: dutchman::worker::Limits {
+                timeout: std::time::Duration::from_secs(u64::MAX / 4),
+                max_memory: None,
+                design: Some(dutchman::worker::DEFAULT_DESIGN_LIMIT),
+            },
+            no_verify: options.no_verify,
+            solidcraft: options.solidcraft.clone(),
+        };
+        std::thread::spawn(move || {
+            let send = |message: Message| {
+                let _ = messages.send(message);
+                ctx.request_repaint();
+            };
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let jobs = entries
+                    .iter()
+                    .map(|entry| Job {
+                        project_files: None,
+                        fallback: None,
+                        input: entry.source.clone(),
+                        output: entry.output.clone(),
+                        replace: true,
+                        search: dutchman::PartSearch::default(),
+                    })
+                    .collect();
+                send(Message::Planned {
+                    problems: Vec::new(),
+                    jobs,
+                });
+                for (index, entry) in entries.iter().enumerate() {
+                    if flag.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    send(Message::Progress(Event::Started(index)));
+                    let result = dutchman::sync::update(entry, &context, Some(&flag), &|event| {
+                        send(Message::Progress(Event::Progress(index, event)));
+                    });
+                    let report = match result {
+                        Ok(report) => report,
+                        Err((_, Some(report)))
+                            if report.get("ok").and_then(Value::as_bool) == Some(false) =>
+                        {
+                            report
+                        }
+                        Err((message, _)) => dutchman::json::failure(
+                            dutchman::json::CONVERT,
+                            dutchman::json::input(&entry.source),
+                            &message,
+                        ),
+                    };
+                    save_report(&entry.output, &report, &send);
+                    send(sized(&entry.source));
+                    send(Message::Progress(Event::Finished(index, report)));
+                }
+            }));
+            send(Message::Done);
+        });
+        Run { stop }
+    }
+
     /// Starts no further file and terminates the isolated converters and their children.
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
     }
+}
+
+/// Looks at the designs with link records under `folder` without blocking a frame: reading a
+/// large source to compare it can take a while.
+pub fn scan_sync(folder: PathBuf, messages: Sender<Message>, ctx: egui::Context) {
+    std::thread::spawn(move || {
+        let entries = dutchman::sync::scan(&folder);
+        let _ = messages.send(Message::SyncScanned { folder, entries });
+        ctx.request_repaint();
+    });
 }
 
 /// Plans folders and estimates their files without blocking a frame.
@@ -308,9 +401,17 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
                         &[
                             "f3d", "f3z", "ipt", "iam", "sldprt", "sldasm", "FCStd", "fcstd",
                             "CATPart", "catpart", "prt", "pvz", "3dm", "sat", "sab", "smt", "smb",
-                            "step", "stp", "igs", "iges", "zip",
+                            "step", "stp", "igs", "iges", "zip", "idw", "slddrw", "f2d", "dft",
+                            "dwg", "dxf",
                         ],
                     )
+                    .add_filter(
+                        "Drawings",
+                        &[
+                            "idw", "slddrw", "f2d", "dft", "dwg", "dxf", "FCStd", "fcstd",
+                        ],
+                    )
+                    .add_filter("Fusion tool libraries", &["tools", "json"])
                     .pick_files()
                     .await
                     .unwrap_or_default(),
@@ -475,12 +576,21 @@ mod tests {
     fn share_links_read_bounded_synthetic_shortcuts_without_network() {
         let folder = tempfile::tempdir().unwrap();
         for (name, contents) in [
-            ("share.url", "[InternetShortcut]\nURL=https://a360.co/synthetic\n"),
-            ("share.webloc", "<?xml version=\"1.0\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist><dict><key>URL</key><string>https://a360.co/synthetic</string></dict></plist>"),
+            (
+                "share.url",
+                "[InternetShortcut]\nURL=https://a360.co/synthetic\n",
+            ),
+            (
+                "share.webloc",
+                "<?xml version=\"1.0\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist><dict><key>URL</key><string>https://a360.co/synthetic</string></dict></plist>",
+            ),
         ] {
             let path = folder.path().join(name);
             std::fs::write(&path, contents).unwrap();
-            assert_eq!(share_link(path.to_str().unwrap()).unwrap(), "https://a360.co/synthetic");
+            assert_eq!(
+                share_link(path.to_str().unwrap()).unwrap(),
+                "https://a360.co/synthetic"
+            );
         }
         let path = folder.path().join("large.url");
         std::fs::write(&path, "x".repeat(8193)).unwrap();
@@ -551,6 +661,7 @@ mod tests {
         }
         let options = ConvertOptions {
             verify: false,
+            replace: true,
             solidcraft_version: Some("0.44.1".parse().unwrap()),
             ..ConvertOptions::default()
         };
@@ -673,6 +784,60 @@ mod tests {
     }
 
     #[test]
+    fn a_run_keeps_a_design_already_in_the_output_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in");
+        let output = dir.path().join("out");
+        std::fs::create_dir_all(&input).unwrap();
+        std::fs::create_dir_all(&output).unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
+        std::fs::copy(&fixture, input.join("part.f3d")).unwrap();
+        std::fs::write(output.join("part.sc"), b"MY OWN DESIGN").unwrap();
+        std::fs::write(output.join("part.report.json"), b"MY OWN REPORT").unwrap();
+        let options = ConvertOptions {
+            verify: false,
+            ..ConvertOptions::default()
+        };
+        let (send, receive) = std::sync::mpsc::channel();
+        let _run = Run::start(
+            vec![input.clone()],
+            output.clone(),
+            &options,
+            send,
+            egui::Context::default(),
+        );
+        let mut reports = Vec::new();
+        loop {
+            match receive
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .unwrap()
+            {
+                Message::Progress(Event::Finished(_, report)) => reports.push(report),
+                Message::ReportSaveFailed(message) => panic!("{message}"),
+                Message::Done => break,
+                _ => {}
+            }
+        }
+        assert_eq!(reports.len(), 1);
+        let numbered = output.join("part (2).sc");
+        assert_eq!(
+            reports.first().unwrap().pointer("/output/path"),
+            Some(&serde_json::json!(numbered.to_str().unwrap()))
+        );
+        assert!(numbered.is_file());
+        assert_eq!(
+            std::fs::read(output.join("part.sc")).unwrap(),
+            b"MY OWN DESIGN"
+        );
+        assert_eq!(
+            std::fs::read(output.join("part.report.json")).unwrap(),
+            b"MY OWN REPORT"
+        );
+        assert_eq!(dutchman::saved_report::read(&numbered).unwrap()["ok"], true);
+    }
+
+    #[test]
     fn iges_in_a_folder_returns_the_shared_refusal_to_the_window() {
         let dir = tempfile::tempdir().unwrap();
         let inputs = dir.path().join("inputs");
@@ -701,7 +866,12 @@ mod tests {
         assert_eq!(reports.len(), 1);
         let report = reports.first().unwrap();
         assert_eq!(report.pointer("/ok"), Some(&serde_json::json!(false)));
-        assert_eq!(report.pointer("/error/message").and_then(Value::as_str), Some("Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import)."));
+        assert_eq!(
+            report.pointer("/error/message").and_then(Value::as_str),
+            Some(
+                "Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import)."
+            )
+        );
         assert!(dutchman::json::fixtures_pitch(&reports).is_none());
         assert!(!outputs.join("design.solidcraft").exists());
         let saved: Value =

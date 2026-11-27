@@ -18,6 +18,23 @@ use crate::{SolidCraftVersion, FORMAT};
 /// The timeline name of the original geometry in a history design.
 pub(crate) const ORIGINAL: &str = "Original geometry (imported)";
 
+/// The Remove feature that takes the bodies of a partial history away before its Import.
+pub(crate) const REMOVE: &str = "Remove converted bodies";
+
+/// The name of the Import holding what a partial history does not convert: the source's
+/// final shape, from the first feature the timeline does not hold.
+pub(crate) fn rest_name(from: Option<&str>) -> String {
+    match from.filter(|from| !from.trim().is_empty()) {
+        Some(from) => format!("Rest of the design (from {from})"),
+        None => "Rest of the design".to_owned(),
+    }
+}
+
+/// Whether an Import feature of that name holds the source's final shape.
+pub(crate) fn is_original_name(name: &str) -> bool {
+    name == ORIGINAL || name.starts_with("Rest of the design")
+}
+
 /// SolidCraft's longest component name.
 const MAX_COMPONENT_NAME: usize = 128;
 
@@ -108,9 +125,12 @@ pub(crate) fn original_looks(doc: &mut Value, looks: &History) {
             .get_mut("features")
             .and_then(Value::as_array_mut)
             .and_then(|features| {
-                features
-                    .iter_mut()
-                    .find(|f| f.get("name").and_then(Value::as_str) == Some(ORIGINAL))
+                features.iter_mut().rev().find(|f| {
+                    f.get("type").and_then(Value::as_str) == Some("import")
+                        && f.get("name")
+                            .and_then(Value::as_str)
+                            .is_some_and(is_original_name)
+                })
             })
             .and_then(Value::as_object_mut)
         {
@@ -190,8 +210,13 @@ pub(crate) enum Live {
     History,
     /// As `History`, for a history that already is the original geometry, which is left out.
     Whole,
-    /// Editable history in a hidden component; the final original remains visible.
+    /// The editable history, then a Remove of the bodies it made, then the original as one
+    /// Import named for the feature it starts at, all in the part's own component.
     Partial,
+    /// Editable history in a hidden component; the final original remains visible. Written
+    /// for a partial history whose bodies SolidCraft could not name, or a SolidCraft without
+    /// the Remove feature.
+    PartialHidden,
     /// As `Partial`, for a whole history that could not be checked against the original.
     Unverified,
     /// The original geometry, with the history suppressed: what the replay is checked against.
@@ -222,13 +247,19 @@ pub(crate) fn history_design(
     stand_up: bool,
 ) -> Value {
     let mut history = history.clone();
-    let hidden = matches!(live, Live::Partial | Live::Unverified);
+    let hidden = matches!(live, Live::PartialHidden | Live::Unverified);
     let wrap_in_occurrence = hidden || stand_up;
     let component = history.next_id;
     let occurrence = component.saturating_add(1);
     if wrap_in_occurrence {
         history.relocate(0, component, "", &mut Default::default());
         history.next_id = occurrence.saturating_add(1);
+    }
+    if live == Live::Partial {
+        // The bodies the history made are taken away before the imported shape, so their
+        // looks have nothing to colour.
+        history.looks.clear();
+        history.face_looks.clear();
     }
     let mut features = history.features.clone();
     if hidden {
@@ -242,7 +273,30 @@ pub(crate) fn history_design(
             }
         }
     }
-    let original = history.next_id;
+    let mut original = history.next_id;
+    let removal = (live == Live::Partial)
+        .then(|| history.replayed_bodies.clone())
+        .flatten()
+        .filter(|bodies| !bodies.is_empty());
+    if let Some(bodies) = removal {
+        let mut remove = json!({
+            "id": original,
+            "name": REMOVE,
+            "type": "remove",
+            "suppressed": false,
+            "bodies": bodies,
+        });
+        if let (true, Some(fields)) = (wrap_in_occurrence, remove.as_object_mut()) {
+            fields.insert("component".to_owned(), json!(component));
+        }
+        features.push(remove);
+        original = original.saturating_add(1);
+    }
+    let original_name = if live == Live::Partial {
+        rest_name(history.rest_from.as_deref())
+    } else {
+        ORIGINAL.to_owned()
+    };
     let (orig_component, orig_occurrence, original_feature_comp) = if hidden && stand_up {
         let comp = original.saturating_add(1);
         let occ = comp.saturating_add(1);
@@ -256,7 +310,7 @@ pub(crate) fn history_design(
         features.push(import_feature(
             model,
             original,
-            ORIGINAL,
+            &original_name,
             original_feature_comp,
             live == Live::History,
             step_blob,
@@ -545,6 +599,7 @@ mod tests {
             source_file: None,
             assembly: None,
             source_step: None,
+            merge_bodies: false,
         }
     }
 
@@ -690,6 +745,8 @@ mod history_tests {
             measured: Default::default(),
             growth: Vec::new(),
             stop: None,
+            replayed_bodies: None,
+            rest_from: None,
             sources: Default::default(),
         }
     }
@@ -701,14 +758,19 @@ mod history_tests {
         hiding.hidden_bodies = vec!["Body 2".to_owned()];
         let version = SolidCraftVersion::V0_30_0;
         for stand_up in [false, true] {
-            for live in [Live::History, Live::Whole, Live::Partial, Live::Unverified] {
+            for live in [
+                Live::History,
+                Live::Whole,
+                Live::PartialHidden,
+                Live::Unverified,
+            ] {
                 let doc = history_design(&model, &hiding, "blobs/x.step", live, version, stand_up);
                 assert_eq!(
                     doc["visibility"]["hidden_bodies"],
                     json!(["Body 2"]),
                     "{live:?}, stand_up={stand_up}"
                 );
-                if matches!(live, Live::Partial | Live::Unverified) {
+                if matches!(live, Live::PartialHidden | Live::Unverified) {
                     assert!(doc["visibility"]["hidden_occurrences"].is_array());
                 }
             }
@@ -740,11 +802,11 @@ mod history_tests {
         let model = crate::testing::cube();
         for target in [
             "0.29.0", "0.30.0", "0.31.0", "0.40.0", "0.41.0", "0.42.0", "0.43.0", "0.44.0",
-            "0.45.0", "0.46.0",
+            "0.45.0", "0.46.0", "0.47.0", "0.48.0", "0.49.0", "0.50.0",
         ] {
             let version = target.parse().unwrap();
             for live in [
-                Live::Partial,
+                Live::PartialHidden,
                 Live::Unverified,
                 Live::History,
                 Live::Whole,
@@ -755,7 +817,17 @@ mod history_tests {
                 // The newest targets keep format 23 and the 0.30 representation.
                 if matches!(
                     target,
-                    "0.40.0" | "0.41.0" | "0.42.0" | "0.43.0" | "0.44.0" | "0.45.0" | "0.46.0"
+                    "0.40.0"
+                        | "0.41.0"
+                        | "0.42.0"
+                        | "0.43.0"
+                        | "0.44.0"
+                        | "0.45.0"
+                        | "0.46.0"
+                        | "0.47.0"
+                        | "0.48.0"
+                        | "0.49.0"
+                        | "0.50.0"
                 ) {
                     assert_eq!(
                         doc,
@@ -769,7 +841,7 @@ mod history_tests {
                         )
                     );
                 }
-                if matches!(live, Live::Partial | Live::Unverified) {
+                if matches!(live, Live::PartialHidden | Live::Unverified) {
                     let component = &doc["components"][0];
                     assert_eq!(
                         component.get("history_hidden"),
@@ -868,5 +940,91 @@ mod history_tests {
         assert_eq!(features.len(), 2);
         assert_eq!(features[0]["component"], components[0]["id"]);
         assert_eq!(features[1]["component"], components[0]["id"]);
+    }
+
+    fn partial() -> History {
+        History {
+            replayed_bodies: Some(vec!["Body1".to_owned()]),
+            rest_from: Some("Hole 1".to_owned()),
+            stop: Some("feature \"Hole 1\": not mapped".to_owned()),
+            looks: [("Body1".to_owned(), json!({"name": "#ff0000"}))]
+                .into_iter()
+                .collect(),
+            ..history()
+        }
+    }
+
+    #[test]
+    fn a_partial_history_removes_its_bodies_then_imports_the_rest() {
+        let model = crate::testing::cube();
+        let doc = history_design(
+            &model,
+            &partial(),
+            "blobs/x.step",
+            Live::Partial,
+            SolidCraftVersion::default(),
+            false,
+        );
+        let features = doc["features"].as_array().unwrap();
+        assert_eq!(features.len(), 4);
+        assert!(features.iter().all(|f| f["suppressed"] == false));
+        let remove = &features[2];
+        assert_eq!(remove["type"], "remove");
+        assert_eq!(remove["id"], 3);
+        assert_eq!(remove["bodies"], json!(["Body1"]));
+        let rest = &features[3];
+        assert_eq!(rest["id"], 4);
+        assert_eq!(rest["type"], "import");
+        assert_eq!(rest["name"], "Rest of the design (from Hole 1)");
+        assert_eq!(rest["step_blob"], "blobs/x.step");
+        assert_eq!(doc["next_id"], 5);
+        // Nothing is hidden and no component stands in for the history.
+        assert!(doc.get("components").is_none());
+        assert!(doc.get("visibility").is_none());
+        assert!(doc.get("appearances").is_none());
+    }
+
+    #[test]
+    fn a_partial_history_stood_up_keeps_everything_in_the_part_component() {
+        let model = crate::testing::cube();
+        let doc = history_design(
+            &model,
+            &partial(),
+            "blobs/x.step",
+            Live::Partial,
+            SolidCraftVersion::default(),
+            true,
+        );
+        let components = doc["components"].as_array().unwrap();
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0]["name"], "generated_unit_cube");
+        assert_eq!(doc["occurrences"].as_array().unwrap().len(), 1);
+        assert!(doc.get("visibility").is_none());
+        let features = doc["features"].as_array().unwrap();
+        assert_eq!(features.len(), 4);
+        assert!(features
+            .iter()
+            .all(|f| f["component"] == components[0]["id"]));
+        assert_eq!(features[2]["type"], "remove");
+        assert_eq!(features[3]["type"], "import");
+    }
+
+    #[test]
+    fn a_partial_history_that_made_no_body_removes_nothing() {
+        let model = crate::testing::cube();
+        let mut sketches = partial();
+        sketches.replayed_bodies = Some(Vec::new());
+        let doc = history_design(
+            &model,
+            &sketches,
+            "blobs/x.step",
+            Live::Partial,
+            SolidCraftVersion::default(),
+            false,
+        );
+        let features = doc["features"].as_array().unwrap();
+        assert_eq!(features.len(), 3);
+        assert!(features.iter().all(|f| f["type"] != "remove"));
+        assert_eq!(features[2]["name"], "Rest of the design (from Hole 1)");
     }
 }

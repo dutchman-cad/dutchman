@@ -12,15 +12,14 @@ pub(super) fn resolve(
     open: &mut Vec<PathBuf>,
     reads: &mut SolidWorksReads,
 ) -> Result<Option<Assembly>, Error> {
-    let wire = serde_json::to_value(&model.ir.model.occurrences)
-        .map_err(|err| Error::Decode(err.to_string()))?;
+    let wire = products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
     let rows = wire.as_array().map_or(&[][..], Vec::as_slice);
     if rows.len() > MAX_PLACEMENTS {
         return Err(Error::Assembly(format!(
             "the assembly places over {MAX_PLACEMENTS} components"
         )));
     }
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = input_folder(input);
     let mut external = ExternalParts::new();
     let mut files: BTreeMap<PathBuf, LoadedPart> = BTreeMap::new();
     let mut unresolved = Vec::new();
@@ -148,11 +147,17 @@ pub(super) fn resolve(
         && external.values().all(Result::is_err)
         && model.ir.geometry.bodies.is_empty()
     {
-        return Err(Error::Assembly(
-            "none of the assembly's parts could be found or read; if they are elsewhere, give \
-             the project folder that holds them"
-                .to_owned(),
-        ));
+        let missing: Vec<&str> = external.keys().take(3).map(String::as_str).collect();
+        return Err(Error::Assembly(format!(
+            "none of the assembly's parts could be found or read ({}{}); if they are elsewhere, \
+             give the project folder that holds them",
+            missing.join(", "),
+            if external.len() > missing.len() {
+                ", ..."
+            } else {
+                ""
+            }
+        )));
     }
     let mut assembly = local_components_with_threads(
         model,
@@ -210,12 +215,17 @@ mod tests {
             "transform": [[1,0,0,30 * key],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]})
     }
 
-    fn assembly(cube: &Model, rows: Vec<Value>) -> Model {
+    fn assembly_wire(cube: &Model, rows: Vec<Value>) -> Value {
         let mut wire = serde_json::to_value(&cube.ir).unwrap();
         wire["geometry"]["bodies"] = json!([]);
+        wire["model"]["product_definitions"] = json!([]);
         wire["model"]["occurrences"] = json!(rows);
+        wire
+    }
+
+    fn assembly(cube: &Model, rows: Vec<Value>) -> Model {
         Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: crate::test_products::read(&assembly_wire(cube, rows)),
             ..cube.clone()
         }
     }
@@ -280,8 +290,14 @@ mod tests {
             ],
         );
         let mut wire = serde_json::to_value(&source.ir).unwrap();
-        wire["model"]["occurrences"][1]["prototype"]["object"] = json!("Long");
-        source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let prototype = wire["model"]["occurrences"][1]["prototype"].clone();
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|definition| definition["id"] == prototype)
+            .unwrap()["storage"]["object"] = json!("Long");
+        source.ir = crate::test_products::read(&wire);
         let mut part = cube.clone();
         part.ir.model.configurations.clear();
         part.ir.model.configurations.push(
@@ -609,7 +625,7 @@ mod tests {
         let mut local = occurrence(1, "unused", json!({"kind":"root"}));
         local["prototype"] =
             json!({"kind":"local", "definition":"synthetic:assembly:component#holder"});
-        let mut source = assembly(
+        let mut wire = assembly_wire(
             &cube,
             vec![
                 local,
@@ -622,9 +638,11 @@ mod tests {
                 "prototype":{"kind":"unresolved"}, "transform":IDENTITY, "scale":[1,1,1]}),
             ],
         );
-        let mut wire = serde_json::to_value(&source.ir).unwrap();
         wire["model"]["product_definitions"] = json!([{"id": "synthetic:assembly:component#holder", "kind": "part", "source_name": "Holder", "bodies": [], "bom_properties": {}, "sketches": []}]);
-        source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let source = Model {
+            ir: crate::test_products::read(&wire),
+            ..cube.clone()
+        };
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("Pin.SLDPRT"), b"").unwrap();
         let decode = |_: Format, _: &Path, _: &mut Report| Ok(cube.clone());

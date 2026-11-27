@@ -6,7 +6,7 @@ with **Insert Design** is replaced by a new version of the same design, as long 
 component, body and feature names and ids stay the same. Dutchman gives the same names and ids
 every time it converts the same source, so a refresh keeps everything attached.
 
-There are three routes. Today the command line works; the app and Dutchman Sync are coming.
+There are three routes. Today the command line and the app work; Dutchman Sync is coming.
 
 ## How it works
 
@@ -71,11 +71,41 @@ only changes.
 
 The checks in SolidCraft run as in a normal conversion; pass `--no-verify` to skip them.
 
-## The Dutchman app (coming)
+## The Dutchman app (works today)
 
-The app will list the designs in a chosen output folder that changed since they were converted,
-with **Re-convert changed**, and will have a **Keep this folder up to date** switch for each
-output folder.
+Choose an output folder that holds converted designs and the app lists, under **Changed since
+last convert**, each design whose source is not what it was:
+
+| Word | Meaning |
+| --- | --- |
+| Source changed | The source file has other bytes than when the design was converted. |
+| Source missing | The source file is not where the link record says. |
+
+Each line gives the design, the program its source comes from, and the word. When every source
+matches, the list says so. The app looks only when the output folder changes, when a run ends,
+and when you press **Refresh**; it never watches in the background. It reads each changed
+source's bytes to be sure, so a file that was only saved again with the same contents is not
+listed.
+
+**Re-convert changed** converts each design that has a changed source again, one after another,
+with the options its link record holds, and replaces the `.sc` in place. Each has a card in the
+Results, with its progress. A design that fails keeps its previous `.sc` and record, and its
+card says why; it stays in the list so it can be tried again. A design with a missing source is
+left alone.
+
+The app will also have a **Keep this folder up to date** switch for each output folder, which
+turns Dutchman Sync on and off for it. The choice is saved in `dutchman/sync-state.json` in your
+configuration folder (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS,
+`$XDG_CONFIG_HOME` or `~/.config` on Linux), schema `dutchman.sync-state/1`, which the app and
+Sync share:
+
+```json
+{"schema": "dutchman.sync-state/1",
+ "folders": [{"output": "/home/ada/out", "source": "/home/ada/cad", "auto_update": true,
+              "enabled": true, "last_checked": "2026-11-22T10:00:00Z"}]}
+```
+
+The switch appears together with Dutchman Sync.
 
 ## Dutchman Sync (coming)
 

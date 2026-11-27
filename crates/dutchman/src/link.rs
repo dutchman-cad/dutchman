@@ -357,7 +357,7 @@ fn normal(path: &Path) -> Vec<Component<'_>> {
 }
 
 /// `time` as an RFC 3339 UTC timestamp, to the second.
-fn rfc3339(time: SystemTime) -> String {
+pub(crate) fn rfc3339(time: SystemTime) -> String {
     let seconds = match time.duration_since(SystemTime::UNIX_EPOCH) {
         Ok(since) => i64::try_from(since.as_secs()).unwrap_or(i64::MAX),
         Err(before) => -i64::try_from(before.duration().as_secs()).unwrap_or(i64::MAX),

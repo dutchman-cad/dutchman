@@ -4,7 +4,7 @@
 
 Question: Which numeric quantity slots establish a length or angle unit?
 
-Known: Dimensioned expressions carry unit suffixes. Coordinate fields use metres. A quantity with an explicit supported `units` string has a scale.
+Known: Dimensioned expressions carry unit suffixes. Coordinate fields use meters. A quantity with an explicit supported `units` string has a scale.
 
 Need: The numeric-slot unit encoding and its relation to expression text.
 
