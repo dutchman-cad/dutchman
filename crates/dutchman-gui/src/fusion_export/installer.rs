@@ -43,6 +43,8 @@ pub struct Installer {
     install: Install,
     latest: Option<String>,
     options: Option<Options>,
+    /// The last install stopped at a development copy; offer to install beside it.
+    dev_copy: bool,
     /// No background reads (tests and screenshots).
     frozen: bool,
     latest_asked: bool,
@@ -65,6 +67,7 @@ impl Installer {
             install: Install::Idle,
             latest: None,
             options: None,
+            dev_copy: false,
             frozen: false,
             latest_asked: false,
             sender,
@@ -126,7 +129,10 @@ impl Installer {
                     self.installed = Some(done.version.clone());
                     self.install = Install::Done(done.version);
                 }
-                Message::Finished(Err(why)) => self.install = Install::Failed(why.to_string()),
+                Message::Finished(Err(why)) => {
+                    self.dev_copy = why == Failure::DevCopy;
+                    self.install = Install::Failed(why.to_string());
+                }
                 Message::Latest(version) => self.latest = Some(version),
             }
         }
@@ -139,9 +145,11 @@ impl Installer {
         ctx: &egui::Context,
         cad_dir: Option<PathBuf>,
         pid_alive: fn(u32) -> bool,
+        mode: install::Mode,
     ) {
+        self.dev_copy = false;
         let options = match self.options.clone().map_or_else(Options::pinned, Ok) {
-            Ok(options) => options,
+            Ok(options) => Options { mode, ..options },
             Err(why) => {
                 self.install = Install::Failed(why.to_string());
                 return;
@@ -287,6 +295,11 @@ impl Installer {
             switch_on_steps(ui);
             self.newer_note(ui, &have);
             if !behind {
+                if self.installed.as_deref() == Some(install::PIN.version)
+                    && ui.button("Repair: reinstall this version").clicked()
+                {
+                    self.start_install(ui.ctx(), cad_dir.clone(), pid_alive, install::Mode::Repair);
+                }
                 return;
             }
             ui.add_space(theme::SPACE_2);
@@ -303,7 +316,10 @@ impl Installer {
         }
         ui.add_space(theme::SPACE_2);
         if ui.button("Install the Fusion exporter").clicked() {
-            self.start_install(ui.ctx(), cad_dir, pid_alive);
+            self.start_install(ui.ctx(), cad_dir.clone(), pid_alive, install::Mode::Install);
+        }
+        if self.dev_copy && ui.button("Install it and keep my copy beside it").clicked() {
+            self.start_install(ui.ctx(), cad_dir, pid_alive, install::Mode::KeepDevCopy);
         }
         ui.horizontal_wrapped(|ui| {
             ui.label(format!(
@@ -555,6 +571,7 @@ mod tests {
             stall_timeout: Duration::from_secs(2),
             deadline: Duration::from_secs(20),
             allow_http: true,
+            mode: install::Mode::Install,
         }
     }
 

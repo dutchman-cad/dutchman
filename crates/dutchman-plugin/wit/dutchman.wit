@@ -1,0 +1,12 @@
+package craft:plugin@0.2.0;
+
+// Dutchman's own world in SolidCraft's package. It adds nothing to the host interface: it names the
+// importer, its file-aware dialog hook (dialog@0.1), per-user settings (user-storage@0.1) and read
+// access to a folder the person picks (folders@0.1) as one world, so the plugin is one component.
+// Each interface is one SolidCraft's own worlds already include or add.
+
+world dutchman-importer {
+    include importer-dialog-plugin;
+    import user-storage;
+    import folders;
+}

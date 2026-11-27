@@ -22,8 +22,8 @@ mod preflight;
 #[path = "../src/stand_up.rs"]
 mod stand_up;
 use adapter::host::{
-    add_to_linker, clock, control, design, evaluate, import_file, log, source, types,
-    ImporterPlugin,
+    add_to_linker, clock, control, design, evaluate, folders, import_file, log, source, types,
+    update_fields, user_storage, DutchmanImporter,
 };
 use dutchman_core::{Format, PartSearch, Report, Writer};
 use dutchman_solidcraft::{
@@ -32,6 +32,7 @@ use dutchman_solidcraft::{
 use limits::MAX_REPORT_BYTES;
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeMap,
     io::{Cursor, Read, Write},
     path::{Path, PathBuf},
     time::Instant,
@@ -84,6 +85,15 @@ struct Host {
     staged: Vec<u8>,
     commands: Vec<Value>,
     evaluator: Option<CliEvaluator>,
+    /// The folder SolidCraft granted for the `parts_folder` field of this import, if the
+    /// person picked one. `None` is what the real host answers when no grant exists.
+    picked: Option<PathBuf>,
+    folder_reads: usize,
+    folder_bytes: usize,
+    /// Per-user settings as SolidCraft holds them: what is saved, and what this import has
+    /// staged. Staged settings are published only when the host accepts the import.
+    settings: BTreeMap<String, String>,
+    staged_settings: BTreeMap<String, Option<String>>,
 }
 fn failed(reason: impl ToString) -> PluginError {
     PluginError::CommandFailed(types::CommandFailure {
@@ -288,6 +298,117 @@ impl source::Host for Host {
         Ok(chunk)
     }
 }
+/// The text the real host gives a plugin that asks for a folder it was not granted.
+const NO_PICKED_FOLDER: &str = "folders:parts_folder: no approved directory for this entry";
+impl Host {
+    fn picked(&mut self, path: &str) -> Result<PathBuf, PluginError> {
+        let Some(root) = &self.picked else {
+            return Err(PluginError::PermissionDenied(NO_PICKED_FOLDER.into()));
+        };
+        if !path.is_empty() && !safe(path) {
+            return Err(PluginError::PermissionDenied(
+                "folders:parts_folder: path must stay inside the directory".into(),
+            ));
+        }
+        Ok(root.join(path))
+    }
+    /// SolidCraft publishes staged settings only when it accepts a successful import.
+    fn commit_staged(&mut self) {
+        for (key, value) in std::mem::take(&mut self.staged_settings) {
+            match value {
+                Some(value) => self.settings.insert(key, value),
+                None => self.settings.remove(&key),
+            };
+        }
+    }
+}
+impl folders::Host for Host {
+    fn read(
+        &mut self,
+        grant: String,
+        path: String,
+        offset: u64,
+        len: u32,
+    ) -> Result<Vec<u8>, PluginError> {
+        assert_eq!(grant, "parts_folder", "the grant is the property key");
+        assert!(len as usize <= limits::CHUNK_BYTES);
+        let target = self.picked(&path)?;
+        let bytes = std::fs::read(target).map_err(failed)?;
+        let start = usize::try_from(offset).unwrap();
+        let end = start.saturating_add(len as usize).min(bytes.len());
+        self.folder_reads += 1;
+        self.folder_bytes += end.saturating_sub(start);
+        Ok(bytes.get(start..end).unwrap_or_default().to_vec())
+    }
+    fn size(&mut self, grant: String, path: String) -> Result<Option<u64>, PluginError> {
+        assert_eq!(grant, "parts_folder");
+        let target = self.picked(&path)?;
+        Ok(target
+            .metadata()
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|m| m.len()))
+    }
+    fn resolve(&mut self, grant: String, path: String) -> Result<Option<String>, PluginError> {
+        assert_eq!(grant, "parts_folder");
+        let target = self.picked(&path)?;
+        if path.is_empty() {
+            return Ok(Some(String::new()));
+        }
+        let mut found = None;
+        let (parent, wanted) = (
+            target.parent().unwrap().to_path_buf(),
+            target.file_name().unwrap().to_string_lossy().to_lowercase(),
+        );
+        let Ok(listing) = std::fs::read_dir(parent) else {
+            return Ok(None);
+        };
+        for entry in listing.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.to_lowercase() == wanted && entry.path().is_file() {
+                found = Some(name);
+                if entry.file_name() == target.file_name().unwrap() {
+                    break;
+                }
+            }
+        }
+        Ok(found.map(|name| match path.rsplit_once('/') {
+            Some((folder, _)) => format!("{folder}/{name}"),
+            None => name,
+        }))
+    }
+}
+impl user_storage::Host for Host {
+    fn get(&mut self, key: String) -> Result<Option<String>, PluginError> {
+        Ok(match self.staged_settings.get(&key) {
+            Some(staged) => staged.clone(),
+            None => self.settings.get(&key).cloned(),
+        })
+    }
+    fn set(&mut self, key: String, value: String) -> Result<(), PluginError> {
+        serde_json::from_str::<Value>(&value).map_err(|e| {
+            PluginError::InvalidInput(FieldFailure {
+                field: key.clone(),
+                reason: e.to_string(),
+            })
+        })?;
+        self.staged_settings.insert(key, Some(value));
+        Ok(())
+    }
+    fn remove(&mut self, key: String) -> Result<bool, PluginError> {
+        let existed = self.get(key.clone())?.is_some();
+        self.staged_settings.insert(key, None);
+        Ok(existed)
+    }
+    fn list(&mut self) -> Result<Vec<String>, PluginError> {
+        let mut keys: Vec<_> = self.settings.keys().cloned().collect();
+        keys.extend(self.staged_settings.keys().cloned());
+        keys.sort();
+        keys.dedup();
+        keys.retain(|key| self.staged_settings.get(key).is_none_or(Option::is_some));
+        Ok(keys)
+    }
+}
 impl design::Host for Host {
     fn write(&mut self, bytes: Vec<u8>) -> Result<(), PluginError> {
         assert!(bytes.len() <= limits::CHUNK_BYTES);
@@ -322,6 +443,11 @@ fn host(root: &Path, main: Vec<u8>) -> Host {
         staged: Vec::new(),
         commands: Vec::new(),
         evaluator: None,
+        picked: None,
+        folder_reads: 0,
+        folder_bytes: 0,
+        settings: BTreeMap::new(),
+        staged_settings: BTreeMap::new(),
     }
 }
 fn contents(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
@@ -401,7 +527,7 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut store = Store::new(&engine, host(&root, bytes));
     store.limiter(|host| &mut host.limits);
     store.set_fuel(20_000_000)?;
-    let instance = ImporterPlugin::instantiate(&mut store, &component, &linker)?;
+    let instance = DutchmanImporter::instantiate(&mut store, &component, &linker)?;
     let started = Instant::now();
     let refused = import_file(
         &instance,
@@ -436,7 +562,7 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut store = Store::new(&engine, host(&root, Vec::new()));
         store.limiter(|host| &mut host.limits);
         store.set_fuel(1_000_000)?;
-        let instance = ImporterPlugin::instantiate(&mut store, &component, &linker)?;
+        let instance = DutchmanImporter::instantiate(&mut store, &component, &linker)?;
         let result = import_file(
             &instance,
             &mut store,
@@ -463,7 +589,7 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut store = Store::new(&engine, host(&root, vec![0; stream_len]));
     store.limiter(|host| &mut host.limits);
     store.set_fuel(50_000_000_000)?;
-    let instance = ImporterPlugin::instantiate(&mut store, &component, &linker)?;
+    let instance = DutchmanImporter::instantiate(&mut store, &component, &linker)?;
     let result = import_file(
         &instance,
         &mut store,
@@ -487,8 +613,11 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     stand_up_replays(&engine, &component, &linker, &root)?;
     hidden_repeated_bodies(&engine, &component, &linker, &root)?;
     folder_not_granted(&engine, &component, &linker, &root)?;
+    picked_parts_folder(&engine, &component, &linker, &root)?;
     part_too_big_for_the_guest(&engine, &component, &linker, &root)?;
     failures_carry_the_full_report(&engine, &component, &linker, &root)?;
+    picked_folder_not_granted(&engine, &component, &linker, &root)?;
+    settings_are_saved_and_offered(&engine, &component, &linker, &root)?;
     let mut fixtures = Vec::new();
     collect_fixtures(&root, &mut fixtures)?;
     fixtures.sort();
@@ -501,7 +630,7 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut store = Store::new(&engine, host(folder, bytes.clone()));
         store.limiter(|host| &mut host.limits);
         store.set_fuel(50_000_000_000)?;
-        let instance = ImporterPlugin::instantiate(&mut store, &component, &linker)?;
+        let instance = DutchmanImporter::instantiate(&mut store, &component, &linker)?;
         let result = import_file(
             &instance,
             &mut store,
@@ -673,7 +802,7 @@ fn fatal_member_failures(
         let mut store = Store::new(engine, host);
         store.limiter(|host| &mut host.limits);
         store.set_fuel(50_000_000_000)?;
-        let instance = ImporterPlugin::instantiate(&mut store, component, linker)?;
+        let instance = DutchmanImporter::instantiate(&mut store, component, linker)?;
         let result = import_file(
             &instance,
             &mut store,
@@ -752,7 +881,7 @@ fn stand_up_replays(
     let mut store = Store::new(engine, host);
     store.limiter(|host| &mut host.limits);
     store.set_fuel(50_000_000_000)?;
-    let instance = ImporterPlugin::instantiate(&mut store, component, linker)?;
+    let instance = DutchmanImporter::instantiate(&mut store, component, linker)?;
     let report = import_file(
         &instance,
         &mut store,
@@ -869,7 +998,7 @@ fn hidden_repeated_bodies(
     let mut store = Store::new(engine, host(root, main.clone()));
     store.limiter(|host| &mut host.limits);
     store.set_fuel(50_000_000_000)?;
-    let instance = ImporterPlugin::instantiate(&mut store, component, linker)?;
+    let instance = DutchmanImporter::instantiate(&mut store, component, linker)?;
     import_file(
         &instance,
         &mut store,
@@ -941,13 +1070,18 @@ fn hidden_repeated_bodies(
         "hidden-visibility",
     )?;
     let bodies = inspected[0]["bodies"].as_array().unwrap();
-    // document.inspect lists the shared component's local definition once;
-    // eval above supplies the two occurrence-qualified world names.
-    assert_eq!(bodies.len(), 1, "{inspected:?}");
-    assert_eq!(
-        bodies[0]["visible"], false,
-        "hidden definition was displayed: {inspected:?}"
+    // SolidCraft up to 0.49 lists the shared component's local definition once; 0.50 lists each
+    // occurrence-qualified body. Either way, nothing hidden may be displayed.
+    assert!(
+        (1..=2).contains(&bodies.len()),
+        "document.inspect lists the definition or both occurrences: {inspected:?}"
     );
+    for body in bodies {
+        assert_eq!(
+            body["visible"], false,
+            "hidden definition was displayed: {inspected:?}"
+        );
+    }
     eprintln!(
         "stand_up_hidden_bodies: first and repeated placement names and visibility match SolidCraft evaluation"
     );
@@ -968,7 +1102,7 @@ fn folder_not_granted(
     let mut store = Store::new(engine, host);
     store.limiter(|host| &mut host.limits);
     store.set_fuel(50_000_000_000)?;
-    let instance = ImporterPlugin::instantiate(&mut store, component, linker)?;
+    let instance = DutchmanImporter::instantiate(&mut store, component, linker)?;
     let result = import_file(
         &instance,
         &mut store,
@@ -1011,7 +1145,7 @@ fn convert_in(
     let mut store = Store::new(engine, host);
     store.limiter(|host| &mut host.limits);
     store.set_fuel(50_000_000_000)?;
-    let instance = ImporterPlugin::instantiate(&mut store, component, linker)?;
+    let instance = DutchmanImporter::instantiate(&mut store, component, linker)?;
     let result = import_file(
         &instance,
         &mut store,
@@ -1025,69 +1159,201 @@ fn convert_in(
     Ok((result, store))
 }
 
-/// A part whose size alone would not fit the guest's memory is refused before it is read, in
-/// one plain line that says which limit, needed against available, and where to go.
-fn part_too_big_for_the_guest(
+/// A folder the person picked in the dialog holds the parts; the assembly's own folder holds
+/// nothing. The conversion reads every part through the `parts_folder` grant and matches the
+/// one that reads the folder beside the file.
+fn picked_parts_folder(
     engine: &Engine,
     component: &Component,
     linker: &Linker<Host>,
     root: &Path,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let folder = root.join("freecad-1.1.4-A01");
-    let main = std::fs::read(folder.join("A01a.FCStd"))?;
+    let parts = root.join("freecad-1.1.4-A01");
+    let main = std::fs::read(parts.join("A01a.FCStd"))?;
     let size = main.len() as u64;
-    let mut host = host(&folder, main);
-    host.fault = Some(Fault::PartTooBig);
-    let (result, store) = convert_in(engine, component, linker, host, "A01a.FCStd", size, "{}")?;
-    let Err(PluginError::LimitExceeded(message)) = result else {
-        return Err(format!("Expected a size refusal, got {result:?}").into());
-    };
-    assert!(
-        message.starts_with("This design is too large to open inside SolidCraft: it needs about "),
-        "{message}"
-    );
-    assert!(
-        message.contains(" MB of memory for the 90")
-            && message.contains(" MB of files it reads, and the plugin has 1700 MB"),
-        "{message}"
-    );
-    assert!(message.contains("Open it in the Dutchman app"), "{message}");
-    assert_eq!(message.lines().count(), 1, "{message}");
-    assert!(store.data().output.is_empty());
-    Ok(())
-}
-
-/// A failed conversion returns its full `dutchman.convert/1` report in the error text, which is
-/// the one path a plugin has (SolidCraft gives it no clipboard and no file to write).
-fn failures_carry_the_full_report(
-    engine: &Engine,
-    component: &Component,
-    linker: &Linker<Host>,
-    root: &Path,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let report_of = |message: &str| -> Value {
-        assert!(message.contains("Dutchman app"), "{message}");
-        serde_json::from_str(message.lines().last().unwrap()).unwrap()
-    };
-    let (broken, store) = convert_in(
+    let (beside, besides_store) = convert_in(
         engine,
         component,
         linker,
-        host(root, vec![0; 64]),
-        "broken.f3d",
-        64,
+        host(&parts, main.clone()),
+        "A01a.FCStd",
+        size,
         "{}",
     )?;
-    let Err(PluginError::InvalidInput(FieldFailure { reason, .. })) = broken else {
-        return Err(format!("Expected invalid input, got {broken:?}").into());
+    beside.map_err(|e| format!("{e:?}"))?;
+    assert_eq!(besides_store.data().folder_reads, 0);
+    let elsewhere = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dutchman-plugin-empty-input");
+    std::fs::create_dir_all(&elsewhere)?;
+    let mut picked = host(&elsewhere, main);
+    picked.picked = Some(parts.clone());
+    let (result, store) = convert_in(
+        engine,
+        component,
+        linker,
+        picked,
+        "A01a.FCStd",
+        size,
+        r#"{"parts_folder":"/the/folder/the/person/picked"}"#,
+    )?;
+    result.map_err(|e| format!("{e:?}"))?;
+    assert!(
+        store.data().folder_reads > 0,
+        "the parts come through the folder grant"
+    );
+    assert_eq!(
+        contents(&store.data().output),
+        contents(&besides_store.data().output),
+        "a picked folder converts the same design as the folder beside the file"
+    );
+    // Dutchman never looks for a part anywhere else: nothing but the file itself came through
+    // `source`, whose folder was empty.
+    assert!(store.data().calls > 0);
+    eprintln!("picked_parts_folder: parts read through the grant, same design as beside the file");
+    Ok(())
+}
+
+/// The field is filled but SolidCraft granted no folder: the refusal names that grant, the
+/// field to use and what it is for, and nothing is read first.
+fn picked_folder_not_granted(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let main = std::fs::read(root.join("freecad-1.1.4-A01/A01a.FCStd"))?;
+    let size = main.len() as u64;
+    let (result, store) = convert_in(
+        engine,
+        component,
+        linker,
+        host(root, main),
+        "A01a.FCStd",
+        size,
+        r#"{"parts_folder":"/saved/value/is/not/consent"}"#,
+    )?;
+    let Err(PluginError::PermissionDenied(message)) = result else {
+        return Err(format!("Expected a folder refusal, got {result:?}").into());
     };
-    let report = report_of(&reason);
-    assert_eq!(report["schema"], "dutchman.convert/1");
-    assert_eq!(report["ok"], false);
-    assert_eq!(report["input"]["path"], "broken.f3d");
-    assert!(report["error"]["kind"].is_string() && report["error"]["stage"].is_string());
-    assert!(reason.contains("broken.failed.json"), "{reason}");
+    for needle in [
+        "parts folder for A01a.FCStd",
+        "\"Folder with the parts\"",
+        "SolidCraft has not granted it",
+        "never writes",
+        NO_PICKED_FOLDER,
+    ] {
+        assert!(message.contains(needle), "{needle}: {message}");
+    }
+    assert!(
+        !message.contains("input folder"),
+        "it must name the picked folder's grant, not the install grant: {message}"
+    );
+    assert_eq!(store.data().calls, 0, "nothing is read before the grant");
     assert!(store.data().output.is_empty());
+    assert!(store.data().staged_settings.is_empty());
+    Ok(())
+}
+
+type HookRun = (Result<String, PluginError>, Store<Host>);
+
+/// The three dialog options are saved after an accepted import and offered back as the
+/// dialog's defaults; a failed import saves nothing, and damaged settings change nothing.
+fn settings_are_saved_and_offered(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let cube = std::fs::read(root.join("generated_unit_cube.f3d"))?;
+    let size = cube.len() as u64;
+    let hook = |host: Host,
+                entry: &str|
+     -> Result<HookRun, Box<dyn std::error::Error + Send + Sync>> {
+        let mut store = Store::new(engine, host);
+        store.limiter(|host| &mut host.limits);
+        store.set_fuel(50_000_000)?;
+        let instance = DutchmanImporter::instantiate(&mut store, component, linker)?;
+        let context = r#"{"values":{},"file":{"name":"cube.f3d","extension":"f3d","size":1,"format":"dutchman.convert","generation":1}}"#;
+        let reply = update_fields(&instance, &mut store, entry, context)?;
+        Ok((reply, store))
+    };
+    // Nothing saved yet: the form keeps the manifest's defaults.
+    let (reply, _) = hook(host(root, Vec::new()), "convert")?;
+    assert_eq!(
+        serde_json::from_str::<Value>(&reply.unwrap())?,
+        json!({"fields":{}})
+    );
+    // An accepted import saves the options it ran with, and only after the host accepts it.
+    let chosen = r#"{"editable_history":false,"up_axis":"stand_up","include_hidden_bodies":true,"parts_folder":"/not/saved"}"#;
+    let (result, mut store) = convert_in(
+        engine,
+        component,
+        linker,
+        {
+            // The person picked a folder this time; it is used for this import and not saved.
+            let mut host = host(root, cube.clone());
+            host.picked = Some(root.to_path_buf());
+            host
+        },
+        "generated_unit_cube.f3d",
+        size,
+        chosen,
+    )?;
+    result.map_err(|e| format!("{e:?}"))?;
+    assert!(store.data().settings.is_empty(), "staged until accepted");
+    store.data_mut().commit_staged();
+    let saved = store.data().settings.get("options").cloned().unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&saved)?,
+        json!({"editable_history":false,"up_axis":"stand_up","include_hidden_bodies":true})
+    );
+    assert_eq!(store.data().settings.len(), 1);
+    // The next dialog offers them.
+    let mut next = host(root, Vec::new());
+    next.settings = store.data().settings.clone();
+    let (reply, _) = hook(next, "convert")?;
+    assert_eq!(
+        serde_json::from_str::<Value>(&reply.unwrap())?,
+        json!({"fields":{
+            "editable_history":{"default":false},
+            "up_axis":{"default":"stand_up"},
+            "include_hidden_bodies":{"default":true}
+        }})
+    );
+    // A failed import stages nothing.
+    let (failed, store) = convert_in(
+        engine,
+        component,
+        linker,
+        host(root, vec![0; 16]),
+        "broken.f3d",
+        16,
+        chosen,
+    )?;
+    assert!(failed.is_err());
+    assert!(store.data().staged_settings.is_empty());
+    // Settings that do not parse, or hold a value the form does not offer, change nothing.
+    let mut damaged = host(root, Vec::new());
+    damaged.settings.insert(
+        "options".into(),
+        r#"{"editable_history":"yes","up_axis":"sideways","include_hidden_bodies":true}"#.into(),
+    );
+    let (reply, _) = hook(damaged, "convert")?;
+    assert_eq!(
+        serde_json::from_str::<Value>(&reply.unwrap())?,
+        json!({"fields":{"include_hidden_bodies":{"default":true}}})
+    );
+    let mut garbage = host(root, Vec::new());
+    garbage.settings.insert("options".into(), "not json".into());
+    let (reply, _) = hook(garbage, "convert")?;
+    assert_eq!(
+        serde_json::from_str::<Value>(&reply.unwrap())?,
+        json!({"fields":{}})
+    );
+    let (wrong, _) = hook(host(root, Vec::new()), "other")?;
+    assert!(matches!(wrong, Err(PluginError::InvalidInput(_))));
+    eprintln!(
+        "settings: saved after an accepted import, offered as defaults, none after a failure"
+    );
     Ok(())
 }
 
@@ -1125,7 +1391,14 @@ fn measure(assembly: &Path) -> Result<(), Box<dyn std::error::Error + Send + Syn
     let name = assembly.file_name().unwrap().to_str().unwrap();
     let mut host = host(assembly.parent().unwrap(), main.clone());
     host.evaluator = None;
-    let options = r#"{"editable_history":true}"#;
+    // With DUTCHMAN_PLUGIN_PARTS_ROOT the parts come from that folder, through the grant the
+    // person would pick in the dialog; without it, from the folder beside the file.
+    let parts_root = std::env::var_os("DUTCHMAN_PLUGIN_PARTS_ROOT").map(PathBuf::from);
+    let options = match &parts_root {
+        Some(_) => r#"{"editable_history":true,"parts_folder":"/picked"}"#,
+        None => r#"{"editable_history":true}"#,
+    };
+    host.picked = parts_root;
     let mut store = Store::new(&engine, host);
     store.limiter(|host| &mut host.limits);
     // SolidCraft's own ceiling is 100,000,000,000; measure with room to finish.
@@ -1134,7 +1407,7 @@ fn measure(assembly: &Path) -> Result<(), Box<dyn std::error::Error + Send + Syn
         .and_then(|f| f.parse().ok())
         .unwrap_or(2_000_000_000_000u64);
     store.set_fuel(fuel)?;
-    let instance = ImporterPlugin::instantiate(&mut store, &component, &linker)?;
+    let instance = DutchmanImporter::instantiate(&mut store, &component, &linker)?;
     let started = Instant::now();
     let result = import_file(
         &instance,
@@ -1148,12 +1421,14 @@ fn measure(assembly: &Path) -> Result<(), Box<dyn std::error::Error + Send + Syn
     );
     let used = fuel - store.get_fuel().unwrap_or(0);
     eprintln!(
-        "assembly_measurement file={name} main_bytes={} peak_guest_mib={:.1} fuel_used={used} seconds={:.1} reads={} read_bytes={} output_bytes={}",
+        "assembly_measurement file={name} main_bytes={} peak_guest_mib={:.1} fuel_used={used} seconds={:.1} reads={} read_bytes={} folder_reads={} folder_bytes={} output_bytes={}",
         main.len(),
         store.data().limits.bytes as f64 / 1048576.0,
         started.elapsed().as_secs_f64(),
         store.data().calls,
         store.data().read,
+        store.data().folder_reads,
+        store.data().folder_bytes,
         store.data().output.len(),
     );
     match result {
@@ -1180,5 +1455,85 @@ fn measure(assembly: &Path) -> Result<(), Box<dyn std::error::Error + Send + Syn
             return Err(format!("trap: {trap}").into());
         }
     }
+    Ok(())
+}
+
+/// A part whose size alone would not fit the guest's memory is refused before it is read, in
+/// one plain line that says which limit, needed against available, and where to go.
+fn part_too_big_for_the_guest(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let folder = root.join("freecad-1.1.4-A01");
+    let main = std::fs::read(folder.join("A01a.FCStd"))?;
+    let size = main.len() as u64;
+    let mut host = host(&folder, main);
+    host.fault = Some(Fault::PartTooBig);
+    let (result, store) = convert_in(engine, component, linker, host, "A01a.FCStd", size, "{}")?;
+    let Err(PluginError::LimitExceeded(message)) = result else {
+        return Err(format!("Expected a size refusal, got {result:?}").into());
+    };
+    assert!(
+        message.starts_with("This design is too large to open inside SolidCraft: it needs about "),
+        "{message}"
+    );
+    assert!(
+        message.contains(" MB of memory for the 90")
+            && message.contains(" MB of files it reads, and the plugin has 1700 MB"),
+        "{message}"
+    );
+    assert!(message.contains("Open it in the Dutchman app"), "{message}");
+    assert_eq!(message.lines().count(), 1, "{message}");
+    assert!(store.data().output.is_empty());
+    Ok(())
+}
+
+/// A failed conversion returns its full `dutchman.convert/1` report in the error text, which is
+/// the one path a plugin has (SolidCraft gives it no clipboard and no file to write); a format it
+/// does not convert is `unsupported`, the kind a refusal dialog shows.
+fn failures_carry_the_full_report(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let report_of = |message: &str| -> Value {
+        assert!(message.contains("Dutchman app"), "{message}");
+        serde_json::from_str(message.lines().last().unwrap()).unwrap()
+    };
+    let (broken, store) = convert_in(
+        engine,
+        component,
+        linker,
+        host(root, vec![0; 64]),
+        "broken.f3d",
+        64,
+        "{}",
+    )?;
+    let Err(PluginError::InvalidInput(FieldFailure { reason, .. })) = broken else {
+        return Err(format!("Expected invalid input, got {broken:?}").into());
+    };
+    let report = report_of(&reason);
+    assert_eq!(report["schema"], "dutchman.convert/1");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["input"]["path"], "broken.f3d");
+    assert!(report["error"]["kind"].is_string() && report["error"]["stage"].is_string());
+    assert!(reason.contains("broken.failed.json"), "{reason}");
+    assert!(store.data().output.is_empty());
+    let (unknown, _) = convert_in(
+        engine,
+        component,
+        linker,
+        host(root, vec![0; 4]),
+        "weird.xyz",
+        4,
+        "{}",
+    )?;
+    let Err(PluginError::Unsupported(message)) = unknown else {
+        return Err(format!("Expected unsupported, got {unknown:?}").into());
+    };
+    assert_eq!(report_of(&message)["error"]["kind"], "unknown_format");
     Ok(())
 }

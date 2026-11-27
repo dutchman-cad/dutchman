@@ -1109,6 +1109,7 @@ fn a_missing_download_in_the_window_says_so_plainly_and_nothing_hangs() {
             stall_timeout: Duration::from_secs(2),
             deadline: Duration::from_secs(20),
             allow_http: true,
+            mode: super::install::Mode::Install,
         });
     let mut h = window_of(panel);
     step_until(&mut h, "a first look", |p| p.last_agent_check.is_some());

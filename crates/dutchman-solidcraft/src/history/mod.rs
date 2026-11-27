@@ -779,6 +779,10 @@ struct Context<'a> {
     /// captured history body registered beside the final body it becomes. An alias shares
     /// its body's name without making that name ambiguous.
     body_aliases: std::collections::BTreeSet<String>,
+    /// Whether an earlier feature made a body the history could not name. Then the one
+    /// named body is not necessarily the only body, so a single-body input state cannot be
+    /// taken for it.
+    unnamed_bodies: bool,
     /// Bodies an earlier feature makes that the final model leaves out, under their names:
     /// ((CADIR producing feature id, feature-local body id), name).
     generated_bodies: Vec<((String, String), String)>,
@@ -854,6 +858,7 @@ impl<'a> Context<'a> {
             topological_replay_required: false,
             named_bodies: Vec::new(),
             body_aliases: std::collections::BTreeSet::new(),
+            unnamed_bodies: false,
             generated_bodies: Vec::new(),
             confirming_consumed_bodies: false,
             default_bodies: BTreeMap::new(),
@@ -1571,6 +1576,7 @@ fn map_into(
         map_unbound_sketches(feature, &bound, &mut ctx, report, &mut history, references);
         let builds = ctx.builds;
         let named_bodies = ctx.named_bodies.len();
+        let unnamed_bodies = ctx.unnamed_bodies;
         let before = history.features.len();
         let blends = ctx.blends.len();
         let inferred = infer::map(
@@ -1602,6 +1608,7 @@ fn map_into(
             }
             ctx.builds = builds;
             ctx.named_bodies.truncate(named_bodies);
+            ctx.unnamed_bodies = unnamed_bodies;
             ctx.extra.clear();
             ctx.blends.truncate(blends);
             history.features.truncate(before);
@@ -2743,15 +2750,20 @@ fn kind(feature: &Value) -> String {
 /// The message for an input selection of a form that is not mapped, naming that form:
 /// `noun` is `face`, `edge` or `body`, `kind` the CADIR selection kind that was found.
 pub(crate) fn unsupported_selection(noun: &str, kind: Option<&str>) -> String {
+    let nouns = if noun == "body" {
+        "bodies".to_owned()
+    } else {
+        format!("{noun}s")
+    };
     match kind {
         Some("historical") => {
             format!("a {noun} from an earlier history state is not supported yet")
         }
         Some("historical_set") => {
-            format!("{noun}s from an earlier history state are not supported yet")
+            format!("{nouns} from an earlier history state are not supported yet")
         }
         Some("historical_partial") => format!(
-            "a {noun} selection from an earlier history state with some {noun}s unresolved is \
+            "a {noun} selection from an earlier history state with some {nouns} unresolved is \
              not supported yet"
         ),
         Some("native" | "native_set") => format!(
@@ -3062,6 +3074,12 @@ mod tests {
         assert!(
             unsupported_selection("body", Some("local")).contains("local to an earlier feature")
         );
+        assert_eq!(
+            unsupported_selection("body", Some("historical_set")),
+            "bodies from an earlier history state are not supported yet"
+        );
+        assert!(unsupported_selection("edge", Some("historical_partial"))
+            .contains("with some edges unresolved"));
         assert!(unsupported_selection("edge", Some("weird")).contains("of kind weird"));
         assert!(unsupported_selection("edge", None).contains("with no kind"));
     }
