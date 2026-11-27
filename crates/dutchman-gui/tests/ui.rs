@@ -435,6 +435,9 @@ fn replacing_asks_once_and_lists_only_files_dutchman_did_not_make() {
         convert(&mut harness);
         // One of the two is now a design the person made themselves.
         std::fs::write(out.path().join("synthetic_cube.sc"), b"MY OWN DESIGN").unwrap();
+        // The results fold the output choices away; "Change…" opens them again.
+        harness.get_by_label("Change…").click_accesskit();
+        harness.run_steps(8);
         harness.get_by_label("Advanced").click_accesskit();
         harness.run_steps(8);
         harness
@@ -2780,6 +2783,14 @@ fn ask_ai_copies_a_short_prompt_naming_files_that_exist() {
     let mut saved = saved;
     if let Some(generator) = saved.get_mut("generator").and_then(|g| g.as_object_mut()) {
         generator.remove("source");
+    }
+    if let (Some(saved), Some(shown)) = (
+        saved.as_object(),
+        row.report.as_ref().and_then(|r| r.as_object()),
+    ) {
+        for key in saved.keys().chain(shown.keys()) {
+            assert_eq!(saved.get(key), shown.get(key), "report key {key}");
+        }
     }
     assert_eq!(Some(&saved), row.report.as_ref());
     // The same text is shown under the button, and Copy copies it again.

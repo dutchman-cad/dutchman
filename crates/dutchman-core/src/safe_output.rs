@@ -252,7 +252,9 @@ fn write_with_mode(
     if replace && !retire_old {
         return temporary.persist(path).map(drop).map_err(|e| e.error);
     }
-    if replace && present(path) {
+    // A name that only matches an existing file apart from case is that file on macOS and
+    // Windows, where it exists; on a case-sensitive filesystem there is nothing to move.
+    if replace && path.try_exists().unwrap_or(true) {
         retire(path)?;
     }
     temporary

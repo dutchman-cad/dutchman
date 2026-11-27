@@ -90,7 +90,7 @@ Targets before SolidCraft 0.25.1 get `.solidcraft` by default.
 writes the next free name (`part (2).sc`) and leaves it as it is. A default
 that is the input itself is always refused. An existing file is replaced only when Dutchman made
 it from the same input and nothing has changed since (the `dutchman.json` entry inside the
-design, which SolidCraft keeps when it saves one); anything else is kept and the
+design); anything else is kept and the
 new design is numbered, with a line saying why. `--replace` (`--force` means the same) replaces any
 existing file without asking, sending it to the trash (or keeping it beside the new one as
 `name.replaced-<time>.sc`); `DUTCHMAN_NO_TRASH=1` always keeps it beside. The old `--no-clobber` is
