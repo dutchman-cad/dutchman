@@ -318,6 +318,7 @@ pub fn read_with(
     if !run.timed_out && !run.status.is_some_and(|s| s.success()) {
         let said = format!("{}{}", lossy(&run.stderr), lossy(&run.stdout)).to_ascii_lowercase();
         let rejected = said.contains("unexpected argument")
+            || said.contains("unrecognized")
             || said.contains("unknown option")
             || said.contains("unknown argument");
         let names_copper = said.contains("--copper");
@@ -728,6 +729,22 @@ cat "$out/manifest.json""#
             "echo \"$*\" >> \"$(dirname \"$in\")/calls.log\"\ncase \"$*\" in *{flag}*) echo \"error: unexpected argument '{flag}' found\" >&2; exit 2 ;; esac\n{}",
             copper_echo()
         )
+    }
+
+    #[test]
+    fn an_argparse_style_rejection_that_names_no_option_still_gets_one_plain_retry() {
+        let _scripts = scripts();
+        let older = format!(
+            "echo \"$*\" >> \"$(dirname \"$in\")/calls.log\"\ncase \"$*\" in *--copper*|*--accept-overlay*) echo \"usage: electronics read [-h]\nerror: unrecognized arguments\" >&2; exit 2 ;; esac\n{}",
+            copper_echo()
+        );
+        let (report, calls) = read_copper(&older, CopperLayers::All);
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert!(
+            !calls[2].contains("--copper") && !calls[2].contains("--accept-overlay"),
+            "{calls:?}"
+        );
+        assert!(note(&report, "does not support `--accept-overlay`").is_some());
     }
 
     fn note<'a>(report: &'a Report, needle: &str) -> Option<&'a crate::report::Loss> {
