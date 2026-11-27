@@ -620,6 +620,6 @@ Both summaries list each relative input path, output path, outcome (Full
 history, Partial N of M, Geometry only, or Failed), and first reason. Counts
 exclude features that need no rebuilding when the saved report provides those
 counts. The output folder's most recent report for each input wins. The desktop
-app offers the same export through **Batch report** under **Output folder**.
+app offers the same export through **Batch report** under **2. Choose where to save them**.
 Summaries contain names, paths, and reasons; keep them local unless you choose
 to share them. See [the report contract](json.md#whole-folder-summaries).

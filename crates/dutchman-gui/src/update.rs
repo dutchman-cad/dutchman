@@ -507,6 +507,10 @@ pub struct Updater {
     notes_epoch: u32,
     status: String,
     allowed: bool,
+    /// Whether the header shows the Donate and Discord buttons; chosen in Settings and saved
+    /// with the update choices.
+    pub show_donate: bool,
+    pub show_discord: bool,
 }
 
 impl Updater {
@@ -524,6 +528,8 @@ impl Updater {
             msi_finish_confirmed: false,
             windows_failure: false,
             automatic: get("automatic").and_then(Value::as_bool).unwrap_or(true),
+            show_donate: get("show_donate").and_then(Value::as_bool).unwrap_or(true),
+            show_discord: get("show_discord").and_then(Value::as_bool).unwrap_or(true),
             skipped: get("skipped").and_then(Value::as_str).unwrap_or("").into(),
             remind_at: get("remind_at").and_then(Value::as_u64).unwrap_or(0),
             release: None,
@@ -587,7 +593,8 @@ impl Updater {
         self.release.is_some()
     }
     pub fn saved(&self) -> Value {
-        serde_json::json!({"automatic": self.automatic, "skipped": self.skipped, "remind_at": self.remind_at})
+        serde_json::json!({"automatic": self.automatic, "skipped": self.skipped, "remind_at": self.remind_at,
+            "show_donate": self.show_donate, "show_discord": self.show_discord})
     }
     fn offered(&self, time: u64) -> bool {
         self.release
@@ -715,6 +722,10 @@ impl Updater {
             ctx.request_repaint_after(Duration::from_secs(self.next.saturating_sub(now()).max(1)));
         }
     }
+    /// Whether the header shows its Update pill.
+    pub fn pill_shown(&self) -> bool {
+        self.offered(now())
+    }
     pub fn header(&mut self, ui: &mut egui::Ui, narrow: bool) {
         if self.offered(now()) {
             let label = if narrow {
@@ -728,14 +739,12 @@ impl Updater {
                         .unwrap_or("")
                 )
             };
-            if ui
-                .add(egui::Button::new(label).corner_radius(egui::CornerRadius::same(16)))
-                .clicked()
+            if crate::theme::header_button(ui, label).clicked()
             {
                 self.press(ui.ctx());
             }
         }
-        if ui.small_button("Settings").clicked() {
+        if crate::theme::header_button(ui, "Settings").clicked() {
             self.settings = true;
         }
     }
@@ -762,6 +771,8 @@ impl Updater {
                 {
                     self.start(ctx, true);
                 }
+                ui.checkbox(&mut self.show_donate, "Show the Donate button");
+                ui.checkbox(&mut self.show_discord, "Show the Discord button");
                 if !self.allowed {
                     ui.label(
                         "Update checks are off for source builds or when DUTCHMAN_UPDATE_CHECK=0.",

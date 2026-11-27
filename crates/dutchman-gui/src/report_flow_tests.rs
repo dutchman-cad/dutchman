@@ -413,7 +413,6 @@ fn main_panel_control_rows_align_without_overlaps() {
                 "Add files…",
                 "Check a folder",
                 "Add folder…",
-                "Clear",
             ];
             let mut controls: Vec<_> = designs
                 .iter()
@@ -447,11 +446,11 @@ fn main_panel_control_rows_align_without_overlaps() {
             // Query widget roles only; exclude containers and their inline text nodes.
             let sections = [
                 (
-                    h.get_by_label("DESIGNS").rect().bottom(),
+                    h.get_by_label("1. ADD YOUR DESIGNS").rect().bottom(),
                     hint_rect.bottom(),
                 ),
                 (
-                    h.get_by_label("OUTPUT FOLDER").rect().bottom(),
+                    h.get_by_label("2. CHOOSE WHERE TO SAVE THEM").rect().bottom(),
                     h.get_by_label("Change…").rect().bottom(),
                 ),
                 (
