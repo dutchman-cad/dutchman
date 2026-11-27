@@ -604,7 +604,21 @@ fn run_cli() -> ExitCode {
                         .pointer("/error/message")
                         .and_then(Value::as_str)
                         .unwrap_or("Onshape fetch could not finish; check the document and retry.");
-                    if calls == 0 {
+                    if report.pointer("/error/code").and_then(Value::as_str)
+                        == Some("onshape/budget")
+                    {
+                        let estimate = report
+                            .get("estimated_calls")
+                            .and_then(Value::as_u64)
+                            .and_then(|calls| u32::try_from(calls).ok());
+                        eprintln!(
+                            "{}",
+                            dutchman::onshape::budget_stop_text(
+                                u32::try_from(calls).unwrap_or(u32::MAX),
+                                estimate
+                            )
+                        );
+                    } else if calls == 0 {
                         eprintln!("{message}");
                     } else {
                         eprintln!("{message} ({calls} API calls)");

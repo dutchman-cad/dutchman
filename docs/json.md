@@ -1914,7 +1914,8 @@ including retries and failures). Success adds `output` (local bundle path),
 cached document names and version resolutions). Failure adds `error: {code, message}` with a
 stable `onshape/` code: `url`, `auth`, `budget`, `yearly-limit`, `throttle`,
 `transport`, `response`, `io`, `limit`, `privacy`, `not-supported`, `export`, or
-`changed`. `changed` reports “the document changed while fetching; try again, or
+`changed`. A `budget` stop and an `approval` stop add `estimated_calls`, the calls the whole
+fetch is expected to need, when it is known. `changed` reports “the document changed while fetching; try again, or
 use a version link” after the workspace changes during both allowed captures.
 No supplied URL, key, bearer token, authorization header, or remote error body is echoed.
 Authentication options add no report fields or schema version. CLI `--bearer-token-file`
