@@ -4,6 +4,10 @@ use std::path::Path;
 use std::process::{Command, Output};
 use std::time::{Duration, SystemTime};
 
+/// How long a running service may take to write a file. The wait ends as soon as the file is
+/// there, so a long cap only matters on a busy machine, where 15 s was not always enough.
+const FILE_WAIT: Duration = Duration::from_secs(60);
+
 fn cube(path: &Path) {
     std::fs::copy(
         concat!(
@@ -279,7 +283,7 @@ fn polling_settles_changes_and_sigterm_saves_state() {
             .unwrap();
         assert!(!out.join("cube.sc").exists());
     }
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + FILE_WAIT;
     while !out.join("cube.report.json").exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -356,7 +360,7 @@ fn a_hard_restart_reuses_saved_hashes() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + FILE_WAIT;
     while !out.join(".dutchman-watch.json").exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
     }
