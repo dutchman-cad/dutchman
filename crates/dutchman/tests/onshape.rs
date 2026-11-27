@@ -1038,13 +1038,21 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
             "/api/v17/variables/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/variables"
         )
     }));
-    assert!(mock.sent.iter().any(|(method, path, _)| {
-        method == "POST"
-            && path
-                == &format!(
-                    "/api/v17/partstudios/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/export/step"
-            )
-    }));
+    let step_request = mock
+        .sent
+        .iter()
+        .find(|(method, path, _)| {
+            method == "POST"
+                && path
+                    == &format!(
+                        "/api/v17/partstudios/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/export/step"
+                    )
+        })
+        .expect("external solid should be exported at its pinned version");
+    assert!(step_request
+        .2
+        .contains("configuration=size%3Dlarge%3Blength%3D25mm%3B"));
+    assert!(step_request.2.contains(&format!("linkDocumentId={DID}")));
     assert!(mock.sent.iter().any(|(method, path, _)| {
         method == "GET" && path == "/api/v17/translations/external-export"
     }));
@@ -2017,11 +2025,12 @@ fn frontend_writer_publishes_derived_design_companions() {
     );
     dutchman_core::convert(&input, &output, &writer).unwrap();
     assert!(output.is_file());
-    assert!(std::fs::read_dir(dir.path()).unwrap().any(|file| file
-        .unwrap()
-        .file_name()
-        .to_string_lossy()
-        .starts_with("derived-")));
+    assert!(std::fs::read_dir(dir.path()).unwrap().any(|file| {
+        file.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("derived-")
+    }));
 }
 
 #[test]

@@ -71,7 +71,10 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
                     if job_file.exists() {
                         std::fs::remove_file(&job_file).map_err(io_error)?;
                     }
-                    return Err(Error::new(ErrorKind::Export, "Onshape could not export this Part Studio to STEP; check that its final bodies regenerate, then retry."));
+                    return Err(Error::new(
+                        ErrorKind::Export,
+                        "Onshape could not export this Part Studio to STEP; check that its final bodies regenerate, then retry.",
+                    ));
                 }
                 Some("ACTIVE") if poll < 20 => {
                     if self.session.calls >= self.session.max_calls {
@@ -97,14 +100,20 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
             }
         }
         if !done {
-            return Err(Error::new(ErrorKind::Export, "Onshape's STEP export is still running after 20 polls; retry later using the cache."));
+            return Err(Error::new(
+                ErrorKind::Export,
+                "Onshape's STEP export is still running after 20 polls; retry later using the cache.",
+            ));
         }
         let files = info
             .get("resultExternalDataIds")
             .and_then(Value::as_array)
             .ok_or_else(response_error)?;
         let [file] = files.as_slice() else {
-            return Err(Error::new(ErrorKind::Export, "Onshape returned more or fewer than one STEP file; export the Part Studio as one grouped STEP file and retry."));
+            return Err(Error::new(
+                ErrorKind::Export,
+                "Onshape returned more or fewer than one STEP file; export the Part Studio as one grouped STEP file and retry.",
+            ));
         };
         let fid = resource_id(file.as_str().ok_or_else(response_error)?)?;
         self.cache_response(&result_file, fid.as_bytes())?;
@@ -112,7 +121,12 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
     }
 
     /// The export request, its body, and where its STEP file is cached.
-    fn step_request(&self, source: &DocumentUrl, eid: &str) -> Result<(String, Vec<u8>, PathBuf)> {
+    fn step_request(
+        &self,
+        source: &DocumentUrl,
+        eid: &str,
+        query: &str,
+    ) -> Result<(String, Vec<u8>, PathBuf)> {
         let path = format!(
             "{API}/partstudios/d/{}/{}/{}/e/{eid}/export/step",
             source.document, source.kind, source.version
@@ -123,16 +137,26 @@ impl<C: HttpClient> Fetcher<'_, '_, C> {
             "stepVersionString": "AP242", "stepUnit": "METER"
         }))
         .map_err(|_| response_error())?;
-        let cache_file = self.cache_dir(&path).join(hash(
-            format!("POST {path}\n{}", String::from_utf8_lossy(&body)).as_bytes(),
-        ));
+        let cache_key = if query.is_empty() {
+            format!("POST {path}\n{}", String::from_utf8_lossy(&body))
+        } else {
+            format!("POST {path}?{query}\n{}", String::from_utf8_lossy(&body))
+        };
+        let cache_file = self.cache_dir(&path).join(hash(cache_key.as_bytes()));
         Ok((path, body, cache_file))
     }
 
     /// Calls the STEP export still needs: none once cached, the download alone after a
     /// finished job, a poll and the download after a started one, else all of them.
-    pub(super) fn step_calls_missing(&self, source: &DocumentUrl, eid: &str) -> Result<u32> {
-        let (_, _, cache_file) = self.step_request(source, eid)?;
+    pub(super) fn step_calls_missing(
+        &self,
+        source: &DocumentUrl,
+        eid: &str,
+        configuration: Option<&str>,
+        linked_document: Option<&str>,
+    ) -> Result<u32> {
+        let query = part_query("", configuration, linked_document);
+        let (_, _, cache_file) = self.step_request(source, eid, &query)?;
         Ok(if cache_file.exists() {
             0
         } else if cache_file.with_extension("result").exists() {

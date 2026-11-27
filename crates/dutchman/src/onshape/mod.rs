@@ -128,7 +128,10 @@ fn part_query(query: &str, configuration: Option<&str>, linked_document: Option<
 }
 fn id(value: &str) -> Result<String> {
     if value.len() != 24 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(Error::new(ErrorKind::Url, "Use an Onshape document URL with 24-character document, workspace/version, and element IDs."));
+        return Err(Error::new(
+            ErrorKind::Url,
+            "Use an Onshape document URL with 24-character document, workspace/version, and element IDs.",
+        ));
     }
     Ok(value.into())
 }
@@ -143,7 +146,10 @@ pub struct DocumentUrl {
 impl DocumentUrl {
     pub fn parse(input: &str, version: Option<&str>) -> Result<Self> {
         let fail = || {
-            Error::new(ErrorKind::Url, "Use https://cad.onshape.com/documents/<id>/w/<workspace>/e/<element> or a /v/<version> URL; --version takes a version ID.")
+            Error::new(
+                ErrorKind::Url,
+                "Use https://cad.onshape.com/documents/<id>/w/<workspace>/e/<element> or a /v/<version> URL; --version takes a version ID.",
+            )
         };
         let url = url::Url::parse(input).map_err(|_| fail())?;
         if url.scheme() != "https"
@@ -506,7 +512,10 @@ pub fn estimate_calls<C: HttpClient>(
                 continue;
             }
             if visited.len() > 1000 {
-                return Err(Error::new(ErrorKind::Limit, "The Onshape assembly references too many assemblies to estimate; choose a smaller assembly."));
+                return Err(Error::new(
+                    ErrorKind::Limit,
+                    "The Onshape assembly references too many assemblies to estimate; choose a smaller assembly.",
+                ));
             }
             let Some(tab) = tabs
                 .iter()
@@ -1341,7 +1350,12 @@ fn capture<C: HttpClient>(
                     rest += fetcher.missing(&variables_path, VARIABLES_QUERY);
                     rest += fetcher.missing(&format!("{base}/sketches"), "");
                     if !sketch_only(list) {
-                        rest += fetcher.step_calls_missing(source, &eid)?;
+                        rest += fetcher.step_calls_missing(
+                            source,
+                            &eid,
+                            configuration,
+                            linked_document,
+                        )?;
                     }
                     if source.kind == "w" {
                         rest += 1;
@@ -1353,7 +1367,11 @@ fn capture<C: HttpClient>(
                     let file = format!("{prefix}/bodydetails/{i}.json");
                     fetcher.raw(
                         &format!("{base}/bodydetails"),
-                        &part_query(&bodydetails_query(i, list.len()), configuration, linked_document),
+                        &part_query(
+                            &bodydetails_query(i, list.len()),
+                            configuration,
+                            linked_document,
+                        ),
                         file,
                         false,
                     )?;
@@ -1423,10 +1441,12 @@ fn capture<C: HttpClient>(
                 paths.insert("features", file);
                 references(&data, &source.document, mid, &mut queue, &mut external, 0)?;
             }
-            _ => return Err(Error::new(
-                ErrorKind::Unsupported,
-                "This Onshape tab is not supported yet; choose a Part Studio or assembly element.",
-            )),
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "This Onshape tab is not supported yet; choose a Part Studio or assembly element.",
+                ));
+            }
         }
         elements.push(json!({"id": eid, "name": tab_name, "type": kind, "files": paths}));
     }
@@ -1438,7 +1458,10 @@ fn capture<C: HttpClient>(
         fetcher.session.allow(http::AUTO_ELEMENT_CALLS);
         let identity = (document.clone(), external_mid.clone(), element.clone());
         if ancestry.contains(&identity) || ancestry.len() >= 8 {
-            return Err(Error::new(ErrorKind::Unsupported, "External Part Studios repeat a reference or exceed eight levels; fetch an assembly without a reference cycle."));
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "External Part Studios repeat a reference or exceed eight levels; fetch an assembly without a reference cycle.",
+            ));
         }
         let source = DocumentUrl {
             document: document.clone(),
@@ -1738,7 +1761,10 @@ fn references(
                     .unwrap_or(mid);
                 if d == did {
                     if m != mid {
-                        return Err(Error::new(ErrorKind::Unsupported, "An assembly reference uses a different microversion; a single-microversion bundle is not supported yet for this assembly."));
+                        return Err(Error::new(
+                            ErrorKind::Unsupported,
+                            "An assembly reference uses a different microversion; a single-microversion bundle is not supported yet for this assembly.",
+                        ));
                     }
                     if queue.len() >= 10000 {
                         return Err(response_error());
@@ -1834,7 +1860,10 @@ fn privacy(value: &Value) -> Result<()> {
                 ]
                 .contains(&key.to_ascii_lowercase().as_str())
                 {
-                    return Err(Error::new(ErrorKind::Privacy, "Onshape returned account or credential fields; this response cannot be stored verbatim in a bundle. Nothing from this response was bundled."));
+                    return Err(Error::new(
+                        ErrorKind::Privacy,
+                        "Onshape returned account or credential fields; this response cannot be stored verbatim in a bundle. Nothing from this response was bundled.",
+                    ));
                 }
                 privacy(value)?;
             }
