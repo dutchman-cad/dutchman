@@ -125,6 +125,7 @@ maps (see the parts table above for what blocks Inventor history today):
   scaled placements, and occurrences whose part is not a separate file.
 - Suppressed occurrences are placed hidden at their position, not dropped; an Info
   `suppressed components` note names them.
+- Occurrences the source hides are placed hidden at their position too.
 - Upstream: cadmpeg leaves local prototypes untransferred. CADIR version 7 (cadmpeg 0.6.3) can
   carry assembly joints, but the Inventor codec does not read them yet.
 

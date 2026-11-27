@@ -526,9 +526,18 @@ fn describing_a_feature_keeps_its_name_out_of_the_shape_and_gives_it_for_the_key
 }
 
 #[test]
-fn neighbours_are_the_parts_either_side_placed_as_they_were() {
+fn both_spellings_of_the_neighbors_scope_are_accepted() {
     let model = assembly(&["One", "Two", "Three", "Four"]);
-    let (view, features) = trial_model(&model, Some(3), "neighbours", Some(2)).unwrap();
+    let new = trial_model(&model, Some(3), "neighbors", Some(2)).unwrap();
+    let old = trial_model(&model, Some(3), "neighbours", Some(2)).unwrap();
+    assert_eq!(new.1, old.1);
+    assert_eq!(Scope::Neighbours.id(), "neighbors");
+}
+
+#[test]
+fn neighbors_are_the_parts_either_side_placed_as_they_were() {
+    let model = assembly(&["One", "Two", "Three", "Four"]);
+    let (view, features) = trial_model(&model, Some(3), "neighbors", Some(2)).unwrap();
     assert_eq!(features, 8);
     let parts: Vec<_> = view
         .assembly

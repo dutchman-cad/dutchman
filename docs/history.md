@@ -36,8 +36,10 @@ history, with no flattened-history warning.
     cylindrical faces, each written as a point inside the face, with the heal setting kept. A
     delete-face selection cadmpeg leaves native is reported as such and stops the history there;
   - body translations and axis-angle rotations on SolidCraft 0.45 or newer, including
-    explicit pivots, when selected bodies have proven earlier names. Copies and
-    unresolved body selections or motion retain the original final geometry;
+    explicit pivots, when selected bodies have proven earlier names. A move that makes one
+    copy of one body keeps the original and names the copy, so later features can use it.
+    Several copies and unresolved body selections or motion retain the original final
+    geometry;
   - move face, as SolidCraft's offset face: planar faces cadmpeg resolves in the feature's own
     input topology and moves along their normal, each written as a point inside the face with
     the signed distance. For SolidCraft 0.45 or newer, the selection also names the unique
@@ -229,9 +231,9 @@ secondary numbers and asks you to check the source thread table.
 UNC/UNF designations are checked in millimeters (25.4 mm per inch), with pitch expressed as
 millimeters or threads per inch. When those numbers agree, a UNC, UNF or UNEF thread is written as a Thread feature in
 SolidCraft's Unified form (`#2-56 UNC`, `1/4-20 UNC`), keeping a class the source names
-(`-2A` external, `-2B` internal), on targets with Unified thread support. No SolidCraft release
-has it yet, so every target reports "Unified threads need a SolidCraft release with Unified
-thread support" rather than mislabeling the thread as ISO metric. Tapped-hole support is separate.
+(`-2A` external, `-2B` internal), on SolidCraft 0.50 and newer. Earlier targets report "Unified threads need SolidCraft 0.50 or newer"
+rather than mislabeling the thread as ISO metric. Tapped-hole support is separate: a UNC/UNF tapped hole
+is still not written as a Thread.
 
 The face must resolve to a complete cylindrical band between two circular rims. Historical
 face IDs without input surface geometry remain unresolved; Dutchman does not infer faces
@@ -454,7 +456,10 @@ profile cadmpeg does not resolve, in a sketch whose curves divide its one profil
 regions, is not mapped yet").
 
 Patterns can repeat earlier features or named bodies in one or two linear directions,
-around an axis, or at fixed spacing along curves of an earlier planar sketch. Explicit
+around an axis, or at fixed spacing along curves of an earlier planar sketch. A body seed
+may also be a body cadmpeg names by the feature that made it, or the one body of the
+pattern's own input state; a seed in an input state that holds several bodies stops the
+history there. Explicit
 linear offsets and circular angles map when their intervals are equal; two linear composite
 stages map to a rectangular grid. Composite feature patterns containing resolved mirrors
 map to an ordered chain: each stage repeats the preceding stage's entire instance set.
@@ -558,11 +563,13 @@ When a partial history is checked against the source's stored bodies, each kept 
 sit where the source has it: within the larger of 1 mm and 2% of its box diagonal when the
 source's position is approximate, or 0.5 mm and 1% when it is exact.
 
-Dutchman targets SolidCraft 0.49 by default with the writer capabilities available in 0.48 and
-keeps design format 23, as for earlier targets. SolidCraft 0.49 opens every earlier
-design format. Saving in SolidCraft 0.49 upgrades a design to format 67 (drawing format 6);
-SolidCraft 0.48 warns about a design saved in 0.49, opens what it can read and keeps the rest.
-Dutchman does not write drawings or require format 67. Explicit older targets keep their existing output.
+Dutchman targets SolidCraft 0.50 by default with the writer capabilities available in 0.49 and
+keeps design format 23, as for earlier targets. SolidCraft 0.50 opens every earlier
+design format. Saving in SolidCraft 0.50 upgrades a design to format 69 (drawing format 8);
+SolidCraft 0.49 warns about a design saved in 0.50, opens what it can read and keeps the rest.
+Dutchman does not write format 69 itself; a drawing is written by SolidCraft's own drawing commands,
+so it takes the drawing format of the SolidCraft that saves it. Explicit older targets keep their existing output.
+SolidCraft 0.50 saves its zip container by default, the container Dutchman already writes and reads.
 
 Converted assemblies embed their parts and STEP blobs in the design container; they do
 not link back to the source part files. SolidCraft's requirement (since 0.45) to use Update Links

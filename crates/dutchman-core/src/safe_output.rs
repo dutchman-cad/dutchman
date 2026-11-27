@@ -25,9 +25,17 @@ pub fn portable_key(name: &str) -> String {
         .into_owned()
 }
 
-/// [`portable_key`] of a whole path, folder names included.
+/// [`portable_key`] of a whole path, folder names included. The key is made from the path's
+/// components, so `out/part.sc` and `out\part.sc` (what Windows makes of it) are one key.
 pub fn portable_path_key(path: &Path) -> String {
-    portable_key(&path.to_string_lossy())
+    let parts: Vec<String> = path
+        .components()
+        .map(|part| match part {
+            std::path::Component::RootDir => String::new(),
+            other => other.as_os_str().to_string_lossy().into_owned(),
+        })
+        .collect();
+    portable_key(&parts.join("/"))
 }
 
 /// Whether something is already at `path`, by the filesystem's own answer, or a file in that
@@ -160,21 +168,65 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
     false
 }
 
+/// What happens to a file a write replaces: it is moved out of the way, never destroyed.
+pub type Retire = fn(&Path) -> std::io::Result<()>;
+
+static RETIRE: std::sync::OnceLock<Retire> = std::sync::OnceLock::new();
+
+/// Sets what becomes of a replaced file (the program sends it to the trash); once only.
+pub fn set_retire(retire: Retire) {
+    let _ = RETIRE.set(retire);
+}
+
+/// Keeps `path` beside itself as `<name>.replaced-<time>.<extension>`. The default, and what
+/// the trash falls back to.
+pub fn keep_as_replaced(path: &Path) -> std::io::Result<()> {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut n = 0_u32;
+    loop {
+        let mut name = std::ffi::OsString::from(format!("{stem}.replaced-{seconds}"));
+        if n > 0 {
+            name.push(format!("-{n}"));
+        }
+        if let Some(extension) = path.extension() {
+            name.push(".");
+            name.push(extension);
+        }
+        let target = path.with_file_name(name);
+        if !present(&target) {
+            return std::fs::rename(path, target);
+        }
+        n += 1;
+    }
+}
+
+fn retire(path: &Path) -> std::io::Result<()> {
+    RETIRE.get().copied().unwrap_or(keep_as_replaced)(path)
+}
+
 /// Fills a new temporary file beside `path` with `fill`, syncs it, and moves it to `path`:
 /// over what is there when `replace` is set (atomically), else only if nothing is there
 /// ([`std::io::ErrorKind::AlreadyExists`] otherwise). The temporary file is removed on any
-/// failure, and `path` is then as it was.
+/// failure, and `path` is then as it was. A file replaced is retired first (see [`set_retire`]),
+/// never overwritten in place.
 pub fn write_with(
     path: &Path,
     replace: bool,
     fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
-    write_with_mode(path, replace, None, fill)
+    write_with_mode(path, replace, true, None, fill)
 }
 
 fn write_with_mode(
     path: &Path,
     replace: bool,
+    retire_old: bool,
     private: Option<u32>,
     fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
@@ -205,25 +257,31 @@ fn write_with_mode(
             .set_permissions(std::fs::Permissions::from_mode(mode))?;
     }
     temporary.as_file().sync_all()?;
-    if replace {
-        temporary.persist(path).map(drop).map_err(|e| e.error)
-    } else {
-        temporary
-            .persist_noclobber(path)
-            .map(drop)
-            .map_err(|e| e.error)
+    if replace && !retire_old {
+        return temporary.persist(path).map(drop).map_err(|e| e.error);
     }
+    // A name that only matches an existing file apart from case is that file on macOS and
+    // Windows, where it exists; on a case-sensitive filesystem there is nothing to move.
+    if replace && path.try_exists().unwrap_or(true) {
+        retire(path)?;
+    }
+    temporary
+        .persist_noclobber(path)
+        .map(drop)
+        .map_err(|e| e.error)
 }
 
-/// [`write`] with replacing, for a file Dutchman owns outright (a report it regenerates).
+/// For a file Dutchman owns outright (a report it regenerates): replaced in one atomic step, with
+/// no retired copy.
 pub fn write_own(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    write(path, bytes, true)
+    use std::io::Write as _;
+    write_with_mode(path, true, false, None, |file| file.write_all(bytes))
 }
 
 /// [`write_own`], readable by its owner only (a private report or key file).
 pub fn write_own_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
-    write_with_mode(path, true, Some(0o600), |file| file.write_all(bytes))
+    write_with_mode(path, true, false, Some(0o600), |file| file.write_all(bytes))
 }
 
 /// Writes `bytes` to exactly `path`, atomically (see [`write_with`]).
@@ -360,6 +418,26 @@ mod tests {
     }
 
     #[test]
+    fn a_replaced_file_is_kept_beside_the_new_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.sc");
+        write(&path, b"old", false).unwrap();
+        write(&path, b"new", true).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        let kept: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("a.replaced-") && name.ends_with(".sc"))
+            .collect();
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(std::fs::read(dir.path().join(&kept[0])).unwrap(), b"old");
+        // A file Dutchman owns is replaced in one step, with no copy.
+        write_own(&path, b"newer").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"newer");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[test]
     fn write_never_replaces_unless_asked_and_replaces_whole() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.sc");
@@ -369,11 +447,22 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"first");
         write(&path, b"second", true).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"second");
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     const NFC: &str = "caf\u{e9}";
     const NFD: &str = "cafe\u{301}";
+
+    #[test]
+    fn a_path_key_ignores_separators() {
+        assert_eq!(
+            portable_path_key(Path::new("out/part.sc")),
+            portable_path_key(&Path::new("out").join("part.sc"))
+        );
+        assert_ne!(
+            portable_path_key(Path::new("out/part.sc")),
+            portable_path_key(Path::new("out/other.sc"))
+        );
+    }
 
     #[test]
     fn portable_keys_fold_normalisation_and_case() {

@@ -88,9 +88,14 @@ Targets before SolidCraft 0.25.1 get `.solidcraft` by default.
 `--to dxf` writes one `part-PageName.dxf` per TechDraw page; see
 [TechDraw drawing output](freecad.md#techdraw-to-dxf). If a model default exists, Dutchman
 writes the next free name (`part (2).sc`) and leaves it as it is. A default
-that is the input itself is always refused. An existing file is never replaced unless you pass
-`--replace` (`--force` means the same). A name that differs from an existing one only in capitals or in how an accented letter is stored counts as that file, because macOS and Windows keep one file for both; the old `--no-clobber` is accepted and does nothing,
-and `--force` conflicts with it. The report names the file actually written. Built-in commands win
+that is the input itself is always refused. An existing file is replaced only when Dutchman made
+it from the same input and nothing has changed since (the `dutchman.json` entry inside the
+design); anything else is kept and the
+new design is numbered, with a line saying why. `--replace` (`--force` means the same) replaces any
+existing file without asking, sending it to the trash (or keeping it beside the new one as
+`name.replaced-<time>.sc`); `DUTCHMAN_NO_TRASH=1` always keeps it beside. The old `--no-clobber` is
+accepted and does nothing, and `--force` conflicts with it. The report names the file actually
+written. Built-in commands win
 over files with the same name; use `dutchman convert pilot` for a file named `pilot`.
 Installed tools take precedence over bare files; otherwise an existing file or a recognized
 CAD extension selects conversion.
@@ -109,11 +114,11 @@ CAD extension selects conversion.
 | `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH` or beside `dutchman`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). The same search runs in the desktop app; see [How Dutchman finds SolidCraft](desktop.md#how-dutchman-finds-solidcraft). When none is found, the report's `solidcraft.search` lists the places tried. |
-| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.49). |
+| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.50). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--write-replay` | For a `.sc` design, also write `<design>.replay.json` beside it (the design's name with `.replay.json` in place of `.sc`): the command script that rebuilds the history step by step. See [Replay a history by hand](troubleshooting.md#replay-a-history-by-hand). Works with `convert` and `convert-all`; the JSON report names it as `replay_script`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
-| `--replace` | Replace an existing design at the output. Without it nothing already there is replaced: a taken name gets the next free one (`part (2).sc`, `part (3).sc`), and the `.report.json`, `.failed.json` and `.replay.json` beside it, the logs and the anonymous report follow the same rule. The report states the path written. |
+| `--replace` | Replace any existing design at the output, without asking; the old file goes to the trash. Without it only a design Dutchman made from the same input, unchanged since, is replaced: a taken name gets the next free one (`part (2).sc`, `part (3).sc`), and the `.report.json`, `.failed.json` and `.replay.json` beside it, the logs and the anonymous report follow the same rule. The report states the path written. |
 | `--no-clobber` | Does nothing: not replacing is the default. Kept so existing scripts work. |
 | `--project DIR` | The project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an `.ipj`, else two folders up. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `--search DIR` | Another folder to search for part files the project folder does not hold, such as a shared library. May be given more than once. |
@@ -522,7 +527,7 @@ Dutchman is made for the current SolidCraft (any release from the last two weeks
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
 `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The target defaults to the found CLI's version, even with `--no-verify`, else the
-newest minor known at build time (currently 0.49). The current window is 0.40–0.49.
+newest minor known at build time (currently 0.50). The current window is 0.40–0.50.
 Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
 0.25 patch 1 or newer; older targets preserve the original geometry and report the version needed.
 Onshape fillets and chamfers blend exactly the edges Onshape blended (its tangent chain resolved
@@ -547,10 +552,10 @@ than falling back to the writer's older pinned `WINDOW_OLDEST` value.
 
 
 SolidCraft conversion reports include the selected target and the discovered CLI version,
-even with verification off. Text output includes `Target SolidCraft 0.49 (found 0.49.0)`,
+even with verification off. Text output includes `Target SolidCraft 0.50 (found 0.50.0)`,
 or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;
 otherwise the found supported version is used, capped at the newest known release, falling
-back to 0.49. Successful conversions print the same installed-version notice beside the
+back to 0.50. Successful conversions print the same installed-version notice beside the
 target line, with the SolidCraft download URL for too-old releases. The CLI never checks
 for Dutchman updates over the network. Failed or refused files print neither line.
 No installed release means no notice. Other output

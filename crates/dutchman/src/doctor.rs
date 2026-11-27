@@ -82,9 +82,7 @@ pub fn run(
     // The converted designs live in the check's own folder, which Dutchman made: a rerun resumes
     // from its checkpoints and rewrites there, never into a folder of the user's.
     batch::prepare_options(&mut plan.jobs, &settings.diagnose.options);
-    for job in &mut plan.jobs {
-        job.replace = true;
-    }
+    own_folder_only(&mut plan.jobs, out);
     let workers = concurrency(settings.jobs, settings.memory);
     let per_worker = settings.memory / workers as u64;
     let mut diagnose = settings.diagnose.clone();
@@ -535,9 +533,37 @@ fn summarize(
         "summary": "Folder checks finished. Review findings before making a report. Only report.json is anonymous; keep all other output private. Nothing was sent."})
 }
 
+/// Lets the check rewrite a converted design only inside `out`, the folder it made for itself;
+/// a design planned anywhere else keeps the default of never replacing a file.
+fn own_folder_only(jobs: &mut [batch::Job], out: &Path) {
+    for job in jobs {
+        job.replace = job.output.starts_with(out);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rerun_replaces_only_inside_its_own_folder() {
+        let job = |output: &str| batch::Job {
+            project_files: None,
+            fallback: None,
+            input: PathBuf::from("a.f3d"),
+            output: PathBuf::from(output),
+            replace: false,
+            requested: None,
+            search: crate::PartSearch::default(),
+        };
+        let mut jobs = [
+            job("/work/checked/converted/a.sc"),
+            job("/work/elsewhere/a.sc"),
+        ];
+        own_folder_only(&mut jobs, Path::new("/work/checked"));
+        assert!(jobs[0].replace);
+        assert!(!jobs[1].replace);
+    }
     #[test]
     fn repeated_failures_are_one_anonymous_finding() {
         let result = json!({"ok": true, "conversion": {"ok": false, "error": {"kind": "decode", "stage": "decode", "message": "private name"}}});

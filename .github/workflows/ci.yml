@@ -54,6 +54,9 @@ jobs:
       # A change to Cargo.toml or Cargo.lock (Dependabot's included) runs the Rust 1.88 build too,
       # so a dependency that moves past the minimum Rust version is caught before it merges.
       lockfile: ${{ steps.diff.outputs.lockfile }}
+      # A pull request that touches the plugin, its packaging or the cadmpeg pin also builds the
+      # plugin component and imports the Fusion fixtures through it (the plugin-host job).
+      plugin: ${{ steps.diff.outputs.plugin }}
       platform: ${{ steps.platform.outputs.platform }}
       floor: ${{ steps.platform.outputs.floor }}
       # Self-hosted 'flyer' runners: the merge queue and pushes to main only. Every pull request
@@ -74,6 +77,7 @@ jobs:
             echo "docker=true" >> "$GITHUB_OUTPUT"
             echo "placements=true" >> "$GITHUB_OUTPUT"
             echo "lockfile=true" >> "$GITHUB_OUTPUT"
+            echo "plugin=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
@@ -82,12 +86,19 @@ jobs:
             echo "docker=true" >> "$GITHUB_OUTPUT"
             echo "placements=true" >> "$GITHUB_OUTPUT"
             echo "lockfile=true" >> "$GITHUB_OUTPUT"
+            echo "plugin=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if git diff --name-only "$BASE" HEAD | grep -qE '(^|/)Cargo\.(toml|lock)$'; then
             echo "lockfile=true" >> "$GITHUB_OUTPUT"
           else
             echo "lockfile=false" >> "$GITHUB_OUTPUT"
+          fi
+          if git diff --name-only "$BASE" HEAD | grep -qE '^(crates/dutchman-plugin/|scripts/package-plugin\.sh$)' \
+            || git diff "$BASE" HEAD -- Cargo.toml Cargo.lock | grep -qE '^[-+][^-+].*cadmpeg'; then
+            echo "plugin=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "plugin=false" >> "$GITHUB_OUTPUT"
           fi
           if git diff --name-only "$BASE" HEAD | grep -qE '^crates/dutchman-(core|solidcraft)/src/assembly' \
             || git diff "$BASE" HEAD -- Cargo.toml Cargo.lock | grep -qE '^[-+][^-+].*cadmpeg'; then
@@ -237,6 +248,44 @@ jobs:
       - run: cargo check --locked --target wasm32-wasip2 -p dutchman-core -p dutchman-solidcraft --no-default-features
       # The SolidCraft plugin component: wasm32-unknown-unknown, no WASI (docs/plugin.md).
       - run: cargo check --locked --target wasm32-unknown-unknown -p dutchman-plugin
+
+  # The plugin's wasm build, run: the component host test imports every Fusion fixture through the
+  # real component, so code that only fails on wasm32-unknown-unknown (a thread that cannot start)
+  # stops here as a trap instead of in SolidCraft. Needs the wasm32 target, so GitHub-hosted.
+  plugin-host:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && (needs.changes.outputs.full == 'true' || needs.changes.outputs.plugin == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: plugin-host
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Add swap for the plugin build
+        run: |
+          sudo fallocate -l 12G /plugin-swap
+          sudo chmod 600 /plugin-swap
+          sudo mkswap /plugin-swap
+          sudo swapon /plugin-swap
+      - run: cargo install --locked wasm-tools --version 1.263.0
+      - name: Build and package the plugin
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "0"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: |
+          cargo build --release --locked --target wasm32-unknown-unknown -p dutchman-plugin
+          # The byte budget is for the release build; this one skips LTO.
+          PLUGIN_WASM_MAX_BYTES=200000000 bash scripts/package-plugin.sh target/wasm32-unknown-unknown/release/dutchman_plugin.wasm plugin-out
+      - name: Import the Fusion fixtures through the component
+        env:
+          DUTCHMAN_PLUGIN_COMPONENT: ${{ github.workspace }}/plugin-out/dutchman.wasm
+        run: cargo test --release --locked -p dutchman-plugin --features host-tests --test component fusion_designs_do_not_trap -- --nocapture
 
   test:
     needs: changes

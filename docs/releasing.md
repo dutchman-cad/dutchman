@@ -34,7 +34,7 @@ Release notes get a "Breaking changes" section whenever there is a breaking chan
    `OLDEST_SOLIDCRAFT` floor (0.18.2). `NEWEST_SOLIDCRAFT` names only the newest known
    minor, currently `[0, 47]`; a patch release requires no Dutchman constant or docs update.
    Choose the oldest release and newest minor from SolidCraft's release dates, then run
-   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.40.0 0.49` with a read-only GitHub token.
+   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.40.0 0.50` with a read-only GitHub token.
    The script reads the authenticated GitHub releases list, selects the highest published
    stable patch of that minor, and checks its checksum metadata. It prints the constants,
    the oldest checksum, and the newest minor's dynamic CI matrix entry. Copy the constants
@@ -304,6 +304,14 @@ Windows x86_64 and Linux x86_64). A change to the file on `main` runs
 the rolling `candidates` pre-release with the archives, their SHA-256 files and
 `candidates.json`. `dutchman investigate` compares a user's design against them and the
 nightly. Remove an entry once its fix is released; an empty list publishes an empty release.
+
+## SolidCraft Workshop listing
+
+`solidcraft-workshop.json` at the repository root is what the SolidCraft Workshop reads to list the
+plugin. Its `version` must equal the workspace version and `min_app_version` the plugin manifest's
+`min_host_version`; a unit test checks both, and that the package is `dutchman-plugin-<version>.zip`,
+the release's plugin file. The Workshop reads the file from the default branch and the package from
+the release tagged `v<version>`, so a version bump changes the listing file in the same pull request.
 
 ## Container image
 

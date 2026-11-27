@@ -618,7 +618,7 @@ impl Panel {
                             ctx.request_repaint();
                         }
                     });
-                } else if status.state == "cancelled" {
+                } else if status.state == "canceled" {
                     self.list_failed("Listing your designs was stopped.".into());
                 } else {
                     let (text, _) = job::reason_info(

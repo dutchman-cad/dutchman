@@ -414,7 +414,7 @@ pub fn chosen_cli(chosen: &Path) -> Result<PathBuf, String> {
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
 /// The newest minor known at build time. Patch releases need no constant update.
-pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 49];
+pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 50];
 
 /// The oldest SolidCraft release published in the 14 days before the tag, never below
 /// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
@@ -469,38 +469,10 @@ pub enum VersionGate {
     UnifiedThread,
 }
 
-/// Test-only switch that makes the Unified thread capability available, to check what it writes.
-#[cfg(test)]
-pub(crate) mod tests_force {
-    use std::cell::Cell;
-
-    thread_local! {
-        static UNIFIED_THREAD: Cell<bool> = const { Cell::new(false) };
-    }
-
-    pub(crate) fn unified_thread() -> bool {
-        UNIFIED_THREAD.with(Cell::get)
-    }
-
-    /// Switches the capability on until the returned guard drops.
-    pub(crate) struct Forced;
-
-    pub(crate) fn force_unified_thread() -> Forced {
-        UNIFIED_THREAD.with(|f| f.set(true));
-        Forced
-    }
-
-    impl Drop for Forced {
-        fn drop(&mut self) {
-            UNIFIED_THREAD.with(|f| f.set(false));
-        }
-    }
-}
-
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
-            Self::UnifiedThread => SolidCraftVersion::UNRELEASED,
+            Self::UnifiedThread => SolidCraftVersion::V0_50_0,
             Self::MoveBody => SolidCraftVersion::V0_45_0,
             Self::LinkedDesign => SolidCraftVersion::V0_44_0,
             Self::ThinExtrude => SolidCraftVersion::V0_44_0,
@@ -521,10 +493,6 @@ impl VersionGate {
 
     /// Whether this target can write the gated representation.
     pub fn supported(self, target: SolidCraftVersion) -> bool {
-        #[cfg(test)]
-        if self == Self::UnifiedThread && tests_force::unified_thread() {
-            return true;
-        }
         target >= self.minimum()
     }
 }
@@ -593,6 +561,9 @@ pub fn solidcraft_minor(line: &str) -> Option<String> {
 pub struct SolidCraftVersion([u64; 3]);
 
 impl SolidCraftVersion {
+    /// First release with inch Unified (UNC, UNF) thread designations.
+    pub const V0_50_0: Self = Self([0, 50, 0]);
+
     /// Release used to prove profiles from resolved sketch features.
     pub const V0_45_0: Self = Self([0, 45, 0]);
 
@@ -4037,23 +4008,25 @@ mod cli_tests {
     }
 
     #[test]
-    fn unified_threads_are_supported_by_no_known_release() {
-        let [major, newest] = NEWEST_SOLIDCRAFT;
-        for minor in 0..=newest + 1 {
-            for patch in [0, 1, 99] {
-                let target = SolidCraftVersion([major, minor, patch]);
-                assert!(
-                    !VersionGate::UnifiedThread.supported(target),
-                    "{major}.{minor}.{patch}"
-                );
-            }
+    fn unified_threads_are_supported_from_050() {
+        for (minor, patch, supported) in [
+            (18, 2, false),
+            (45, 0, false),
+            (49, 0, false),
+            (49, 1, false),
+            (49, 99, false),
+            (50, 0, true),
+            (50, 1, true),
+            (51, 0, true),
+        ] {
+            let target = SolidCraftVersion([0, minor, patch]);
+            assert_eq!(
+                VersionGate::UnifiedThread.supported(target),
+                supported,
+                "0.{minor}.{patch}"
+            );
         }
-        assert!(!VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
-        {
-            let _forced = tests_force::force_unified_thread();
-            assert!(VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
-        }
-        assert!(!VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
+        assert!(VersionGate::UnifiedThread.supported(SolidCraftVersion::default()));
     }
 
     #[test]
@@ -4312,6 +4285,27 @@ mod version_tests {
     }
 
     #[test]
+    fn target_050_keeps_049_writer_capabilities() {
+        let target: SolidCraftVersion = "0.50.0".parse().unwrap();
+        let previous: SolidCraftVersion = "0.49.0".parse().unwrap();
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+            VersionGate::HistoryBody,
+            VersionGate::SplitFaces,
+            VersionGate::ScopedBodies,
+            VersionGate::ClosedCircleBlend,
+            VersionGate::MoveBody,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
+        assert!(!target_loses_history(target));
+    }
+
+    #[test]
     fn minor_status_preserves_patch_sensitive_writer_rules() {
         for (found, status) in [
             ("0.27.0", "current"),
@@ -4332,7 +4326,9 @@ mod version_tests {
             ("0.48.9", "current"),
             ("0.49.0", "current"),
             ("0.49.9", "current"),
-            ("0.50.0", "newer"),
+            ("0.50.0", "current"),
+            ("0.50.9", "current"),
+            ("0.51.0", "newer"),
             ("0.17.99", "too_old"),
         ] {
             assert_eq!(

@@ -198,6 +198,11 @@ pub struct App {
     /// What this session wrote at each output path: its size and modified time then. A design is
     /// converted again over its own file only while the file is still exactly that.
     written: std::collections::BTreeMap<PathBuf, (u64, std::time::SystemTime)>,
+    /// The files already in the output folder that Dutchman did not make from the files being
+    /// converted, while the window asks whether to replace them.
+    replace_confirm: Option<Vec<String>>,
+    /// The answer to that question for the run about to start.
+    replace_choice: Option<bool>,
     /// Keep an explicit UI preview independent of the installed CLI.
     solidcraft_preview: bool,
     /// Where the search for `solidcraft-cli` looked, when it found none.
@@ -446,7 +451,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
 const LARGE_ESTIMATE: &str = "A large conversion: it can take a while and use much of this \
      computer's memory. If it seems stuck, tell us in \"Is there a problem? Is something missing?\"";
 
-/// An estimate shown in the warning colour: five minutes or more, or more than half the free
+/// An estimate shown in the warning color: five minutes or more, or more than half the free
 /// memory (or 8 GB when the free memory is not known).
 fn large_estimate(estimate: &Estimate, available: Option<u64>) -> bool {
     let memory = available
@@ -565,6 +570,8 @@ impl App {
             checker: dutchman_solidcraft::usable_cli(&checking_with),
             solidcraft_open: false,
             written: std::collections::BTreeMap::new(),
+            replace_confirm: None,
+            replace_choice: None,
             solidcraft_preview: false,
             search_note,
             header_bottom: 72.0,
@@ -1532,11 +1539,25 @@ impl App {
         let Some(out_dir) = self.out_dir.clone() else {
             return;
         };
+        let mut options = self.options.clone();
+        if options.replace && self.replace_choice.is_none() {
+            // Replacing is the user's explicit choice, but a file they made themselves is only
+            // replaced after one question that names it.
+            let files = dutchman::batch::unmade_outputs(&self.inputs, &out_dir, &options);
+            if !files.is_empty() {
+                self.replace_confirm = Some(files);
+                return;
+            }
+        }
+        if self.replace_choice == Some(false) {
+            options.replace = false;
+        }
+        self.replace_choice = None;
         self.batch_report_key = None;
         self.batch_report_finished = false;
         self.batch_report_saved = None;
         self.pending = Some(PendingRun {
-            options: self.options.clone(),
+            options,
             kind: RunKind::Batch {
                 inputs: self.inputs.clone(),
                 out_dir,
@@ -2247,6 +2268,20 @@ impl App {
             return;
         }
 
+        egui::TopBottomPanel::bottom("as-is-footer")
+            .frame(
+                Frame::new()
+                    .fill(ctx.style().visuals.panel_fill)
+                    .inner_margin(Margin {
+                        left: theme::SPACE_8 as i8,
+                        right: theme::SPACE_8 as i8,
+                        top: 0,
+                        bottom: theme::SPACE_1 as i8,
+                    }),
+            )
+            .show_separator_line(false)
+            .show(ctx, |ui| self.as_is_footer(ui, ctx));
+
         egui::TopBottomPanel::bottom("conversion")
             .frame(
                 Frame::new()
@@ -2319,6 +2354,7 @@ impl App {
         self.consent.poll();
         self.updater.report_ids = self.consent.ids.clone();
         self.solidcraft_window(ctx);
+        self.replace_window(ctx);
         if let Some(link) = self
             .onshape
             .window(ctx, self.header_bottom, !self.running())
@@ -2478,6 +2514,33 @@ impl App {
         });
     }
 
+    /// One quiet line at the bottom of the window: the as-is notice and a link to its details.
+    fn as_is_footer(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let p = *theme::palette(ui);
+        let text = (crate::FOOTER, crate::FOOTER_MORE);
+        // The panel spans the whole window below both columns. A row is as tall as a button by
+        // default; the footer's is as tall as its small text, so it never costs the controls room.
+        ui.spacing_mut().interact_size.y = 0.0;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = theme::SPACE_2;
+            ui.label(RichText::new(text.0).small().color(p.tide));
+            let more = ui.add(egui::Link::new(RichText::new(text.1).small()));
+            // Another "More" button lives on result cards; give this one its own name.
+            more.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Link,
+                    true,
+                    "More about Dutchman and your files",
+                )
+            });
+            if more.clicked() {
+                ctx.open_url(egui::OpenUrl::new_tab(footer_docs_url(
+                    dutchman::BUILD_VERSION,
+                )));
+            }
+        });
+    }
+
     fn title_controls(&mut self, ui: &mut egui::Ui, narrow: bool) {
         // The same panel as every result's: Discord first, GitHub as the backup.
         let p = *theme::palette(ui);
@@ -2563,6 +2626,48 @@ impl App {
                 // Search again: SolidCraft may have been installed, or been slow to start.
                 self.set_solidcraft_cli(self.options.solidcraft.clone());
             }
+        }
+    }
+
+    /// The one question before replacing: which of the files already there Dutchman did not make
+    /// from the files being converted. Cancelling keeps them and saves under numbered names.
+    fn replace_window(&mut self, ctx: &egui::Context) {
+        let Some(files) = self.replace_confirm.clone() else {
+            return;
+        };
+        let mut answer = None;
+        egui::Window::new("Replace files you made yourself")
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .collapsible(false)
+            .resizable(false)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                let many = files.len() != 1;
+                ui.label(format!(
+                    "Replace {} {} you made yourself?",
+                    files.len(),
+                    if many { "files" } else { "file" }
+                ));
+                for name in files.iter().take(5) {
+                    ui.label(name);
+                }
+                if files.len() > 5 {
+                    ui.label(format!("and {} more", files.len() - 5));
+                }
+                ui.label("Dutchman did not make these from the files being converted. A replaced file goes to the trash.");
+                ui.horizontal(|ui| {
+                    if ui.button("Replace").clicked() {
+                        answer = Some(true);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        answer = Some(false);
+                    }
+                });
+            });
+        if let Some(replace) = answer {
+            self.replace_confirm = None;
+            self.replace_choice = Some(replace);
+            self.start(ctx);
         }
     }
 
@@ -3111,7 +3216,7 @@ impl App {
                 side_by_side(ui, wide, |ui| {
                     let mut replace = self.options.replace;
                     if ui
-                        .checkbox(&mut replace, "Replace designs already in the output folder")
+                        .checkbox(&mut replace, "Replace existing files")
                         .changed()
                     {
                         self.options.replace = replace;
@@ -3642,7 +3747,7 @@ impl App {
             let unfinished = row
                 .is_some_and(|(_, row)| matches!(row.status, Status::Waiting | Status::Converting));
             let intro = match &steps {
-                Some(steps) => Some(steps.intro),
+                Some(steps) => Some(steps.intro.as_str()),
                 None if unfinished => Some(report_panel::RUNNING_INTRO),
                 None => None,
             };
@@ -4028,13 +4133,13 @@ fn row_ui(
         return action;
     }
     if let Some(message) = &view.error {
-        // A drawing that is not read yet is not a failure: its note is in the warning colour.
-        let colour = if view.status == present::Status::NotSupported {
+        // A drawing that is not read yet is not a failure: its note is in the warning color.
+        let color = if view.status == present::Status::NotSupported {
             p.lantern_text
         } else {
             p.danger
         };
-        text_with_links(ui, message, colour);
+        text_with_links(ui, message, color);
         if let Some((path, ready)) = log {
             if let Err(message) = platform::log_controls(ui, path, ready) {
                 action = Some(Action::Notice(message));
@@ -4197,6 +4302,15 @@ pub fn agents_url(version: &str) -> String {
         _ => format!("v{version}"),
     };
     format!("https://github.com/dutchman-cad/dutchman/blob/{rev}/assets/install/AGENTS.md")
+}
+
+/// The docs section the footer's **More** link opens, at this build's own version.
+pub fn footer_docs_url(version: &str) -> String {
+    let rev = match version.split_once("-nightly.") {
+        Some((_, commit)) if !commit.is_empty() => commit.to_owned(),
+        _ => format!("v{version}"),
+    };
+    format!("https://github.com/dutchman-cad/dutchman/blob/{rev}/docs/desktop.md#provided-as-is-and-your-files")
 }
 
 /// How long "Copied" shows before the button looks as it did.
@@ -4815,7 +4929,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
             let mut app = App::new(cc);
             app.options.no_verify = true;
-            app.found_version = Some("0.49.0".into());
+            app.found_version = Some("0.50.0".into());
             app.rows.push(Row {
                 input: PathBuf::from("synthetic.f3d"),
                 output: Some(PathBuf::from("synthetic.sc")),
