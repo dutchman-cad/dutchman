@@ -297,7 +297,8 @@ pub fn read_with(
             "--json".as_ref(),
         ];
         if all {
-            args.extend(["--copper".as_ref(), "all".as_ref()]);
+            args.push(OsStr::new("--copper"));
+            args.push(OsStr::new("all"));
         }
         args
     };
