@@ -364,6 +364,18 @@ fn the_main_screen_has_three_numbered_steps_with_labels_before_controls() {
                 "{name}"
             );
         }
+        // Diagnostics is a quiet button at the foot of the checks, not beside Replace.
+        assert!(
+            h.get_by_label("Open diagnostics folder").rect().top()
+                >= h.get_by_label("Checks").rect().bottom()
+        );
+        // Advanced's rows are indented one step, and their controls stay in the same column
+        // as the other rows'.
+        h.get_by_label("Advanced").click_accesskit();
+        h.run_steps(8);
+        let column = h.get_by_label("Output format").rect().left();
+        assert!((h.get_by_label("Part positions").rect().left() - column).abs() < 1.0);
+        assert!((h.get_by_label("Up axis").rect().left() - column).abs() < 1.0);
         for (label, control) in [
             ("Existing files", "Replace existing files"),
             ("Checks", "Check feature history in SolidCraft"),
@@ -6383,7 +6395,7 @@ fn connected_onshape_keeps_results_in_their_own_column() {
             .query_by_label("Paste your Onshape Part Studio link")
             .is_none());
         let convert = h.get_by_label("Convert").rect();
-        assert!(h.get_by_label("Open diagnostics folder").rect().bottom() <= convert.top());
+        assert!(h.get_by_label("Preset").rect().bottom() <= convert.top());
         h.get_by_label("Onshape connected ✓").click_accesskit();
         h.run_steps(4);
         h.get_by_label("Paste your Onshape Part Studio link");
@@ -6422,7 +6434,7 @@ fn the_fusion_button_in_the_convert_bar_keeps_the_left_column_inside() {
             (button.center().y - convert.center().y).abs() < 1.0,
             "the button is on the Convert bar's row"
         );
-        assert!(h.get_by_label("Open diagnostics folder").rect().bottom() <= convert.top());
+        assert!(h.get_by_label("Preset").rect().bottom() <= convert.top());
         assert!(button.right() <= 1280.0);
         assert!(!h.state().page_scrolls());
     }

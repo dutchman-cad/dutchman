@@ -128,7 +128,7 @@ pub const HEADER_HEIGHT: f32 = 26.0;
 
 /// A header button: one shape, height and padding for Settings, the SolidCraft version, the
 /// update pill and the Discord button.
-pub fn header_button<'a>(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
+pub fn header_button(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
     header_button_with(ui, egui::Button::new(text))
 }
 

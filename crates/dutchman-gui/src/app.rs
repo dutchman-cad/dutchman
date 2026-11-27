@@ -3085,11 +3085,13 @@ impl App {
             .num_columns(2)
             .min_col_width(LABEL_COLUMN)
             .show(ui, |ui| self.preset_ui(ui));
-        egui::CollapsingHeader::new("Advanced").show_unindented(ui, |ui| {
+        egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
+            // Indented one step under Advanced; the label column keeps its right edge.
+            let indent = ui.spacing().indent;
             egui::Grid::new("options-advanced")
                 .spacing([theme::SPACE_2, theme::SPACE_1])
                 .num_columns(2)
-                .min_col_width(LABEL_COLUMN)
+                .min_col_width(LABEL_COLUMN - indent)
                 .show(ui, |ui| self.advanced_rows(ui, p));
         });
         egui::Grid::new("options-output")
@@ -3248,18 +3250,7 @@ impl App {
             .labelled_by(name.id);
         ui.end_row();
         ui.label("Existing files");
-        ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.options.replace, "Replace existing files");
-            if ui.small_button("Open diagnostics folder").clicked() {
-                let result = dutchman::diagnostics::default_folder().and_then(|folder| {
-                    std::fs::create_dir_all(&folder).map_err(|err| err.to_string())?;
-                    platform::open(&folder)
-                });
-                if let Err(message) = result {
-                    self.notice = Some(message);
-                }
-            }
-        });
+        ui.checkbox(&mut self.options.replace, "Replace existing files");
         ui.end_row();
         ui.label("Checks");
         {
@@ -3271,16 +3262,15 @@ impl App {
                 {
                     self.options.no_verify = !verify;
                 }
-                if ui.small_button("SolidCraft version…").clicked() {
-                    self.solidcraft_open = true;
-                }
             });
             ui.end_row();
             ui.label("");
-            ui.checkbox(
-                &mut self.options.no_memory_check,
-                "Convert and check history even if memory is low",
-            ).on_hover_text("Force the conversion and history check despite the memory estimate. This can run out of memory. Checking history off stays off.");
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(
+                    &mut self.options.no_memory_check,
+                    "Convert and check history even if memory is low",
+                ).on_hover_text("Force the conversion and history check despite the memory estimate. This can run out of memory. Checking history off stays off.");
+            });
             ui.end_row();
             ui.label("");
             let checker = match &self.checker {
@@ -3302,6 +3292,23 @@ impl App {
                 // Keep paths on one line; the whole path is on hover.
                 ui.add(label.truncate()).on_hover_text(checker);
             }
+            ui.end_row();
+            ui.label("");
+            // Quiet buttons at the foot of the checks: the checker, and where the run logs are.
+            ui.horizontal_wrapped(|ui| {
+                if ui.small_button("SolidCraft version…").clicked() {
+                    self.solidcraft_open = true;
+                }
+                if ui.small_button("Open diagnostics folder").clicked() {
+                    let result = dutchman::diagnostics::default_folder().and_then(|folder| {
+                        std::fs::create_dir_all(&folder).map_err(|err| err.to_string())?;
+                        platform::open(&folder)
+                    });
+                    if let Err(message) = result {
+                        self.notice = Some(message);
+                    }
+                }
+            });
         }
         ui.end_row();
     }
@@ -4742,6 +4749,16 @@ fn loss_line(ui: &mut egui::Ui, p: &Palette, loss: &present::LossLine) {
     ui.add(egui::Label::new(job).wrap());
 }
 
+/// `chars` reduced to `keep` characters around an ellipsis in the middle.
+fn cut_middle(chars: &[char], keep: usize) -> String {
+    let head: String = chars.iter().take(keep / 2).collect();
+    let tail: String = chars
+        .iter()
+        .skip(chars.len().saturating_sub(keep - keep / 2))
+        .collect();
+    format!("{head}…{tail}")
+}
+
 /// `text` cut in the middle with an ellipsis until it fits `max_width` in the monospace font, so
 /// the start of a path and its last folder both stay visible.
 fn middle_ellipsis(ui: &egui::Ui, text: &str, max_width: f32) -> String {
@@ -4758,11 +4775,7 @@ fn middle_ellipsis(ui: &egui::Ui, text: &str, max_width: f32) -> String {
         return text.to_owned();
     }
     let chars: Vec<char> = text.chars().collect();
-    let cut = |keep: usize| {
-        let head: String = chars[..keep / 2].iter().collect();
-        let tail: String = chars[chars.len() - (keep - keep / 2)..].iter().collect();
-        format!("{head}…{tail}")
-    };
+    let cut = |keep: usize| cut_middle(&chars, keep);
     let (mut low, mut high) = (0, chars.len());
     while low < high {
         let mid = (low + high).div_ceil(2);
@@ -4906,6 +4919,18 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn cutting_a_path_in_the_middle_keeps_both_ends_and_never_panics() {
+        let chars: Vec<char> = "/home/a/designs".chars().collect();
+        assert_eq!(cut_middle(&chars, 7), "/ho…igns");
+        assert_eq!(cut_middle(&chars, chars.len()), "/home/a…/designs");
+        assert_eq!(cut_middle(&chars, 0), "…");
+        assert_eq!(cut_middle(&chars, 1), "…s");
+        assert_eq!(cut_middle(&[], 4), "…");
+        let short: Vec<char> = "ab".chars().collect();
+        assert_eq!(cut_middle(&short, 10), "ab…ab");
+    }
 
     #[test]
     fn input_row_shows_plain_capability_and_only_meaningful_folders() {
