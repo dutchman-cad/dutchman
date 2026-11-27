@@ -712,7 +712,7 @@ mod tests {
     /// A cube that inserts the designs in `inserts`.
     fn inserting(inserts: Vec<Value>) -> Model {
         let mut model = cube();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["occurrences"] = Value::Array(inserts);
         // Each insertion's placeholder definition: empty, naming no stored design.
         wire["model"]["product_definitions"] = Value::Array(

@@ -9,7 +9,7 @@ use crate::{SolidCraftWriter, Verification, VersionGate};
 /// The referenced neutral design, parsed from its JSON.
 #[cfg(any(test, feature = "onshape"))]
 fn neutral_design(reference: &Value) -> Result<cadmpeg_ir::CadIr, String> {
-    serde_json::from_value(
+    dutchman_core::ir_wire::from_value(
         reference
             .get("ir")
             .cloned()
@@ -75,7 +75,7 @@ pub(super) fn map(
         bindings.push((id.to_owned(), name.to_owned()));
     }
     let step = crate::step::restate(&source, &mut Report::default()).map_err(|e| e.to_string())?;
-    let wire = serde_json::to_value(&source.ir).map_err(|e| e.to_string())?;
+    let wire = dutchman_core::ir_wire::to_value(&source.ir).map_err(|e| e.to_string())?;
     let mut source_ctx = Context::new(wire.get("model").unwrap_or(&Value::Null))
         .with_geometry(wire.get("geometry").unwrap_or(&Value::Null));
     source_ctx.source = Some(&source);

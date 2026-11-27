@@ -22,6 +22,7 @@ mod fusion_archive;
 mod hidden;
 mod input_edges;
 mod ir_retain;
+pub mod ir_wire;
 mod locate;
 mod memory;
 pub mod module;
@@ -665,7 +666,7 @@ fn missing_linked_component_names(
 /// The part of `model` holding only `bodies` (CADIR body ids) and what they are made of, named
 /// `name`; why it cannot stand alone, else.
 pub fn with_bodies(model: &Model, bodies: &[&str], name: String) -> Result<Model, String> {
-    let document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
+    let document = crate::ir_wire::to_value(&model.ir).map_err(|err| err.to_string())?;
     assembly::geometry_only(model, &document, bodies, name)
 }
 
@@ -1049,7 +1050,7 @@ mod tests {
         .unwrap();
         model.ir.model.occurrences.clear();
         model.assembly = None;
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let template = wire["geometry"]["bodies"][0].clone();
         let mut bodies = Vec::new();
         let mut definitions = Vec::new();
@@ -1065,13 +1066,13 @@ mod tests {
             definitions.push(json!({
                 "id": format!("synthetic:test:component#block-{index}"), "kind": "part",
                 "bodies": [id], "sketches": [], "bom_properties": {},
-                "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [],
+                "storage": {"kind": "embedded"}, "occurrences": [],
                 "instance_bodies": [], "representations": []
             }));
         }
         wire["geometry"]["bodies"] = json!(bodies);
         wire["model"]["product_definitions"] = json!(definitions);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::ir_wire::from_str(&wire.to_string()).unwrap();
         for codes in [
             vec!["f3d/assembly.local-occurrence-path-pose-unresolved"],
             vec!["f3d/assembly.local-occurrence-envelope-native"],
@@ -1135,7 +1136,7 @@ mod tests {
             Some("generated_unit_cube.f3d")
         );
         // Synthetic: two insertions whose source designs the reader states as unresolved.
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         // On this CADIR, an insertion whose design is not in the file is a part definition
         // with no bodies, as in `missing_links_are_reported_but_embedded_components_are_complete`.
         wire["model"]["product_definitions"] = json!([{
@@ -1202,7 +1203,7 @@ mod tests {
                 false,
             ),
         ] {
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
             wire["model"]["product_definitions"] = json!([{
                 "id": "synthetic:assembly:component#part/unresolved", "kind": "part",
                 "bodies": bodies, "sketches": [], "bom_properties": {}

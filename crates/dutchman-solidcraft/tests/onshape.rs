@@ -831,7 +831,7 @@ fn new_synthetic_sketches_and_inch_parameters_replay_against_the_source() {
 // Independently authored neutral thin construction for existing writer checks.
 // The Onshape reader refuses these records until source scope and sides resolve.
 fn neutral_thin(mut model: Model, midplane: bool, flip: bool, second: f64) -> Model {
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let sketch = wire["model"]["sketches"][0]["id"].clone();
     let entities: Vec<Value> = wire["model"]["sketch_entities"]
         .as_array()
@@ -868,7 +868,7 @@ fn neutral_thin(mut model: Model, midplane: bool, flip: bool, second: f64) -> Mo
         "direction":{"kind":"profile_normal","reversed":{"kind":"literal","value":extrude["direction"]["kind"]=="reversed_profile_normal"}},
         "origin":{"kind":"profile_plane"},"span":{"kind":"between","start":{"kind":"at_origin"},"end":{"kind":"amount","value":literal(extrude["extent"]["side"]["termination"]["length"].as_f64().unwrap())}},
         "output":{"body":{"kind":"thin","thickness":thickness},"boolean":{"kind":"new_body"}},"native_options":{},"source_settings":{}}}}}]);
-    model.ir = serde_json::from_value(wire).unwrap();
+    model.ir = dutchman_core::ir_wire::from_value(wire).unwrap();
     model
 }
 fn thin_bundle(midplane: bool, flip: bool, second: f64) -> (Model, Report) {
@@ -917,11 +917,11 @@ fn thin_outputs_refuse_conflicting_projections_and_preserve_older_targets() {
     // A mismatched profile in an otherwise well-formed typed record is not
     // allowed to supply output semantics to a different model projection.
     let (model, _) = thin_bundle(false, false, 0.0);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["design"]["features"][0]["definition"]["operation"]["value"]["profile"]["picks"] =
         json!({"kind":"named","value":[]});
     let model = Model {
-        ir: serde_json::from_value(wire).unwrap(),
+        ir: dutchman_core::ir_wire::from_value(wire).unwrap(),
         ..model
     };
     let doc = write_synthetic_latest(&model, &mut report);
@@ -1232,7 +1232,7 @@ fn derived_boolean_requires_captured_results() {
 #[test]
 fn derived_companion_conversion_losses_are_reported_under_the_insert() {
     let (mut source, mut report) = model("derived");
-    let mut wire = serde_json::to_value(&source.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&source.ir).unwrap();
     let mut reference: Value = serde_json::from_str(
         wire["model"]["features"][2]["source_properties"]["design_reference"]
             .as_str()
@@ -1246,7 +1246,7 @@ fn derived_companion_conversion_losses_are_reported_under_the_insert() {
     });
     wire["model"]["features"][2]["source_properties"]["design_reference"] =
         json!(serde_json::to_string(&reference).unwrap());
-    source.ir = serde_json::from_value(wire).unwrap();
+    source.ir = dutchman_core::ir_wire::from_value(wire).unwrap();
     let mut bytes = Vec::new();
     SolidCraftWriter::new()
         .target_version(Some(SolidCraftVersion::V0_44_0))

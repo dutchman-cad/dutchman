@@ -410,9 +410,6 @@ pub(crate) fn release_solidworks_display(model: &mut Model, report: &mut Report)
     // vertex/triangle arrays into a JSON value just to visit their metadata.
     for mesh in &model.ir.model.tessellations {
         if let Some(source) = &mesh.source_object {
-            if let Some(name) = &source.name {
-                crate::names::saw_stored(name, report);
-            }
             for path in &source.instance_path {
                 crate::names::saw_stored(path, report);
             }
@@ -824,7 +821,7 @@ fn local_components_with_threads(
     positions: crate::PartPositions,
     report: &mut Report,
 ) -> Result<Option<(Assembly, Vec<String>)>, String> {
-    let packed = serde_json::to_string(&model.ir).map_err(|err| err.to_string())?;
+    let packed = crate::ir_wire::to_string(&model.ir).map_err(|err| err.to_string())?;
     let source = slicing::Packed::read(&packed)?;
     let mut document = source.document()?;
     if let Some(model) = document.get_mut("model") {
@@ -1020,7 +1017,8 @@ fn local_components_in_document(
     let mut identities = std::mem::take(&mut tree.part_identities);
     let worlds = world_placements(&occurrences)?;
     let inserted = inserted_designs(&occurrences);
-    let ordered = joints_in_timeline_order(arena("assembly_joints"), arena("features"));
+    let member_joints = per_instance_member_joints(arena("assembly_joints"), &occurrences);
+    let ordered = joints_in_timeline_order(&member_joints, arena("features"));
     let (joints, mut left_out) = joints(&ordered, &tree.paths, &worlds, &inserted);
 
     let own_part = if !loose.is_empty() {
@@ -1346,7 +1344,7 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
             let Some(index) = owner
                 .get("native_ref")
                 .and_then(Value::as_str)
-                .filter(|id| !id.starts_with("f3d:xref/"))
+                .filter(|id| !products::is_member_identity(id))
                 .and_then(|id| carriers.get(id))
             else {
                 break;
@@ -2412,6 +2410,76 @@ fn joints(
         }
     }
     (joints, notes)
+}
+
+/// cadmpeg states the joints of a member document once, naming the occurrence that inserts the
+/// document first. A document inserted more than once has no joints for its other insertions,
+/// so each of those gets its own copy of the joint, rebased onto its insertion: the same joint
+/// ids, in the same place in the order, and the original first.
+fn per_instance_member_joints(joints: &[Value], occurrences: &[&Value]) -> Vec<Value> {
+    let mut prototype_of: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut inserts: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for row in occurrences {
+        if let (Some(id), Some(definition)) = (
+            row.get("id").and_then(Value::as_str),
+            row.pointer("/prototype/definition").and_then(Value::as_str),
+        ) {
+            prototype_of.insert(id, definition);
+            inserts.entry(definition).or_default().push(id);
+        }
+    }
+    let mut out = joints.to_vec();
+    for joint in joints {
+        // A member document's own joints carry its scope in the id (`f3d:<key>@model:joint#`).
+        if !joint
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.contains("@model:joint#"))
+        {
+            continue;
+        }
+        let pointers = [
+            "/operands/value/connector/operand/container",
+            "/operands/value/connectors/0/operand/container",
+            "/operands/value/connectors/1/operand/container",
+        ];
+        let mut named: BTreeSet<&str> = BTreeSet::new();
+        for pointer in pointers {
+            if let Some(container) = joint.pointer(pointer) {
+                if container.get("kind").and_then(Value::as_str) == Some("occurrence") {
+                    named.extend(container.get("occurrence").and_then(Value::as_str));
+                }
+            }
+        }
+        let instanced: Vec<&str> = named
+            .into_iter()
+            .filter(|id| {
+                prototype_of
+                    .get(id)
+                    .and_then(|definition| inserts.get(definition))
+                    .is_some_and(|all| all.len() > 1)
+            })
+            .collect();
+        // Two different inserted documents in one joint cannot be paired up by position.
+        let [base] = instanced.as_slice() else {
+            continue;
+        };
+        let Some(all) = prototype_of.get(base).and_then(|d| inserts.get(d)) else {
+            continue;
+        };
+        for sibling in all.iter().filter(|id| *id != base) {
+            let mut copy = joint.clone();
+            for pointer in pointers {
+                if let Some(container) = copy.pointer_mut(pointer) {
+                    if container.get("occurrence").and_then(Value::as_str) == Some(*base) {
+                        container["occurrence"] = Value::String((*sibling).to_owned());
+                    }
+                }
+            }
+            out.push(copy);
+        }
+    }
+    out
 }
 
 /// A joint row's kind: `grounded` for a joint to the ground, else its pair kind.
@@ -3774,8 +3842,7 @@ fn typed_part(
             sketch.placement = moved.ok_or("a carried sketch's plane is malformed")?;
         }
     }
-    ir.set_scope(source.scope())
-        .map_err(|err| err.to_string())?;
+    ir.set_scope(source.scope());
     Ok(ir)
 }
 
@@ -3942,7 +4009,7 @@ mod tests {
     use super::*;
 
     fn placed_document(model: &Model) -> Value {
-        let mut document = serde_json::to_value(&model.ir).unwrap();
+        let mut document = crate::ir_wire::to_value(&model.ir).unwrap();
         products::project(&mut document["model"]).unwrap();
         document
     }
@@ -4008,7 +4075,7 @@ mod tests {
                 return Ok(self.cube.clone());
             }
             let rows = self.assemblies.get(&name).cloned().unwrap_or_default();
-            let mut wire = serde_json::to_value(&self.cube.ir).unwrap();
+            let mut wire = crate::ir_wire::to_value(&self.cube.ir).unwrap();
             wire["model"]["occurrences"] = Value::Array(rows);
             Ok(Model {
                 ir: crate::test_products::read(&wire),
@@ -4409,7 +4476,7 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap();
-        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&part.ir).unwrap();
         let body = wire["geometry"]["bodies"][0]["id"]
             .as_str()
             .unwrap()
@@ -4436,7 +4503,7 @@ mod tests {
     #[test]
     fn unproven_positions_account_for_bodies_without_occurrences() {
         let model = with_components(true);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let mut orphan = wire["geometry"]["bodies"][0].clone();
         orphan["id"] = json!("synthetic:test:body#unplaced");
         wire["geometry"]["bodies"]
@@ -4449,11 +4516,11 @@ mod tests {
             .push(json!({
                 "id": "synthetic:test:component#unplaced", "kind": "part",
                 "bodies": ["synthetic:test:body#unplaced"], "sketches": [], "bom_properties": {},
-                "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [],
+                "storage": {"kind": "embedded"}, "occurrences": [],
                 "instance_bodies": [], "representations": []
             }));
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: crate::ir_wire::from_str(&wire.to_string()).unwrap(),
             ..model
         };
         let mut report = Report::default();
@@ -4513,7 +4580,7 @@ mod tests {
             crate::PartPositions::FirstPlaced,
         ] {
             let model = with_components(true);
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
             let fallback = "f3d:model:component#fallback/stored-frame-occurrence";
             let renamed = wire["model"]["occurrences"][0]["id"].clone();
             wire["model"]["occurrences"][0]["id"] = json!(fallback);
@@ -4533,7 +4600,7 @@ mod tests {
                 {"id":"f3d:Design/BulkStream.dat:design-component-occurrence#11", "transform": IDENTITY}
             ]);
             let model = Model {
-                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ir: crate::ir_wire::from_str(&wire.to_string()).unwrap(),
                 ..model
             };
             let mut report = Report::default();
@@ -4564,7 +4631,7 @@ mod tests {
     fn unproven_positions_are_not_counted_as_placed() {
         for undecoded in [false, true] {
             let model = with_components(true);
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
             wire["model"]["occurrences"][0]["native_ref"] = json!("f3d:xref:reference#1");
             wire["model"]["occurrences"][0]["name"] = json!("Panel");
             wire["native"]["f3d"]["xref_references"] = json!([
@@ -4580,7 +4647,7 @@ mod tests {
                 ]);
             }
             let model = Model {
-                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ir: crate::ir_wire::from_str(&wire.to_string()).unwrap(),
                 ..model
             };
             let mut report = Report::default();
@@ -4713,7 +4780,7 @@ mod tests {
     #[test]
     fn component_slicing_reports_an_appearance_binding_without_a_target() {
         let mut model = with_components(true);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["appearances"] = json!([{"id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}, "properties": {}, "textures": []}]);
         wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#missing", "target": {"entity": {"kind": "face", "value": "synthetic:test:face#missing"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
         model.ir = crate::test_products::read(&wire);
@@ -4753,7 +4820,7 @@ mod tests {
     #[test]
     fn an_unplaced_appearance_target_is_distinguished_from_a_missing_target() {
         let mut model = with_components(true);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let body = wire["geometry"]["bodies"][0]["id"].clone();
         wire["model"]["product_definitions"]
             .as_array_mut()
@@ -4791,7 +4858,7 @@ mod tests {
     #[test]
     fn shared_slices_keep_complete_instance_scopes_and_only_their_appearances() {
         let model = with_components(true);
-        let original = serde_json::to_value(&model.ir).unwrap();
+        let original = crate::ir_wire::to_value(&model.ir).unwrap();
         let mut wire = original.clone();
         let geometry = wire["geometry"].as_object_mut().unwrap();
         geometry.remove("product_definitions");
@@ -4887,11 +4954,11 @@ mod tests {
 
     #[test]
     fn cadir_has_no_component_appearance_target_and_an_occurrence_one_is_left_out() {
-        let mut wire = serde_json::to_value(&with_components(true).ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&with_components(true).ir).unwrap();
         wire["model"]["appearances"] = json!([{"id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}, "properties": {}, "textures": []}]);
         let binding = |kind: &str| json!([{"id": "synthetic:test:appearance-binding#unsupported", "target": {"entity": {"kind": kind, "value": "f3d:model:component#block"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
         wire["model"]["appearance_bindings"] = binding("component");
-        let error = cadmpeg_ir::CadIr::from_json(&wire.to_string())
+        let error = crate::ir_wire::from_str(&wire.to_string())
             .unwrap_err()
             .to_string();
         assert!(error.contains("component"), "{error}");
@@ -4939,7 +5006,7 @@ mod tests {
     #[test]
     fn the_designs_own_loose_bodies_keep_their_part_identity() {
         let model = with_components(true);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let mut loose = wire["geometry"]["bodies"][0].clone();
         loose["id"] = json!("synthetic:cube:body#loose");
         wire["geometry"]["bodies"]
@@ -4961,7 +5028,7 @@ mod tests {
     #[test]
     fn a_component_cadmpeg_cannot_attribute_bodies_to_stays_beside_those_that_have_them() {
         let model = with_components(true);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let mut loose = wire["geometry"]["bodies"][0].clone();
         loose["id"] = json!("synthetic:cube:body#loose");
         wire["geometry"]["bodies"]
@@ -5038,7 +5105,7 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap();
-        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&part.ir).unwrap();
         let body = wire["geometry"]["bodies"][0]["id"].clone();
         let sketch = wire["model"]["sketches"][0]["id"].clone();
         let mut copy = wire["geometry"]["bodies"][0].clone();
@@ -5074,7 +5141,7 @@ mod tests {
     }
 
     fn feature_ids(part: &Model) -> Vec<String> {
-        let wire = serde_json::to_value(&part.ir).unwrap();
+        let wire = crate::ir_wire::to_value(&part.ir).unwrap();
         wire["model"]["features"]
             .as_array()
             .into_iter()
@@ -5086,7 +5153,7 @@ mod tests {
     #[test]
     fn a_component_carries_the_history_bodies_its_own_features_make() {
         let model = with_history(true);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let block = wire["model"]["features"][0]["id"].clone();
         let nest = |id: &str, by: &Value| {
             let mut body = wire["geometry"]["bodies"][0].clone();
@@ -5125,7 +5192,7 @@ mod tests {
         );
         // The expanded and the compact row index carry the same.
         let expanded = placed_document(&model);
-        let text = serde_json::to_string(&model.ir).unwrap();
+        let text = crate::ir_wire::to_string(&model.ir).unwrap();
         let packed = slicing::Packed::read(&text).unwrap();
         let mut document = packed.document().unwrap();
         products::project(&mut document["model"]).unwrap();
@@ -5171,7 +5238,7 @@ mod tests {
     #[test]
     fn a_component_keeps_the_history_body_its_split_consumed() {
         let part = with_history(true);
-        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&part.ir).unwrap();
         let split = "synthetic:test:feature#split";
         let body_id = wire["geometry"]["bodies"][0]["id"].clone();
         wire["model"]["features"].as_array_mut().unwrap().push(json!({
@@ -5211,7 +5278,7 @@ mod tests {
         };
         let assembly = local_assembly(&part).unwrap().unwrap();
         let ids = |part: &Model| {
-            let wire = serde_json::to_value(&part.ir).unwrap();
+            let wire = crate::ir_wire::to_value(&part.ir).unwrap();
             wire["model"]["history_bodies"]
                 .as_array()
                 .into_iter()
@@ -5229,7 +5296,7 @@ mod tests {
         // Both index representations carry consumed bodies without expanding their topology
         // into the document used to discover component ownership.
         let expanded = placed_document(&part);
-        let text = serde_json::to_string(&part.ir).unwrap();
+        let text = crate::ir_wire::to_string(&part.ir).unwrap();
         let packed = slicing::Packed::read(&text).unwrap();
         let mut document = packed.document().unwrap();
         products::project(&mut document["model"]).unwrap();
@@ -5261,7 +5328,7 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap();
-        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&part.ir).unwrap();
         let body = wire["geometry"]["bodies"][0]["id"].clone();
         let mut builder = String::new();
         for feature in wire["model"]["features"].as_array_mut().unwrap() {
@@ -5303,7 +5370,8 @@ mod tests {
     #[test]
     fn a_sketch_another_component_builds_is_carried_in_at_its_place() {
         let source = |model: &Model| {
-            serde_json::to_value(&model.ir).unwrap()["model"]["sketches"][0]["placement"]["frame"]
+            crate::ir_wire::to_value(&model.ir).unwrap()["model"]["sketches"][0]["placement"]
+                ["frame"]
                 .clone()
         };
         let (model, builder) = with_layout_sketch(0);
@@ -5315,7 +5383,7 @@ mod tests {
             .find(|part| part.name == "Block")
             .unwrap();
         // The sketch feature comes along as Block's own, so Block's history has its sketch.
-        let wire = serde_json::to_value(&block.ir).unwrap();
+        let wire = crate::ir_wire::to_value(&block.ir).unwrap();
         let carried = wire["model"]["features"]
             .as_array()
             .unwrap()
@@ -5433,12 +5501,12 @@ mod tests {
         // cadmpeg leaves root-level features unowned. When the root component is folded into
         // an embedded part, its slice must still take them.
         let model = repeated_sketch_part([0.0, 0.0], selected_layout_profile());
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let root = "f3d:model:component#root";
         let body = wire["model"]["product_definitions"][0]["bodies"].clone();
         wire["model"]["product_definitions"] = json!([{
             "id": root, "kind": "part", "bodies": body, "sketches": [], "bom_properties": {},
-            "storage": {"kind": "file", "document": {}}, "tessellations": [], "occurrences": [],
+            "storage": {"kind": "file", "document": {}}, "occurrences": [],
             "instance_bodies": [], "representations": []
         }]);
         wire["model"]["occurrences"] = json!([]);
@@ -5449,7 +5517,7 @@ mod tests {
                 .remove("product_definition");
         }
         let model = Model {
-            ir: serde_json::from_value(wire).unwrap(),
+            ir: crate::ir_wire::from_value(wire).unwrap(),
             ..model
         };
         let document = placed_document(&model);
@@ -5468,7 +5536,7 @@ mod tests {
         );
         assert_eq!(kept.len(), 2, "{kept:?}");
         // With loose bodies as well, each unowned feature and parameter lives in one slice.
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["geometry"]["bodies"]
             .as_array_mut()
             .unwrap()
@@ -5478,7 +5546,7 @@ mod tests {
             "ordinal": 0, "dependencies": [], "properties": {}
         }]);
         let with_loose = Model {
-            ir: serde_json::from_value(wire).unwrap(),
+            ir: crate::ir_wire::from_value(wire).unwrap(),
             ..model
         };
         let document = placed_document(&with_loose);
@@ -5491,7 +5559,7 @@ mod tests {
         );
         let loose = slice_of(&["synthetic:model:body#loose"], HistoryOwner::Root);
         let parameters = |part: &Model| {
-            serde_json::to_value(&part.ir).unwrap()["model"]["parameters"]
+            crate::ir_wire::to_value(&part.ir).unwrap()["model"]["parameters"]
                 .as_array()
                 .map_or(0, Vec::len)
         };
@@ -5508,7 +5576,7 @@ mod tests {
         let model = repeated_sketch_part([100.0, 10.0], selected_layout_profile());
         let part = slice_repeated_sketch(&model);
         assert!(feature_ids(&part).contains(&"synthetic:model:feature#sketch".to_owned()));
-        let wire = serde_json::to_value(&part.ir).unwrap();
+        let wire = crate::ir_wire::to_value(&part.ir).unwrap();
         let frame = &wire["model"]["sketches"][0]["placement"]["frame"];
         assert_eq!(frame["origin"], json!({"x": 0.0, "y": 0.0, "z": 0.0}));
         assert_eq!(frame["u_axis"], json!({"x": 0.0, "y": 1.0, "z": 0.0}));
@@ -5559,7 +5627,7 @@ mod tests {
         let model = repeated_sketch_part([100.0, 10.0], selection);
         let part = slice_repeated_sketch(&model);
         assert!(!feature_ids(&part).contains(&"synthetic:model:feature#sketch".to_owned()));
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["sketch_entities"]
             .as_array_mut()
             .unwrap()
@@ -5579,7 +5647,7 @@ mod tests {
     #[test]
     fn a_native_selection_of_the_same_sketch_does_not_stop_the_instance_check() {
         let model = repeated_sketch_part([100.0, 10.0], selected_layout_profile());
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["features"].as_array_mut().unwrap().push(json!({"id": "synthetic:model:feature#native", "ordinal": 2, "suppressed": false, "product_definition": "f3d:model:component#block", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {"kind": "sketch_selection",
                 "value": {"sketch": "synthetic:model:sketch#layout", "selections": ["native"]}}}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 1.0}}}, "op": "join"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         let model = Model {
@@ -5599,7 +5667,7 @@ mod tests {
 
     fn with_owned_history() -> Model {
         let model = with_history(false);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["features"][0]["product_definition"] = json!("f3d:model:component#block");
         wire["model"]["features"][0]["outputs"] = json!([]);
         wire["model"]["features"][1]["product_definition"] = json!("f3d:model:component#other");
@@ -5629,7 +5697,7 @@ mod tests {
             .unwrap();
             let block = &assembly.parts[0];
             assert_eq!(feature_ids(block), [feature_ids(&model)[0].clone()]);
-            let wire = serde_json::to_value(&block.ir).unwrap();
+            let wire = crate::ir_wire::to_value(&block.ir).unwrap();
             assert_eq!(wire["model"]["parameters"].as_array().unwrap().len(), 1);
             assert_eq!(wire["model"]["parameters"][0]["name"], "block_length");
             // Other consumes Block's sketch, but cannot pull in its owned sketch feature.
@@ -5643,7 +5711,7 @@ mod tests {
     #[test]
     fn a_body_centers_list_two_components_share_is_left_out_of_both() {
         let model = with_owned_history();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let shared = "1:0,0,1;2:0,0,2";
         wire["model"]["features"][0]["source_properties"] = json!({"body_centers": shared});
         wire["model"]["features"][1]["source_properties"] = json!({"body_centers": shared});
@@ -5652,7 +5720,7 @@ mod tests {
             ..model
         };
         let centers = |model: &Model| -> Vec<Value> {
-            let wire = serde_json::to_value(&model.ir).unwrap();
+            let wire = crate::ir_wire::to_value(&model.ir).unwrap();
             wire["model"]["features"]
                 .as_array()
                 .unwrap()
@@ -5704,7 +5772,7 @@ mod tests {
     #[test]
     fn another_components_feature_is_not_seeded_by_outputs_or_followed_from_a_sketch() {
         let model = with_owned_history();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let sketch = wire["model"]["sketches"][0]["id"].clone();
         wire["model"]["product_definitions"][0]["sketches"] = json!([sketch]);
         wire["model"]["features"][0]["product_definition"] = json!("f3d:model:component#other");
@@ -5725,7 +5793,7 @@ mod tests {
     #[test]
     fn timeline_predecessors_do_not_bring_another_parts_history() {
         let model = with_owned_history();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let mut predecessor = history_sphere();
         predecessor["ordinal"] = json!(0);
         wire["model"]["features"][0]["ordinal"] = json!(101);
@@ -5750,7 +5818,7 @@ mod tests {
     fn root_owned_history_goes_only_to_the_loose_body_part_when_it_exists() {
         for loose in [false, true] {
             let model = with_owned_history();
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
             let feature = history_sphere();
             wire["model"]["features"]
                 .as_array_mut()
@@ -5790,7 +5858,7 @@ mod tests {
                         feature_ids(&assembly.parts[own]),
                         [feature["id"].as_str().unwrap()]
                     );
-                    let wire = serde_json::to_value(&assembly.parts[own].ir).unwrap();
+                    let wire = crate::ir_wire::to_value(&assembly.parts[own].ir).unwrap();
                     assert_eq!(wire["model"]["parameters"].as_array().unwrap().len(), 1);
                     assert_eq!(wire["model"]["parameters"][0]["name"], "root_length");
                 }
@@ -5801,7 +5869,7 @@ mod tests {
     #[test]
     fn a_sub_assemblys_own_bodies_keep_its_owned_history() {
         let model = nested(true, None);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let mut feature = history_sphere();
         feature["product_definition"] = json!("f3d:model:component#frame");
         wire["model"]["features"] = json!([feature]);
@@ -5831,7 +5899,7 @@ mod tests {
     #[test]
     fn an_unknown_scope_does_not_seed_root_owned_history() {
         let model = with_history(false);
-        let document = serde_json::to_value(&model.ir).unwrap();
+        let document = crate::ir_wire::to_value(&model.ir).unwrap();
         let body = model.ir.geometry.bodies[0].id.to_string();
         let part = only(
             &model,
@@ -5858,7 +5926,7 @@ mod tests {
         // Every body belongs to `Block`, so `Carriage`, naming none and holding none, is
         // empty rather than unattributed.
         let model = with_components(true);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["product_definitions"]
             .as_array_mut()
             .unwrap()
@@ -5910,7 +5978,7 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap();
-        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&part.ir).unwrap();
         let body = wire["geometry"]["bodies"][0]["id"].clone();
         let frame_bodies = if frame_owns { json!([body]) } else { json!([]) };
         wire["model"]["product_definitions"] = json!([
@@ -5941,7 +6009,7 @@ mod tests {
 
     /// `model` with these assembly joints.
     fn with_joints(model: Model, joints: Value) -> Model {
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["assembly_joints"] = joints;
         Model {
             ir: crate::test_products::read(&wire),
@@ -5952,7 +6020,7 @@ mod tests {
     /// The model with a feature at each ordinal naming the joint with that key, as cadmpeg
     /// binds a joint to the timeline step that made it.
     fn with_joint_features(model: Model, bound: &[(u64, &str)]) -> Model {
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let features = wire["model"]["features"].as_array_mut().unwrap();
         for (ordinal, joint) in bound {
             features.push(json!({
@@ -7011,7 +7079,7 @@ mod tests {
                 stored.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
                 let timeline = with_joints(model.clone(), json!(stored));
                 let mut wire =
-                    serde_json::to_value(&with_joint_features(timeline, &bound).ir).unwrap();
+                    crate::ir_wire::to_value(&with_joint_features(timeline, &bound).ir).unwrap();
                 if posed {
                     wire["native"]["f3d"]["xref_references"] = json!([
                         {"id": "f3d:xref:reference#0", "current_pose": {"carrier_record_index": 7}}
@@ -7181,7 +7249,7 @@ mod tests {
     /// `model` with the `design_component_occurrences` records `ids` carrying current poses,
     /// so the occurrences that name them as their `native_ref` are posed.
     fn with_current_poses(model: Model, ids: &[&str]) -> Model {
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let placed = placed_document(&model);
         let occurrences: Vec<_> = placed["model"]["occurrences"]
             .as_array()
@@ -7204,7 +7272,7 @@ mod tests {
 
     /// Ensures a component `mid` exists. Tree fixtures install it before assigning children.
     fn with_mid(model: Model) -> Model {
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         if wire["model"]["product_definitions"]
             .as_array()
             .unwrap()
@@ -7426,7 +7494,7 @@ mod tests {
             connector_at(0, &[], facing(at([-20.0, 0.0, 0.0], 0.0)))
         )]);
         let mut wire =
-            serde_json::to_value(&with_joints(model.clone(), joints.clone()).ir).unwrap();
+            crate::ir_wire::to_value(&with_joints(model.clone(), joints.clone()).ir).unwrap();
         wire["native"]["f3d"]["design_component_occurrences"] = json!([
             {"id": "f3d:Design/BulkStream.dat:design-component-occurrence#7",
              "current_pose": {"carrier_record_index": 9, "transform": at([12.0, 0.0, 0.0], 0.0)}},
@@ -7438,7 +7506,13 @@ mod tests {
         let (assembly, notes) = local_components(&posed).unwrap().unwrap();
         let frame = world_at(&assembly, &[0]).unwrap();
         assert!(near(&frame, &at([120.0, 0.0, 0.0], 0.0)), "{frame:?}");
-        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert_eq!(
+            notes.len(),
+            1,
+            "{notes:?} joints={} {:?}",
+            posed.ir.model.assembly_joints.len(),
+            assembly.joints
+        );
         // A decoder-bound display pose works without any native current pose,
         // survives compact metadata extraction, and outranks this touching joint
         // (1 mm from where the joint puts the frame, so its blocks stay in the model's extent).
@@ -7526,7 +7600,7 @@ mod tests {
                 ),
             ]),
         );
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["native"]["f3d"]["xref_references"] = json!([
             {"id": "f3d:xref:reference#1", "contained_poses": [
                 {"contained_record_index": 11}
@@ -7607,6 +7681,64 @@ mod tests {
         assert_eq!(
             source_posed(&wire),
             BTreeSet::from(["insert".to_owned(), "other".to_owned()])
+        );
+    }
+
+    #[test]
+    fn a_member_documents_joint_is_applied_once_per_insertion_of_the_document() {
+        let occurrence = |id: &str, definition: &str| json!({"id": id, "prototype": {"kind": "local", "definition": definition}});
+        let rows = [
+            occurrence(
+                "f3d:model:occurrence#xref-1-0",
+                "f3d:xref:product-definition#member",
+            ),
+            occurrence(
+                "f3d:model:occurrence#xref-1-1",
+                "f3d:xref:product-definition#member",
+            ),
+            occurrence(
+                "f3d:model:occurrence#xref-2-0",
+                "f3d:xref:product-definition#other",
+            ),
+        ];
+        let rows: Vec<&Value> = rows.iter().collect();
+        let joint = |id: &str, occurrence: &str| {
+            json!({"id": id, "operands": {"kind": "pair", "value": {"connectors": [
+                {"operand": {"container": {"kind": "root"}}},
+                {"operand": {"container": {"kind": "occurrence", "occurrence": occurrence,
+                    "occurrence_path": ["part"]}}}]}}})
+        };
+        let joints = [
+            joint("f3d:key.f3d@model:joint#1", "f3d:model:occurrence#xref-1-0"),
+            // A joint of the document's root design, and one of a document inserted once.
+            joint("f3d:model:joint#2", "f3d:model:occurrence#xref-1-0"),
+            joint("f3d:key.f3d@model:joint#3", "f3d:model:occurrence#xref-2-0"),
+        ];
+        let applied = per_instance_member_joints(&joints, &rows);
+        let named: Vec<(&str, &str)> = applied
+            .iter()
+            .map(|row| {
+                (
+                    row["id"].as_str().unwrap(),
+                    row.pointer("/operands/value/connectors/1/operand/container/occurrence")
+                        .and_then(Value::as_str)
+                        .unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("f3d:key.f3d@model:joint#1", "f3d:model:occurrence#xref-1-0"),
+                ("f3d:model:joint#2", "f3d:model:occurrence#xref-1-0"),
+                ("f3d:key.f3d@model:joint#3", "f3d:model:occurrence#xref-2-0"),
+                ("f3d:key.f3d@model:joint#1", "f3d:model:occurrence#xref-1-1"),
+            ]
+        );
+        // The path inside the document is kept: only the insertion changes.
+        assert_eq!(
+            applied[3].pointer("/operands/value/connectors/1/operand/container/occurrence_path"),
+            Some(&json!(["part"]))
         );
     }
 
@@ -8065,7 +8197,7 @@ mod tests {
     /// it, named `Gripper`) holding a block 5 mm along x, joined by `joints`.
     fn with_inserted_design(joints: Value) -> Model {
         let model = nested(false, Some(json!([])));
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let mut finger = placed(9, "block", json!({}), 5.0);
         finger["id"] = json!("f3d:xref/role-1/model:occurrence#finger");
         finger["parent"] = inside(8);
@@ -8440,7 +8572,7 @@ mod tests {
 
         // When the block's only body is hidden, every placement of it is hidden; the part
         // is placed all the same, so its geometry stays in the design.
-        let mut wire = serde_json::to_value(&nested(false, None).ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&nested(false, None).ir).unwrap();
         wire["geometry"]["bodies"][0]["visible"] = json!(false);
         let model = Model {
             ir: crate::test_products::read(&wire),
@@ -8728,7 +8860,7 @@ mod tests {
         // The new neutral graph cannot express a parent placement directly. Check
         // the assembly builder's refusal on a malformed projected placed tree.
         let model = nested(false, None);
-        let text = serde_json::to_string(&model.ir).unwrap();
+        let text = crate::ir_wire::to_string(&model.ir).unwrap();
         let source = slicing::Packed::read(&text).unwrap();
         let mut document = source.document().unwrap();
         products::project(&mut document["model"]).unwrap();
@@ -8810,7 +8942,7 @@ mod tests {
     #[test]
     fn parallel_slices_keep_parts_names_histories_and_tree_order_identical() {
         let mut unnamed = nested(true, None);
-        let mut wire = serde_json::to_value(&unnamed.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&unnamed.ir).unwrap();
         for definition in wire["model"]["product_definitions"].as_array_mut().unwrap() {
             definition.as_object_mut().unwrap().remove("name");
         }
@@ -8853,7 +8985,7 @@ mod tests {
             model.ir.geometry.points.reverse();
             model.ir.fragment = true;
             let expanded = placed_document(&model);
-            let text = serde_json::to_string(&model.ir).unwrap();
+            let text = crate::ir_wire::to_string(&model.ir).unwrap();
             let packed = slicing::Packed::read(&text).unwrap();
             let mut document = packed.document().unwrap();
             products::project(&mut document["model"]).unwrap();
@@ -8887,8 +9019,8 @@ mod tests {
                 let actual =
                     only_indexed(&model, &index, &bodies, owner, "part".to_owned()).unwrap();
                 assert_eq!(
-                    serde_json::to_value(&actual.ir).unwrap(),
-                    serde_json::to_value(&expected.ir).unwrap()
+                    crate::ir_wire::to_value(&actual.ir).unwrap(),
+                    crate::ir_wire::to_value(&expected.ir).unwrap()
                 );
             }
         }
@@ -8902,7 +9034,7 @@ mod tests {
             (10.0, true, 0.0, "instances"),
         ] {
             let model = with_components(true);
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
             wire["model"]["occurrences"][0]["native_ref"] =
                 json!("f3d:Design/BulkStream.dat:design-component-occurrence#11");
             wire["native"]["f3d"]["design_component_occurrences"] = json!([
@@ -8957,7 +9089,7 @@ mod tests {
     fn smart_positions_admit_rigid_inserted_copies_independently_of_record_order() {
         for reversed in [false, true] {
             let model = with_components(true);
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
             let mut third = wire["model"]["occurrences"][1].clone();
             third["id"] = json!("f3d:model:occurrence#third");
             third["transform"] = json!(at([100.0, 0.0, 0.0], 0.0));
@@ -9021,7 +9153,7 @@ mod tests {
     #[test]
     fn smart_positions_reject_a_pose_that_breaks_a_touching_fixed_joint() {
         let model = with_components(true);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let mut records = Vec::new();
         for (index, x) in [(0, 10.0), (1, 30.0)] {
             wire["model"]["occurrences"][index]["native_ref"] = json!(format!(
@@ -9059,7 +9191,7 @@ mod tests {
 
     /// `model` with these saved-scene displayed poses (occurrence key, x in mm).
     fn with_displayed(model: &Model, poses: &[(u32, f64)]) -> Model {
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["native"]["f3d"]["display_poses"] = json!(poses
             .iter()
             .map(|(key, x)| json!({

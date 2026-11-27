@@ -24,10 +24,7 @@ fn cube_step() -> Vec<u8> {
     let encoder = build_encoder(Format::Step);
     let (_, target) = encoder.targets().default().unwrap();
     let plan = encoder
-        .plan(
-            EncodeInput::new(&ir, None),
-            TargetRequest::Explicit(target.id.as_str()),
-        )
+        .plan(EncodeInput::new(&ir, None).with_target(TargetRequest::Explicit(target.id.as_str())))
         .unwrap();
     let mut bytes = Vec::new();
     plan.write_to(&mut bytes).unwrap();

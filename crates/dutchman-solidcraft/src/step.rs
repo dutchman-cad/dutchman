@@ -53,9 +53,10 @@ fn plan(model: &Model) -> Result<cadmpeg_ir::codec::write::ExportPlan, Error> {
     if model.ir.geometry.bodies.is_empty() || model.ir.geometry.faces.is_empty() {
         return Err(no_geometry());
     }
-    let input = EncodeInput::new(&model.ir, model.fidelity.as_ref());
+    let input = EncodeInput::new(&model.ir, model.fidelity.as_ref())
+        .with_target(TargetRequest::Explicit(SCHEMA));
     let plan = build_encoder(Format::Step)
-        .plan(input, TargetRequest::Explicit(SCHEMA))
+        .plan(input)
         .map_err(|err| Error::Restate(format!("cannot restate the model as STEP: {err}")))?;
     let losses = &plan.report().losses;
     if losses
@@ -132,7 +133,7 @@ fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error
 /// What the procedural surfaces cadmpeg could not restate are, said plainly: a coil's helix
 /// surface is left out of the STEP, so the solid it bounds opens with no volume.
 fn unwritten_surfaces(model: &Model) -> Option<String> {
-    let wire = serde_json::to_value(&model.ir).ok()?;
+    let wire = dutchman_core::ir_wire::to_value(&model.ir).ok()?;
     let surfaces = wire
         .get("geometry")?
         .get("procedural_surfaces")?

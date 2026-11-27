@@ -50,7 +50,7 @@ fn changed(bytes: &[u8], mut edit: impl FnMut(&str, &mut Value)) -> Vec<u8> {
 }
 
 fn timeline(model: &Model) -> Value {
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -84,9 +84,16 @@ fn synthetic_bundles_retain_the_expected_cadir_rows_and_final_step() {
         assert_eq!(kinds(&model), expected, "{name}: {:?}", report.losses());
         assert_eq!(model.ir.geometry.bodies.len(), 1);
         let wire = timeline(&model);
-        let roundtrip: cadmpeg_ir::CadIr =
-            serde_json::from_value(serde_json::to_value(&model.ir).unwrap()).unwrap();
+        // The CADIR wire reader refuses the design arenas the wire omits, so the full document
+        // is read back through `ir_wire`, and the bare wire is read as the reader states it.
+        let roundtrip = dutchman_core::ir_wire::from_value(
+            dutchman_core::ir_wire::to_value(&model.ir).unwrap(),
+        )
+        .unwrap();
         assert_eq!(roundtrip, model.ir);
+        let bare: cadmpeg_ir::CadIr =
+            serde_json::from_value(serde_json::to_value(&model.ir).unwrap()).unwrap();
+        assert_eq!(bare.geometry, model.ir.geometry);
         assert!(wire["model"].get("bodies").is_none());
         assert!(!wire["geometry"]["edges"].as_array().unwrap().is_empty());
         for edge in wire["geometry"]["edges"].as_array().unwrap() {
@@ -1818,6 +1825,29 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
             }
         });
         let (model, report) = read(&bytes).unwrap();
+        if matches!(
+            failure,
+            "microversion" | "source-final-parts" | "unknown-source-body"
+        ) {
+            // The reference's records are refused or skipped, so the derived studio keeps its
+            // geometry as stored bodies with a combine instead of a native feature.
+            assert!(
+                kinds(&model).contains(&"stored_geometry".into()),
+                "{failure}: {:?}",
+                kinds(&model)
+            );
+            if failure == "microversion" {
+                assert!(
+                    report.losses().iter().any(|loss| loss.code.as_deref()
+                        == Some("onshape/member.not-supported")
+                        && loss.detail.contains("sourceMicroversion")),
+                    "{failure}: {:?}",
+                    report.losses()
+                );
+            }
+            assert!(model.source_step.is_some());
+            continue;
+        }
         assert!(kinds(&model).contains(&"native".into()), "{failure}");
         assert!(
             report

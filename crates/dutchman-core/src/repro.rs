@@ -35,7 +35,7 @@ pub fn subset(model: &Model, arena: &str, ordinal: usize) -> Result<Model, Strin
 }
 
 fn subset_guarded(model: &Model, arena: &str, ordinal: usize) -> Result<Model, String> {
-    let mut document = serde_json::to_value(&model.ir).map_err(|e| e.to_string())?;
+    let mut document = crate::ir_wire::to_value(&model.ir).map_err(|e| e.to_string())?;
     let homes = ["geometry", "model"];
     let arenas = || {
         homes
@@ -116,7 +116,7 @@ fn subset_guarded(model: &Model, arena: &str, ordinal: usize) -> Result<Model, S
         }
     }
     let mut subset = model.clone();
-    subset.ir = serde_json::from_value(document).map_err(|e| e.to_string())?;
+    subset.ir = crate::ir_wire::from_value(document).map_err(|e| e.to_string())?;
     // Dependency closure need not retain the enclosing document root.
     subset.ir.fragment = true;
     subset.fidelity = None;
@@ -301,14 +301,14 @@ pub fn bundle(
         else {
             return Ok(None);
         };
-        let signature = Signature::new(
-            finding,
-            document
-                .source
-                .as_ref()
-                .map_or("cadir", |source| source.format()),
-            cadmpeg_registry::repro::Stage::Check,
-        );
+        let format = document
+            .source
+            .as_ref()
+            .map_or("cadir", |source| source.format());
+        let Some(codec) = cadmpeg_core::text::CodecId::new(format) else {
+            return Ok(None);
+        };
+        let signature = Signature::new(finding, codec, cadmpeg_registry::repro::Stage::Check);
         let initial = cadmpeg_registry::repro::cut(document, finding, options).ok();
         if initial
             .as_ref()
@@ -460,8 +460,8 @@ mod bundle_tests {
         let mut encoded = Vec::new();
         cadmpeg_codec_f3d::F3dCodec
             .plan(
-                cadmpeg_ir::codec::write::EncodeInput::new(&doc, None),
-                cadmpeg_ir::codec::write::target::TargetRequest::Inherit,
+                cadmpeg_ir::codec::write::EncodeInput::new(&doc, None)
+                    .with_target(cadmpeg_ir::codec::write::target::TargetRequest::Inherit),
             )
             .unwrap()
             .write_to(&mut encoded)

@@ -2308,7 +2308,7 @@ fn techdraw_dxf_exports_page_text_and_reports_missing_ir_geometry() {
         .model
         .drawings
         .iter()
-        .find(|drawing| drawing.object.ends_with("#Note"))
+        .find(|drawing| drawing.object.as_str().ends_with("#Note"))
         .unwrap()
         .object
         .clone();
@@ -2332,7 +2332,7 @@ fn techdraw_dxf_exports_page_text_and_reports_missing_ir_geometry() {
         .model
         .semantic_annotations
         .iter_mut()
-        .find(|annotation| annotation.object.ends_with("#Note"))
+        .find(|annotation| annotation.object.as_str().ends_with("#Note"))
         .unwrap()
         .text = vec!["first".into(), "".into(), "third".into()];
     let pages = dutchman_dxf::pages(&model, None, &mut dutchman_core::Report::default()).unwrap();
@@ -2517,7 +2517,7 @@ fn neutral_view_curves_keep_placement_visibility_and_source_layers() {
         .model
         .drawings
         .iter_mut()
-        .find(|d| d.object.ends_with("#Front"))
+        .find(|d| d.object.as_str().ends_with("#Front"))
         .unwrap();
     for (source, visibility, displayed) in [
         ("cosmetic", "hidden", true),

@@ -244,7 +244,7 @@ pub(super) fn map(
         }
         bodies.push(json!({"id": id("body", native), "name": name}));
     }
-    let payload = serde_json::to_string(&json!({"schema":"dutchman.design-reference/1","ir":source.ir,"step":step,"name":source.name,"bodies":bodies})).map_err(|e|e.to_string())?;
+    let payload = serde_json::to_string(&json!({"schema":"dutchman.design-reference/1","ir":crate::ir_wire::to_value(&source.ir).map_err(|e|e.to_string())?,"step":step,"name":source.name,"bodies":bodies})).map_err(|e|e.to_string())?;
     if payload.len() > *reference_budget {
         *reference_budget = 0;
         return Err("the captured neutral designs exceed the 256 MiB reference limit; convert a smaller studio".into());

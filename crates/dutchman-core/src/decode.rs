@@ -44,15 +44,15 @@ pub(crate) fn detect_part(path: &Path) -> Option<Format> {
     .flatten()
 }
 
-/// cadmpeg's desktop ceilings in salvage mode: a successful decode keeps going past a loss
-/// and reports it, rather than refusing the whole file. The input cap is Dutchman's own.
+/// cadmpeg's desktop ceilings. With the default strictness, which refuses nothing, a successful
+/// decode keeps going past a loss and reports it, rather than refusing the whole file. The input
+/// cap is Dutchman's own.
 pub(crate) fn policy() -> DecodePolicy {
     DecodePolicy {
         limits: ResourceLimits {
             max_input_bytes: MAX_INPUT_BYTES,
             ..ResourceLimits::desktop()
         },
-        ..DecodePolicy::desktop()
     }
 }
 
@@ -313,7 +313,11 @@ pub(crate) fn onshape_step(
         .enter_nested("Onshape STEP member")
         .map_err(|error| Error::Decode(error.to_string()))?;
     let decoded = codec
-        .decode_with_context(ctx, root)
+        .decode_with_context(
+            ctx,
+            root,
+            &cadmpeg_ir::report::strictness::Strictness::default(),
+        )
         .map_err(|error| decode_failure(Format::Step, error))?;
     let (ir, decoded_report, fidelity) = decoded.into_parts();
     if !decoded_report.geometry_transferred() {
@@ -474,7 +478,11 @@ fn decode_unguarded(
     }
     let reading_name = path.file_name().map(|name| name.to_string_lossy());
     let reading = progress.map(|p| p.stage_step(crate::StepKind::Reading, reading_name.as_deref()));
-    let options = DecodeOptions { depth, policy };
+    let options = DecodeOptions {
+        depth,
+        policy,
+        strictness: cadmpeg_ir::report::strictness::Strictness::default(),
+    };
     let decode = || codec.decode(&mut Cursor::new(bytes), &options);
     let members = progress.and_then(|p| p.members.clone()).map(|sink| {
         std::rc::Rc::new(Members {
@@ -1858,7 +1866,7 @@ mod tests {
             );
         }
         ir.model.product_definitions.push(
-            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "bodies": ["test:model:body#A", "test:model:body#B"], "bom_properties": {}, "sketches": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}))
+            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "bodies": ["test:model:body#A", "test:model:body#B"], "bom_properties": {}, "storage":{"kind":"embedded"}, "occurrences":[], "instance_bodies":[], "representations":[]}))
             .unwrap(),
         );
         for (ordinal, name, body, active) in [(0, "Short", "A", true), (1, "Tall", "B", false)] {
@@ -1964,9 +1972,11 @@ mod tests {
     fn geometry_alone_leaves_no_definition_naming_a_removed_sketch() {
         let mut model = cube();
         model.ir.model.product_definitions.push(
-            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "sketches": ["test:model:sketch#0"], "bom_properties": {}, "bodies": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}))
+            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "bom_properties": {}, "bodies": [], "storage":{"kind":"embedded"}, "occurrences":[], "instance_bodies":[], "representations":[]}))
             .unwrap(),
         );
+        model.ir.model.product_definitions[0].sketches =
+            serde_json::from_value(serde_json::json!(["test:model:sketch#0"])).unwrap();
         geometry_only(&mut model.ir);
         assert!(model
             .ir
@@ -2032,6 +2042,7 @@ mod tests {
         );
         let findings = vec![Finding {
             check: Check::ParameterDomain,
+            rule: cadmpeg_ir::report::check::RuleName::from_static("eval.parameter-domain"),
             severity: CadmpegSeverity::Error,
             entity: Some(model.ir.geometry.coedges[0].id.to_string()),
             related: Vec::new(),

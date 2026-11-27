@@ -658,6 +658,7 @@ fn load(
     let row = json!({"id": id("input", text(feature, "featureId")?), "input_of": id("feature", text(feature, "featureId")?),
         "bodies": bodies, "faces": faces.keys().collect::<Vec<_>>(), "edges": edges.keys().collect::<Vec<_>>(),
         "face_owners": face_owners.iter().map(|(face, body)| json!({"face": face, "body": body})).collect::<Vec<_>>(),
+        "face_geometry": [], "body_writers": [],
         "vertices": [], "edge_geometry": samples, "native_ref": format!("{prefix}/bodydetails/{ordinal}.json")});
     Ok(State {
         row,
