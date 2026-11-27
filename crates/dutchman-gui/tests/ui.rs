@@ -757,7 +757,7 @@ fn replace_existing_files_screenshots() {
     std::env::set_var("DUTCHMAN_NO_TRASH", "1");
     let mut index = String::new();
     for (set, design) in [
-        ("en", "Toob v2"),
+        ("en", "bracket"),
         (
             "de",
             "Gehäuse-Rückwand für das Mehrzweck-Fräsgerät, Fassung 2",
@@ -5177,7 +5177,7 @@ mod paste_inputs {
         // The numbers are stated, with a thousands separator.
         assert_eq!(
             message,
-            "Stopped after 50 Onshape API calls. About 1,500 more are needed; Continue fetching uses them from your yearly allowance. What's fetched so far is kept."
+            "Stopped after 50 Onshape API calls. About 1,500 more needed, 1,550 in all; choose Continue fetching to confirm them against your yearly allowance. What's fetched so far is kept."
         );
         // It is resumable, so it does not look like a failure.
         assert_eq!(h.state().rows()[0].status, Status::Stopped);
@@ -5205,6 +5205,51 @@ mod paste_inputs {
         wait_for_conversion(&mut h);
         assert!(h.query_by_label("Continue fetching").is_none());
         assert_eq!(h.state().rows()[0].status, Status::Converted);
+    }
+
+    /// The Results card after a fetch stops at the call limit. Needs a GPU renderer; set
+    /// DUTCHMAN_GUI_SCREENSHOTS. Mocked fetch, made-up document, neutral folder.
+    #[cfg(feature = "test-support")]
+    #[test]
+    #[ignore = "renders a GPU screenshot of the call-limit stop; set DUTCHMAN_GUI_SCREENSHOTS"]
+    fn onshape_budget_stop_screenshots() {
+        let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        h.ctx.set_theme(ThemePreference::Light);
+        h.state_mut().preview_onshape(Some("Test designer"));
+        h.state_mut()
+            .set_clipboard_for_test(|| (vec![], String::new()));
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), budget_then_ok_fetch);
+        output_picker(&mut h, output.path());
+        h.run_steps(8);
+        paste(
+            &mut h,
+            "https://cad.onshape.com/documents/000000000000000000000000/w/000000000000000000000000/e/000000000000000000000000",
+        );
+        let started = Instant::now();
+        while h.query_by_label("Continue fetching").is_none() {
+            assert!(started.elapsed() < Duration::from_secs(20), "no button");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        h.state_mut()
+            .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
+        h.run_steps(8);
+        let mut index = String::new();
+        shot(
+            &mut h,
+            &dir,
+            &mut index,
+            "onshape-budget-stop",
+            "day",
+            "Call-limit stop on the Results card.",
+        );
     }
 
     fn big_estimate(_link: String, _token: Option<PathBuf>) -> Result<u32, String> {
@@ -7008,4 +7053,59 @@ fn up_axis_screenshots() {
             "Up axis choices listed: Automatic, Stand up, Keep the file's axes.",
         );
     }
+}
+
+/// The Advanced section with the "Inner copper layers" choice at 1280x800: English, and with a
+/// long German design name (the app has no German text yet, so the name is the long string).
+/// Neutral paths under /tmp/demo.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn inner_copper_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let demo = PathBuf::from("/tmp/demo");
+    let designs = demo.join("Designs");
+    std::fs::create_dir_all(&designs).unwrap();
+    let mut index = String::new();
+    for (language, name) in [
+        ("english", "Controller board.f3d"),
+        (
+            "german",
+            "Leiterplatte Hauptsteuerung Erweiterungsmodul Entwurf Zwei.f3d",
+        ),
+    ] {
+        let input = designs.join(name);
+        std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+        for (theme, label) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().preview_solidcraft(Some("0.50.0"));
+            harness.state_mut().set_checker_for_test(true);
+            harness.state_mut().add_inputs([input.clone()]);
+            harness.state_mut().set_out_dir(demo.join("out"));
+            harness.state_mut().set_verify(false);
+            wait_for_estimate(&mut harness);
+            harness.get_by_label("Advanced").click_accesskit();
+            harness.run_steps(8);
+            harness
+                .get_by_label("Inner copper layers")
+                .click_accesskit();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("inner-copper-{language}"),
+                label,
+                "Advanced open with Inner copper layers ticked.",
+            );
+        }
+    }
+    std::fs::write(dir.join("inner-copper.md"), index).unwrap();
 }

@@ -368,6 +368,9 @@ The mapper uses only cadmpeg's resolved plane, input face boundaries and nested
 `history_bodies` (`produced_by` / `consumed_by`). It does not infer a splitting plane
 from final result bodies when the tool is native. Component slices carry history bodies
 with their producing or consuming feature, without mixing their topology into final geometry.
+They carry each kept feature's input and result states (`feature_input_topologies`,
+`feature_result_topologies`) the same way, though no other row points at them, so a component's
+features can still name a body by the feature that made or last wrote it.
 The current Fusion reader pin emits produced snapshots but does not populate `consumed_by`.
 A native target without a consumed body association remains a reported loss; consumed-body
 preservation and mapping are covered by synthetic tests against the current neutral model API.

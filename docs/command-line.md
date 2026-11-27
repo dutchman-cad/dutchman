@@ -109,6 +109,7 @@ CAD extension selects conversion.
 | `--no-sketches` | Leave reference sketches out; sketches needed by retained history stay. |
 | `--no-joints` | Leave assembly joints out and retain the selected placements before joint solving. |
 | `--part-positions MODE` | Part positions: `smart` (default), `last-shown`, or `first-placed`. |
+| `--copper LAYERS` | Circuit boards: `outer` (default) reads the top and bottom copper; `all` also reads each inner copper layer, as its own overlay named like `Inner copper (In1.Cu)`. It passes `--copper all` to `dutchman-electronics read`; a module too old to know it is read for the outer layers, and the report says so. |
 | `--stored-placements` | Alias of `--part-positions first-placed`: place parts where they were first placed, ignoring later moves. |
 | `--stand-up`, `--keep-axes` | The up axis. By default (automatic) a design is stood up (+90° about +X, so +Y becomes SolidCraft's +Z) when its source states that it is Y-up, as a Fusion export's manifest does; a design that is Z-up, or whose up axis is unknown, keeps its axes. `--stand-up` always rotates; `--keep-axes` never rotates (`--no-stand-up` is the same option). The report's `up_axis` states what was found, where, and what was done. |
 | `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |

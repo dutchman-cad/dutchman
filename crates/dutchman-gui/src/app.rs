@@ -352,6 +352,11 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
                 dutchman_core::PartPositions::Smart
             }
         });
+    options.copper = settings
+        .get("copper")
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_default();
     options.stored_placements = false;
     options.no_joints = settings
         .get("no_joints")
@@ -443,6 +448,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
         "no_verify": options.no_verify,
         "part_positions": options.effective_part_positions().name(),
+        "copper": options.copper.name(),
         "up_axis": orientation_of(options).name(),
     })
 }
@@ -3052,22 +3058,44 @@ impl App {
             let choices = self.options.choices();
             let (mut history, mut sketches, mut joints) =
                 (choices.history, choices.sketches, choices.joints);
-            // Switches narrow the selected base; Fast has nothing further to leave out.
-            ui.add_enabled_ui(self.options.preset != Preset::Fast, |ui| {
-                let changed = side_by_side(ui, wide, |ui| {
-                    ui.checkbox(&mut history, "Feature history").changed()
-                        | ui.checkbox(&mut sketches, "Sketches").changed()
-                        | ui.checkbox(&mut joints, "Joints").changed()
-                });
-                if changed {
-                    set_choices(&mut self.options, history, sketches, joints);
-                    self.custom = true;
-                }
-            })
-            .response
-            .on_disabled_hover_text(
-                "Choose Standard or Full to keep history, sketches, or joints.",
-            );
+            let mut inner = self.options.copper == dutchman_core::CopperLayers::All;
+            // Switches narrow the selected base; Fast has nothing further to leave out. The
+            // inner copper choice is about circuit boards, so every preset keeps it, and it
+            // shares the row so the section stays as tall as it was.
+            let narrowing = self.options.preset != Preset::Fast;
+            let hint = "Choose Standard or Full to keep history, sketches, or joints.";
+            let (changed, copper_changed) = side_by_side(ui, wide, |ui| {
+                let changed = ui
+                    .add_enabled(narrowing, egui::Checkbox::new(&mut history, "Feature history"))
+                    .on_disabled_hover_text(hint)
+                    .changed()
+                    | ui
+                        .add_enabled(narrowing, egui::Checkbox::new(&mut sketches, "Sketches"))
+                        .on_disabled_hover_text(hint)
+                        .changed()
+                    | ui
+                        .add_enabled(narrowing, egui::Checkbox::new(&mut joints, "Joints"))
+                        .on_disabled_hover_text(hint)
+                        .changed();
+                let copper_changed = ui
+                    .checkbox(&mut inner, "Inner copper layers")
+                    .on_hover_text(
+                        "Circuit boards: also read each inner copper layer. Needs a recent electronics module; without it only the top and bottom copper is read.",
+                    )
+                    .changed();
+                (changed, copper_changed)
+            });
+            if changed {
+                set_choices(&mut self.options, history, sketches, joints);
+                self.custom = true;
+            }
+            if copper_changed {
+                self.options.copper = if inner {
+                    dutchman_core::CopperLayers::All
+                } else {
+                    dutchman_core::CopperLayers::Outer
+                };
+            }
         });
     }
 

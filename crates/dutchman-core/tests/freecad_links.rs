@@ -220,6 +220,7 @@ fn external_links_use_search_folders_and_case_insensitive_filenames() {
             part_positions: dutchman_core::PartPositions::Smart,
             project: Some(project.clone()),
             also: vec![library],
+            copper: Default::default(),
         },
         &mut Report::default(),
     )
