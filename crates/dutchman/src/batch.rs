@@ -1687,7 +1687,10 @@ mod tests {
         // Two workers, ample memory: assemblies first, then 9, 5, 2, 1 GiB.
         let (started, mut finished, _) =
             fake_batch(&["a1", "b9", "asm2", "c5", "d2"], 2, Some(1 << 40));
-        assert_eq!(&started[..2], &[2, 1]);
+        // The two workers start at once, so the first two may be recorded in either order.
+        let mut first_two = started[..2].to_vec();
+        first_two.sort_unstable();
+        assert_eq!(first_two, [1, 2]);
         assert_eq!(started.len(), 5);
         finished.sort_unstable();
         assert_eq!(finished, [0, 1, 2, 3, 4]);
