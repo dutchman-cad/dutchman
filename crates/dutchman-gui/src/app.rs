@@ -3025,11 +3025,15 @@ impl App {
                     self.onshape.toggle(ui.ctx(), &clipboard);
                 }
             });
-            ui.small(if cfg!(target_os = "macos") {
-                "Drop, or paste files or links (⌘V)"
-            } else {
-                "Drop, or paste files or links (Ctrl+V)"
-            });
+            ui.label(
+                RichText::new(if cfg!(target_os = "macos") {
+                    "Drop, or paste files or links (⌘V)"
+                } else {
+                    "Drop, or paste files or links (Ctrl+V)"
+                })
+                .small()
+                .color(p.tide),
+            );
         });
     }
 
