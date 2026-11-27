@@ -268,6 +268,20 @@ fn app_layout_screenshots() {
                     name,
                     &format!("Three-step layout, {kind} design, Advanced open."),
                 );
+                if kind != "narrow" {
+                    harness
+                        .get_by_label("Check feature history in SolidCraft")
+                        .scroll_to_me();
+                    harness.run_steps(8);
+                    shot(
+                        &mut harness,
+                        &dir,
+                        &mut index,
+                        &format!("layout-{kind}-scrolled-{set}"),
+                        name,
+                        &format!("Same, scrolled to the end of step 3 ({kind})."),
+                    );
+                }
                 if kind == "mechanical" {
                     harness.get_by_label("Settings").click_accesskit();
                     harness.run_steps(8);
@@ -362,18 +376,19 @@ fn inner_copper_waits_for_a_circuit_board_in_the_same_place() {
     h.state_mut()
         .add_inputs([fixture("generated_unit_cube.f3d")]);
     h.run_steps(12);
-    h.get_by_label("Advanced");
+    h.get_by_label("Advanced").click_accesskit();
+    h.run_steps(8);
     let spot = h.get_by_label("Inner copper layers").rect();
     assert!(h.get_by_label("Circuit boards").rect().right() <= spot.left());
     h.get_by_label("Add a circuit board to use this.");
-    assert!(h.get_by_label("Inner copper layers").is_disabled());
+    assert!(egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label("Inner copper layers")).is_disabled());
     let work = tempfile::tempdir().unwrap();
     let board = work.path().join("controller-board.PcbDoc");
     std::fs::copy(fixture("synthetic_cube.ipt"), &board).unwrap();
     h.state_mut().add_inputs([board]);
     h.run_steps(12);
     assert!(h.query_by_label("Add a circuit board to use this.").is_none());
-    assert!(!h.get_by_label("Inner copper layers").is_disabled());
+    assert!(!egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label("Inner copper layers")).is_disabled());
     assert!((h.get_by_label("Inner copper layers").rect().left() - spot.left()).abs() < 1.0);
 }
 

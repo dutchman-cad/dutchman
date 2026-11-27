@@ -3248,7 +3248,7 @@ impl App {
         });
         ui.end_row();
         ui.label("Checks");
-        ui.vertical(|ui| {
+        {
             let mut verify = !self.options.no_verify;
             ui.horizontal_wrapped(|ui| {
                 if ui
@@ -3261,10 +3261,14 @@ impl App {
                     self.solidcraft_open = true;
                 }
             });
+            ui.end_row();
+            ui.label("");
             ui.checkbox(
                 &mut self.options.no_memory_check,
                 "Convert and check history even if memory is low",
             ).on_hover_text("Force the conversion and history check despite the memory estimate. This can run out of memory. Checking history off stays off.");
+            ui.end_row();
+            ui.label("");
             let checker = match &self.checker {
                 Ok(cli) => format!("Checks with {}.", display(cli)),
                 Err(dutchman_solidcraft::NoCli::Blocked(why)) => why.clone(),
@@ -3284,7 +3288,7 @@ impl App {
                 // Keep paths on one line; the whole path is on hover.
                 ui.add(label.truncate()).on_hover_text(checker);
             }
-        });
+        }
         ui.end_row();
     }
 
