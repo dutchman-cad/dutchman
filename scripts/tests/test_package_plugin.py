@@ -1,6 +1,7 @@
 """The plugin archive carries the vector images referenced by its manifest."""
 import hashlib
 import json
+import tomllib
 import os
 from pathlib import Path
 import subprocess
@@ -54,8 +55,9 @@ class PluginPackage(unittest.TestCase):
                             self.assertEqual(package.read(icon), expected)
                             self.assertEqual((out / icon).read_bytes(), expected)
                         self.assertEqual(package.read("dutchman.wasm"), b"component fixture")
-                        if version:
-                            self.assertEqual(manifest["version"], version)
+                        workspace = tomllib.loads((ROOT / "Cargo.toml").read_text())
+                        expected_version = version or workspace["workspace"]["package"]["version"]
+                        self.assertEqual(manifest["version"], expected_version)
                     if version:
                         digest = (out / f"{name}.sha256").read_text().split()[0]
                         self.assertEqual(digest, hashlib.sha256(archive.read_bytes()).hexdigest())

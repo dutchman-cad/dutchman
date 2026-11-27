@@ -398,6 +398,10 @@ impl ConvertOptions {
         }
         args.push("--part-positions".into());
         args.push(self.effective_part_positions().name().into());
+        if self.copper != dutchman_core::CopperLayers::Outer {
+            args.push("--copper".into());
+            args.push(self.copper.name().into());
+        }
         args.push("--preset".into());
         args.push(self.preset.name().into());
         for (enabled, flag) in [

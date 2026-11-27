@@ -2191,6 +2191,72 @@ fn an_explicit_budget_is_never_raised_by_the_document() {
     assert_eq!(router.sent, 50);
 }
 
+#[test]
+fn a_stop_at_the_call_limit_names_the_calls_spent_and_the_estimate() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 60,
+        sent: 0,
+    };
+    let error = fetch(
+        &mut router,
+        &credentials(),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        50,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    let needed = error.estimate.expect("the stop carries the estimate");
+    assert!(needed > 50, "{needed}");
+    let report = dutchman::json::onshape_fetch(&Err(error));
+    assert_eq!(report["error"]["code"], "onshape/budget");
+    assert_eq!(report["calls"], 50);
+    assert_eq!(report["estimated_calls"], needed);
+    let text = dutchman::onshape::budget_stop_text(50, Some(needed));
+    assert!(text.contains("after 50 API calls"), "{text}");
+    assert!(text.contains(&format!("--max-calls {needed} ")), "{text}");
+}
+
+#[test]
+fn the_command_line_budget_stop_text_gives_a_limit_that_makes_progress() {
+    use dutchman::onshape::budget_stop_text;
+    assert_eq!(
+        budget_stop_text(50, Some(51)),
+        "Onshape call budget reached after 50 API calls; this document needs about 51. Rerun with --max-calls 51 (MCP: max_calls) to finish; replies already fetched cost no calls."
+    );
+    // An estimate at or below the calls spent still names a limit above them.
+    assert!(budget_stop_text(50, Some(40)).contains("--max-calls 51 "));
+    assert!(budget_stop_text(1500, Some(1800)).contains("needs about 1,800"));
+    let unknown = budget_stop_text(50, None);
+    assert!(unknown.contains("after 50 API calls") && unknown.contains("larger --max-calls"));
+}
+
+#[test]
+fn an_allowed_fetch_is_estimated_first_and_its_limit_fits_the_document() {
+    // `yes` skips the question, not the estimate; the fetch is the same one the gated path
+    // makes, so a document over the starting limit finishes and counts the listing once.
+    let dir = tempfile::tempdir().unwrap();
+    let mut router = Router {
+        creators: 60,
+        sent: 0,
+    };
+    let report = fetch_gated(
+        &mut router,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        true,
+    )
+    .unwrap();
+    assert!(report.calls > 50, "{}", report.calls);
+    assert_eq!(report.calls, router.sent);
+}
+
 fn listing_mock(tabs: Value) -> Mock {
     Mock {
         replies: VecDeque::from([
