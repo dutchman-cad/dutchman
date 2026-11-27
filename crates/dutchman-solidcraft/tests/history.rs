@@ -6835,7 +6835,7 @@ fn body_patterns_resolve_generated_and_input_state_seeds() {
             patterned(linear.clone()),
             json!([{"kind": "bodies", "value": selection}]),
         );
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["feature_result_topologies"] = json!([{
             "id": "synthetic:history-result:state#0", "output_of": "f3d:model:feature#2",
             "members": [{"kind": "body", "id": "cube"}]}]);
@@ -6843,7 +6843,7 @@ fn body_patterns_resolve_generated_and_input_state_seeds() {
             "id": "synthetic:history-input:state#0", "input_of": "f3d:model:feature#3",
             "bodies": state_bodies, "faces": [], "edges": [], "vertices": [],
             "edge_geometry": [], "face_owners": []}]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new()
@@ -22196,12 +22196,12 @@ fn body_moves_keep_resolved_transforms_and_selected_bodies() {
 #[test]
 fn a_resolved_selection_of_a_captured_base_body_is_not_ambiguous() {
     let mut model = based_cube_changed_later(true);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let features = wire["model"]["features"].as_array_mut().unwrap();
     let last = features.len() - 1;
     features[last]["name"] = json!("Move");
     features[last]["definition"]["value"] = body_move([5.0, 0.0, 0.0], None);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new()
@@ -22228,9 +22228,9 @@ fn copying_body_moves_keep_the_source_and_name_the_copy() {
     let mut definition = body_move([20.0, 0.0, 0.0], None);
     definition["value"]["copies"] = json!(1);
     let mut model = modifying(definition);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"][2]["outputs"] = json!(["synthetic:copy:body#0"]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new()
