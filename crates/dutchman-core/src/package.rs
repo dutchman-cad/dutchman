@@ -622,17 +622,28 @@ fn put_in_folders(assembly: &mut Assembly, groups: &BTreeMap<usize, String>, rep
                 folders.len() - 1
             }
         };
-        let (_, inner, copied) = &mut folders[folder];
-        let part = *copied.entry(placement.part).or_insert_with(|| {
-            inner.parts.push(assembly.parts[placement.part].clone());
-            inner
-                .definitions
-                .push(assembly.definitions.get(placement.part).cloned().flatten());
-            inner
-                .identities
-                .push(assembly.identities.get(placement.part).cloned().flatten());
-            inner.parts.len() - 1
-        });
+        let Some((_, inner, copied)) = folders.get_mut(folder) else {
+            slots.push(Some(placement));
+            continue;
+        };
+        let part = match copied.get(&placement.part) {
+            Some(part) => *part,
+            None => {
+                let Some(source) = assembly.parts.get(placement.part) else {
+                    slots.push(Some(placement));
+                    continue;
+                };
+                inner.parts.push(source.clone());
+                inner
+                    .definitions
+                    .push(assembly.definitions.get(placement.part).cloned().flatten());
+                inner
+                    .identities
+                    .push(assembly.identities.get(placement.part).cloned().flatten());
+                copied.insert(placement.part, inner.parts.len() - 1);
+                inner.parts.len() - 1
+            }
+        };
         inner.placements.push(Placement { part, ..placement });
     }
     // Folders take the slots left empty, in the order they were made.
@@ -1071,6 +1082,7 @@ impl Notes {
 // ---------------------------------------------------------------------------------------------
 
 /// Adds each overlay as a sheet part placed with the part it names.
+#[allow(clippy::too_many_arguments)]
 fn overlays(
     list: &[Value],
     scale: f64,
