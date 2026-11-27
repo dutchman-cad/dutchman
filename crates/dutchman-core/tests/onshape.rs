@@ -2272,12 +2272,11 @@ fn assert_assembly_placements_and_mates(ring: bool) {
                     [
                         0.,
                         0.,
-                        match name.as_str() {
-                            "base" => 0.,
-                            "middle" => 5.,
-                            "upper" => 10.,
-                            _ => panic!("unexpected part {name}"),
-                        },
+                        [("base", 0.), ("middle", 5.), ("upper", 10.)]
+                            .into_iter()
+                            .find(|(part, _)| *part == name.as_str())
+                            .map(|(_, z)| z)
+                            .unwrap(),
                     ],
                 )
             };
