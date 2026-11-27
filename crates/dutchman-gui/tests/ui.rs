@@ -6743,7 +6743,7 @@ fn drawing_screenshots() {
             harness
                 .state_mut()
                 .set_diagnostic_log(PathBuf::from("/tmp/demo/log.jsonl"));
-            harness.state_mut().preview_solidcraft(Some("0.49.1"));
+            harness.state_mut().preview_solidcraft(Some("0.50.0"));
             harness.state_mut().set_verify(false);
             convert(&mut harness);
             assert_eq!(harness.state().rows()[0].status, Status::Failed);
