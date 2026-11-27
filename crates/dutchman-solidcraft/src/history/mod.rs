@@ -930,7 +930,6 @@ impl<'a> Context<'a> {
         rows.get(id).map_or(&[], Vec::as_slice)
     }
 
-    /// Whether a body the history makes already has this name.
     /// Whether a body name other than `id`'s own names another body: ids that only alias
     /// one body under its name do not.
     fn body_name_shared(&self, id: &str, name: &str) -> bool {
@@ -940,6 +939,7 @@ impl<'a> Context<'a> {
             })
     }
 
+    /// Whether a body the history makes already has this name.
     fn body_name_taken(&self, name: &str) -> bool {
         self.named_bodies
             .iter()

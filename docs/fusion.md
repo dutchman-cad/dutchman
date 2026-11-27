@@ -925,7 +925,8 @@ A captured base import can name the same body by its final and historical geomet
 identities. A Move selecting the sole body in its own input state resolves those
 aliases to one earlier SolidCraft body name. Distinct earlier body names remain
 ambiguous and are refused; native identifiers and final geometry do not establish
-a historical match.
+a historical match. A Combine, Mirror, Move or pattern that selects that body by its final
+identity also finds the one body, not two bodies sharing a name.
 
 Modeled thread history remains blocked even on SolidCraft 0.45: the available nominal
 thread data cannot prove an exact helical reconstruction. The final modeled geometry is
