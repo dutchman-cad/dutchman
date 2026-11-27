@@ -455,19 +455,26 @@ pub(crate) fn estimate_calls(
 const STOP_START: &str = "Stopped after ";
 const STOP_CALLS: &str = " Onshape API calls.";
 const STOP_MORE: &str = " About ";
+const STOP_MORE_MID: &str = " more needed, ";
 const STOP_MORE_END: &str =
-    " more are needed; Continue fetching uses them from your yearly allowance.";
-const STOP_UNKNOWN: &str = " Continue fetching uses more from your yearly allowance.";
+    " in all; choose Continue fetching to confirm them against your yearly allowance.";
+const STOP_UNKNOWN: &str =
+    " Choose Continue fetching to use more of your yearly allowance, after the app shows how many.";
 const STOP_KEPT: &str = " What's fetched so far is kept.";
 
 /// Shown when the fetch stops at Dutchman's limit on Onshape requests: the calls made and,
-/// when known, about how many more the rest needs. The Results card offers "Continue
-/// fetching" under it, so it names no command-line option.
+/// when known, about how many more the rest needs and how many the document needs in all.
+/// The Results card offers "Continue fetching" under it, which asks before spending, so the
+/// text names no command-line option.
 pub(crate) fn budget_stop_text(calls: u32, remaining: Option<u32>) -> String {
     use dutchman::onshape::calls_text;
     let mut text = format!("{STOP_START}{}{STOP_CALLS}", calls_text(calls));
     match remaining {
-        Some(more) => text.push_str(&format!("{STOP_MORE}{}{STOP_MORE_END}", calls_text(more))),
+        Some(more) => text.push_str(&format!(
+            "{STOP_MORE}{}{STOP_MORE_MID}{}{STOP_MORE_END}",
+            calls_text(more),
+            calls_text(calls.saturating_add(more))
+        )),
         None => text.push_str(STOP_UNKNOWN),
     }
     text.push_str(STOP_KEPT);
@@ -483,7 +490,7 @@ pub(crate) fn parse_budget_stop(text: &str) -> Option<(u32, Option<u32>)> {
     let made = number(made)?;
     let remaining = rest
         .strip_prefix(STOP_MORE)
-        .and_then(|rest| rest.split_once(STOP_MORE_END))
+        .and_then(|rest| rest.split_once(STOP_MORE_MID))
         .and_then(|(more, _)| number(more));
     Some((made, remaining))
 }
@@ -532,7 +539,8 @@ pub(crate) fn fetch_with_budget(
             version: None,
             bearer_token_file,
             max_calls,
-            // The app asks before this point whenever the estimate is above 50 calls.
+            // The app asks before this point whenever the estimate is above 50 calls; the
+            // fetch estimates again from the cached listing, so its limit fits the document.
             yes: true,
             json: false,
         },
@@ -565,7 +573,14 @@ fn failure_message(report: &serde_json::Value) -> String {
             .get("calls")
             .and_then(serde_json::Value::as_u64)
             .map_or(0, |calls| u32::try_from(calls).unwrap_or(u32::MAX));
-        return budget_stop_text(calls, None);
+        // The fetch's own estimate of the whole document, when it had one: what is left is
+        // that less what was spent.
+        let remaining = report
+            .get("estimated_calls")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|total| u32::try_from(total).ok())
+            .map(|total| total.saturating_sub(calls).max(1));
+        return budget_stop_text(calls, remaining);
     }
     report
         .pointer("/error/message")
@@ -698,19 +713,33 @@ mod tests {
         let text = failure_message(&report);
         assert_eq!(
             text,
-            "Stopped after 50 Onshape API calls. Continue fetching uses more from your yearly allowance. What's fetched so far is kept."
+            "Stopped after 50 Onshape API calls. Choose Continue fetching to use more of your yearly allowance, after the app shows how many. What's fetched so far is kept."
         );
         assert!(!text.contains("--"));
         assert_eq!(parse_budget_stop(&text), Some((50, None)));
         let known = budget_stop_text(50, Some(2500));
         assert_eq!(
             known,
-            "Stopped after 50 Onshape API calls. About 2,500 more are needed; Continue fetching uses them from your yearly allowance. What's fetched so far is kept."
+            "Stopped after 50 Onshape API calls. About 2,500 more needed, 2,550 in all; choose Continue fetching to confirm them against your yearly allowance. What's fetched so far is kept."
         );
         assert_eq!(parse_budget_stop(&known), Some((50, Some(2500))));
         assert_eq!(parse_budget_stop("Keys refused"), None);
         let other = serde_json::json!({"ok": false, "error": {"code": "onshape/auth", "message": "Keys refused"}});
         assert_eq!(failure_message(&other), "Keys refused");
+    }
+
+    #[test]
+    fn a_stop_one_call_short_says_what_was_spent_and_what_the_document_needs() {
+        // The document needed 51 calls; the stop came at 50.
+        let report = serde_json::json!({"ok": false, "calls": 50, "estimated_calls": 51,
+            "error": {"code": "onshape/budget", "message": "Onshape call budget reached; raise it with --max-calls"}});
+        let text = failure_message(&report);
+        assert_eq!(
+            text,
+            "Stopped after 50 Onshape API calls. About 1 more needed, 51 in all; choose Continue fetching to confirm them against your yearly allowance. What's fetched so far is kept."
+        );
+        assert!(!text.contains("--max-calls"));
+        assert_eq!(parse_budget_stop(&text), Some((50, Some(1))));
     }
 
     #[test]

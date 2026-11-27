@@ -361,6 +361,17 @@ pub fn plan(model: &Model, report: &mut Report) -> Plan {
                 continue;
             };
             order.push((drawing, offset));
+            // cadmpeg states the drawing records a page shows or a view collection holds as
+            // typed ids; they take the place of the Views link list.
+            for target in drawing.views.iter().rev() {
+                let child = if drawing.kind == DrawingKind::Projection {
+                    let [x, y] = drawing.position.map_or([0.0, 0.0], |p| p.get());
+                    [offset[0] + x, offset[1] + y]
+                } else {
+                    offset
+                };
+                queue.push((target.as_str(), child));
+            }
             for role in ["Views", "Group"] {
                 for link in drawing.relationships.get(role).into_iter().flatten().rev() {
                     if let Some(target) = drawing_target(link, &objects) {

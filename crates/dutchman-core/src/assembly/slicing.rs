@@ -198,6 +198,8 @@ impl<'a> Index<'a> {
             shell: Option<String>,
             produced_by: Option<String>,
             consumed_by: Option<String>,
+            input_of: Option<String>,
+            output_of: Option<String>,
         }
         let mut index = Self::new(document);
         for (&arena, rows) in source.geometry.iter().chain(&source.model) {
@@ -216,6 +218,8 @@ impl<'a> Index<'a> {
                     let parent = match arena {
                         "regions" => identity.body,
                         "faces" => identity.shell,
+                        "feature_input_topologies" => identity.input_of,
+                        "feature_result_topologies" => identity.output_of,
                         _ => None,
                     };
                     if let Some(parent) = parent {
@@ -261,6 +265,8 @@ impl<'a> Index<'a> {
                     let parent = match arena.as_str() {
                         "regions" => row.get("body"),
                         "faces" => row.get("shell"),
+                        "feature_input_topologies" => row.get("input_of"),
+                        "feature_result_topologies" => row.get("output_of"),
                         _ => None,
                     };
                     if let Some(parent) = parent.and_then(Value::as_str) {

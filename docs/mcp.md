@@ -1215,6 +1215,10 @@ with a plain explanation and summary or private-send options; it is not a tool e
 
 ## Assembly placements
 
+Conversion tools accept `copper`: `"outer"` (default) reads a circuit board's top and bottom copper;
+`"all"` also reads each inner copper layer, when the installed electronics module supports it (else the outer layers
+are read and the report says so).
+
 Conversion tools accept `part_positions`: `"smart"` (default), `"last-shown"`, or
 `"first-placed"`. Smart accepts current poses only when touching joints close (or there are
 none), geometry fits in first-placement assembly bounds grown by 10%, and repeated inserted
