@@ -9,6 +9,7 @@ use cadmpeg_core::decode::{
 };
 use cadmpeg_core::CodecError;
 use cadmpeg_ir::codec::{Codec, DecodeFailure, DecodeOptions};
+use cadmpeg_ir::report::strictness::Strictness;
 use cadmpeg_ir::report::Severity as CadmpegSeverity;
 use cadmpeg_ir::validate::validate_neutral_for_decode;
 use cadmpeg_registry::{
@@ -44,8 +45,9 @@ pub(crate) fn detect_part(path: &Path) -> Option<Format> {
     .flatten()
 }
 
-/// cadmpeg's desktop ceilings in salvage mode: a successful decode keeps going past a loss
-/// and reports it, rather than refusing the whole file. The input cap is Dutchman's own.
+/// cadmpeg's desktop ceilings. With the default strictness, which refuses nothing, a successful
+/// decode keeps going past a loss and reports it, rather than refusing the whole file. The input
+/// cap is Dutchman's own.
 pub(crate) fn policy() -> DecodePolicy {
     DecodePolicy {
         limits: ResourceLimits {

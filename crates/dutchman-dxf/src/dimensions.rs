@@ -119,7 +119,7 @@ mod tests {
     fn angular_labels_keep_degrees_and_signed_tolerances() {
         let mut annotation = SemanticAnnotation::new(
             SemanticAnnotationId::mint("synthetic:test:annotation#angle").unwrap(),
-            "angle".into(),
+            cadmpeg_ir::ids::Identity::new("synthetic:test:object#angle").unwrap(),
             SemanticAnnotationKind::Dimension,
             "Dimension".into(),
             0,
@@ -141,7 +141,7 @@ mod tests {
     fn labels_require_measurements_and_keep_replacements_and_tolerances() {
         let mut annotation = SemanticAnnotation::new(
             SemanticAnnotationId::mint("synthetic:test:annotation#dimension").unwrap(),
-            "dimension".into(),
+            cadmpeg_ir::ids::Identity::new("synthetic:test:object#dimension").unwrap(),
             SemanticAnnotationKind::Dimension,
             "Dimension".into(),
             0,
@@ -169,7 +169,7 @@ mod anchor_tests {
     fn anchors_generate_page_space_extensions_and_arrows_without_scaling_value() {
         let mut annotation = SemanticAnnotation::new(
             SemanticAnnotationId::mint("synthetic:test:annotation#width").unwrap(),
-            "width".into(),
+            cadmpeg_ir::ids::Identity::new("synthetic:test:object#width").unwrap(),
             SemanticAnnotationKind::Dimension,
             "Dimension".into(),
             0,

@@ -228,7 +228,8 @@ pub struct Plan {
 }
 
 fn name(drawing: &Drawing) -> &str {
-    drawing.object.rsplit('#').next().unwrap_or(&drawing.object)
+    let object = drawing.object.as_str();
+    object.rsplit('#').next().unwrap_or(object)
 }
 
 fn drawing_target<'a>(
