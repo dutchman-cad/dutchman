@@ -5233,7 +5233,7 @@ mod tests {
     #[test]
     fn a_component_carries_the_input_and_result_states_of_its_own_features() {
         let model = with_history(true);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let block = wire["model"]["features"][0]["id"].clone();
         let other = json!("synthetic:copy:feature#other");
         let result = |id: &str, of: &Value| {
@@ -5243,7 +5243,7 @@ mod tests {
         let input = |id: &str, of: &Value| {
             json!({"id": format!("synthetic:input:state#{id}"),
             "input_of": of, "bodies": [], "faces": [], "edges": [], "vertices": [],
-            "edge_geometry": [], "face_owners": []})
+            "edge_geometry": [], "face_owners": [], "face_geometry": [], "body_writers": []})
         };
         // Nothing points at these rows: each names only its feature.
         wire["model"]["feature_result_topologies"] =
@@ -5277,7 +5277,7 @@ mod tests {
         );
         // The expanded and the compact row index carry the same.
         let expanded = placed_document(&model);
-        let text = serde_json::to_string(&model.ir).unwrap();
+        let text = crate::ir_wire::to_string(&model.ir).unwrap();
         let packed = slicing::Packed::read(&text).unwrap();
         let mut document = packed.document().unwrap();
         products::project(&mut document["model"]).unwrap();
