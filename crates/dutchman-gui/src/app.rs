@@ -2652,7 +2652,8 @@ impl App {
         let color = match status {
             "too_old" | "none_found" => p.lantern_text,
             "newer" => p.spectre,
-            _ => p.tide,
+            // The same text color as the other header buttons: it is a button, not a note.
+            _ => ui.visuals().text_color(),
         };
         let label = match (&self.found_version, narrow) {
             (Some(version), true) => {
@@ -3077,7 +3078,7 @@ impl App {
     /// The options everything is converted with: Preset, then Advanced, then the output format,
     /// replacing and the checks. Labels stand in one column, before their controls, and the
     /// same rows serve a mechanical design and a circuit board.
-    fn options_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, p: &Palette) {
+    fn options_ui(&mut self, ui: &mut egui::Ui, p: &Palette) {
         // Rows of choices are a little tighter than buttons, so the whole step fits in view.
         ui.spacing_mut().button_padding.y = 2.0;
         egui::Grid::new("options-preset")
@@ -3099,7 +3100,6 @@ impl App {
             .num_columns(2)
             .min_col_width(LABEL_COLUMN)
             .show(ui, |ui| self.output_rows(ui, p));
-        self.inventor_project_row(ui, ctx, p);
     }
 
     fn advanced_rows(&mut self, ui: &mut egui::Ui, p: &Palette) {
@@ -3202,6 +3202,41 @@ impl App {
             }
         });
         ui.end_row();
+        // Where an assembly's part files are searched for: an input setting, so it is here.
+        if !self.inputs.is_empty() && self.has_inventor {
+            ui.label("Inventor project");
+            let chosen = self.options.project.clone();
+            let mut find = false;
+            ui.horizontal(|ui| {
+                let project = match &chosen {
+                    Some(dir) => display(dir),
+                    None => "found from each assembly".to_owned(),
+                };
+                let room = (ui.available_width() - 150.0).max(80.0);
+                ui.scope(|ui| {
+                    ui.set_max_width(room);
+                    ui.add(
+                        egui::Label::new(RichText::new(project).small().color(p.tide)).truncate(),
+                    )
+                    .on_hover_text(
+                        "Where an assembly's part files are searched for when they are not \
+                         at the paths it stores. Found from each assembly: the nearest folder \
+                         above it holding an .ipj, else two folders up; a folder you add is \
+                         its files' project.",
+                    );
+                });
+                if chosen.is_some() && ui.small_button("Automatic").clicked() {
+                    find = true;
+                }
+                if ui.small_button("Choose…").clicked() {
+                    worker::pick(Pick::Project, self.sender.clone(), ui.ctx().clone());
+                }
+            });
+            ui.end_row();
+            if find {
+                self.options.project = None;
+            }
+        }
     }
 
     /// Whether the list may hold a circuit board: a board file, or a folder or ZIP that could
@@ -3311,49 +3346,6 @@ impl App {
             });
         }
         ui.end_row();
-    }
-
-    fn inventor_project_row(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, p: &Palette) {
-        if self.inputs.is_empty() || !self.has_inventor {
-            return;
-        }
-        ui.add_space(theme::SPACE_2);
-        let chosen = self.options.project.clone();
-        let mut find = false;
-        egui::Sides::new().shrink_left().truncate().show(
-            ui,
-            |ui| {
-                let project = match &chosen {
-                    Some(dir) => display(dir),
-                    None => "found from each assembly".to_owned(),
-                };
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(format!("Inventor project folder: {project}"))
-                            .small()
-                            .color(p.tide),
-                    )
-                    .truncate(),
-                )
-                .on_hover_text(
-                    "Where an assembly's part files are searched for when they are not \
-                     at the paths it stores. Found from each assembly: the nearest folder \
-                     above it holding an .ipj, else two folders up; a folder you add is \
-                     its files' project.",
-                );
-            },
-            |ui| {
-                if chosen.is_some() && ui.button(RichText::new("Automatic").small()).clicked() {
-                    find = true;
-                }
-                if ui.button(RichText::new("Choose…").small()).clicked() {
-                    worker::pick(Pick::Project, self.sender.clone(), ctx.clone());
-                }
-            },
-        );
-        if find {
-            self.options.project = None;
-        }
     }
 
     fn batch_report_button(&mut self, ui: &mut egui::Ui) {
@@ -3487,7 +3479,7 @@ impl App {
         ui.add_space(theme::SPACE_2);
         section_label(ui, &p, "3. Pick how to convert them");
         panel(ui, &p, false, |ui| {
-            ui.add_enabled_ui(!self.running(), |ui| self.options_ui(ui, ctx, &p));
+            ui.add_enabled_ui(!self.running(), |ui| self.options_ui(ui, &p));
         });
     }
 
