@@ -230,3 +230,42 @@ fn portable_detection_requires_all_three_release_programs() {
         Install::Zip(folder.path().to_owned())
     );
 }
+
+#[test]
+fn closing_is_refused_except_while_only_downloading() {
+    let job = Job::new();
+    assert!(!job.blocks_close(), "an idle job never blocks closing");
+    job.set_phase(Phase::Running);
+    assert!(job.blocks_close(), "installing work blocks closing");
+
+    let guard = Downloading::start(&job.downloading);
+    let inner = |_: &str, _: u64, _: &mut dyn std::io::Write| Ok(());
+    let fetch = ending_download(&guard, &inner);
+    let mut sink = Vec::new();
+    assert!(job.downloading() && !job.blocks_close(), "download starts");
+    fetch("https://x/dutchman.zip.sha256", 4096, &mut sink).unwrap();
+    assert!(
+        !job.blocks_close(),
+        "still downloading between the two files"
+    );
+    fetch("https://x/dutchman.zip", 1 << 20, &mut sink).unwrap();
+    assert!(
+        job.blocks_close(),
+        "verifying and installing block closing again"
+    );
+    drop(fetch);
+    drop(guard);
+    assert!(job.blocks_close());
+    job.set_phase(Phase::Installed);
+    assert!(!job.blocks_close());
+
+    // A failed package fetch also ends the download phase, and a panic cannot leave it set.
+    let flag = Arc::new(AtomicBool::new(false));
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = Downloading::start(&flag);
+        assert!(flag.load(Ordering::SeqCst));
+        panic!("worker dies mid-download");
+    }));
+    assert!(panicked.is_err());
+    assert!(!flag.load(Ordering::SeqCst));
+}

@@ -35,8 +35,14 @@ pub const DM_DONE: &str = "Copied. Paste it into the DM and say what's wrong.";
 pub const GITHUB_OPENED: &str = "The GitHub form opened in your browser. Never attach the design.";
 /// The folded section with the anonymous summary, the AI prompt and Diagnose.
 pub const MORE: &str = "More";
+/// The secondary button beside the GitHub link: review, then upload to the cloud inbox.
+pub const CLOUD_REPORT_BUTTON: &str = "Review and send report";
+/// The muted label that starts the row of report buttons.
+pub const NOT_ON_DISCORD: &str = "Not on Discord?";
+/// Why the cloud button is disabled while the file is still converting.
+pub const CLOUD_REPORT_WAIT: &str = "Available when this file finishes";
 /// Shown once a claim code is copied for updates on a sent report.
-pub const UPDATES_COPIED: &str = "A claim code is copied. Join our Discord server (step 1) if you \
+pub const UPDATES_COPIED: &str = "A claim code is copied. Join our Discord (step 1) if you \
      haven't, then paste the code on its own in Dutchy's DM to get updates on this report.";
 /// The bottom bar's line after Stop.
 pub const STOPPING: &str = "Stopping the converter and its children. No other file starts.";
@@ -61,6 +67,10 @@ pub struct Card<'a> {
     /// What happened when its button was last pressed, shown instead of the hint.
     pub done: Option<&'a str>,
 }
+
+/// Titles that replace the cards' own, so a screenshot test can show long translations.
+#[cfg(feature = "test-support")]
+pub static TITLES_FOR_TEST: std::sync::Mutex<Option<[String; 3]>> = std::sync::Mutex::new(None);
 
 /// The narrowest a card gets before the cards wrap onto another line.
 const MIN_CARD_WIDTH: f32 = 175.0;
@@ -91,11 +101,20 @@ pub fn cards(
         ui.columns(across, |columns| {
             for (column, (ui, card)) in columns.iter_mut().zip(chunk).enumerate() {
                 let number = line * across + column + 1;
+                #[cfg(feature = "test-support")]
+                let title_text = TITLES_FOR_TEST
+                    .lock()
+                    .ok()
+                    .and_then(|titles| titles.as_ref().and_then(|t| t.get(number - 1).cloned()))
+                    .unwrap_or_else(|| card.title.to_owned());
+                #[cfg(not(feature = "test-support"))]
+                let title_text = card.title.to_owned();
                 let natural_id = base.with(("natural", number));
                 let natural = ui
                     .data(|data| data.get_temp::<f32>(natural_id))
                     .unwrap_or(0.0);
                 let spare = (tallest - natural).max(0.0);
+                let button_id = base.with("button-height");
                 let advice = card.button.is_none();
                 let frame = if advice {
                     Frame::new()
@@ -111,18 +130,21 @@ pub fn cards(
                         ui.set_width(ui.available_width());
                         theme::compact_rows(ui);
                         let top = ui.cursor().top();
-                        ui.horizontal(|ui| {
+                        // One row each for the title, the button and the note, the same height
+                        // in every card, so they line up whatever the title's length.
+                        ui.horizontal_top(|ui| {
                             badge(ui, p, number, advice);
-                            ui.add(
-                                egui::Label::new(RichText::new(card.title).strong().color(p.ink))
-                                    .wrap(),
-                            );
+                            fit_title(ui, p, &title_text);
                         });
-                        ui.add_space(spare);
                         if let Some((label, step)) = card.button {
-                            if ui.add(filled(p, label)).clicked() {
+                            let response = ui.add(filled(p, label));
+                            ui.data_mut(|data| data.insert_temp(button_id, response.rect.height()));
+                            if response.clicked() {
                                 pressed = Some(step);
                             }
+                        } else {
+                            let height = ui.data(|data| data.get_temp::<f32>(button_id));
+                            ui.add_space(height.unwrap_or(0.0));
                         }
                         // Left-aligned: a justified column would stretch the gaps between words.
                         ui.with_layout(Layout::top_down(Align::Min), |ui| match card.done {
@@ -133,6 +155,7 @@ pub fn cards(
                                 ui.label(RichText::new(card.hint).small().color(p.tide));
                             }
                         });
+                        ui.add_space(spare);
                         let height = ui.cursor().top() - top - spare;
                         ui.data_mut(|data| data.insert_temp(natural_id, height));
                         measured = measured.max(height);
@@ -146,6 +169,30 @@ pub fn cards(
         ui.ctx().request_repaint();
     }
     pressed
+}
+
+/// A card's title in a row two lines tall at the normal size, the same in every card so the
+/// buttons below line up. A title past two lines ends in an ellipsis, with the full title on
+/// hover. The font never shrinks.
+fn fit_title(ui: &mut egui::Ui, p: &Palette, title: &str) {
+    const LINES: usize = 2;
+    let width = ui.available_width();
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let line = ui.fonts_mut(|fonts| fonts.row_height(&font));
+    ui.set_min_height(LINES as f32 * line);
+    let cut = ui
+        .painter()
+        .layout(title.to_owned(), font.clone(), p.ink, width)
+        .rows
+        .len()
+        > LINES;
+    let mut job = egui::text::LayoutJob::simple(title.to_owned(), font, p.ink, width);
+    job.wrap.max_rows = LINES;
+    job.wrap.overflow_character = Some('\u{2026}');
+    let response = ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Wrap));
+    if cut {
+        response.on_hover_text(title);
+    }
 }
 
 /// The step's number in a circle: filled for a step with a button, outlined for advice.
@@ -188,13 +235,6 @@ pub fn filled<'a>(p: &Palette, label: &'a str) -> egui::Button<'a> {
 /// A button drawn as a link, for the backup route and other quiet actions.
 pub fn link(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
     ui.add(egui::Button::new(RichText::new(label).color(p.spectre).underline()).frame(false))
-}
-
-/// A small backup link below the primary reporting steps.
-pub fn backup_link(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
-    ui.add(
-        egui::Button::new(RichText::new(label).small().color(p.spectre).underline()).frame(false),
-    )
 }
 
 /// The message copied for Dutchy's DM about a finished file: what happened, the details line

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cadmpeg_ir::features::FinitePoint3;
+use cadmpeg_ir::features::geometry::FinitePoint3;
 use cadmpeg_ir::geometry::analytic::{
     CircleCurve, ConeSurface, CylinderSurface, DegenerateCurve, EllipseCurve, HyperbolaCurve,
     LineCurve, ParabolaCurve, PlaneSurface, SphereSurface, TorusSurface,
@@ -114,6 +114,7 @@ impl Copies<'_> {
                     source_file: part.source_file.clone(),
                     assembly: None,
                     source_step: part.source_step.clone(),
+                    merge_bodies: part.merge_bodies,
                 };
                 if mirrored {
                     copy.name = format!("{} (mirrored)", part.name);

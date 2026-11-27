@@ -539,7 +539,14 @@ pub(crate) fn fetch_with_budget(
         Some(progress),
     );
     if report.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
-        Ok(out)
+        // The bundle was written under the link's id; it goes by the design's name once
+        // it is whole. The cache of fetched replies is elsewhere, so a resumed fetch
+        // does not depend on this name. A failed rename keeps the complete id-named file.
+        let titled = report
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|title| dutchman::onshape::retitle(&out, title).ok());
+        Ok(titled.unwrap_or(out))
     } else {
         Err(failure_message(&report))
     }
@@ -547,11 +554,13 @@ pub(crate) fn fetch_with_budget(
 
 /// The text the Results card shows for a failed fetch.
 fn failure_message(report: &serde_json::Value) -> String {
-    if report
-        .pointer("/error/code")
-        .and_then(serde_json::Value::as_str)
-        == Some("onshape/budget")
-    {
+    // A fetch the user stopped is shown like a stop at the request limit: resumable.
+    if matches!(
+        report
+            .pointer("/error/code")
+            .and_then(serde_json::Value::as_str),
+        Some("onshape/budget" | "onshape/stopped")
+    ) {
         let calls = report
             .get("calls")
             .and_then(serde_json::Value::as_u64)

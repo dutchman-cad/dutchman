@@ -13,6 +13,7 @@ pub struct Request {
     pub body: Vec<u8>,
 }
 
+#[derive(Clone)]
 pub struct Response {
     pub status: u16,
     pub headers: BTreeMap<String, String>,
@@ -130,6 +131,13 @@ pub(super) struct Session<'a, C> {
 pub trait FetchProgress {
     /// After each call is sent: the calls so far, and the estimated total once it is known.
     fn calls(&mut self, sent: u32, needed: Option<u32>);
+    /// Asked before each call is sent: true ends the fetch with [`ErrorKind::Stopped`].
+    fn stop_requested(&mut self) -> bool {
+        false
+    }
+    /// Once, as soon as the document name and the linked tab's name are known: the title
+    /// the design goes by ([`super::bundle_title`]). Costs no call.
+    fn named(&mut self, _title: &str) {}
 }
 
 /// Calls an automatic budget starts with: document name, tab list, microversion checks.
@@ -166,6 +174,11 @@ impl<C: HttpClient> Session<'_, C> {
         for attempt in 0..=3 {
             if self.calls >= self.max_calls {
                 return Err(self.error(ErrorKind::Budget, "Onshape call budget reached; raise it with --max-calls (MCP: max_calls) to continue using cached replies."));
+            }
+            if let Some(progress) = self.progress.as_mut() {
+                if progress.stop_requested() {
+                    return Err(self.error(ErrorKind::Stopped, "Fetch stopped. What it fetched is kept; fetch the same link again to continue with only the missing calls."));
+                }
             }
             let date = httpdate::fmt_http_date(self.client.now());
             let nonce = self.client.nonce()?;

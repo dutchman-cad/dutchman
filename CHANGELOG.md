@@ -106,7 +106,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Safely share identical companion designs between parallel conversions while preserving edited companions.
 - Explain which custom Onshape feature stops history and why its frozen shape cannot be proved, while keeping the final shape.
 - Keep Onshape ellipses, repeated trimmed regions, blends, revolve axes and holes editable, and thin walls editable when their stored controls and body selections resolve.
-- Carry symmetric extrudes and variable expressions with their units; convert sketch-only and multi-part Part Studios with part names and colours.
+- Carry symmetric extrudes and variable expressions with their units; convert sketch-only and multi-part Part Studios with part names and colors.
 - Prove up-to-next extents from stored input faces and region holes from closed boundaries; keep the final shape with a named loss when required data is missing.
 - Keep default-plane sketches and explicit sketch-region extrudes editable when Onshape bundles use compressed REST queries.
 - Keep face-attached Onshape sketches editable when their saved placement is complete, including at the start of a history.
@@ -202,9 +202,9 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   and keeps the SolidCraft version that checked the file. The secondary pills are
   Anonymous report and GitHub issue; private bundles use their own size for sending.
 - Stop promptly ends the converter and its children; partial histories and large
-  estimates show in the warning colour.
+  estimates show in the warning color.
 - Keep problem reporting visible with Advanced and output choices expanded; choose a result to report that file in the shared panel.
-- Show partial history, geometry-only and degraded results in the warning colour.
+- Show partial history, geometry-only and degraded results in the warning color.
 - Keep Discord first, with a small GitHub backup link and anonymous review and file diagnosis reachable under More.
 - Keep insecure share links refused with an error that omits the original link.
 - Check missing-SolidCraft guidance even on machines that find its CLI on PATH.
@@ -220,7 +220,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Open larger assemblies such as a 41-part robot arm in the SolidCraft plugin.
 - Refuse designs too large for the plugin immediately and direct them to the Dutchman app.
 - Include a theme-aware Dutchman ship icon in the SolidCraft plugin package.
-- Name partial successes “Partly converted” and geometry-only results “Converted, no history”, keeping their amber colour.
+- Name partial successes “Partly converted” and geometry-only results “Converted, no history”, keeping their amber color.
 - Move problem reporting closer under the output folder when one result leaves room.
 
 ### Command line and install
@@ -300,16 +300,16 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### cadmpeg
 
-- Keep definition-level body and face colours with the updated CAD reader.
-- Report colours and attributes that belong to one placed instance or an evaluation state instead
+- Keep definition-level body and face colors with the updated CAD reader.
+- Report colors and attributes that belong to one placed instance or an evaluation state instead
   of applying them to every placement.
 - Keep native conversion and editable history working with cadmpeg's CADIR v11.
 - Keep diagnostic checks and minimum reproductions working with v11 geometry.
-- Preserve trimmed face colours and point-to-line sketch dimensions with v11 geometry.
+- Preserve trimmed face colors and point-to-line sketch dimensions with v11 geometry.
 
 ### Docs
 
-- The cadmpeg canary issue lists the first compiler errors; colour codes in the build log left
+- The cadmpeg canary issue lists the first compiler errors; color codes in the build log left
   its error block empty.
 - ARM merge queue checks use a faster linker and record link times for diagnosing slow builds.
 - Linux checks skip lengthy toolchain deletion when the runner already has ample free disk.
@@ -337,7 +337,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 ### Formats
 
 - Fusion files retain more component placements and keep part history past assembly-only steps.
-- SolidWorks reading recognises more compact extrusion operations.
+- SolidWorks reading recognizes more compact extrusion operations.
 - FreeCAD faces keep their internal edges.
 - Fusion files keep more part history: Combine, Sweep, path pattern, sphere, Emboss, contour
   flange, unfold and refold steps are read, and body ownership and component placements
@@ -349,7 +349,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - FreeCAD macros: a dimension driven by a parameter now rebuilds with the parameter's value;
   FreeCAD stopped such a rebuild with "syntax error".
 - A Fusion design that holds only mesh bodies (an imported STL, OBJ or 3MF) now says how many mesh bodies it has and that Dutchman does not convert meshes yet, instead of "no geometry could be read". Convert the meshes to solids in Fusion and save a new copy.
-- Fusion bodies you hid stay hidden in SolidCraft 0.42 and newer, which now honours the hidden
+- Fusion bodies you hid stay hidden in SolidCraft 0.42 and newer, which now honors the hidden
   mark Dutchman writes for them; the conversion note says so.
 
 ### History
@@ -478,7 +478,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - A sketch region whose holes cross each other (a nut pocket drawn over a bolt hole) is now
   found. SolidCraft refused the extrude with "unknown complete source profile", because the
   region's hole is the union of the two; the region is now named by a point inside it.
-- Keep partial history unverified when any source body centre rests on incomplete edge evidence, even if every body has a centre entry.
+- Keep partial history unverified when any source body center rests on incomplete edge evidence, even if every body has a center entry.
 - A trimmed sketch region bounded partly by a piece of a line is now found. The piece was read
   as a distance along the line instead of the fraction of it that cadmpeg gives, so the region
   never closed. Such regions are now named by a point inside them, and their unused curves are
@@ -486,7 +486,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - A loft section that takes several loops of one sketch is no longer mapped: the source can fill the outer loop where the loops read as a ring, so the rebuilt loft could have a hole the original does not.
 - A Fusion feature whose profile selection stays native, in a sketch with one profile loop that other curves divide into several regions, now stops the history there instead of using every region. Before, a cut through such a sketch could remove the whole part.
 - A feature that takes a list of a sketch's profiles no longer keeps that sketch's unused curves
-  solid. A line in no profile (one from the origin to the centre of a ring, say) is now written as
+  solid. A line in no profile (one from the origin to the center of a ring, say) is now written as
   construction, as it already was for features that select regions, instead of splitting the
   profile so that SolidCraft refused the extrude ("unknown complete source profile").
 - Write a spline SolidCraft cannot take directly as a chain of exact spline pieces instead of
@@ -547,7 +547,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Inventor: more history forms decode, among them more fillet forms (no longer left native), state-2 Thicken face selectors, full-turn revolves, through-all surface extrusions over a solid body, work-plane body trims, and mirror planes from work planes.
 - Fusion: face and fillet edge selections are read from the history their scope is bound to, and Cut and reordered Coil scopes decode.
 - SolidWorks: closed faces without edges and ring edges are kept, more offset surfaces convert, and source bodies used by derived or mirrored geometry no longer appear as current bodies.
-- Fusion: more threads, holes, healed face deletions, extrudes, fillets, shells, lofts, pipes, and patterns decode for history mapping. Sketches keep their timeline names, and historical body centres use sampled edges with incomplete evidence identified.
+- Fusion: more threads, holes, healed face deletions, extrudes, fillets, shells, lofts, pipes, and patterns decode for history mapping. Sketches keep their timeline names, and historical body centers use sampled edges with incomplete evidence identified.
 - Inventor: fixed-spacing rectangular body patterns and more face selections decode for history mapping. CATIA: more shared sheet boundaries and sheet trims convert.
 
 ### Docs
@@ -638,7 +638,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   are folded under **Help us fix it**.
 - The small text in the report step boxes is left-aligned instead of justified with wide gaps.
 - A converted result with any loss (history not kept or only partly kept, features flattened or
-  blocked, parts left unplaced, colours dropped) now has a visible **Report this file…** button
+  blocked, parts left unplaced, colors dropped) now has a visible **Report this file…** button
   in its card. It opens the report section with **Review and send report**.
 - **Ask your AI about this file** now copies a short paragraph naming your file, the
   converted design, its saved report, and the log of that run. The prompt also opens in a
@@ -660,7 +660,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - The desktop app now finds SolidCraft the way the command line does. A SolidCraft that was
   slow to answer when the app opened (a first start after installing) is no longer treated as
   missing for the whole session: opening the SolidCraft version window searches again. A
-  remembered `solidcraft-cli` that no longer answers is ignored in favour of the automatic
+  remembered `solidcraft-cli` that no longer answers is ignored in favor of the automatic
   search, and the window lists the places that were searched when nothing is found.
 - The Update button now asks GitHub for the latest release each time you press it, so it never offers an older version than the newest one. It shows "Checking for updates…", then the new version, "Dutchman is up to date", or why the check failed with a Retry button.
 - Update checks read GitHub's releases feed instead of its rate-limited API.
@@ -702,7 +702,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - A feature SolidCraft refuses when it replays the history is now reported as
   `SolidCraft refused feature "X": ...`, without SolidCraft's internal site number, instead of
   reading like a Dutchman mapping limit. The JSON feature entry gains `source`, `category`,
-  `upstream` and `reason_raw`; a fillet larger than its neighbouring faces has its own category
+  `upstream` and `reason_raw`; a fillet larger than its neighboring faces has its own category
   with a link to the SolidCraft issue. The anonymous report carries the category and link.
   The same wording is used in the history summary, the verification reason and per-part
   reasons.
@@ -733,7 +733,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   A base feature written with its body as the design ends isn't compared, since the source's
   state after it is the body before later features changed it.
 - Where a Fusion file marks a history state's body box as exact, the partial-history body check
-  compares its centre within 0.5 mm or 1% of the body's size, rather than half its size.
+  compares its center within 0.5 mm or 1% of the body's size, rather than half its size.
 
 ### cadmpeg
 
@@ -748,7 +748,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   transitions, split planes, absorbed bodies and hole-loop profiles are resolved, construction axes
   become datum axes, surface patches become filled surfaces, and compact Surface Extend forms decode.
 - Inventor reads Mirror source bodies, more hole and edge selector forms, derived stored
-  bodies, sketch box members and Thicken face operands; Creo transfers geometric tolerances; NX assembly placements and CATIA face colours are
+  bodies, sketch box members and Thicken face operands; Creo transfers geometric tolerances; NX assembly placements and CATIA face colors are
   read more correctly.
 - Fusion: extrude profiles are proven from their end caps and recipe operands are bound per
   counted operand, so extrudes no longer sweep the wrong sketch region where cadmpeg picked one
@@ -772,7 +772,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   projected joint's assumed activation is reported, and a same-component body copy and paste
   reads as a move with one copy.
 - Inventor: polygon sketches close, parameters keep their values when the unit type is
-  unrecognised, bodies are named from the feature that owns them, fillet and chamfer input
+  unrecognized, bodies are named from the feature that owns them, fillet and chamfer input
   edges resolve on elliptical, spline and bounded ellipse carriers, with secondary names and
   through edge revisions, and attached plates in a rotated frame are read. Planar curve sketch
   members and construction lines with a conflicting carrier are kept native instead of misread.
@@ -784,7 +784,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 - Troubleshooting explains how to replay a converted history by hand and what a `.sc` design
   holds.
-- Contributing explains how to build against a local cadmpeg, how to build a fast optimised
+- Contributing explains how to build against a local cadmpeg, how to build a fast optimized
   profile for checking one file, and that tests for bugs found on private files use generic
   dimensions and synthetic geometry.
 
@@ -801,10 +801,10 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### Assemblies
 
-- Fewer false "colour dropped" notes on Fusion assemblies: colour assignments that do reach the design are no longer reported as lost, including on parts placed more than once and beside a hidden editable history copy. No visible change on the public test assemblies.
-- Put face colours on the right faces where a pick landed on the wrong arc of a cylinder or inside a hole, for example on painted stepper motor bodies.
-- Keep body colours when a component also contains saved wire edges or a body that cannot be written.
-- Say plainly when a colour's target is missing from the decoded design.
+- Fewer false "color dropped" notes on Fusion assemblies: color assignments that do reach the design are no longer reported as lost, including on parts placed more than once and beside a hidden editable history copy. No visible change on the public test assemblies.
+- Put face colors on the right faces where a pick landed on the wrong arc of a cylinder or inside a hole, for example on painted stepper motor bodies.
+- Keep body colors when a component also contains saved wire edges or a body that cannot be written.
+- Say plainly when a color's target is missing from the decoded design.
 - Change the Fusion assembly default to Smart part positions, accepting current poses only when joints, bounds, and repeated inserted designs agree. Use `--part-positions first-placed` to restore the old placement choice.
 - Add Part positions choices Smart, As Fusion last showed them, and As first placed to the CLI, remembered desktop Advanced settings, and MCP. Keep `--stored-placements` as a first-placed alias.
 - Report the selected mode, placement rule counts, and fallback reasons in JSON and an Info note.
@@ -812,7 +812,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Prefer decoder-bound saved-scene displayed poses in Smart and As Fusion last showed them, without current-pose guards; skip ambiguous and unbound rows and support decoders without the arena.
 - Keep joints closed at displayed poses by deriving missing holder placements from agreeing children, and report derived holders and conflicts.
 - Keep groups whose joints already close at their stored poses before placing other joined parts, and prefer a non-identity stored world pose when starting an unplaced joint group.
-- Carry the smallest connected holder or its origin body assembly when a joint places it, leaving unrelated children of identity organisers where they belong.
+- Carry the smallest connected holder or its origin body assembly when a joint places it, leaving unrelated children of identity organizers where they belong.
 - Resolve isolated child pose markers within a posed component against already closing joints, while preserving explicit holder and independently contained poses.
 - Apply joint offsets and angular offsets in the second connector's frame, keeping joined parts at their stored poses when those frames already close.
 - Keep slider translation offsets and use the matching distance direction for aligned connector frames.
@@ -832,7 +832,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   version panel can choose the `solidcraft-cli` to check with and remembers it.
 - When only the SolidCraft app is found, the panel says why that is not enough and which Windows
   downloads include `solidcraft-cli`.
-- Open the window at a size that shows the whole main screen at once, centred on the screen, with no scrolling. A window size you saved is still restored.
+- Open the window at a size that shows the whole main screen at once, centerd on the screen, with no scrolling. A window size you saved is still restored.
 - Show Designs and Output folder beside Results in a wide window; narrow windows keep one column.
 - Scroll long results inside the Results column, and a long list of designs inside Designs, instead of scrolling the whole screen.
 - Tighten the spacing of the options so more fit in view, and show the page scrollbar only when it is needed.
@@ -852,14 +852,14 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - The memory warning shows the same figure as the file's row: the memory converting needs. It
   showed about twice that, adding a history check that is skipped when it would not fit.
 - Name the original program in the Part positions choice, such as "As Inventor last showed them", when every queued design comes from one program, and say "As last shown in the original program" otherwise.
-- Report converted files with lost features, wrong placement or missing colours from a section that starts closed on the result card.
+- Report converted files with lost features, wrong placement or missing colors from a section that starts closed on the result card.
 - Review the exact anonymous metadata before sending, or use the existing private-send steps to share the file.
 - Preview and send converted-file summaries with `dutchman report` or the MCP reporting tools.
 - Open at the default size when the saved window size is too small to use, for example after Dutchman Convert was closed while minimized, instead of restoring a window about 100 pixels wide.
 - Find the right diagnostic log on each result card with Show this run's log and Copy log to…;
   batch cards share one log and retries keep the other cards linked to their original run.
 - Include date, time, Dutchman version and result in automatic log names, keeping running
-  names after crashes and recognising older logs when keeping the newest ten.
+  names after crashes and recognizing older logs when keeping the newest ten.
 - Open the right diagnostics folder on Windows and select the run's log with native paths.
 - Identify the run's log in report review and copied Discord messages, explain that it has
   no design names or contents, and show an advisory notice for logs from another version.
@@ -873,8 +873,8 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### Reports
 
-- Count dropped colours by cause in anonymous reports and diagnostic logs: wire bodies or saved free edges, unmatched face picks, absent targets, unwritable bodies and other mapping gaps.
-- Keep retained colours out of dropped-assignment counts and omit appearance identifiers and example messages from anonymous cause entries.
+- Count dropped colors by cause in anonymous reports and diagnostic logs: wire bodies or saved free edges, unmatched face picks, absent targets, unwritable bodies and other mapping gaps.
+- Keep retained colors out of dropped-assignment counts and omit appearance identifiers and example messages from anonymous cause entries.
 - Diagnostic logs show anonymous per-member Fusion archive preparation timings for nested scanning, layer classification and reference metadata extraction before decoding starts.
 - Diagnostic logs time each step of preparing a Fusion archive: scanning it, classifying its
   documents, and opening the session.
@@ -896,9 +896,9 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Empty regions without shells no longer consume body appearance targets on stored base
   features. Their STEP shapes and names stay aligned, preserving later editable features.
   Other shape-count mismatches omit explicit appearance targets while keeping history.
-- A cylindrical face with its own colour (holes, bosses, rounded edges) now gets that colour in
+- A cylindrical face with its own color (holes, bosses, rounded edges) now gets that color in
   the written design, placed by a point on the face. Before, only planar faces did and the
-  colours of curved faces were reported as left out.
+  colors of curved faces were reported as left out.
 - Delete face maps to SolidCraft's delete-face feature when cadmpeg resolves the faces in the
   feature's own input topology (planar and cylindrical faces, with the heal setting). When the
   selection is still native, the history note now says so instead of "not mapped yet".
@@ -959,7 +959,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### Assemblies
 
-- Reduce conversion time for assemblies with many coloured faces, including with the fast preset.
+- Reduce conversion time for assemblies with many colored faces, including with the fast preset.
 - Designs compress their stored geometry, so a large assembly stays well under SolidCraft's design file limit: a public 88-component assembly went from 333 MB to 10 MB.
 - Joints into a Fusion component stored at the identity move the whole component only when internal joints or file poses bind the rest of what it holds to the joined part, the joints that reach into it agree on where it goes, and the file does not already place both joined parts. An outer joint that places a part inside from something placed (a part joined to the origin) keeps that part where it puts it. RailCore II 300ZL and the Voron 2.4 keep every occurrence where 0.2.5 put them; the robot arm's gripper still moves onto the arm.
 - Mirrored placements retain reflected component geometry in shared mirrored definitions,
@@ -977,7 +977,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - A component a joint places now carries the parts the file poses inside it. Before, an inserted
   design joined to the rest of an assembly by a part inside it was moved to that joint, but the
   parts the file poses inside it stayed at their old world positions, so they were left away from
-  the rest of the design while their neighbours moved.
+  the rest of the design while their neighbors moved.
 - A converted assembly writes each sketch under the part that owns it instead of in the
   assembly root, once per part however many times it is placed, including sketches of a
   component that holds no bodies. Sketches with no owner, such as those of the design's own
@@ -996,7 +996,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### Desktop app
 
-- Show copied-report notices in the success colour and clear them on the next action.
+- Show copied-report notices in the success color and clear them on the next action.
 - Offer only available report choices, use plain consent wording, and show Retry after a failed send.
 - Keep the app header during folder checks, clarify the part selector, and keep the page scrollbar visible to reach every private-send option.
 - A failed file's card now shows how to send the file privately: join the Discord server, then
@@ -1014,7 +1014,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   build that reads only some formats, such as the SolidCraft importer plugin, links only their
   cadmpeg codecs.
 - New `dutchman diagnose --narrow FILE` runs the whole narrowing by itself: it ranks the parts,
-  isolates a failing part, alone and then with its neighbours, bisects its history to the first
+  isolates a failing part, alone and then with its neighbors, bisects its history to the first
   failing feature, and records the failure's signature (kind of feature, options, profile shape,
   and error code; never names, paths, or real dimensions). Each step has its own limits, it says
   `step 3 of 5: narrowing part 17 (feature 41 of 80)` as it goes, and running it again resumes
@@ -1078,7 +1078,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - MCP adds anonymous `diagnose`, `diagnose_narrow`, `convert_part`, `stop_at_feature`,
   `same_failure` and `make_report` tools, with a paste-in troubleshooting prompt. Reports
   stay local until the user chooses to share them.
-- Keep one millimetre placement differences detectable on large bodies by capping the advisory bounds and placement allowance at 0.5 mm.
+- Keep one millimeter placement differences detectable on large bodies by capping the advisory bounds and placement allowance at 0.5 mm.
 - Check assembly placements and compare bodies in the selected joint pose so intentional joint placement does not produce look-wrong findings.
 - Flag toroidal faces without trim loops when they share a shell with other faces; allow whole tori in their own shells.
 - Count empty leaf placements separately from placements with geometry in assembly
@@ -1129,7 +1129,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Convert FreeCAD TechDraw pages to DXF with `convert --to dxf`, one file per page,
   or select a page with `--page NAME`. Keep neutral view curves, visible and hidden
   line types, dimension labels and measurements, annotations, template frames, and
-  resolved title-block text in millimetre page space. Report unsupported content
+  resolved title-block text in millimeter page space. Report unsupported content
   and entity counts per page in JSON.
 - Leave out Fusion bodies kept only as consumed tools or removed bodies, with their exclusive
   geometry and an Info note. Keep user-hidden component members available.
@@ -1172,8 +1172,8 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Keep child placements used to resolve the poses of inserted Fusion designs, and suppress
   conflicting joints so those components stay in place when SolidCraft opens the design.
 - Keep body and face appearance bindings on component definitions, including imported and
-  stored solids, so every placement inherits their colours and opacity. Write uniformly
-  painted faces as a body colour, retain mixed face looks, and report bindings left out.
+  stored solids, so every placement inherits their colors and opacity. Write uniformly
+  painted faces as a body color, retain mixed face looks, and report bindings left out.
 - Slice component models in parallel and reuse identical empty assembly holders. Prepare
   SolidCraft assembly parts in parallel, including per-part replay checks, while
   preserving design bytes and report order. Bound workers with `--threads N` on `convert`,
@@ -1213,7 +1213,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 - Add Fast, Standard, and Full conversion presets, with history, reference-sketch, and joint
   choices. Standard budgets assembly history against available memory; Full never drops it
-  for memory. FreeCAD output honours the history choice only.
+  for memory. FreeCAD output honors the history choice only.
 - Estimate conversion memory and time before decoding. Offer a lighter preset interactively,
   or refuse an over-budget run with exit 2; `--yes` disables prompts and `--no-memory-check`
   bypasses the guard. JSON reports include estimates and effective choices. MCP accepts the
@@ -1638,13 +1638,13 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 - Convert CATIA `.CATPart`, Creo View `.pvz`, Rhino `.3dm`, ACIS `.sat`/`.sab`/`.smt`/`.smb`,
   and STEP `.step`/`.stp` through the geometry path. Creo and NX parts (`.prt`, including
-  numbered Creo saves) are recognised by contents and report when geometry reading is not
-  supported yet. SolidWorks assemblies remain recognised without a reader.
-- IGES `.igs`/`.iges` files are recognised and refused before decoding, with directions to open
+  numbered Creo saves) are recognized by contents and report when geometry reading is not
+  supported yet. SolidWorks assemblies remain recognized without a reader.
+- IGES `.igs`/`.iges` files are recognized and refused before decoding, with directions to open
   them in SolidCraft directly (File > Import). SolidCraft's own importer sews their faces into
   solids; cadmpeg does not yet. IGES refusals do not invite test files.
 - The CLI, JSON reports, and desktop app show whether each format reads geometry, opens without
-  geometry, is recognised without a reader, or should be opened in SolidCraft directly.
+  geometry, is recognized without a reader, or should be opened in SolidCraft directly.
   `dutchman formats` lists that status alongside what Dutchman converts. After a refused
   conversion (except IGES) or a history that did not fully map, one invitation links to
   test-file recipes and private help with wrong conversions. `--quiet` hides it; JSON output
@@ -1821,7 +1821,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 - Holes: counterbores and countersinks at a sketch's points, through all or to a
   flat-bottomed depth; holes at a directed position without a sketch, on an axis through the
-  cap of the extrusion before them, at selected sketch points and centres, with a drill-point
+  cap of the extrusion before them, at selected sketch points and centers, with a drill-point
   form, and ending at that earlier cap. Tapered holes, and counterbores or countersinks with a
   drill point, are not mapped yet.
 - Extrudes that start or end at a planar face of an earlier body, one-sided extrudes with a
@@ -1830,7 +1830,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   into surfaces; taper, corner transitions and changing sections are not mapped yet.
 - Lofts end at a point or vertex, and several sections may be profiles of one sketch.
 - Coils map to SolidCraft coils: along any axis, up or down it, of round or square section,
-  inside, centred on or outside their path, turning either way. The report says why a tapered
+  inside, centerd on or outside their path, turning either way. The report says why a tapered
   coil, a flat spiral or a coil of triangular section is not mapped: SolidCraft's coil has no
   such option. When cadmpeg's STEP writer leaves out a helix surface (the swept face of a
   coil or thread), the report says so in plain words (`Degraded`, `geometry`).
@@ -1838,10 +1838,10 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Selected sketch profiles that cross themselves map through the regions they split into;
   a native profile pick resolves when even-odd nesting gives one region with its holes.
 - A solid line drawn across a sketch profile from one point of its boundary to another, such
-  as the diagonals of an Inventor centre-point rectangle, is written as construction when the
+  as the diagonals of an Inventor center-point rectangle, is written as construction when the
   sketch's profile table takes that profile whole, and the report counts them (`Info`).
 - More holes map: at a directed position without a sketch, on an axis through the cap of the
-  extrusion before them, at selected sketch points and centres, with a drill-point form, and
+  extrusion before them, at selected sketch points and centers, with a drill-point form, and
   ending at that earlier cap. A tapered hole is not mapped yet.
 
 - The report says why a tapered coil, a flat spiral or a coil of triangular section is not
@@ -1860,21 +1860,21 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   that share a sketch.
 
 - Coils map to SolidCraft coils: along any axis, up or down it, of round or square section,
-  inside, centred on or outside their path, turning either way, by turns and pitch, turns and
+  inside, centerd on or outside their path, turning either way, by turns and pitch, turns and
   height, or height and pitch. Tapered coils, flat spirals and triangular sections are not
   mapped yet.
 
 - Circular feature patterns over a partial turn now map with copies at both ends of the span.
 - Counterbore and countersink holes at a sketch's points map to SolidCraft holes, through all
   or to a flat-bottomed depth. One with a drill point at its bottom is not mapped yet.
-- Coils map to SolidCraft coils: up the Z axis, of round or square section, inside, centred on
+- Coils map to SolidCraft coils: up the Z axis, of round or square section, inside, centerd on
   or outside their path, turning either way, by turns and pitch, turns and height, or height and
   pitch. Tapered coils, flat spirals and triangular sections are not mapped yet.
 - When cadmpeg's STEP writer leaves out a helix surface (the swept face of a coil or thread),
   the report says so in plain words (`Degraded`, `geometry`): the solid it bounds opens without
   it, with no volume.
 - A solid line drawn across a sketch profile from one point of its boundary to another, such
-  as the diagonals of an Inventor centre-point rectangle, is written as construction when the
+  as the diagonals of an Inventor center-point rectangle, is written as construction when the
   sketch's profile table takes that profile whole: solid, it would split the profile, and
   SolidCraft found no profile to match. cadmpeg does not yet say which Inventor sketch curves
   are construction. The report says how many lines were written so (`Info`).
@@ -2003,7 +2003,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   thickness, on the sketch's side the source puts them. A flange thick on both sides of its
   sketch is not mapped yet.
 
-- Fusion base features (bodies a timeline holds as they are, modelled directly or imported)
+- Fusion base features (bodies a timeline holds as they are, modeled directly or imported)
   map onto SolidCraft Import features at their place in the timeline, each holding its own
   bodies as STEP, so the features after them keep their history instead of the whole design
   being flattened. A base body that later features change is caught by the check against
@@ -2049,7 +2049,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Nodes that only order the feature tree (folders, FreeCAD's PartDesign Body, comment and
   annotation containers) are counted as not needed instead of stopping the history.
 
-- Simple holes drilled at a sketch's circle centres, arc centres or points map onto
+- Simple holes drilled at a sketch's circle centers, arc centers or points map onto
   SolidCraft holes: through all, or to a depth with a flat end or a drill point. FreeCAD's
   Hole is one; counterbores, countersinks and holes placed on faces are not mapped yet.
 
@@ -2101,7 +2101,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### Reports
 
-- A file with more than 12 losses is summarised by component in the text reports: the design
+- A file with more than 12 losses is summarized by component in the text reports: the design
   first, then each part with its counts and, when its history was flattened, why. `--verbose`
   prints every line. `convert --log FILE` writes the whole report, every loss in full, to a
   file, and `convert-all` writes one for the run to `dutchman.log` in its output folder (or
@@ -2175,7 +2175,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### Feature history
 
-- Lofts guided by one or two rails of sketch curves keep their rails. A loft along a centreline
+- Lofts guided by one or two rails of sketch curves keep their rails. A loft along a centerline
   still flattens, with the reason.
 - Mirrors of earlier features across a plane map onto SolidCraft mirrors.
 - Sphere and torus primitives map onto SolidCraft's (a torus about the Z axis). Boxes and
@@ -2192,7 +2192,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 ### Feature history
 
 - Lofts through profiles of two or more sketches map onto SolidCraft lofts, when they have no
-  guide rails or centreline and are open, smooth and solid.
+  guide rails or centerline and are open, smooth and solid.
 - Sweeps of a sketch profile along sketch curves map onto SolidCraft sweeps: along the whole
   path, square to it or held as drawn, optionally twisted or guided by one rail.
 
@@ -2279,7 +2279,7 @@ The first release that converts designs. Native CAD files are read by
 
 ### Appearances
 
-- Body colours, and planar face colours, carry across: through STEP for imports, and as
+- Body colors, and planar face colors, carry across: through STEP for imports, and as
   SolidCraft looks for replayed bodies, including bodies of parts inside assemblies.
 
 ### Command line

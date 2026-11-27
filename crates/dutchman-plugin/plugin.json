@@ -2,10 +2,14 @@
   "id": "dutchman",
   "name": "Dutchman",
   "version": "0.2.10",
-  "description": "Open Fusion, Inventor, SolidWorks or FreeCAD files with File > Open.",
+  "description": "Open Fusion, Inventor, SolidWorks or FreeCAD files with File > Open. Dutchman is in active development and provided as is. Keep a copy of your designs somewhere else, just in case.",
+  "min_host_version": "0.50.0",
   "capabilities": [
-    "evaluate@0.1",
-    "formats@0.1"
+    "dialog@0.1",
+    "evaluate@0.2",
+    "folders@0.1",
+    "formats@0.2",
+    "user-storage@0.1"
   ],
   "runtime": {
     "module": "dutchman.wasm",
@@ -23,6 +27,7 @@
           "sldasm",
           "fcstd"
         ],
+        "file_first": true,
         "input_schema": {
           "type": "object",
           "x-solidcraft-icon": "icons/dutchman.svg",
@@ -39,6 +44,10 @@
               "title": "Up axis",
               "oneOf": [
                 {
+                  "const": "auto",
+                  "title": "Automatic (stand up when the source says Y-up)"
+                },
+                {
                   "const": "as_is",
                   "title": "As in the file"
                 },
@@ -47,21 +56,28 @@
                   "title": "Stand up (Y-up to Z-up)"
                 }
               ],
-              "default": "as_is",
-              "description": "As is keeps source coordinates. Stand up changes source Y-up to Z-up."
+              "default": "auto",
+              "description": "Automatic stands a design up only when its source states that it is Y-up, and keeps the file's axes when it is Z-up or says nothing. As in the file never rotates. Stand up always changes Y-up to Z-up."
             },
             "include_hidden_bodies": {
               "type": "boolean",
               "title": "Include hidden bodies",
               "default": false,
               "description": "Also include hidden intermediate or consumed shapes that normal conversion leaves out."
+            },
+            "parts_folder": {
+              "type": "string",
+              "title": "Folder with the parts",
+              "format": "directory",
+              "x-solidcraft-grant": "read",
+              "description": "Optional. For an assembly whose parts are not beside it, such as a Fusion export folder: pick the folder that holds them. Dutchman reads that folder for this file only and never writes. Leave it empty to read the folder that holds the file."
             }
           }
         }
       }
     ],
     "limits": {
-      "fuel": 670960576380,
+      "fuel": 100000000000,
       "memory_mib": 2048,
       "deadline_ms": 300000,
       "stack_kib": 16384
