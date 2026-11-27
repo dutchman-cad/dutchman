@@ -2743,10 +2743,16 @@ fn side_path(
             let object = operand.get("object").and_then(Value::as_str).unwrap_or("");
             let prefix = id.strip_suffix(object).filter(|_| !object.is_empty());
             let mut named = id;
-            for key in listed(container.get("occurrence_path"))
+            let path_keys = listed(container.get("occurrence_path"));
+            for (key, from_path) in path_keys
                 .iter()
-                .chain(listed(operand.get("subelements")))
-                .filter_map(Value::as_str)
+                .map(|key| (key, true))
+                .chain(
+                    listed(operand.get("subelements"))
+                        .iter()
+                        .map(|key| (key, false)),
+                )
+                .filter_map(|(key, from_path)| Some((key.as_str()?, from_path)))
             {
                 let below = paths.get(named).map(|located| located.own.as_slice());
                 let within = |located: &Located| {
@@ -2771,6 +2777,18 @@ fn side_path(
                 };
                 if let Some(nested) = nested {
                     named = nested;
+                } else if from_path
+                    && !paths
+                        .keys()
+                        .any(|id| id.rsplit(['#', ':']).next() == Some(key))
+                {
+                    // No occurrence the design places carries this key. Stopping at the one above
+                    // it would apply the joint's frame, stated in the part's space, to the whole
+                    // holder and move it twice.
+                    return Err(
+                        "it names a component inside an inserted design that the design does not place"
+                            .to_owned(),
+                    );
                 }
             }
             let located = paths
@@ -7682,6 +7700,31 @@ mod tests {
             source_posed(&wire),
             BTreeSet::from(["insert".to_owned(), "other".to_owned()])
         );
+    }
+
+    #[test]
+    fn a_joint_naming_a_part_the_design_does_not_place_is_left_out_not_applied_to_its_holder() {
+        let located = |own: Vec<usize>| Located {
+            path: own.clone(),
+            own,
+            shared: None,
+        };
+        let paths: BTreeMap<&str, Located> = BTreeMap::from([
+            ("f3d:model:occurrence#holder", located(vec![0])),
+            ("f3d:model:occurrence#part", located(vec![0, 1])),
+        ]);
+        let worlds = BTreeMap::new();
+        let inserted = BTreeMap::new();
+        let operand = |path: Value| {
+            json!({"container": {"kind": "occurrence", "occurrence": "f3d:model:occurrence#holder",
+                "occurrence_path": path}, "object": "x", "subelements": []})
+        };
+        // A key a placed occurrence carries moves the joint to that occurrence.
+        let placed = side_path(&operand(json!(["part"])), &paths, &worlds, &inserted).unwrap();
+        assert_eq!(placed.0.own, vec![0, 1]);
+        // A key no placed occurrence carries must not stop at the holder.
+        let reason = side_path(&operand(json!(["gone"])), &paths, &worlds, &inserted).unwrap_err();
+        assert!(reason.contains("does not place"), "{reason}");
     }
 
     #[test]
