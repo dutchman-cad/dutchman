@@ -242,6 +242,12 @@ fn input_state_body(
     if selected != held {
         return Err("it selects a body its input state does not hold".to_owned());
     }
+    if ctx.unnamed_bodies {
+        return Err(
+            "its one input body cannot be matched to a named body: an earlier feature made a body the history could not name"
+                .to_owned(),
+        );
+    }
     let mut seen = std::collections::BTreeSet::new();
     let mut live = ctx
         .named_bodies
@@ -577,8 +583,13 @@ pub(super) fn mirror(
         "mirror",
         json!({"features": [], "bodies": bodies, "plane": plane, "combine": combine}),
     );
-    if let (Some(names), Some(fields)) = (names, mapped.as_object_mut()) {
-        fields.insert("body_names".to_owned(), json!(names));
+    match (names, mapped.as_object_mut()) {
+        (Some(names), Some(fields)) => {
+            fields.insert("body_names".to_owned(), json!(names));
+        }
+        // A copy kept beside its seed is a body the history did not name.
+        (None, _) if !combine => ctx.unnamed_bodies = true,
+        _ => {}
     }
     Ok(mapped)
 }
@@ -921,6 +932,34 @@ mod tests {
         assert!(body_names(&source, &selection, &ctx)
             .unwrap_err()
             .contains("one body an earlier feature named"));
+    }
+
+    #[test]
+    fn a_single_historical_input_is_not_the_named_body_beside_an_unnamed_one() {
+        let model = json!({"feature_input_topologies": [{
+            "id": "input", "input_of": "mirror", "bodies": ["input-body"]
+        }]});
+        let mut ctx = Context::testing(&model);
+        ctx.named_bodies
+            .push(("imported".into(), "Imported body".into()));
+        let source = json!({"id": "mirror"});
+        let selection = json!({"kind": "historical", "value": {
+            "state": "input", "bodies": ["input-body"], "native": "seed"
+        }});
+        assert!(body_names(&source, &selection, &ctx).is_ok());
+        // An earlier new body the history could not name may be the one the state holds.
+        ctx.unnamed_bodies = true;
+        assert!(body_names(&source, &selection, &ctx)
+            .unwrap_err()
+            .contains("could not name"));
+        // A new body with no outputs and no stated result is such a body.
+        let mut ctx = Context::testing(&model);
+        let unnamed = json!({"id": "extrude", "outputs": []});
+        assert!(super::super::extrude::body_names(&unnamed, &mut ctx, "new_body").is_none());
+        assert!(ctx.unnamed_bodies);
+        let mut ctx = Context::testing(&model);
+        assert!(super::super::extrude::body_names(&unnamed, &mut ctx, "join").is_none());
+        assert!(!ctx.unnamed_bodies);
     }
 
     #[test]

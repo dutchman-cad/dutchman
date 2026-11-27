@@ -211,7 +211,8 @@ and axis-angle rotations, including explicit pivots, when every selected body ha
 a proven earlier name; in a design state that holds several bodies, a moved body is the
 one earlier named body whose creating feature affected exactly its history slot. CADIR supplies millimeters and radians; the writer never
 infers a transform from final geometry. Unresolved body selections, unresolved
-point-to-point motion, and copied body result identities remain blockers. Bodies
+point-to-point motion, several copies, and copies of several bodies in one move remain
+blockers; a move that copies one body keeps the original and names the copy. Bodies
 available only as final geometry also require a captured pre-move body. Older
 targets keep the original final geometry with a named version refusal.
 
