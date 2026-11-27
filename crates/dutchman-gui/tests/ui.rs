@@ -6349,18 +6349,26 @@ mod test_support;
 /// `in/bracket.f3d` and `in/plate.f3d` converted into `out/` from the window, so each design has
 /// a link record, and the window has looked at the folder.
 fn converted_pair() -> (Harness<'static, App>, tempfile::TempDir) {
+    converted_pair_named(["bracket.f3d", "plate.f3d"], egui::vec2(1100.0, 900.0))
+}
+
+/// `converted_pair` with other design names and window size.
+fn converted_pair_named(
+    names: [&str; 2],
+    size: egui::Vec2,
+) -> (Harness<'static, App>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let inputs = dir.path().join("in");
     std::fs::create_dir_all(&inputs).unwrap();
-    for name in ["bracket.f3d", "plate.f3d"] {
+    for name in names {
         std::fs::copy(fixture("generated_unit_cube.f3d"), inputs.join(name)).unwrap();
     }
     let mut harness = Harness::builder()
-        .with_size(egui::vec2(1100.0, 900.0))
+        .with_size(size)
         .build_eframe(|cc| test_app(cc));
     harness
         .state_mut()
-        .add_inputs([inputs.join("bracket.f3d"), inputs.join("plate.f3d")]);
+        .add_inputs([inputs.join(names[0]), inputs.join(names[1])]);
     harness.state_mut().set_out_dir(dir.path().join("out"));
     harness.state_mut().set_verify(false);
     convert(&mut harness);
@@ -6608,35 +6616,48 @@ fn sync_list_screenshots() {
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
     let mut index = String::new();
-    for (theme, label) in [
-        (ThemePreference::Light, "Day"),
-        (ThemePreference::Dark, "Night"),
+    // The app has no German text yet, so the German set is a test-only simulation: long German
+    // design names under the English labels.
+    for (language, names) in [
+        ("en", ["bracket.f3d", "plate.f3d"]),
+        (
+            "de-DE",
+            [
+                "Außenhülle-Befestigungswinkel-Fertigungsabteilung.f3d",
+                "Maschinenbau-Grundplatte-Schutzabdeckung.f3d",
+            ],
+        ),
     ] {
-        let (mut harness, work) = converted_pair();
-        harness.ctx.set_theme(theme);
-        save_again(&work.path().join("in/bracket.f3d"));
-        std::fs::remove_file(work.path().join("in/plate.f3d")).unwrap();
-        refresh_sync_list(&mut harness, "Source changed");
-        shot(
-            &mut harness,
-            &dir,
-            &mut index,
-            "changed-since-last-convert",
-            label,
-            "One design whose source changed and one whose source is missing, with Re-convert changed.",
-        );
-        harness.get_by_label("Re-convert changed").click_accesskit();
-        harness.step();
-        wait_for_conversion(&mut harness);
-        wait_for_sync_list(&mut harness);
-        shot(
-            &mut harness,
-            &dir,
-            &mut index,
-            "re-converted",
-            label,
-            "After Re-convert changed: the card for the updated design; the missing source stays listed.",
-        );
+        for (theme, label) in [
+            (ThemePreference::Light, "Day"),
+            (ThemePreference::Dark, "Night"),
+        ] {
+            let (mut harness, work) = converted_pair_named(names, egui::vec2(1280.0, 800.0));
+            harness.ctx.set_theme(theme);
+            save_again(&work.path().join("in").join(names[0]));
+            std::fs::remove_file(work.path().join("in").join(names[1])).unwrap();
+            refresh_sync_list(&mut harness, "Source changed");
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("changed-since-last-convert-{language}"),
+                label,
+                "One design whose source changed and one whose source is missing, with Re-convert changed.",
+            );
+            harness.get_by_label("Re-convert changed").click_accesskit();
+            harness.step();
+            wait_for_conversion(&mut harness);
+            wait_for_sync_list(&mut harness);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("re-converted-{language}"),
+                label,
+                "After Re-convert changed: the card for the updated design; the missing source stays listed.",
+            );
+        }
     }
     std::fs::write(dir.join("index.md"), index).unwrap();
 }
