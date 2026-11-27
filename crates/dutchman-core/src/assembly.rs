@@ -1343,7 +1343,7 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
             let Some(index) = owner
                 .get("native_ref")
                 .and_then(Value::as_str)
-                .filter(|id| !id.starts_with("f3d:xref/"))
+                .filter(|id| !products::is_member_identity(id))
                 .and_then(|id| carriers.get(id))
             else {
                 break;
