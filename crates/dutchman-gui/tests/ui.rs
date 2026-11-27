@@ -5032,6 +5032,51 @@ mod paste_inputs {
         assert_eq!(h.state().rows()[0].status, Status::Converted);
     }
 
+    /// The Results card after a fetch stops at the call limit. Needs a GPU renderer; set
+    /// DUTCHMAN_GUI_SCREENSHOTS. Mocked fetch, made-up document, neutral folder.
+    #[cfg(feature = "test-support")]
+    #[test]
+    #[ignore = "renders a GPU screenshot of the call-limit stop; set DUTCHMAN_GUI_SCREENSHOTS"]
+    fn onshape_budget_stop_screenshots() {
+        let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        h.ctx.set_theme(ThemePreference::Light);
+        h.state_mut().preview_onshape(Some("Test designer"));
+        h.state_mut()
+            .set_clipboard_for_test(|| (vec![], String::new()));
+        h.state_mut().set_verify(false);
+        h.state_mut()
+            .set_link_transport_for_test(Arc::new(MockNetwork::default()), budget_then_ok_fetch);
+        output_picker(&mut h, output.path());
+        h.run_steps(8);
+        paste(
+            &mut h,
+            "https://cad.onshape.com/documents/000000000000000000000000/w/000000000000000000000000/e/000000000000000000000000",
+        );
+        let started = Instant::now();
+        while h.query_by_label("Continue fetching").is_none() {
+            assert!(started.elapsed() < Duration::from_secs(20), "no button");
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        h.state_mut()
+            .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
+        h.run_steps(8);
+        let mut index = String::new();
+        shot(
+            &mut h,
+            &dir,
+            &mut index,
+            "onshape-budget-stop",
+            "day",
+            "Call-limit stop on the Results card.",
+        );
+    }
+
     fn big_estimate(_link: String, _token: Option<PathBuf>) -> Result<u32, String> {
         Ok(120)
     }
