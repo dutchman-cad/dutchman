@@ -224,16 +224,16 @@ fn app_layout_screenshots() {
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
     let mut index = String::new();
-    for (set, mechanical, board, subtitle) in [
-        ("en", "bracket", "controller-board", None),
+    // The app has no German text. The "de" set is the English window with long German design
+    // names, the stress case for the lists and rows; nothing else in it is translated.
+    for (set, mechanical, board) in [
+        ("en", "bracket", "controller-board"),
         (
             "de",
             "Gehäuse-Rückwand für das Mehrzweck-Fräsgerät, Fassung 2",
             "Leiterplatte Hauptsteuerung Erweiterungsmodul Entwurf Zwei",
-            Some("Wandelt native CAD-Konstruktionen in SolidCraft-Konstruktionen um.".to_owned()),
         ),
     ] {
-        *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = subtitle;
         for (theme, name) in [
             (ThemePreference::Light, "day"),
             (ThemePreference::Dark, "night"),
@@ -300,7 +300,6 @@ fn app_layout_screenshots() {
             }
         }
     }
-    *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = None;
     std::fs::write(dir.join("layout.md"), index).unwrap();
 }
 
@@ -526,8 +525,8 @@ fn the_version_sits_on_the_titles_baseline_in_one_line() {
     }
 }
 
-/// The main window's header at 1280x800: the version on the title's line, in English and with a
-/// long German subtitle (the app has no German text yet), Day and Night.
+/// The main window's header at 1280x800: the version on the title's line, Day and Night. (The
+/// app has no German text, so there is no German variant.)
 #[cfg(feature = "test-support")]
 #[test]
 #[ignore = "renders GPU screenshots of the header; set DUTCHMAN_GUI_SCREENSHOTS"]
@@ -535,14 +534,7 @@ fn header_version_screenshots() {
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
     let mut index = String::new();
-    for (language, subtitle) in [
-        ("english", None),
-        (
-            "german",
-            Some("Wandelt native CAD-Konstruktionen in SolidCraft-Konstruktionen um.".to_owned()),
-        ),
-    ] {
-        *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = subtitle;
+    for language in ["english"] {
         for (theme, name) in [
             (ThemePreference::Light, "day"),
             (ThemePreference::Dark, "night"),
@@ -570,7 +562,6 @@ fn header_version_screenshots() {
             );
         }
     }
-    *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = None;
     std::fs::write(dir.join("header-version.md"), index).unwrap();
 }
 
@@ -2131,12 +2122,9 @@ fn solidworks_folder_shows_the_plan_and_hides_inventor_settings() {
         assert!(started.elapsed() < Duration::from_secs(30));
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert_eq!(
-        harness
-            .query_all_by_label_contains("Inventor project folder:")
-            .count(),
-        0
-    );
+    harness.get_by_label("Advanced").click_accesskit();
+    harness.run_steps(8);
+    assert!(harness.query_by_label("Inventor project").is_none());
     assert!(harness.query_by_label("Choose an output folder.").is_none());
     harness
         .state_mut()

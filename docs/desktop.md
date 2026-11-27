@@ -134,7 +134,7 @@ Inventor and SolidWorks assembly references select the top-level roots, which co
 with their parts resolved inside the project; unused parts convert afterwards. A same-name STEP export beside
 a native file is kept as a fallback if the native conversion fails.
 
-The Inventor project folder setting appears only for inputs containing Inventor files.
+The **Inventor project** row under **Advanced** (the folder, **Automatic** and **Choose…**) appears only for inputs containing Inventor files.
 Available memory is labeled as memory and hidden when unknown. Automatic SolidCraft
 selection compares the versions found on PATH, beside Dutchman and in installed applications, choosing
 the newest; `SOLIDCRAFT_CLI` remains an explicit override.
