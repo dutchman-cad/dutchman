@@ -18064,6 +18064,63 @@ fn shells_map_historical_input_faces_and_signed_direction() {
     }
 }
 
+/// A shell that removes no face leaves its body a closed hollow solid.
+#[test]
+fn a_shell_removing_no_face_hollows_its_body() {
+    let model = modifying(json!({"kind": "shell", "value": {
+        "bodies": cube_body(), "removed_faces": {"kind": "faces", "value": []},
+        "thickness": 1.0, "outward": false}}));
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0)),
+    );
+    let shell = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "shell")
+        .unwrap_or_else(|| panic!("{}", history_line(&report)));
+    assert_eq!(shell["faces"], json!([]));
+    assert_eq!(shell["body"], "unit cube", "{}", history_line(&report));
+    // Older targets keep the stored result.
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_44_0)),
+    );
+    assert!(!document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "shell"));
+    assert!(
+        history_line(&report).contains("removes no face is written for SolidCraft 0.45"),
+        "{}",
+        history_line(&report)
+    );
+    // The replay writes for the CLI's own version; older ones keep the final geometry.
+    if let Some(cli) = solidcraft().filter(|cli| {
+        dutchman_solidcraft::VersionGate::ClosedShell.supported(
+            dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone())),
+        )
+    }) {
+        let got = volumes(
+            &cli,
+            &written_with(
+                &model,
+                &SolidCraftWriter::new().verification(Verification::Off),
+            )
+            .0,
+        );
+        assert_eq!(got.len(), 1, "{got:?}");
+        let expected = 1000.0 - 8.0 * 8.0 * 8.0;
+        assert!((got[0] - expected).abs() < 1.0, "{got:?} vs {expected}");
+    }
+}
+
 #[test]
 fn shells_require_their_own_historical_input_faces() {
     let model = historical_shell(false);
