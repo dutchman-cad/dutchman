@@ -1369,6 +1369,25 @@ fn discard_reference_sketches(mapping: &mut Mapping) {
         .count();
 }
 
+const OMITTED_COPY: &str = "it makes a separate copy body that the source design keeps but \
+    leaves out of its bodies; rebuilding such a copy is not supported yet";
+
+/// Whether cadmpeg reports that this pattern or mirror makes a copy body that the design's
+/// final bodies leave out (`feature.pattern-copy-body-omitted`; its detail starts with the
+/// feature's id).
+fn omits_a_copy_body(feature: &Value, source_losses: &[dutchman_core::Loss]) -> bool {
+    let Some(id) = feature.get("id").and_then(Value::as_str) else {
+        return false;
+    };
+    let named = format!("{id} ");
+    source_losses.iter().any(|loss| {
+        loss.code
+            .as_deref()
+            .is_some_and(|code| code.ends_with("/feature.pattern-copy-body-omitted"))
+            && loss.detail.starts_with(&named)
+    })
+}
+
 /// The reason cadmpeg gave when the design's timeline was in the file but its feature history
 /// did not decode, in plain words; `None` when the decoder reported no such failure, so the
 /// design really has no timeline.
@@ -1592,6 +1611,13 @@ fn map_into(
             .unwrap_or_else(|| map_feature(feature, &mut ctx, report, &mut history.features));
         // A cut or intersection with no body before it: SolidCraft has nothing to cut and
         // refuses the feature when it replays.
+        // A copy the source keeps as its own body but leaves out of the final bodies: a
+        // rebuilt copy would be a body the design does not have.
+        let mapped = if omits_a_copy_body(feature, source_losses) {
+            Err(OMITTED_COPY.to_owned())
+        } else {
+            mapped
+        };
         let mapped = mapped.and_then(|mapped| match &mapped {
             Mapped::Feature(built) if !builds && cuts_a_body(built) => Err(
                 "it cuts or intersects a body, and no earlier feature in the history builds one"
@@ -3336,6 +3362,54 @@ mod tests {
             reason.contains("cadmpeg could not decode it (the timeline record is damaged)"),
             "{reason}"
         );
+    }
+
+    #[test]
+    fn a_mirror_whose_copy_the_design_leaves_out_is_refused_by_name() {
+        let model = cube();
+        let wire = serde_json::to_value(&model.ir).unwrap();
+        let body = wire["geometry"]["bodies"][0]["id"].clone();
+        let mut features = wire["model"]["features"].as_array().unwrap().clone();
+        let ordinal = features.len() as u64;
+        features.push(feature(
+            90,
+            ordinal,
+            "Mirror 1",
+            json!({
+            "kind": "pattern", "value": {
+                "pattern": {"kind": "mirror", "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+                    "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}},
+                "seeds": [{"kind": "bodies", "value": {"kind": "bodies", "value": [body]}}]}}),
+        ));
+        let model = with(model, json!(features), wire["model"]["parameters"].clone());
+        let status = |losses: &[(&str, &str)]| {
+            let mut notes = Report::default();
+            for (code, detail) in losses {
+                notes.push_coded(Severity::Degraded, *code, code, *detail);
+            }
+            let mapping = map_until(
+                &model,
+                &mut Report::default(),
+                crate::SolidCraftVersion::default(),
+                false,
+                notes.losses(),
+                None,
+            );
+            let mirror = mapping.features.last().unwrap();
+            (mirror.status, mirror.reason.clone())
+        };
+        let (_, reason) = status(&[]);
+        assert_ne!(reason.as_deref(), Some(OMITTED_COPY));
+        let detail =
+            "f3d:model:feature#90 generates separate body slot(s) 2 that its history keeps";
+        assert_eq!(
+            status(&[("f3d/feature.pattern-copy-body-omitted", detail)]),
+            (FeatureStatus::Blocked, Some(OMITTED_COPY.to_owned()))
+        );
+        // A loss naming another feature leaves this one alone.
+        let other = "f3d:model:feature#9 generates separate body slot(s) 2 that its history keeps";
+        let (_, reason) = status(&[("f3d/feature.pattern-copy-body-omitted", other)]);
+        assert_ne!(reason.as_deref(), Some(OMITTED_COPY));
     }
 
     #[test]
