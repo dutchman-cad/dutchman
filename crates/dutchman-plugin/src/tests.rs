@@ -578,12 +578,10 @@ fn only_the_three_dialog_options_are_saved_and_offered() {
     }
     assert!(offered["fields"].get(crate::PARTS_FOLDER).is_none());
     let stored: Value = serde_json::from_str(&saved).unwrap();
-    for entry in [&stored["formats"]["fusion"]] {
-        assert!(
-            serde_json::from_str::<Options>(&entry.to_string()).is_ok(),
-            "stored options are valid options"
-        );
-    }
+    assert!(
+        serde_json::from_str::<Options>(&stored["formats"]["fusion"].to_string()).is_ok(),
+        "stored options are valid options"
+    );
     // The automatic axis, the default, is saved and offered like the others.
     let automatic = encode(&Options::default(), "ipt", None);
     assert_eq!(
