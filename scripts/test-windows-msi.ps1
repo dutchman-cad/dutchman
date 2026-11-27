@@ -3,6 +3,7 @@ param([Parameter(Mandatory)][string]$Version)
 $ErrorActionPreference = 'Stop'
 $install = Join-Path $env:LOCALAPPDATA 'Programs\Dutchman'
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Dutchman Convert.lnk'
+$syncShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Dutchman Sync.lnk'
 $registration = 'HKCU:\Software\Dutchman CAD\Dutchman Convert'
 # Windows Installer keeps a per-user product's Add/Remove Programs entry under the user's SID
 # in its own UserData key, not in the HKCU Uninstall key that non-MSI installers use.
@@ -33,7 +34,7 @@ function Entries {
         Where-Object { $_ -and $_.DisplayName -eq 'Dutchman Convert' })
 }
 function Check-Installed([string]$ExpectedVersion) {
-    foreach ($name in @('dutchman-gui.exe', 'dutchman.exe', 'dutchman-mcp.exe', 'LICENSE', 'NOTICE', 'Spectral-OFL.txt', 'IBM-Plex-OFL.txt', 'sysinfo-MIT.txt', 'AGENTS.md', 'skills/dutchman-converting/SKILL.md', 'docs/desktop.md', 'docs/json.md')) {
+    foreach ($name in @('dutchman-gui.exe', 'dutchman-sync.exe', 'dutchman.exe', 'dutchman-mcp.exe', 'LICENSE', 'NOTICE', 'Spectral-OFL.txt', 'IBM-Plex-OFL.txt', 'sysinfo-MIT.txt', 'AGENTS.md', 'skills/dutchman-converting/SKILL.md', 'docs/desktop.md', 'docs/json.md')) {
         Assert-True (Test-Path (Join-Path $install $name)) "Missing installed file: $name"
     }
     foreach ($doc in Get-ChildItem docs -Recurse -File -Filter '*.md') {
@@ -47,6 +48,9 @@ function Check-Installed([string]$ExpectedVersion) {
     Assert-True (Test-Path $shortcut) 'Missing Start menu shortcut'
     $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
     Assert-True ($link.TargetPath -ieq (Join-Path $install 'dutchman-gui.exe')) 'Wrong shortcut target'
+    Assert-True (Test-Path $syncShortcut) 'Missing Dutchman Sync Start menu shortcut'
+    $syncLink = (New-Object -ComObject WScript.Shell).CreateShortcut($syncShortcut)
+    Assert-True ($syncLink.TargetPath -ieq (Join-Path $install 'dutchman-sync.exe')) 'Wrong Dutchman Sync shortcut target'
     $path = [Environment]::GetEnvironmentVariable('Path', 'User').Split(';').TrimEnd('\')
     Assert-True (@($path | Where-Object { $_ -ieq $install }).Count -eq 1) 'Expected exactly one user PATH entry'
     Assert-True ((Get-ItemProperty $registration).InstallDir.TrimEnd('\') -ieq $install) 'Missing per-user installer identity'
@@ -79,6 +83,7 @@ function Check-Installed([string]$ExpectedVersion) {
 function Check-Clean {
     Assert-True (!(Test-Path $install)) 'Uninstall left program files or the install folder'
     Assert-True (!(Test-Path $shortcut)) 'Uninstall left the shortcut'
+    Assert-True (!(Test-Path $syncShortcut)) 'Uninstall left the Dutchman Sync shortcut'
     Assert-True (!(Test-Path $registration)) 'Uninstall left installer registration'
     Assert-True (@(Entries).Count -eq 0) 'Uninstall left an Add/Remove Programs entry'
     $after = [string][Environment]::GetEnvironmentVariable('Path', 'User')

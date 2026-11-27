@@ -15,11 +15,12 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-for program in dutchman dutchman-mcp dutchman-gui; do
+for program in dutchman dutchman-mcp dutchman-gui dutchman-sync; do
   lipo -create -output "$work/$program" "$arm/$program" "$intel/$program"
   chmod 755 "$work/$program"
   lipo -info "$work/$program" >&2
 done
 "$work/dutchman-gui" --version >&2
+"$work/dutchman-sync" --version >&2
 # The shared packager checks dutchman --version and the MCP server's ping response.
 "$root/scripts/package-archive.sh" macos-universal "$name" "$ref" "$work"

@@ -652,3 +652,45 @@ fn background_checks_still_reuse_the_etag_and_the_cached_release() {
     assert_eq!(updater.release.as_ref().unwrap().tag, "v8.0.0");
     assert_eq!(updater.click, Click::None);
 }
+
+#[test]
+fn a_server_dripping_bytes_cannot_hold_the_feed_check_past_its_total_deadline() {
+    use std::io::Write;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            std::thread::spawn(move || {
+                let mut request = [0; 2048];
+                let _ = std::io::Read::read(&mut stream, &mut request);
+                let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n");
+                // One byte every 500 ms never trips the 1 s stall timeout.
+                for _ in 0..1000 {
+                    if stream.write_all(b"x").and_then(|_| stream.flush()).is_err() {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            });
+        }
+    });
+    let timeouts = Timeouts {
+        connect: Duration::from_secs(1),
+        stall: Duration::from_secs(1),
+        total: Some(Duration::from_secs(2)),
+    };
+    let started = std::time::Instant::now();
+    let result = fetch_with(
+        &format!("http://127.0.0.1:{port}/releases.atom"),
+        None,
+        timeouts,
+    );
+    assert!(result.is_err(), "a dripping feed must fail");
+    assert!(
+        started.elapsed() < Duration::from_secs(8),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(Timeouts::SMALL.total, Some(Duration::from_secs(20)));
+}

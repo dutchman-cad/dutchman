@@ -219,12 +219,16 @@ fn input_state_body(
     if own.is_none() || state.get("input_of").and_then(Value::as_str) != own {
         return Err("its input body state belongs to another feature".to_owned());
     }
-    let [held] = state
+    let held_bodies = state
         .get("bodies")
         .and_then(Value::as_array)
         .map(Vec::as_slice)
-        .unwrap_or_default()
-    else {
+        .unwrap_or_default();
+    if held_bodies.len() > 1 {
+        return slot_bodies(source, held_bodies, selection, ctx)
+            .ok_or_else(|| UNSUPPORTED.to_owned());
+    }
+    let [held] = held_bodies else {
         return Err(UNSUPPORTED.to_owned());
     };
     let [selected] = selection
@@ -237,6 +241,12 @@ fn input_state_body(
     };
     if selected != held {
         return Err("it selects a body its input state does not hold".to_owned());
+    }
+    if ctx.unnamed_bodies {
+        return Err(
+            "its one input body cannot be matched to a named body: an earlier feature made a body the history could not name"
+                .to_owned(),
+        );
     }
     let mut seen = std::collections::BTreeSet::new();
     let mut live = ctx
@@ -253,6 +263,67 @@ fn input_state_body(
         (Some(body), None) => Ok(vec![body]),
         _ => Err("its one input body is not the one body an earlier feature named".to_owned()),
     }
+}
+
+/// The earlier-named bodies that the selected bodies of a several-body input state are.
+/// A state body's id ends in its history slot, and the feature that first output a body
+/// stores the slots it affected: a slot names the one body whose creating feature affected
+/// exactly that slot. Any slot that is not held, repeated, or matched by other than one named
+/// body leaves the whole selection unresolved.
+fn slot_bodies(
+    source: &Value,
+    held: &[Value],
+    selection: &Value,
+    ctx: &Context,
+) -> Option<Vec<(Option<String>, String)>> {
+    let own_ordinal = source.get("ordinal").and_then(Value::as_u64)?;
+    let slot_of = |id: &str| id.rsplit(':').next()?.parse::<u64>().ok();
+    let affected = |feature: &Value| -> Option<Vec<u64>> {
+        feature
+            .pointer("/source_properties/affected_bodies")?
+            .as_str()?
+            .split(',')
+            .map(|slot| slot.trim().parse().ok())
+            .collect()
+    };
+    let selected = selection.pointer("/value/bodies")?.as_array()?;
+    let mut found: Vec<(Option<String>, String)> = Vec::new();
+    for body in selected {
+        if !held.contains(body) {
+            return None;
+        }
+        let slot = slot_of(body.as_str()?)?;
+        let mut matches = Vec::new();
+        for (id, name) in &ctx.named_bodies {
+            let creator = ctx
+                .arena("features")
+                .iter()
+                .filter(|row| {
+                    row.get("ordinal")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|ordinal| ordinal < own_ordinal)
+                        && row
+                            .get("outputs")
+                            .and_then(Value::as_array)
+                            .is_some_and(|outputs| {
+                                outputs.iter().any(|out| out.as_str() == Some(id))
+                            })
+                })
+                .min_by_key(|row| row.get("ordinal").and_then(Value::as_u64));
+            if creator.and_then(affected) == Some(vec![slot]) {
+                matches.push((Some(id.clone()), name.clone()));
+            }
+        }
+        matches.dedup_by(|a, b| a.1 == b.1);
+        let [one] = matches.as_slice() else {
+            return None;
+        };
+        if found.iter().any(|(_, name)| name == &one.1) {
+            return None;
+        }
+        found.push(one.clone());
+    }
+    (!found.is_empty()).then_some(found)
 }
 
 /// A removal of selected bodies from the model.
@@ -512,8 +583,13 @@ pub(super) fn mirror(
         "mirror",
         json!({"features": [], "bodies": bodies, "plane": plane, "combine": combine}),
     );
-    if let (Some(names), Some(fields)) = (names, mapped.as_object_mut()) {
-        fields.insert("body_names".to_owned(), json!(names));
+    match (names, mapped.as_object_mut()) {
+        (Some(names), Some(fields)) => {
+            fields.insert("body_names".to_owned(), json!(names));
+        }
+        // A copy kept beside its seed is a body the history did not name.
+        (None, _) if !combine => ctx.unnamed_bodies = true,
+        _ => {}
     }
     Ok(mapped)
 }
@@ -803,6 +879,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_several_body_state_resolves_a_body_by_its_history_slot() {
+        let feature = |id: &str, ordinal: u64, out: &str, affected: &str| json!({"id": id, "ordinal": ordinal, "outputs": [out], "source_properties": {"affected_bodies": affected}});
+        let state = json!({"id": "s", "input_of": "f:move",
+            "bodies": ["s:1", "s:2"], "faces": [], "edges": [], "vertices": [], "edge_geometry": []});
+        let model = json!({"features": [
+            feature("f:a", 2, "a", "2"), feature("f:b", 1, "b", "1"),
+            json!({"id": "f:move", "ordinal": 3, "outputs": ["a"], "source_properties": {"affected_bodies": "2"}})],
+            "feature_input_topologies": [state]});
+        let mut ctx = Context::testing(&model);
+        ctx.named_bodies
+            .extend([("a".into(), "Body A".into()), ("b".into(), "Body B".into())]);
+        let pick = |slot: &str| {
+            json!({"kind": "historical",
+            "value": {"state": "s", "bodies": [slot], "native": "n"}})
+        };
+        let source = json!({"id": "f:move", "ordinal": 3});
+        let got = input_state_body(&source, &pick("s:2"), &ctx).unwrap();
+        assert_eq!(got, vec![(Some("a".to_owned()), "Body A".to_owned())]);
+        let got = input_state_body(&source, &pick("s:1"), &ctx).unwrap();
+        assert_eq!(got[0].1, "Body B");
+        // A slot no earlier feature affected alone stays refused.
+        let mut other = ctx.named_bodies.clone();
+        other.push(("c".into(), "Body C".into()));
+        ctx.named_bodies = other;
+        assert!(input_state_body(&source, &pick("s:3"), &ctx).is_err());
+        assert!(input_state_body(&source, &pick("s:1"), &ctx).is_ok());
+    }
+
+    #[test]
     fn a_single_historical_input_accepts_aliases_of_one_imported_body() {
         let model = json!({"feature_input_topologies": [{
             "id": "input", "input_of": "move", "bodies": ["input-body"]
@@ -827,6 +932,34 @@ mod tests {
         assert!(body_names(&source, &selection, &ctx)
             .unwrap_err()
             .contains("one body an earlier feature named"));
+    }
+
+    #[test]
+    fn a_single_historical_input_is_not_the_named_body_beside_an_unnamed_one() {
+        let model = json!({"feature_input_topologies": [{
+            "id": "input", "input_of": "mirror", "bodies": ["input-body"]
+        }]});
+        let mut ctx = Context::testing(&model);
+        ctx.named_bodies
+            .push(("imported".into(), "Imported body".into()));
+        let source = json!({"id": "mirror"});
+        let selection = json!({"kind": "historical", "value": {
+            "state": "input", "bodies": ["input-body"], "native": "seed"
+        }});
+        assert!(body_names(&source, &selection, &ctx).is_ok());
+        // An earlier new body the history could not name may be the one the state holds.
+        ctx.unnamed_bodies = true;
+        assert!(body_names(&source, &selection, &ctx)
+            .unwrap_err()
+            .contains("could not name"));
+        // A new body with no outputs and no stated result is such a body.
+        let mut ctx = Context::testing(&model);
+        let unnamed = json!({"id": "extrude", "outputs": []});
+        assert!(super::super::extrude::body_names(&unnamed, &mut ctx, "new_body").is_none());
+        assert!(ctx.unnamed_bodies);
+        let mut ctx = Context::testing(&model);
+        assert!(super::super::extrude::body_names(&unnamed, &mut ctx, "join").is_none());
+        assert!(!ctx.unnamed_bodies);
     }
 
     #[test]

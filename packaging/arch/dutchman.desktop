@@ -8,3 +8,8 @@ Icon=dutchman
 Terminal=false
 Categories=Graphics;Engineering;
 StartupWMClass=dutchman
+Actions=Sync;
+
+[Desktop Action Sync]
+Name=Dutchman Sync
+Exec=dutchman-sync

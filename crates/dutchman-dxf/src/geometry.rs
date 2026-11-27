@@ -10,10 +10,7 @@ pub(crate) fn curve(
 ) -> Option<Entity> {
     let [x, y] = drawing.position?.get();
     let scale = drawing.scale.map_or(1.0, |s| s.get());
-    let angle = drawing
-        .rotation_degrees
-        .map_or(0.0, |r| r.get())
-        .to_radians();
+    let angle = drawing.rotation.map_or(0.0, |r| r.get());
     Some(placed_curve(geometry, [x + ox, y + oy], scale, angle))
 }
 
@@ -69,7 +66,11 @@ pub(crate) fn placed_curve(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cadmpeg_ir::{scalar::PositiveReal, units::FiniteVector};
+    use cadmpeg_ir::{
+        drawings::{DrawingId, DrawingKind},
+        scalar::{Angle, PositiveLength, PositiveReal},
+        units::FiniteVector,
+    };
 
     #[test]
     fn transforms_exact_curves_and_preserves_clockwise_arc_sweep() {
@@ -77,9 +78,18 @@ mod tests {
             start: FiniteVector::new([1.0, 2.0]).unwrap(),
             end: FiniteVector::new([3.0, 4.0]).unwrap(),
         };
-        let Entity::Line { start, end } =
-            placed_curve(&line, [100.0, 50.0], 2.0, std::f64::consts::FRAC_PI_2)
-        else {
+        let mut drawing = Drawing::new(
+            DrawingId::mint("synthetic:test:drawing#view").unwrap(),
+            "view".into(),
+            DrawingKind::View,
+            "View".into(),
+            0,
+            Some("native".into()),
+        );
+        drawing.position = Some(FiniteVector::new([90.0, 30.0]).unwrap());
+        drawing.scale = PositiveReal::new(2.0);
+        drawing.rotation = Some(Angle::QUARTER_TURN);
+        let Some(Entity::Line { start, end }) = curve(&line, &drawing, [10.0, 20.0]) else {
             panic!("line expected")
         };
         assert!((start[0] - 96.0).abs() < 1e-10);
@@ -88,7 +98,7 @@ mod tests {
         assert!((end[1] - 56.0).abs() < 1e-10);
         let arc = DrawingCurveGeometry::Arc {
             center: FiniteVector::new([0.0, 0.0]).unwrap(),
-            radius: PositiveReal::new(1.0).unwrap(),
+            radius: PositiveLength::new(1.0).unwrap(),
             start: FiniteVector::new([1.0, 0.0]).unwrap(),
             middle: FiniteVector::new([0.0, -1.0]).unwrap(),
             end: FiniteVector::new([-1.0, 0.0]).unwrap(),

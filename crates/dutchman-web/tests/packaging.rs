@@ -60,7 +60,13 @@ fn archive(target: &str, web: bool) {
     .unwrap();
     let release = dir.join("target").join(target).join("release");
     fs::create_dir_all(&release).unwrap();
-    for name in ["dutchman", "dutchman-mcp", "dutchman-gui", "dutchman-web"] {
+    for name in [
+        "dutchman",
+        "dutchman-mcp",
+        "dutchman-gui",
+        "dutchman-sync",
+        "dutchman-web",
+    ] {
         // Non-Linux fixtures deliberately omit the web program.
         if name == "dutchman-web" && !web {
             continue;
@@ -96,7 +102,7 @@ fn archive(target: &str, web: bool) {
         .unwrap();
     assert!(listing.status.success());
     let files = String::from_utf8(listing.stdout).unwrap();
-    for name in ["dutchman", "dutchman-mcp", "dutchman-gui"] {
+    for name in ["dutchman", "dutchman-mcp", "dutchman-gui", "dutchman-sync"] {
         assert!(files.lines().any(|path| path == format!("fixture/{name}")));
     }
     assert_eq!(

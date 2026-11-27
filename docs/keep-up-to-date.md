@@ -6,7 +6,7 @@ with **Insert Design** is replaced by a new version of the same design, as long 
 component, body and feature names and ids stay the same. Dutchman gives the same names and ids
 every time it converts the same source, so a refresh keeps everything attached.
 
-There are three routes. Today the command line works; the app and Dutchman Sync are coming.
+There are three routes. Today the command line and Dutchman Sync work; the app's list and switch are coming.
 
 ## How it works
 
@@ -77,11 +77,65 @@ The app will list the designs in a chosen output folder that changed since they 
 with **Re-convert changed**, and will have a **Keep this folder up to date** switch for each
 output folder.
 
-## Dutchman Sync (coming)
+## Dutchman Sync
 
-A small background helper with its own icon, in the system tray or menu bar, will run the same
-conversions without a terminal, show each design as up to date, source changed, updating, failed
-or source missing, and notify you when a design is updated or an update fails.
+Dutchman Sync is a small background program that runs the same checks and conversions as
+`dutchman sync --watch`, without a terminal. It is installed with Dutchman and has its own
+launcher entry and icon: **Dutchman Sync** in the Start menu on Windows, `Dutchman Sync.app` in
+Applications on macOS (it comes on the same disk image), and **Dutchman Sync** in the app list on
+Linux (the Arch package and the `dutchman-sync` program in the archives; from the AppImage, run
+`Dutchman.AppImage --run dutchman-sync`, or use the **Dutchman Sync** action of its launcher).
+
+The first time you start it, one small window opens: **Choose a folder of CAD files to keep
+converted**. Choose the source folder (where your CAD files are) and the output folder (where
+the SolidCraft designs go) and click **Start**. Sync converts the files that have no design yet,
+then keeps every design up to date. After that Sync lives in the system tray (the menu bar on
+macOS) and the window closes.
+
+The tray menu has:
+
+| Item | What it does |
+| --- | --- |
+| **Pause** / **Resume** | Stops checking and converting, or starts again. |
+| **Add folder** | Opens the window to choose another pair of folders. |
+| **Open Dutchman** | Opens the Dutchman app. |
+| **Quit Dutchman Sync** | Stops Sync and turns every folder off, so the app's switch shows off. |
+
+Clicking the icon (on Windows and Linux) opens the window. On a Linux desktop that shows no tray
+icons (GNOME without an AppIndicator extension), Sync still runs; start it again to open its window.
+
+- **Notifications.** A desktop notification appears when a design is updated, when an update
+  fails (the previous design is kept), and, for a folder with auto-update off, when a source
+  changed.
+- **Auto-update off.** For a folder whose `auto_update` is off, Sync only detects a changed
+  source and tells you; it converts nothing until the setting is turned on.
+- **Start at login.** The window has a **Start Dutchman Sync when I log in** checkbox, off by
+  default. Turning it on adds a value to the per-user Run key (Windows), a LaunchAgent in
+  `~/Library/LaunchAgents` (macOS), or a file in `~/.config/autostart` (Linux); turning it off
+  removes it. A copy started at login opens no window.
+- **One copy.** Starting Dutchman Sync again, from the launcher or the command line, opens the
+  running copy's window and exits; it never starts a second copy.
+
+The app, the tray and the launcher agree through one file, `dutchman/sync-state.json` in the
+per-user config folder (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS,
+`$XDG_CONFIG_HOME` or `~/.config` on Linux), schema `dutchman.sync-state/1`:
+
+```json
+{
+  "schema": "dutchman.sync-state/1",
+  "folders": [
+    {"output": "/home/me/designs", "source": "/home/me/cad", "auto_update": true,
+     "enabled": true, "last_checked": "2026-11-22T09:30:00Z"}
+  ],
+  "paused": false,
+  "start_at_login": false
+}
+```
+
+A missing or unreadable file reads as no folders. Sync reads the file about once a second, so a
+folder turned on or off elsewhere takes effect at once. The window that lists every design with
+its status (up to date, source changed, updating, failed, source missing) and an **Update**
+button is still to come.
 
 ## The SolidCraft plugin (once SolidCraft linked imports exist)
 

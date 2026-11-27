@@ -302,7 +302,7 @@ struct Circle {
 
 impl Circle {
     fn read(geometry: &Value) -> Result<Self, String> {
-        let center = v3(geometry.get("center")).ok_or("a circle without a centre")?;
+        let center = v3(geometry.get("center")).ok_or("a circle without a center")?;
         let normal = v3(geometry.get("normal"))
             .and_then(unit)
             .ok_or("a circle without a normal")?;

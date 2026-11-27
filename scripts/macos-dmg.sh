@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Packages Dutchman Convert for macOS as one disk image: Dutchman Convert.app (the desktop app, with the
-# `dutchman` and `dutchman-mcp` commands inside it) for Apple silicon and Intel alike, a link to
-# Applications, and a note on opening it the first time.
+# `dutchman` and `dutchman-mcp` commands inside it) and Dutchman Sync.app (the menu bar helper that
+# keeps converted designs up to date, with the `dutchman` command it converts with) for Apple
+# silicon and Intel alike, a link to Applications, and a note on opening it the first time.
 #
 #   scripts/macos-dmg.sh <version> <label> <aarch64-dir> <x86_64-dir> <out.dmg>
 #
 # <version> is the bundle's version (numbers only, 0.1.3); <label> names the image's volume
-# (0.1.3, or nightly). Each dir holds one target's dutchman, dutchman-mcp and dutchman-gui.
+# (0.1.3, or nightly). Each dir holds one target's dutchman, dutchman-mcp, dutchman-gui and
+# dutchman-sync.
 #
 # The app is signed ad hoc (`codesign -s -`), not with a Developer ID, and not notarized:
 # macOS asks once before opening it (docs/install.md, "Opening the app the first time").
@@ -40,6 +42,39 @@ for program in dutchman dutchman-mcp; do
   lipo -create -output "$app/Contents/Helpers/$program" "$arm/$program" "$intel/$program"
 done
 lipo -info "$app/Contents/MacOS/Dutchman"
+
+# Dutchman Sync.app: a menu bar program with no Dock icon (LSUIElement). The dutchman command it
+# converts with is a helper of its own, as an app bundle must hold what it runs.
+sync_app="$stage/Dutchman Sync.app"
+mkdir -p "$sync_app/Contents/MacOS" "$sync_app/Contents/Helpers" "$sync_app/Contents/Resources/licences"
+lipo -create -output "$sync_app/Contents/MacOS/DutchmanSync" "$arm/dutchman-sync" "$intel/dutchman-sync"
+lipo -create -output "$sync_app/Contents/Helpers/dutchman" "$arm/dutchman" "$intel/dutchman"
+lipo -info "$sync_app/Contents/MacOS/DutchmanSync"
+cp "$root/crates/dutchman-gui/assets/Dutchman.icns" "$sync_app/Contents/Resources/Dutchman.icns"
+cp "$root/LICENSE" "$root/NOTICE" "$sync_app/Contents/Resources/"
+cp "$root"/crates/dutchman-gui/assets/fonts/*.txt "$root"/licences/*.txt "$sync_app/Contents/Resources/licences/"
+cat > "$sync_app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Dutchman Sync</string>
+  <key>CFBundleDisplayName</key><string>Dutchman Sync</string>
+  <key>CFBundleIdentifier</key><string>io.github.dutchman-cad.dutchman-sync</string>
+  <key>CFBundleExecutable</key><string>DutchmanSync</string>
+  <key>CFBundleIconFile</key><string>Dutchman</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${version}</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSHumanReadableCopyright</key><string>Apache License 2.0</string>
+</dict>
+</plist>
+PLIST
+plutil -lint "$sync_app/Contents/Info.plist"
 
 cp "$root/crates/dutchman-gui/assets/Dutchman.icns" "$app/Contents/Resources/Dutchman.icns"
 cp "$root/LICENSE" "$root/NOTICE" "$app/Contents/Resources/"
@@ -87,7 +122,11 @@ for program in dutchman dutchman-mcp; do
 done
 codesign --force --sign - --timestamp=none "$app"
 codesign --verify --strict --verbose=2 "$app"
+codesign --force --sign - --timestamp=none "$sync_app/Contents/Helpers/dutchman"
+codesign --force --sign - --timestamp=none "$sync_app"
+codesign --verify --strict --verbose=2 "$sync_app"
 "$app/Contents/Helpers/dutchman" --version
+"$sync_app/Contents/MacOS/DutchmanSync" --version
 
 ln -s /Applications "$stage/Applications"
 cat > "$stage/Read me first.txt" <<'NOTE'
@@ -95,6 +134,10 @@ Dutchman Convert, part of Dutchman CAD, converts native CAD designs into SolidCr
 
 Install: drag Dutchman Convert.app onto Applications. Launchpad, the Dock and Finder show it as
 Dutchman.
+
+Dutchman Sync.app is optional. Drag it onto Applications too: it lives in the menu bar and keeps
+converted designs up to date with their source files. It is not signed with an Apple Developer ID
+either, so open it the first time the same way.
 
 Opening it the first time
 -------------------------
@@ -146,9 +189,10 @@ on run arguments
       set icon size of viewOptions to 96
       set text size of viewOptions to 13
       set background picture of viewOptions to (POSIX file (mountPath & "/.background/background.tiff")) as alias
-      set position of item "Dutchman Convert.app" of imageFolder to {180, 190}
-      set position of item "Applications" of imageFolder to {460, 190}
-      set position of item "Read me first.txt" of imageFolder to {320, 320}
+      set position of item "Dutchman Convert.app" of imageFolder to {140, 190}
+      set position of item "Dutchman Sync.app" of imageFolder to {320, 190}
+      set position of item "Applications" of imageFolder to {500, 190}
+      set position of item "Read me first.txt" of imageFolder to {320, 330}
       close imageWindow
       open imageFolder
       update imageFolder without registering applications

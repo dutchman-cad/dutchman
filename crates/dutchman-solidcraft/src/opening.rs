@@ -178,15 +178,19 @@ impl SolidCraftWriter {
                                 .unwrap_or(0)
                                 == parent;
                             let standalone_original = parent == 0
-                                && feature.get("name").and_then(Value::as_str)
-                                    == Some(document::ORIGINAL);
+                                && feature
+                                    .get("name")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(document::is_original_name);
                             (in_parent || standalone_original)
                                 && feature.get("suppressed").and_then(Value::as_bool) != Some(true)
                         });
                         feature.get("type").and_then(Value::as_str) == Some("import")
                             && ((same_component
-                                && feature.get("name").and_then(Value::as_str)
-                                    == Some(document::ORIGINAL))
+                                && feature
+                                    .get("name")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(document::is_original_name))
                                 || (!same_component && visible_parent))
                     })
                     .and_then(|feature| feature.get("id"))
@@ -554,6 +558,28 @@ mod tests {
                 && loss.detail.contains("Edit")
                 && loss.detail.contains("Synthetic STEP refusal")));
         }
+    }
+
+    #[test]
+    fn a_failed_feature_before_the_rest_of_a_partial_history_keeps_the_imported_rest() {
+        let bytes = crate::container::Container::empty().finish(&json!({"features": [
+            {"id": 0, "name": "Stored base", "type": "import", "suppressed": false},
+            {"id": 1, "name": "Edit", "type": "offset_faces", "suppressed": false},
+            {"id": 2, "name": document::REMOVE, "type": "remove", "bodies": ["Body1"], "suppressed": false},
+            {"id": 3, "name": document::rest_name(Some("Hole 1")), "type": "import", "suppressed": false}
+        ]})).unwrap();
+        let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RefusedImport));
+        let mut report = Report::default();
+        let bytes = writer.check_opening(bytes, &mut report, None).unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let doc: Value =
+            serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        let features = doc["features"].as_array().unwrap();
+        assert_eq!(features.len(), 2);
+        assert_eq!(features[0]["name"], "Stored base");
+        assert_eq!(features[0]["suppressed"], true);
+        assert_eq!(features[1]["name"], "Rest of the design (from Hole 1)");
+        assert_eq!(features[1]["suppressed"], false);
     }
 
     #[test]

@@ -5,6 +5,8 @@
 pub mod app;
 mod doctor;
 #[doc(hidden)]
+pub mod fusion_export;
+#[doc(hidden)]
 pub mod native_paste;
 mod onshape;
 #[doc(hidden)]
@@ -13,6 +15,7 @@ pub mod platform;
 pub mod report_consent;
 pub mod report_panel;
 pub mod report_policy;
+pub mod sync_helper;
 pub mod theme;
 pub mod worker;
 
@@ -24,6 +27,19 @@ pub const APP_NAME: &str = "Dutchman Convert";
 /// The name eframe keeps the app's settings under. It follows the package version, not
 /// [`dutchman::BUILD_VERSION`], so one nightly's settings carry over to the next.
 pub const SETTINGS_NAME: &str = concat!("Dutchman Convert ", env!("CARGO_PKG_VERSION"));
+
+/// The line under the app's name in the wide header.
+pub const SUBTITLE: &str = "Converts native CAD designs into SolidCraft designs.";
+
+/// A subtitle that replaces the real one, so a screenshot test can show a long translation.
+#[cfg(feature = "test-support")]
+pub static SUBTITLE_FOR_TEST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The quiet line at the bottom of the main window.
+pub const FOOTER: &str = "Dutchman is in active development and provided as is. Keep a copy of your designs somewhere else, just in case.";
+
+/// The link after the footer line.
+pub const FOOTER_MORE: &str = "More";
 
 /// The version beside the app's name in its top row.
 pub fn version_label() -> String {

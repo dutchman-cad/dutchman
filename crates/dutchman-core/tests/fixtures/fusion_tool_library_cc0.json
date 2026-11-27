@@ -1,0 +1,849 @@
+{
+    "data": [
+        {
+            "BMC": "carbide",
+            "GRADE": "Mill Generic",
+            "description": "CC0 6 mm flat end mill, 3 flute carbide",
+            "geometry": {
+                "CSP": false,
+                "DC": 6,
+                "HAND": true,
+                "LB": 22,
+                "LCF": 16,
+                "NOF": 3,
+                "NT": 1,
+                "OAL": 64,
+                "RE": 0,
+                "SFDM": 6,
+                "TA": 0,
+                "TP": 0,
+                "assemblyGaugeLength": 82,
+                "shoulder-diameter": 6,
+                "shoulder-length": 16,
+                "thread-profile-angle": 60,
+                "tip-diameter": 6,
+                "tip-length": 0,
+                "tip-offset": 0
+            },
+            "guid": "f53c0b08-9d3e-4059-9b91-4fd54a9a699b",
+            "holder": {
+                "description": "CC0 ER16 collet chuck, 60 mm gauge",
+                "gaugeLength": 60,
+                "guid": "f7960b9f-2731-4116-9b3e-4819182a5c5e",
+                "product-id": "CC0-HLD-ER16-60",
+                "product-link": "",
+                "segments": [
+                    {
+                        "height": 4,
+                        "lower-diameter": 10,
+                        "upper-diameter": 22
+                    },
+                    {
+                        "height": 26,
+                        "lower-diameter": 22,
+                        "upper-diameter": 22
+                    },
+                    {
+                        "height": 10,
+                        "lower-diameter": 22,
+                        "upper-diameter": 30
+                    },
+                    {
+                        "height": 20,
+                        "lower-diameter": 30,
+                        "upper-diameter": 30
+                    }
+                ],
+                "type": "holder",
+                "unit": "millimeters",
+                "vendor": "CC0 Test"
+            },
+            "post-process": {
+                "break-control": false,
+                "comment": "",
+                "diameter-offset": 0,
+                "length-offset": 0,
+                "live": true,
+                "manual-tool-change": false,
+                "number": 0,
+                "turret": 0
+            },
+            "product-id": "CC0-FEM-6",
+            "product-link": "",
+            "start-values": {
+                "presets": [
+                    {
+                        "description": "Slotting and pocketing in aluminium",
+                        "f_n": 0.03,
+                        "f_z": 0.03,
+                        "guid": "fd874523-0053-4d10-a65d-eca705a2ec5e",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 12000,
+                        "n_ramp": 12000,
+                        "name": "Aluminium",
+                        "ramp-angle": 2,
+                        "tool-coolant": "flood",
+                        "use-stepdown": false,
+                        "use-stepover": false,
+                        "v_c": 226.1946710584651,
+                        "v_f": 1080,
+                        "v_f_leadIn": 1080,
+                        "v_f_leadOut": 1080,
+                        "v_f_plunge": 360,
+                        "v_f_ramp": 360,
+                        "v_f_transition": 1080
+                    },
+                    {
+                        "description": "Pocketing in mild steel",
+                        "f_n": 0.01799329702555509,
+                        "f_z": 0.018000279290601873,
+                        "guid": "5508e59b-54c4-47ea-9d51-8c82892124c3",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 4774,
+                        "n_ramp": 4774,
+                        "name": "Steel",
+                        "ramp-angle": 2,
+                        "tool-coolant": "flood",
+                        "use-stepdown": false,
+                        "use-stepover": false,
+                        "v_c": 89.98777996942603,
+                        "v_f": 257.8,
+                        "v_f_leadIn": 257.8,
+                        "v_f_leadOut": 257.8,
+                        "v_f_plunge": 85.9,
+                        "v_f_ramp": 85.9,
+                        "v_f_transition": 257.8
+                    }
+                ]
+            },
+            "tool-block": null,
+            "type": "flat end mill",
+            "unit": "millimeters",
+            "vendor": "CC0 Test"
+        },
+        {
+            "BMC": "carbide",
+            "GRADE": "Mill Generic",
+            "description": "CC0 1/4 in ball end mill, 2 flute carbide",
+            "geometry": {
+                "CSP": false,
+                "DC": 0.24999999999999997,
+                "HAND": true,
+                "LB": 0.7499999999999999,
+                "LCF": 0.49999999999999994,
+                "NOF": 2,
+                "NT": 1,
+                "OAL": 2.5,
+                "RE": 0.125,
+                "SFDM": 0.24999999999999997,
+                "TA": 0,
+                "TP": 0,
+                "assemblyGaugeLength": 0.7499999999999999,
+                "shoulder-diameter": 0.24999999999999997,
+                "shoulder-length": 0.49999999999999994,
+                "thread-profile-angle": 60,
+                "tip-diameter": 0,
+                "tip-length": 0,
+                "tip-offset": 0
+            },
+            "guid": "6ae862f8-a00b-45b0-be7d-2d2c0a4da9da",
+            "post-process": {
+                "break-control": false,
+                "comment": "",
+                "diameter-offset": 0,
+                "length-offset": 0,
+                "live": true,
+                "manual-tool-change": false,
+                "number": 0,
+                "turret": 0
+            },
+            "product-id": "CC0-BEM-250",
+            "product-link": "",
+            "start-values": {
+                "presets": [
+                    {
+                        "description": "3D contouring in aluminium, inch units",
+                        "f_n": 0.0016666666666666668,
+                        "f_z": 0.0025,
+                        "guid": "7fb5b8e9-9045-4b48-b87b-34618b414d03",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 12000,
+                        "n_ramp": 12000,
+                        "name": "Aluminium",
+                        "ramp-angle": 2,
+                        "tool-coolant": "flood",
+                        "use-stepdown": false,
+                        "use-stepover": false,
+                        "v_c": 785.3981633974481,
+                        "v_f": 60,
+                        "v_f_leadIn": 60,
+                        "v_f_leadOut": 60,
+                        "v_f_plunge": 20,
+                        "v_f_ramp": 20,
+                        "v_f_transition": 60
+                    }
+                ]
+            },
+            "tool-block": null,
+            "type": "ball end mill",
+            "unit": "inches",
+            "vendor": "CC0 Test"
+        },
+        {
+            "BMC": "carbide",
+            "GRADE": "Mill Generic",
+            "description": "CC0 10 mm bull nose end mill, R1.0, 4 flute",
+            "geometry": {
+                "CSP": false,
+                "DC": 10,
+                "HAND": true,
+                "LB": 30,
+                "LCF": 22,
+                "NOF": 4,
+                "NT": 1,
+                "OAL": 80,
+                "RE": 1,
+                "SFDM": 10,
+                "TA": 0,
+                "TP": 0,
+                "assemblyGaugeLength": 30,
+                "shoulder-diameter": 10,
+                "shoulder-length": 22,
+                "thread-profile-angle": 60,
+                "tip-diameter": 8,
+                "tip-length": 0,
+                "tip-offset": 0
+            },
+            "guid": "e7421c59-37f4-43e5-97f3-feba4e04f5c4",
+            "post-process": {
+                "break-control": false,
+                "comment": "",
+                "diameter-offset": 0,
+                "length-offset": 0,
+                "live": true,
+                "manual-tool-change": false,
+                "number": 0,
+                "turret": 0
+            },
+            "product-id": "CC0-BNM-10R1",
+            "product-link": "",
+            "start-values": {
+                "presets": [
+                    {
+                        "description": "Roughing in mild steel",
+                        "f_n": 0.05334590009425071,
+                        "f_z": 0.04000157084511467,
+                        "guid": "7786dc39-8295-48e0-a93b-75c4c0ccfc1f",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 3183,
+                        "n_ramp": 3183,
+                        "name": "Steel",
+                        "ramp-angle": 2,
+                        "tool-coolant": "flood",
+                        "use-stepdown": false,
+                        "use-stepover": false,
+                        "v_c": 99.99689416376312,
+                        "v_f": 509.3,
+                        "v_f_leadIn": 509.3,
+                        "v_f_leadOut": 509.3,
+                        "v_f_plunge": 169.8,
+                        "v_f_ramp": 169.8,
+                        "v_f_transition": 509.3
+                    }
+                ]
+            },
+            "tool-block": null,
+            "type": "bull nose end mill",
+            "unit": "millimeters",
+            "vendor": "CC0 Test"
+        },
+        {
+            "BMC": "carbide",
+            "GRADE": "Mill Generic",
+            "description": "CC0 12 mm 90 degree chamfer mill",
+            "geometry": {
+                "CSP": false,
+                "DC": 12,
+                "HAND": true,
+                "LB": 30,
+                "LCF": 5,
+                "NOF": 3,
+                "NT": 1,
+                "OAL": 65,
+                "RE": 0,
+                "SFDM": 6,
+                "TA": 45,
+                "TP": 0,
+                "assemblyGaugeLength": 30,
+                "shoulder-diameter": 6,
+                "shoulder-length": 5,
+                "thread-profile-angle": 60,
+                "tip-diameter": 2,
+                "tip-length": 0,
+                "tip-offset": 0
+            },
+            "guid": "e5cfa45f-65eb-4437-82f3-063fe3596525",
+            "post-process": {
+                "break-control": false,
+                "comment": "",
+                "diameter-offset": 0,
+                "length-offset": 0,
+                "live": true,
+                "manual-tool-change": false,
+                "number": 0,
+                "turret": 0
+            },
+            "product-id": "CC0-CHM-12-90",
+            "product-link": "",
+            "start-values": {
+                "presets": [
+                    {
+                        "description": "Edge breaking in steel",
+                        "f_n": 0.030018850141376063,
+                        "f_z": 0.030003141690229343,
+                        "guid": "8b0490bf-a5af-4dfa-9f9e-f733be00c2bd",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 2122,
+                        "n_ramp": 2122,
+                        "name": "Steel",
+                        "ramp-angle": 2,
+                        "tool-coolant": "flood",
+                        "use-stepdown": false,
+                        "use-stepover": false,
+                        "v_c": 79.99751533101049,
+                        "v_f": 191,
+                        "v_f_leadIn": 191,
+                        "v_f_leadOut": 191,
+                        "v_f_plunge": 63.7,
+                        "v_f_ramp": 63.7,
+                        "v_f_transition": 191
+                    }
+                ]
+            },
+            "tool-block": null,
+            "type": "chamfer mill",
+            "unit": "millimeters",
+            "vendor": "CC0 Test"
+        },
+        {
+            "BMC": "hss",
+            "GRADE": "generic",
+            "description": "CC0 8.5 mm twist drill, 118 degree HSS",
+            "geometry": {
+                "CSP": false,
+                "DC": 8.5,
+                "HAND": true,
+                "LB": 80,
+                "LCF": 75,
+                "NOF": 2,
+                "NT": 1,
+                "OAL": 117,
+                "RE": 0,
+                "SFDM": 8.5,
+                "SIG": 118,
+                "TP": 0,
+                "assemblyGaugeLength": 80,
+                "shoulder-length": 75,
+                "thread-profile-angle": 60,
+                "tip-diameter": 0,
+                "tip-length": 0,
+                "tip-offset": 0
+            },
+            "guid": "95bd64df-a757-42c9-8cd5-1a65c1e8d980",
+            "post-process": {
+                "break-control": false,
+                "comment": "",
+                "diameter-offset": 0,
+                "length-offset": 0,
+                "live": true,
+                "manual-tool-change": false,
+                "number": 0,
+                "turret": 0
+            },
+            "product-id": "CC0-DRL-8.5",
+            "product-link": "",
+            "start-values": {
+                "presets": [
+                    {
+                        "description": "Drilling mild steel",
+                        "f_z": 0,
+                        "guid": "69e58787-d10f-4d9d-979e-666de3148cbc",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 936,
+                        "name": "Steel",
+                        "tool-coolant": "flood",
+                        "use-feed-per-revolution": false,
+                        "v_c": 24.994511151960392,
+                        "v_f": 0,
+                        "v_f_leadIn": 0,
+                        "v_f_leadOut": 0,
+                        "v_f_plunge": 112.3,
+                        "v_f_ramp": 0,
+                        "v_f_retract": 112.3,
+                        "v_f_transition": 0
+                    }
+                ]
+            },
+            "tool-block": null,
+            "type": "drill",
+            "unit": "millimeters",
+            "vendor": "CC0 Test"
+        },
+        {
+            "BMC": "hss",
+            "GRADE": "generic",
+            "description": "CC0 M10x1.5 right hand tap",
+            "geometry": {
+                "CSP": false,
+                "DC": 10,
+                "HAND": true,
+                "LB": 35,
+                "LCF": 18,
+                "NOF": 3,
+                "NT": 1,
+                "OAL": 80,
+                "RE": 0,
+                "SFDM": 7,
+                "SIG": 0,
+                "TP": 1.5,
+                "assemblyGaugeLength": 35,
+                "shoulder-length": 30,
+                "thread-profile-angle": 60,
+                "tip-diameter": 0,
+                "tip-length": 0,
+                "tip-offset": 0
+            },
+            "guid": "a2636ef4-c008-4259-bb95-1be58d2181c3",
+            "post-process": {
+                "break-control": false,
+                "comment": "",
+                "diameter-offset": 0,
+                "length-offset": 0,
+                "live": true,
+                "manual-tool-change": false,
+                "number": 0,
+                "turret": 0
+            },
+            "product-id": "CC0-TAP-M10X1.5",
+            "product-link": "",
+            "start-values": {
+                "presets": [
+                    {
+                        "description": "Tapping in steel",
+                        "f_z": 0,
+                        "guid": "3e2f443b-29f5-44d8-9e65-7f093b98d9cc",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 360,
+                        "name": "Default preset",
+                        "tool-coolant": "flood",
+                        "use-feed-per-revolution": false,
+                        "v_c": 11.309733552923255,
+                        "v_f": 0,
+                        "v_f_leadIn": 0,
+                        "v_f_leadOut": 0,
+                        "v_f_plunge": 540,
+                        "v_f_ramp": 0,
+                        "v_f_retract": 540,
+                        "v_f_transition": 0
+                    }
+                ]
+            },
+            "tool-block": null,
+            "type": "tap right hand",
+            "unit": "millimeters",
+            "vendor": "CC0 Test"
+        },
+        {
+            "BMC": "carbide",
+            "GRADE": "Mill Generic",
+            "description": "CC0 M10x1.5 single-form thread mill",
+            "geometry": {
+                "CSP": false,
+                "DC": 7,
+                "HAND": true,
+                "LB": 25,
+                "LCF": 15,
+                "NOF": 3,
+                "NT": 1,
+                "OAL": 60,
+                "RE": 0,
+                "SFDM": 6,
+                "TA": 0,
+                "TP": 1.5,
+                "TPN": 1.5,
+                "TPX": 1.5,
+                "assemblyGaugeLength": 25,
+                "shoulder-diameter": 6,
+                "shoulder-length": 20,
+                "thread-profile-angle": 60,
+                "thread-tip-type": "point",
+                "tip-diameter": 7,
+                "tip-length": 0,
+                "tip-offset": 0
+            },
+            "guid": "0164a44e-18d4-4c4e-a079-fe389c836480",
+            "post-process": {
+                "break-control": false,
+                "comment": "",
+                "diameter-offset": 0,
+                "length-offset": 0,
+                "live": true,
+                "manual-tool-change": false,
+                "number": 0,
+                "turret": 0
+            },
+            "product-id": "CC0-THM-M10",
+            "product-link": "",
+            "start-values": {
+                "presets": [
+                    {
+                        "description": "Thread milling in aluminium",
+                        "f_n": 0.040004398504508466,
+                        "f_z": 0.04000073308408474,
+                        "guid": "2e3f8c50-da37-41f1-bccc-0db06bcf2d61",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 9094,
+                        "n_ramp": 9094,
+                        "name": "Aluminium",
+                        "ramp-angle": 2,
+                        "tool-coolant": "flood",
+                        "use-stepdown": false,
+                        "use-stepover": false,
+                        "v_c": 199.98750514221905,
+                        "v_f": 1091.3,
+                        "v_f_leadIn": 1091.3,
+                        "v_f_leadOut": 1091.3,
+                        "v_f_plunge": 363.8,
+                        "v_f_ramp": 363.8,
+                        "v_f_transition": 1091.3
+                    }
+                ]
+            },
+            "tool-block": null,
+            "type": "thread mill",
+            "unit": "millimeters",
+            "vendor": "CC0 Test"
+        },
+        {
+            "BMC": "carbide",
+            "description": "CC0 CNMG 12 04 08 turning insert, right hand",
+            "geometry": {
+                "EPSR": 0,
+                "INSD": 12.7,
+                "LH": 0,
+                "OAL": 30,
+                "RA": 0,
+                "RE": 0.8,
+                "S": 4.76,
+                "SC": "C",
+                "SCTY": "T",
+                "SIZE_SPECIFICATION_MODE": "IC",
+                "TC": "M",
+                "tool_grooveWidth": 0,
+                "tool_insertWidth": 0,
+                "tool_internalThread": false
+            },
+            "guid": "1497d840-16e1-4955-8834-68b67717ecd5",
+            "holder": {
+                "CW": 25,
+                "H": 20,
+                "HAND": "R",
+                "LH": 25,
+                "MTP": "D",
+                "OAL": 125,
+                "THSC": "L",
+                "W": 20,
+                "tool_endCutting": true,
+                "tool_leadingAngle": 0,
+                "tool_roundShank": false,
+                "tool_sideCutting": true,
+                "tool_trailingAngle": 0
+            },
+            "post-process": {
+                "break-control": false,
+                "comment": "",
+                "compensation-offset": 0,
+                "manual-tool-change": false,
+                "number": 0,
+                "turret": 0
+            },
+            "product-id": "CC0-TRN-CNMG120408",
+            "product-link": "",
+            "setup": {
+                "HAND": true,
+                "angle": 0,
+                "compensation": "tip tangent",
+                "tool_grooveCompOppositeEdge": false,
+                "tool_shaftAxisAngle": 0
+            },
+            "start-values": {
+                "presets": [
+                    {
+                        "description": "Finishing steel",
+                        "f_n": 0.2,
+                        "f_n_leadIn": 0.2,
+                        "f_n_leadOut": 0.2,
+                        "guid": "1fd335ae-af51-4db2-8923-c132f8372688",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 0,
+                        "name": "Default preset",
+                        "tool-coolant": "flood",
+                        "use-constant-surface-speed": true,
+                        "use-depth-of-cut": false,
+                        "use-feed-per-revolution": true,
+                        "v_c": 220
+                    }
+                ]
+            },
+            "tool-block": null,
+            "type": "turning general",
+            "unit": "millimeters",
+            "vendor": "CC0 Test"
+        },
+        {
+            "BMC": "carbide",
+            "description": "CC0 10 mm boring bar, CCMT 06 insert",
+            "geometry": {
+                "EPSR": 0,
+                "INSD": 6.35,
+                "LH": 0,
+                "OAL": 20,
+                "RA": 0,
+                "RE": 0.4,
+                "S": 2.38,
+                "SC": "C",
+                "SCTY": "T",
+                "SIZE_SPECIFICATION_MODE": "IC",
+                "TC": "M",
+                "tool_grooveWidth": 0,
+                "tool_insertWidth": 0,
+                "tool_internalThread": false
+            },
+            "guid": "af98f4b8-2c63-4fdf-8f99-831c86ea3bfe",
+            "holder": {
+                "THSC": ""
+            },
+            "post-process": {
+                "break-control": false,
+                "comment": "",
+                "compensation-offset": 0,
+                "manual-tool-change": false,
+                "number": 0,
+                "turret": 0
+            },
+            "product-id": "CC0-BOR-10",
+            "product-link": "",
+            "setup": {
+                "HAND": true,
+                "angle": 90,
+                "compensation": "tip tangent",
+                "tool_grooveCompOppositeEdge": false,
+                "tool_shaftAxisAngle": 0
+            },
+            "start-values": {
+                "presets": [
+                    {
+                        "description": "Internal finishing",
+                        "f_n": 0.1,
+                        "f_n_leadIn": 0.1,
+                        "f_n_leadOut": 0.1,
+                        "guid": "ac7ab887-1f62-4ad7-84de-5f49d732e61f",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 0,
+                        "name": "Default preset",
+                        "tool-coolant": "flood",
+                        "use-constant-surface-speed": true,
+                        "use-depth-of-cut": false,
+                        "use-feed-per-revolution": true,
+                        "v_c": 180
+                    }
+                ]
+            },
+            "tool-block": null,
+            "type": "turning boring",
+            "unit": "millimeters",
+            "vendor": "CC0 Test"
+        },
+        {
+            "BMC": "carbide",
+            "description": "CC0 3 mm OD grooving tool",
+            "geometry": {
+                "EPSR": 0,
+                "INSD": 10,
+                "LH": 0,
+                "OAL": 25,
+                "RA": 0,
+                "RE": 0,
+                "S": 3,
+                "SC": "groove round",
+                "SCTY": "T",
+                "TC": "M",
+                "tool_grooveWidth": 3,
+                "tool_insertWidth": 3,
+                "tool_internalThread": false
+            },
+            "guid": "575f62ea-b72c-4fc8-9548-efcc0aaa5a63",
+            "holder": {
+                "THSC": ""
+            },
+            "post-process": {
+                "break-control": false,
+                "comment": "",
+                "compensation-offset": 0,
+                "manual-tool-change": false,
+                "number": 0,
+                "turret": 0
+            },
+            "product-id": "CC0-GRV-3",
+            "product-link": "",
+            "setup": {
+                "HAND": true,
+                "angle": 0,
+                "compensation": "insert center",
+                "tool_grooveCompOppositeEdge": false,
+                "tool_shaftAxisAngle": 0
+            },
+            "start-values": {
+                "presets": [
+                    {
+                        "description": "Grooving steel",
+                        "f_n": 0.05,
+                        "f_n_leadIn": 0.05,
+                        "f_n_leadOut": 0.05,
+                        "guid": "d9e5c986-67bd-4d69-8c65-58a05a32801d",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 0,
+                        "name": "Default preset",
+                        "tool-coolant": "flood",
+                        "use-constant-surface-speed": true,
+                        "use-depth-of-cut": false,
+                        "use-feed-per-revolution": true,
+                        "v_c": 120
+                    }
+                ]
+            },
+            "tool-block": null,
+            "type": "turning grooving",
+            "unit": "millimeters",
+            "vendor": "CC0 Test"
+        },
+        {
+            "BMC": "carbide",
+            "description": "CC0 OD threading insert, 60 degree, 1.5 mm pitch",
+            "geometry": {
+                "EPSR": 0,
+                "INSD": 10,
+                "LH": 0,
+                "OAL": 19,
+                "RA": 0,
+                "RE": 0,
+                "S": 3.97,
+                "SC": "thread iso triple",
+                "SCTY": "T",
+                "TC": "M",
+                "TP": 1.5,
+                "TPN": 1.5,
+                "TPX": 1.5,
+                "thread-profile-angle": 60,
+                "thread-tip-radius": 0.18,
+                "thread-tip-type": "round",
+                "tool_grooveWidth": 0,
+                "tool_insertWidth": 0,
+                "tool_internalThread": false
+            },
+            "guid": "67a6dbe5-f494-40f9-aaba-6710a7983018",
+            "holder": {
+                "THSC": ""
+            },
+            "post-process": {
+                "break-control": false,
+                "comment": "",
+                "compensation-offset": 0,
+                "manual-tool-change": false,
+                "number": 0,
+                "turret": 0
+            },
+            "product-id": "CC0-THR-1.5",
+            "product-link": "",
+            "setup": {
+                "HAND": true,
+                "angle": 0,
+                "compensation": "tip tangent",
+                "tool_grooveCompOppositeEdge": false,
+                "tool_shaftAxisAngle": 0
+            },
+            "start-values": {
+                "presets": [
+                    {
+                        "description": "Threading steel",
+                        "guid": "58e19b3b-a0be-4a13-8e6c-2bb5960531af",
+                        "material": {
+                            "category": "all",
+                            "query": "",
+                            "use-hardness": false
+                        },
+                        "n": 500,
+                        "name": "Default preset",
+                        "tool-coolant": "flood",
+                        "use-constant-surface-speed": false,
+                        "use-depth-of-cut": false,
+                        "use-feed-per-revolution": false,
+                        "v_c": 0,
+                        "v_f": 0,
+                        "v_f_leadIn": 0,
+                        "v_f_leadOut": 0
+                    }
+                ]
+            },
+            "tool-block": null,
+            "type": "turning threading",
+            "unit": "millimeters",
+            "vendor": "CC0 Test"
+        }
+    ],
+    "version": 37
+}

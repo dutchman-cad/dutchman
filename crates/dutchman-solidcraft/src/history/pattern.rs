@@ -88,6 +88,19 @@ pub(crate) fn map(
     if !features.is_empty() && !bodies.is_empty() {
         return Err("patterns mixing feature and body seeds are not supported yet: SolidCraft requires one seed kind".to_owned());
     }
+    // SolidCraft names the copies of a body pattern, or of a feature that makes a new body,
+    // itself; the history does not know them.
+    let copies_bodies = !bodies.is_empty()
+        || preceding.iter().any(|mapped| {
+            mapped.get("operation").and_then(Value::as_str) == Some("new_body")
+                && mapped
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| features.iter().any(|seed| seed == name))
+        });
+    if copies_bodies {
+        ctx.unnamed_bodies = true;
+    }
     // Older SolidCraft cannot use a pattern or mirror feature as a feature seed.
     if preceding.iter().any(|mapped| {
         matches!(

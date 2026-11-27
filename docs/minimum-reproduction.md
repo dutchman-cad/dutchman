@@ -62,7 +62,7 @@ A killed process can leave a temporary directory under the output folder; keep i
    Post it on Dutchman's issues yourself. If rebuilding did not reproduce, say so.
 
 Share the reviewed anonymous.json; include a synthetic file rebuilt from scratch only
-if it reproduces and you are free to share it, with its STEP export and a public licence
+if it reproduces and you are free to share it, with its STEP export and a public license
 such as CC0. Never send the original file. Never send local-key.json. The
 [paste-ready prompt](testing-your-library.md#let-your-own-ai-make-a-minimum-reproduction)
 coaches this procedure without posting or uploading anything for you.

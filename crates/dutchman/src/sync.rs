@@ -57,6 +57,8 @@ enum Event {
     Updated,
     Failed,
     SourceMissing,
+    /// The source changed and the design was not converted again (auto-update is off).
+    Changed,
 }
 
 impl Event {
@@ -67,6 +69,7 @@ impl Event {
             Event::Updated => ("updated", "updated"),
             Event::Failed => ("failed", "failed"),
             Event::SourceMissing => ("source_missing", "source missing"),
+            Event::Changed => ("changed", "changed"),
         }
     }
 }
@@ -128,7 +131,20 @@ pub fn run(command: &Command) -> Result<bool, String> {
         let signal = Arc::clone(&stop);
         ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))
             .map_err(|e| format!("cannot listen for shutdown: {e}"))?;
-        return watch_folder(command, &folder, &context, &stop);
+        let mut printer = Printer {
+            command,
+            folder: &folder,
+        };
+        return watch_folder(
+            &Timing {
+                settle: Duration::from_secs(command.settle),
+                interval: Duration::from_secs(command.interval.get()),
+            },
+            &folder,
+            &context,
+            &stop,
+            &mut printer,
+        );
     }
     let records = find_records(&folder);
     if records.is_empty() && !command.json {
@@ -137,7 +153,7 @@ pub fn run(command: &Command) -> Result<bool, String> {
     let mut ok = true;
     for record in records {
         let started = Instant::now();
-        let outcome = check_record(&record, &context, None);
+        let outcome = check_record(&record, &context, None, true);
         ok &= outcome.event != Event::Failed;
         emit(command, &folder, &record, started, &outcome)?;
     }
@@ -214,7 +230,12 @@ fn load(record_path: &Path) -> Result<Design, String> {
 }
 
 /// Looks at one design and converts it again when its source changed.
-fn check_record(record_path: &Path, context: &Context, stop: Option<&AtomicBool>) -> Outcome {
+fn check_record(
+    record_path: &Path,
+    context: &Context,
+    stop: Option<&AtomicBool>,
+    convert: bool,
+) -> Outcome {
     let design = match load(record_path) {
         Ok(design) => design,
         Err(why) => return Outcome::new(Event::Failed, why),
@@ -249,6 +270,9 @@ fn check_record(record_path: &Path, context: &Context, stop: Option<&AtomicBool>
         .and_then(Value::as_str);
     if has_output && recorded == Some(digest.as_str()) {
         return Outcome::new(Event::Unchanged, "");
+    }
+    if !convert {
+        return Outcome::new(Event::Changed, "");
     }
     let source = link::Source::with_metadata(digest, &meta);
     match reconvert(&design, &source, context, stop) {
@@ -428,16 +452,51 @@ struct Seen {
     missing: bool,
     /// Whether a line has been written for this design.
     announced: bool,
+    /// Whether the source changed and was left alone because auto-update was off.
+    held: bool,
+}
+
+/// How often the watch scans and how long a source must rest before it counts as saved.
+struct Timing {
+    settle: Duration,
+    interval: Duration,
+}
+
+/// What the watch loop tells its caller, and asks of it.
+trait Sink {
+    /// Whether a changed source is converted again; read at every check, so it can change
+    /// while the watch runs. When it is off, a change is only reported (`Event::Changed`) and
+    /// converted once this turns on.
+    fn auto_update(&self) -> bool {
+        true
+    }
+    /// One design's outcome.
+    fn event(&mut self, record: &Path, started: Instant, outcome: &Outcome) -> Result<(), String>;
+    /// A scan of the folder ended.
+    fn scanned(&mut self) {}
+}
+
+/// Prints each event, as `dutchman sync --watch` does.
+struct Printer<'a> {
+    command: &'a Command,
+    folder: &'a Path,
+}
+
+impl Sink for Printer<'_> {
+    fn event(&mut self, record: &Path, started: Instant, outcome: &Outcome) -> Result<(), String> {
+        emit(self.command, self.folder, record, started, outcome)
+    }
 }
 
 fn watch_folder(
-    command: &Command,
+    timing: &Timing,
     folder: &Path,
     context: &Context,
     stop: &AtomicBool,
+    sink: &mut dyn Sink,
 ) -> Result<bool, String> {
-    let settle = Duration::from_secs(command.settle);
-    let interval = Duration::from_secs(command.interval.get());
+    let settle = timing.settle;
+    let interval = timing.interval;
     let mut states: BTreeMap<PathBuf, Seen> = BTreeMap::new();
     let mut next_scan = Instant::now();
     let mut first_scan = true;
@@ -460,13 +519,7 @@ fn watch_folder(
                 Err(why) => {
                     if state.broken.as_ref() != Some(&record_stamp) {
                         state.broken = Some(record_stamp);
-                        emit(
-                            command,
-                            folder,
-                            &record,
-                            Instant::now(),
-                            &Outcome::new(Event::Failed, why),
-                        )?;
+                        sink.event(&record, Instant::now(), &Outcome::new(Event::Failed, why))?;
                         ok = false;
                     }
                     continue;
@@ -478,12 +531,15 @@ fn watch_folder(
                 state.handled = None;
                 if !state.missing {
                     state.missing = true;
-                    emit(command, folder, &record, Instant::now(), &missing(&design))?;
+                    sink.event(&record, Instant::now(), &missing(&design))?;
                 }
                 continue;
             };
             state.missing = false;
-            if state.handled.as_ref() == Some(&(current.clone(), record_stamp.clone())) {
+            let converting = sink.auto_update();
+            if state.handled.as_ref() == Some(&(current.clone(), record_stamp.clone()))
+                && !(state.held && converting)
+            {
                 continue;
             }
             let observation = state.source.get_or_insert_with(|| {
@@ -504,6 +560,7 @@ fn watch_folder(
             if observation.0 != current {
                 *observation = (current.clone(), Instant::now());
                 state.handled = None;
+                state.held = false;
             }
             let age = SystemTime::now()
                 .duration_since(current.modified)
@@ -515,20 +572,155 @@ fn watch_folder(
                 continue;
             }
             let started = Instant::now();
-            let outcome = check_record(&record, context, Some(stop));
+            let outcome = check_record(&record, context, Some(stop), converting);
+            state.held = outcome.event == Event::Changed;
             // Remember the source as it was before converting: a save during the conversion
             // makes it differ, and so settles and converts again.
             state.handled = Some((current, stamp(&record)));
             ok &= outcome.event != Event::Failed;
             if outcome.event != Event::Unchanged || !state.announced {
-                emit(command, folder, &record, started, &outcome)?;
+                sink.event(&record, started, &outcome)?;
             }
             state.announced = true;
         }
+        sink.scanned();
         first_scan = false;
         next_scan = Instant::now()
             .checked_add(interval)
             .ok_or("polling interval is too large; choose fewer seconds")?;
     }
     Ok(ok)
+}
+
+/// How a design stands, as [`watch`] reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// The design matches its source.
+    Unchanged,
+    /// The source changed and the design was converted again.
+    Updated,
+    /// The design could not be updated; the previous design is kept.
+    Failed,
+    /// The source file is gone.
+    SourceMissing,
+    /// The source changed and the design was left alone, as auto-update is off.
+    Changed,
+}
+
+/// One design's outcome, from [`watch`].
+#[derive(Clone, Debug)]
+pub struct Observed {
+    /// The design (`.sc`) the link record belongs to; the record path when it cannot be read.
+    pub design: PathBuf,
+    pub status: Status,
+    /// Why, for a failure or a missing source; empty otherwise.
+    pub message: String,
+    /// The conversion's report, when one was made.
+    pub report: Option<Value>,
+}
+
+/// What [`watch`] asks of its caller, and tells it.
+pub trait Observer {
+    /// Whether a changed source is converted again. Read at every check, so it can change
+    /// while the watch runs: off reports `Status::Changed` and leaves the design as it is.
+    fn auto_update(&self) -> bool {
+        true
+    }
+    /// A design's outcome. An unchanged design is reported once, then only when it changes.
+    fn event(&mut self, observed: Observed);
+    /// A scan of the folder ended.
+    fn scanned(&mut self) {}
+}
+
+/// Settings for [`watch`], for a program other than the command line.
+#[derive(Clone, Debug)]
+pub struct WatchSettings {
+    /// The program that converts in a child process: `dutchman` itself, or a program that
+    /// calls `dutchman::worker::run_if_worker` first.
+    pub program: PathBuf,
+    /// Time between scans.
+    pub interval: Duration,
+    /// How long a source's size and modification time must stay unchanged.
+    pub settle: Duration,
+    /// Time allowed per conversion.
+    pub timeout: Duration,
+    /// Megabytes allowed per conversion (0: unlimited).
+    pub max_memory_mb: u64,
+    /// Write history without checking it in SolidCraft.
+    pub no_verify: bool,
+    /// The SolidCraft CLI that checks a written history.
+    pub solidcraft: Option<PathBuf>,
+}
+
+impl WatchSettings {
+    /// The command line's defaults, converting with `program`.
+    pub fn new(program: PathBuf) -> Self {
+        Self {
+            program,
+            interval: Duration::from_secs(5),
+            settle: Duration::from_secs(10),
+            timeout: worker::DEFAULT_TIMEOUT,
+            max_memory_mb: worker::DEFAULT_MAX_MEMORY_MB,
+            no_verify: false,
+            solidcraft: None,
+        }
+    }
+}
+
+struct Forward<'a>(&'a mut dyn Observer);
+
+impl Sink for Forward<'_> {
+    fn auto_update(&self) -> bool {
+        self.0.auto_update()
+    }
+    fn event(&mut self, record: &Path, _started: Instant, outcome: &Outcome) -> Result<(), String> {
+        let design = load(record).map_or_else(|_| record.to_path_buf(), |design| design.output);
+        self.0.event(Observed {
+            design,
+            status: match outcome.event {
+                Event::Unchanged => Status::Unchanged,
+                Event::Updated => Status::Updated,
+                Event::Failed => Status::Failed,
+                Event::SourceMissing => Status::SourceMissing,
+                Event::Changed => Status::Changed,
+            },
+            message: outcome.message.clone(),
+            report: outcome.report.clone(),
+        });
+        Ok(())
+    }
+    fn scanned(&mut self) {
+        self.0.scanned();
+    }
+}
+
+/// Watches `folder` as `dutchman sync --watch` does, until `stop` is set, reporting to
+/// `observer` instead of printing. `Err` when the folder is not one or the interval cannot
+/// be waited.
+pub fn watch(
+    folder: &Path,
+    settings: &WatchSettings,
+    stop: &AtomicBool,
+    observer: &mut dyn Observer,
+) -> Result<(), String> {
+    let folder = std::path::absolute(folder).map_err(|e| e.to_string())?;
+    if !folder.is_dir() {
+        return Err(format!("{} is not a folder", folder.display()));
+    }
+    let context = Context {
+        program: settings.program.clone(),
+        limits: worker::Limits {
+            timeout: settings.timeout.max(Duration::from_secs(1)),
+            max_memory: (settings.max_memory_mb > 0)
+                .then_some(settings.max_memory_mb.saturating_mul(1 << 20)),
+            design: Some(worker::DEFAULT_DESIGN_LIMIT),
+        },
+        no_verify: settings.no_verify,
+        solidcraft: settings.solidcraft.clone(),
+    };
+    let timing = Timing {
+        settle: settings.settle,
+        interval: settings.interval.max(Duration::from_millis(100)),
+    };
+    watch_folder(&timing, &folder, &context, stop, &mut Forward(observer)).map(|_| ())
 }

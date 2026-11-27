@@ -3,7 +3,7 @@
 #
 #   scripts/package-appimage.sh <target> <version> [binaries-dir]
 #
-# Takes dutchman, dutchman-mcp, dutchman-gui and dutchman-web (from target/<target>/release, or
+# Takes dutchman, dutchman-mcp, dutchman-gui, dutchman-sync and dutchman-web (from target/<target>/release, or
 # binaries-dir) and writes, in dist/:
 #   dutchman-<version>-<arch>.AppImage         (<arch> is x86_64 or aarch64)
 #   dutchman-<version>-<arch>.AppImage.zsync   for delta updates (AppImageUpdate and the like)
@@ -61,12 +61,14 @@ appdir="dist/appimage-$arch/Dutchman.AppDir"
 rm -rf "dist/appimage-$arch"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" \
   "$appdir/usr/share/icons/hicolor/scalable/apps" "$appdir/usr/share/licenses/dutchman/licences"
-for program in dutchman dutchman-mcp dutchman-gui dutchman-web; do
+for program in dutchman dutchman-mcp dutchman-gui dutchman-sync dutchman-web; do
   install -m755 "$bins/$program" "$appdir/usr/bin/$program"
 done
 install -m755 packaging/linux/AppRun "$appdir/AppRun"
 install -m644 packaging/arch/dutchman.desktop "$appdir/dutchman.desktop"
 install -m644 packaging/arch/dutchman.desktop "$appdir/usr/share/applications/dutchman.desktop"
+install -m644 packaging/linux/dutchman-sync.desktop "$appdir/usr/share/applications/dutchman-sync.desktop"
+install -m644 packaging/arch/dutchman.svg "$appdir/usr/share/icons/hicolor/scalable/apps/dutchman-sync.svg"
 install -m644 packaging/arch/dutchman.svg "$appdir/dutchman.svg"
 install -m644 packaging/arch/dutchman.svg "$appdir/usr/share/icons/hicolor/scalable/apps/dutchman.svg"
 ln -s dutchman.svg "$appdir/.DirIcon"
@@ -95,6 +97,7 @@ if [[ ${SKIP_RUN:-0} != 1 ]]; then
   ln -sf "$root/dist/$name" "dist/appimage-$arch/links/dutchman"
   timeout 60 "dist/appimage-$arch/links/dutchman" --version > /dev/null
   echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | "dist/$name" --run dutchman-mcp | grep -q '"result"'
+  "dist/$name" --run dutchman-sync --version > /dev/null
 fi
 rm -rf "dist/appimage-$arch"
 

@@ -41,6 +41,7 @@ pub(super) fn map(
                 .ok_or("the referenced geometry is missing")?
                 .into(),
         ),
+        merge_bodies: false,
         name: reference
             .get("name")
             .and_then(Value::as_str)

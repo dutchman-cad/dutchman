@@ -3,7 +3,7 @@
 #
 #   scripts/package-archive.sh <target> <name> <ref> [binaries-dir]
 #
-# Takes dutchman, dutchman-mcp and dutchman-gui (plus dutchman-web on Linux) and writes
+# Takes dutchman, dutchman-mcp, dutchman-gui and dutchman-sync (plus dutchman-web on Linux) and writes
 # dist/<name>.zip (Windows) or dist/<name>.tar.gz, holding a <name> folder with the programs,
 # LICENSE, NOTICE, dependency and font licences, skills, docs, installed AGENTS.md, and the
 # README with its links pinned to <ref>
@@ -25,7 +25,7 @@ exe=""
 [[ $target == *windows* ]] && exe=".exe"
 rm -rf "dist/$name"
 mkdir -p "dist/$name/licences"
-programs=(dutchman dutchman-mcp dutchman-gui)
+programs=(dutchman dutchman-mcp dutchman-gui dutchman-sync)
 [[ $target == *linux* ]] && programs+=(dutchman-web)
 for program in "${programs[@]}"; do
   cp "${4:-target/$target/release}/$program$exe" "dist/$name/"
@@ -38,6 +38,7 @@ cp crates/dutchman-gui/assets/fonts/*.txt licences/*.txt "dist/$name/licences/"
 
 if [[ ${SKIP_RUN:-0} != 1 ]]; then
   "dist/$name/dutchman$exe" --version >&2
+  "dist/$name/dutchman-sync$exe" --version >&2
   if [[ $target == *linux* ]]; then
     "dist/$name/dutchman-web$exe" --version >&2
   fi

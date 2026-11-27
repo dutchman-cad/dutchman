@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Dutchman Sync
+GenericName=Keeps converted designs up to date
+Comment=Converts designs again when their source CAD files change
+Exec=dutchman-sync
+Icon=dutchman-sync
+Terminal=false
+Categories=Graphics;Engineering;
+StartupWMClass=dutchman-sync
