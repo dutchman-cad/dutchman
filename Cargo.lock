@@ -734,7 +734,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "cadmpeg-asm"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-derive",
@@ -746,7 +746,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-catia"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -759,7 +759,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-creo"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -770,7 +770,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-f3d"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-asm",
  "cadmpeg-container",
@@ -791,7 +791,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-freecad"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -806,7 +806,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-iges"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -820,7 +820,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-inventor"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-asm",
  "cadmpeg-container",
@@ -835,7 +835,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-nx"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -851,7 +851,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-pvz"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -863,7 +863,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-rhino"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -881,7 +881,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-sat"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-asm",
  "cadmpeg-core",
@@ -891,7 +891,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-sldprt"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -909,7 +909,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-step"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "base64 0.23.1",
  "cadmpeg-container",
@@ -924,7 +924,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-container"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-core",
  "crc32fast",
@@ -935,7 +935,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-core"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-derive",
  "flate2",
@@ -950,12 +950,12 @@ dependencies = [
 [[package]]
 name = "cadmpeg-derive"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 
 [[package]]
 name = "cadmpeg-ir"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "base64 0.23.1",
  "cadmpeg-core",
@@ -971,7 +971,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-measure"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -982,7 +982,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-parasolid"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -992,7 +992,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-protein"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -1006,7 +1006,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-registry"
 version = "0.6.12"
-source = "git+https://github.com/raykholo/cadmpeg?rev=81c2afb147ead49406c3e29a95bd1565295b5eeb#81c2afb147ead49406c3e29a95bd1565295b5eeb"
+source = "git+https://github.com/raykholo/cadmpeg?rev=7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b#7ef2a46e44e7e26ce9c1d2dc5f7f883d53db3e9b"
 dependencies = [
  "cadmpeg-codec-catia",
  "cadmpeg-codec-creo",

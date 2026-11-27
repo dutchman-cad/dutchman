@@ -184,6 +184,7 @@ mod guest {
             file: source::FileInfo,
             options: String,
         ) -> Result<String, PluginError> {
+            report_panics();
             if entry != ENTRY {
                 return Err(invalid(
                     "entry",
@@ -360,6 +361,17 @@ mod guest {
             }),
             other => other,
         }
+    }
+
+    /// A panic inside the plugin is a trap on this target (no unwinding), and the host sees only
+    /// "unreachable". Say what panicked, and where, through the host's log before it traps.
+    fn report_panics() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            std::panic::set_hook(Box::new(|info| {
+                log::log(log::Level::Error, &format!("Dutchman plugin panic: {info}"));
+            }));
+        });
     }
 
     fn note(message: &str) {

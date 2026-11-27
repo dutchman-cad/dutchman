@@ -218,6 +218,10 @@ time through `dutchman_core::time::Instant`, which is `std::time::Instant` nativ
 clock that never advances on `wasm32-unknown-unknown`; cadmpeg's Fusion codec does the same
 (cadmpeg/cadmpeg#1283, included in Dutchman's cadmpeg pin).
 The plugin uses one worker and no progress heartbeat thread.
+Threads do not exist on this target either: `std::thread::scope`'s `spawn` panics, which is a trap in the host. cadmpeg's Fusion
+decoder runs its scoped tasks through a shim that runs each one when it is spawned on `wasm32-unknown-unknown`. A panic inside the
+plugin is also written to SolidCraft's log by a panic hook before the trap. CI builds the component and runs
+`fusion_designs_do_not_trap` in `tests/component.rs`, which imports every Fusion fixture through it.
 
 The host tests are opt-in so the Wasmtime test compiler does not raise the normal
 workspace's Rust 1.88 requirement. `tests/solidcraft_host.rs` runs the package on a real

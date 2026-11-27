@@ -238,6 +238,44 @@ jobs:
       # The SolidCraft plugin component: wasm32-unknown-unknown, no WASI (docs/plugin.md).
       - run: cargo check --locked --target wasm32-unknown-unknown -p dutchman-plugin
 
+  # The plugin's wasm build, run: the component host test imports every Fusion fixture through the
+  # real component, so code that only fails on wasm32-unknown-unknown (a thread that cannot start)
+  # stops here as a trap instead of in SolidCraft. Needs the wasm32 target, so GitHub-hosted.
+  plugin-host:
+    needs: changes
+    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: plugin-host
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Add swap for the plugin build
+        run: |
+          sudo fallocate -l 12G /plugin-swap
+          sudo chmod 600 /plugin-swap
+          sudo mkswap /plugin-swap
+          sudo swapon /plugin-swap
+      - run: cargo install --locked wasm-tools --version 1.263.0
+      - name: Build and package the plugin
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "0"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: |
+          cargo build --release --locked --target wasm32-unknown-unknown -p dutchman-plugin
+          # The byte budget is for the release build; this one skips LTO.
+          PLUGIN_WASM_MAX_BYTES=200000000 bash scripts/package-plugin.sh target/wasm32-unknown-unknown/release/dutchman_plugin.wasm plugin-out
+      - name: Import the Fusion fixtures through the component
+        env:
+          DUTCHMAN_PLUGIN_COMPONENT: ${{ github.workspace }}/plugin-out/dutchman.wasm
+        run: cargo test --release --locked -p dutchman-plugin --features host-tests --test component fusion_designs_do_not_trap -- --nocapture
+
   test:
     needs: changes
     if: needs.changes.outputs.code == 'true' || (github.event_name == 'pull_request' && needs.changes.outputs.platform == 'true')

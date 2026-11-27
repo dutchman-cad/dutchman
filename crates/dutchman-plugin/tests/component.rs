@@ -462,6 +462,63 @@ fn contents(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
     result.sort();
     result
 }
+/// Every Fusion design among the fixtures must come back from the component as a result or a
+/// refusal, never a trap. A panic inside the guest (a thread that cannot start, a clock) is a
+/// trap on this target, and the plugin's panic hook names it through the host log above.
+#[test]
+fn fusion_designs_do_not_trap() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            let path = std::env::var("DUTCHMAN_PLUGIN_COMPONENT").map_err(|_| {
+                "Set DUTCHMAN_PLUGIN_COMPONENT to the wasm32-unknown-unknown component"
+            })?;
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(path);
+            let mut config = Config::new();
+            config
+                .wasm_component_model(true)
+                .consume_fuel(true)
+                .max_wasm_stack(16 * 1024 * 1024)
+                .async_stack_size(18 * 1024 * 1024);
+            let engine = Engine::new(&config)?;
+            let component = Component::from_file(&engine, &path)?;
+            let mut linker = Linker::new(&engine);
+            add_to_linker(&mut linker)?;
+            let root =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../dutchman-core/tests/fixtures");
+            let mut fixtures = Vec::new();
+            collect_fixtures(&root, &mut fixtures)?;
+            fixtures.sort();
+            let mut converted = 0;
+            for source in fixtures
+                .iter()
+                .filter(|path| path.extension().is_some_and(|e| e == "f3d"))
+            {
+                let name = source.file_name().unwrap().to_str().unwrap();
+                let bytes = std::fs::read(source)?;
+                let size = bytes.len() as u64;
+                let host = host(source.parent().unwrap(), bytes);
+                let (result, _) = convert_in(&engine, &component, &linker, host, name, size, "{}")
+                    .map_err(|trap| format!("{name}: the component trapped: {trap}"))?;
+                eprintln!(
+                    "{name}: {}",
+                    if result.is_ok() {
+                        "converted"
+                    } else {
+                        "refused"
+                    }
+                );
+                converted += usize::from(result.is_ok());
+            }
+            assert!(converted >= 2, "only {converted} Fusion fixtures converted");
+            Ok(())
+        })?
+        .join()
+        .map_err(|_| "Component harness worker failed")?
+}
+
 #[test]
 fn component_matches_cli_pipeline_on_public_fixtures(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
