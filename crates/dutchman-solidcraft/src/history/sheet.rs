@@ -47,6 +47,12 @@ pub(super) fn base_flange(
     if let (true, Some(fields)) = (flip, out.as_object_mut()) {
         fields.insert("flip".to_owned(), Value::Bool(true));
     }
+    // Name the body the sheet makes so a later through-all cut has something to cut.
+    if let Some(fields) = out.as_object_mut() {
+        if let Some(names) = super::extrude::body_names(feature, ctx, "new_body") {
+            fields.insert("body_names".to_owned(), json!(names));
+        }
+    }
     Ok(out)
 }
 
@@ -398,9 +404,17 @@ fn prove_picks(state: &Value, selected: &[Value], base: &Base) -> Result<Vec<Pic
         }
         let direction = difference(*b, *a);
         let length = dot(direction, direction).sqrt();
-        if !((near(start, *a) && near(end, *b)) || (near(start, *b) && near(end, *a)))
-            || (dot(tangent, direction).abs() / length - 1.0).abs() > 1e-9
-        {
+        // Where earlier features trimmed the sheet (cuts, corner rounds) the input
+        // edge is the surviving sub-segment of the rebuilt edge, so its endpoints
+        // only need to lie on the rebuilt edge. On an unmodified base they must
+        // coincide with it. Either way the flange spans the input edge's own
+        // endpoints.
+        let endpoints_ok = if base.modified {
+            on_segment(start, *a, *b) && on_segment(end, *a, *b)
+        } else {
+            (near(start, *a) && near(end, *b)) || (near(start, *b) && near(end, *a))
+        };
+        if !endpoints_ok || (dot(tangent, direction).abs() / length - 1.0).abs() > 1e-9 {
             return Err(
                 "its input edge vertices or tangent differ from the rebuilt edge".to_owned(),
             );
@@ -409,7 +423,7 @@ fn prove_picks(state: &Value, selected: &[Value], base: &Base) -> Result<Vec<Pic
         picks.push(Pick {
             point,
             index,
-            ends: (*a, *b),
+            ends: (start, end),
         });
     }
     Ok(picks)
@@ -427,6 +441,9 @@ struct Base {
     perimeter: usize,
     /// Outward unit direction across each sketch perimeter edge.
     outward: Vec<V3>,
+    /// Whether earlier mapped features changed the base sheet, so a flange's
+    /// input edges may be sub-segments of the rebuilt perimeter edges.
+    modified: bool,
 }
 
 /// Enumerates the pre-feature body edges from the mapped base sketch.
@@ -439,7 +456,8 @@ fn base_edges(ctx: &Context, preceding: &[Value], attached: bool) -> Result<Base
         .next()
         .filter(|f| f.get("type").and_then(Value::as_str) == Some("sheet_base"))
         .ok_or("an edge flange on a body that is not a base sheet is not supported yet")?;
-    if solids.next().is_some() {
+    let modified = solids.next().is_some();
+    if !attached && modified {
         return Err(
             "an edge flange on a base sheet that earlier features changed is not supported yet"
                 .to_owned(),
@@ -521,6 +539,7 @@ fn base_edges(ctx: &Context, preceding: &[Value], attached: bool) -> Result<Base
         origin: sketch.origin,
         perimeter,
         outward,
+        modified,
     })
 }
 
@@ -769,17 +788,12 @@ pub(super) fn attached_plate(
     let along = difference(b, a);
     let length = dot(along, along).sqrt();
     // Inventor builds the plate once on each attached edge: the same rectangle, standing
-    // square on the same face of the sheet. A further edge is the same flange only when it
-    // is as long as the first and on the same face.
+    // square on the same face of the sheet. A perimeter flange reaches the far edges of a
+    // non-square base, so the further edges only need to stand on the same face.
     for other in others {
-        let (c, d) = other.ends;
-        let long = difference(d, c);
-        if (dot(long, long).sqrt() - length).abs() > TOL
-            || (other.index >= 4) != (pick.index >= 4)
-            || dot(long, along).abs() / (length * length) < 1.0 - 1e-6
-        {
+        if (other.index >= 4) != (pick.index >= 4) {
             return Err(
-                "a plate attached along edges of different lengths or faces is not supported yet"
+                "a plate attached along edges on both faces of the base sheet is not supported yet"
                     .to_owned(),
             );
         }
@@ -919,35 +933,40 @@ pub(super) struct SheetRule {
     pub(super) thickness: f64,
     pub(super) radius: Option<f64>,
     pub(super) k_factor: Option<f64>,
+    /// The source sheet's bend-relief width and gap in mm, where the source gives them.
+    pub(super) relief_width: Option<f64>,
+    pub(super) gap: Option<f64>,
     pub(super) name: String,
 }
 
 impl SheetRule {
     /// The SolidCraft rule.
     pub(super) fn value(&self) -> Value {
-        rule(&self.name, self.thickness, self.radius, self.k_factor)
+        rule(&self.name, self.thickness, self.radius, self.k_factor, self.relief_width, self.gap)
     }
 }
 
 /// A SolidCraft sheet rule of `thickness` mm, named after it, with SolidCraft's own defaults
-/// for everything else but the bend radius and K-factor, where given.
+/// for everything else but the bend radius, K-factor, relief width and gap, where given.
 pub(super) fn rule(
     name: &str,
     thickness: f64,
     radius: Option<f64>,
     k_factor: Option<f64>,
+    relief_width: Option<f64>,
+    gap: Option<f64>,
 ) -> Value {
     json!({
         "name": name,
         "thickness": format!("{thickness} mm"),
         "bend_radius": radius.map_or_else(|| "Thickness".to_owned(), |r| format!("{r} mm")),
         "k_factor": k_factor.map_or_else(|| "0.44".to_owned(), |k| k.to_string()),
-        "relief_width": "Thickness",
+        "relief_width": relief_width.map_or_else(|| "Thickness".to_owned(), |w| format!("{w} mm")),
         "relief_depth": "Thickness * 0.5",
         "corner_relief": "Thickness * 4.0",
-        "corner_relief_shape": "notch",
+        "corner_relief_shape": "tear",
         "hem_gap": "0.01 mm",
-        "gap": "Thickness",
+        "gap": gap.map_or_else(|| "Thickness".to_owned(), |g| format!("{g} mm")),
     })
 }
 

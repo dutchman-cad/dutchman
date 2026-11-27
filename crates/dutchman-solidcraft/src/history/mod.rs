@@ -1003,6 +1003,20 @@ impl<'a> Context<'a> {
 
     /// The name of the sheet rule of `thickness` mm with the given bend radius and K-factor
     /// (SolidCraft's defaults where `None`), made the first time it is asked for.
+    /// A source parameter of `name` as a length in mm, when the source gives it one.
+    fn source_length(&self, name: &str) -> Option<f64> {
+        let model = self.source?;
+        for parameter in &model.ir.model.parameters {
+            if parameter.name == name {
+                return match parameter.value.as_ref() {
+                    Some(cadmpeg_ir::ParameterValue::Length(length)) => Some(length.get()),
+                    _ => None,
+                };
+            }
+        }
+        None
+    }
+
     fn sheet_rule_of(
         &mut self,
         thickness: f64,
@@ -1014,10 +1028,14 @@ impl<'a> Context<'a> {
             (Some(a), Some(b)) => (a - b).abs() < 1e-9,
             _ => false,
         };
+        let relief_width = self.source_length("BendReliefWidth");
+        let gap = self.source_length("GapSize");
         if let Some(known) = self.sheet_rules.iter().find(|known| {
             (known.thickness - thickness).abs() < 1e-9
                 && same(known.radius, radius)
                 && same(known.k_factor, k_factor)
+                && same(known.relief_width, relief_width)
+                && same(known.gap, gap)
         }) {
             return known.name.clone();
         }
@@ -1032,6 +1050,8 @@ impl<'a> Context<'a> {
             thickness,
             radius,
             k_factor,
+            relief_width,
+            gap,
             name: name.clone(),
         });
         name
