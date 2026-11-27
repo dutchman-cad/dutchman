@@ -85,12 +85,15 @@ geometry and hands over finished areas.
 }
 ```
 
-- `kind` is `copper`, `silkscreen` or `mask`. `finish` (`masked` or `bare`) tells the two kinds of copper apart and
+- `kind` is `copper`, `silkscreen`, `mask` or `laminate`. `finish` (`masked` or `bare`) tells the two kinds of copper apart and
   appears only on copper. `side` (`top`, `bottom` or `inner`) says which way a thick overlay grows (down for `bottom`, up otherwise). An
   overlay with any other `side` is left out, with a `Degraded` note, and the rest converts. An `inner` overlay is
   inner copper (a board's `read --copper all`): it also carries `layer`, the board's name for that layer such as
   `In1.Cu`, and its body is named `<name> (<layer>)`, for example `Inner copper (In1.Cu)`. It is placed by its `z`
   and `thickness` like any other overlay.
+- A `laminate` overlay is the opaque board material at one face (`side` `top` or `bottom`), drawn under the copper and
+  the mask like any other overlay, with `z` and `thickness`; without `color` it is FR-4 tan. A `kind` Dutchman does not
+  know leaves that overlay out with a `Dropped` note, and the rest converts.
 - A `mask` overlay is the solder mask on one face: the board outline minus the mask openings (the pads) and minus the
   drills, as holes. The module draws it between the copper and the silkscreen, at `z` = thickness + 0.005 on top and
   -0.005 below.

@@ -65,6 +65,8 @@ const BARE_COPPER: [f64; 3] = [0.83, 0.64, 0.22];
 /// White, the default for silkscreen.
 const SILKSCREEN: [f64; 3] = [1.0, 1.0, 1.0];
 /// Solder mask green, the default for a mask overlay.
+/// Board laminate (FR-4), the default for a laminate overlay.
+const LAMINATE: [f64; 3] = [0.76, 0.69, 0.45];
 const SOLDER_MASK: [f64; 3] = [0.05, 0.45, 0.22];
 
 #[derive(Deserialize)]
@@ -1149,11 +1151,12 @@ fn overlays(
             },
             "silkscreen" => SILKSCREEN,
             "mask" => SOLDER_MASK,
+            "laminate" => LAMINATE,
             other => {
                 dropped(
                     report,
                     format!(
-                        "its kind `{}` is not copper, silkscreen or mask; it is left out",
+                        "its kind `{}` is not copper, silkscreen, mask or laminate; it is left out",
                         clip(other, 32)
                     ),
                 );
@@ -2621,6 +2624,85 @@ mod tests {
             Severity::Degraded,
             "its group is not text"
         ));
+    }
+
+    #[test]
+    fn laminate_is_an_opaque_body_and_an_unknown_kind_is_skipped_with_a_note() {
+        let dir = package("laminate");
+        write_models(&dir);
+        let area = json!([{"outer": square(2.0), "holes": []}]);
+        let mut top = overlay("Laminate top", area.clone());
+        top["kind"] = json!("laminate");
+        top.as_object_mut().unwrap().remove("finish");
+        top["z"] = json!(1.6);
+        top["thickness"] = json!(0.1);
+        let mut bottom = top.clone();
+        bottom["name"] = json!("Laminate bottom");
+        bottom["side"] = json!("bottom");
+        bottom["z"] = json!(0.0);
+        let mut odd = overlay("Odd", area.clone());
+        odd["kind"] = json!("hologram");
+        let mut mask = overlay("Mask top", area);
+        mask["kind"] = json!("mask");
+        mask["opacity"] = json!(0.6);
+        let (model, report) = read(
+            &dir,
+            &manifest(json!({"overlays": [top, bottom, odd, mask]})),
+        );
+        let assembly = model.unwrap().assembly.unwrap();
+        let names: Vec<_> = assembly.parts.iter().map(|p| p.name.clone()).collect();
+        assert!(names.contains(&"Laminate top".to_owned()), "{names:?}");
+        assert!(names.contains(&"Laminate bottom".to_owned()), "{names:?}");
+        assert!(names.contains(&"Mask top".to_owned()));
+        assert!(!names.contains(&"Odd".to_owned()));
+        let step_of = |name: &str| {
+            let part = assembly.parts.iter().find(|p| p.name == name).unwrap();
+            part.source_step.clone().unwrap()
+        };
+        assert!(step_of("Laminate top").contains("COLOUR_RGB('',0.76,0.69,0.45)"));
+        // The mask's opacity is the module's own value, passed through as transparency 0.4.
+        assert!(step_of("Mask top").contains("0.4"));
+        assert!(mentions(&report, Severity::Dropped, "hologram"));
+    }
+
+    #[test]
+    fn a_standard_body_and_its_leads_land_in_one_folder_with_their_own_colours() {
+        let dir = package("leads");
+        write_models(&dir);
+        let mut m = manifest(json!({}));
+        m["parts"] = json!([
+            {"name": "Board", "model": "board"},
+            {"name": "U1", "model": "cube", "color": "#202020", "group": "Components top",
+             "transform": [[1,0,0,10],[0,1,0,5],[0,0,1,1.6]]},
+            {"name": "U1 leads", "model": "cube", "color": "#c0c0c0", "group": "Components top",
+             "transform": [[1,0,0,10],[0,1,0,5],[0,0,1,1.6]]},
+        ]);
+        let (model, _) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert_eq!(assembly.placements.len(), 2, "the board and one folder");
+        let folder = assembly
+            .parts
+            .iter()
+            .find(|p| p.name == "Components top")
+            .and_then(|p| p.assembly.as_ref())
+            .unwrap();
+        let names: Vec<_> = folder
+            .placements
+            .iter()
+            .map(|p| p.name.clone().unwrap())
+            .collect();
+        assert_eq!(names, ["U1", "U1 leads"]);
+        // Two colours, so two coloured copies of the model.
+        assert_eq!(folder.parts.len(), 2);
+        let colour = |name: &str| {
+            let placement = folder
+                .placements
+                .iter()
+                .find(|p| p.name.as_deref() == Some(name))
+                .unwrap();
+            folder.parts[placement.part].source_step.clone().unwrap()
+        };
+        assert_ne!(colour("U1"), colour("U1 leads"));
     }
 
     #[test]
