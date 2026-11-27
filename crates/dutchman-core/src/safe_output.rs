@@ -25,9 +25,17 @@ pub fn portable_key(name: &str) -> String {
         .into_owned()
 }
 
-/// [`portable_key`] of a whole path, folder names included.
+/// [`portable_key`] of a whole path, folder names included. The key is made from the path's
+/// components, so `out/part.sc` and `out\part.sc` (what Windows makes of it) are one key.
 pub fn portable_path_key(path: &Path) -> String {
-    portable_key(&path.to_string_lossy())
+    let parts: Vec<String> = path
+        .components()
+        .map(|part| match part {
+            std::path::Component::RootDir => String::new(),
+            other => other.as_os_str().to_string_lossy().into_owned(),
+        })
+        .collect();
+    portable_key(&parts.join("/"))
 }
 
 /// Whether something is already at `path`, by the filesystem's own answer, or a file in that
@@ -443,6 +451,18 @@ mod tests {
 
     const NFC: &str = "caf\u{e9}";
     const NFD: &str = "cafe\u{301}";
+
+    #[test]
+    fn a_path_key_ignores_separators() {
+        assert_eq!(
+            portable_path_key(Path::new("out/part.sc")),
+            portable_path_key(&Path::new("out").join("part.sc"))
+        );
+        assert_ne!(
+            portable_path_key(Path::new("out/part.sc")),
+            portable_path_key(Path::new("out/other.sc"))
+        );
+    }
 
     #[test]
     fn portable_keys_fold_normalisation_and_case() {
