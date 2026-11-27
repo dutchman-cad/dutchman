@@ -36,11 +36,17 @@ pub enum Format {
     DxfDrawing,
     /// A Solid Edge drawing (.dft).
     SolidEdgeDrawing,
+    /// A Solid Edge part (.par).
+    SolidEdgePart,
+    /// A Solid Edge sheet-metal part (.psm).
+    SolidEdgeSheetMetal,
+    /// A Solid Edge assembly (.asm).
+    SolidEdgeAssembly,
 }
 
 impl Format {
     /// Every recognised format.
-    pub const ALL: [Format; 24] = [
+    pub const ALL: [Format; 27] = [
         Self::FusionArchive,
         Self::FusionMultiDocument,
         Self::InventorPart,
@@ -65,6 +71,9 @@ impl Format {
         Self::DwgDrawing,
         Self::DxfDrawing,
         Self::SolidEdgeDrawing,
+        Self::SolidEdgePart,
+        Self::SolidEdgeSheetMetal,
+        Self::SolidEdgeAssembly,
     ];
 
     fn metadata(self) -> (&'static str, &'static str, &'static str, &'static str) {
@@ -153,6 +162,24 @@ impl Format {
                 "Solid Edge drawing (.dft)",
                 "Solid Edge",
             ),
+            Self::SolidEdgePart => (
+                "solid_edge_part",
+                "par",
+                "Solid Edge part (.par)",
+                "Solid Edge",
+            ),
+            Self::SolidEdgeSheetMetal => (
+                "solid_edge_sheet_metal",
+                "psm",
+                "Solid Edge sheet-metal part (.psm)",
+                "Solid Edge",
+            ),
+            Self::SolidEdgeAssembly => (
+                "solid_edge_assembly",
+                "asm",
+                "Solid Edge assembly (.asm)",
+                "Solid Edge",
+            ),
         }
     }
 
@@ -191,6 +218,9 @@ impl Format {
             Self::DwgDrawing => &["dwg"],
             Self::DxfDrawing => &["dxf"],
             Self::SolidEdgeDrawing => &["dft"],
+            Self::SolidEdgePart => &["par"],
+            Self::SolidEdgeSheetMetal => &["psm"],
+            Self::SolidEdgeAssembly => &["asm"],
         }
     }
     /// Human-readable format name.
@@ -215,6 +245,9 @@ impl Format {
             | Self::DxfDrawing
             | Self::SolidEdgeDrawing => None,
             Self::FreeCadDocument => Some("fcstd"),
+            Self::SolidEdgePart | Self::SolidEdgeSheetMetal | Self::SolidEdgeAssembly => {
+                Some("solidedge")
+            }
             Self::CatiaPart => Some("catia"),
             Self::CreoPart => Some("creo"),
             Self::NxPart => Some("nx"),
