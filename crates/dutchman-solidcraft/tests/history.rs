@@ -22529,3 +22529,136 @@ fn a_prefix_that_holds_the_source_shape_stays_when_only_a_blend_follows() {
         "{document}"
     );
 }
+
+/// The example cube history with a join extrude after the cube, a second one after that, and a
+/// timeline container whose rollback bar sits before `bar` (`None`: at the end).
+/// `suppress` names the features the source suppresses. Joining 10 mm square extrudes of
+/// length 20 would make the final body twice the cube, so a replay that builds past the bar
+/// differs from the source's stored cube.
+fn rolled_back_history(bar: Option<&str>, suppress: &[&str]) -> Model {
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let boss = |key: u32, name: &str, ordinal: u32| {
+        json!({"id": format!("f3d:model:feature#{key}"), "ordinal": ordinal, "name": name,
+            "suppressed": suppress.contains(&name), "dependencies": ["f3d:model:feature#2"],
+            "outputs": ["synthetic:cube:body#0"],
+            "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {
+                "profile": {"kind": "planar", "value": first_profile()},
+                "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"},
+                "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 20.0}}},
+                "op": "join"}}},
+            "source_properties": {}, "source_content": []})
+    };
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    features.push(boss(3, "Boss A", 2));
+    features.push(boss(4, "Boss B", 3));
+    let member = |key: u32| json!({"kind": "feature", "value": format!("f3d:model:feature#{key}")});
+    let rollback = match bar {
+        Some(name) => {
+            let key = match name {
+                "Boss A" => 3,
+                _ => 4,
+            };
+            json!({"kind": "before", "value": member(key)})
+        }
+        None => json!({"kind": "end"}),
+    };
+    wire["design"]["containers"] = json!([{"kind": "ordered", "value": {
+        "id": "f3d:design:container#1", "kind": "timeline",
+        "members": [member(1), member(2), member(3), member(4)],
+        "folders": [], "rollback": rollback}}]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+fn timeline_names(document: &Value) -> Vec<String> {
+    document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|feature| feature["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_rollback_bar_becomes_the_timeline_marker_and_the_later_features_stay_live() {
+    let (document, report) = convert(
+        &rolled_back_history(Some("Boss A"), &[]),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    // Base sketch and Block lie before the bar.
+    assert_eq!(document["marker"], 2, "{document}");
+    assert_eq!(
+        timeline_names(&document)[..4],
+        ["Base sketch", "Block", "Boss A", "Boss B"]
+    );
+    for feature in &document["features"].as_array().unwrap()[..4] {
+        assert_eq!(feature["suppressed"], false, "{feature}");
+    }
+    assert!(
+        history_line(&report).contains("4 of 4 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn a_source_without_a_rollback_writes_no_marker() {
+    let (document, _) = convert(
+        &rolled_back_history(None, &[]),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(document.get("marker").is_none(), "{document}");
+    assert!(timeline_names(&document).contains(&"Boss B".to_owned()));
+    let plain = convert(
+        &cube_with_history(10.0, first_profile(), None),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(plain.0.get("marker").is_none());
+}
+
+#[test]
+fn a_suppressed_feature_and_the_rollback_bar_are_distinct_states() {
+    // Boss A is suppressed in the source (left out); the bar sits before Boss B.
+    let (document, report) = convert(
+        &rolled_back_history(Some("Boss B"), &["Boss A"]),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let names = timeline_names(&document);
+    assert!(!names.iter().any(|name| name == "Boss A"), "{names:?}");
+    // The suppressed feature takes no row; the bar is after the sketch and Block.
+    assert_eq!(document["marker"], 2, "{document}");
+    let after = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|feature| feature["name"] == "Boss B")
+        .unwrap();
+    assert_eq!(after["suppressed"], false);
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("suppressed in the source")));
+}
+
+#[test]
+fn the_body_at_the_marker_is_the_one_the_replay_is_checked_against() {
+    let Some(cli) = solidcraft() else { return };
+    let model = rolled_back_history(Some("Boss A"), &[]);
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
+    );
+    // The stored cube is the state at the bar; building Boss A and B would double it.
+    assert_eq!(document["marker"], 2, "{document}");
+    assert!(
+        history_line(&report).contains("4 of 4 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let volume = volumes(&cli, &written(&model).0);
+    assert_eq!(volume.len(), 1);
+    assert!((volume[0] - 1000.0).abs() / 1000.0 < dutchman_solidcraft::VOLUME_TOLERANCE);
+}

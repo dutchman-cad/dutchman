@@ -99,6 +99,13 @@ even when volume and area fall within their allowances. Missing regions still fa
 per-piece checks apply. Single-region bodies and designs with multiple source bodies
 keep their existing one-to-one comparisons.
 
+When the source rolls its history back to an earlier feature, Dutchman writes that position as
+SolidCraft's timeline marker. The features after the rollback bar are written unsuppressed past
+the marker, so they stay editable, and the replay is compared with the body at the marker. A
+suppressed feature is still left out and reported, separate from the rolled-back features. The
+marker is written when the history is `verified` or the whole design; a `partial`, `flattened`
+or `unverified` result writes none.
+
 ### Verification tolerances
 
 Every number below is a constant in `crates/dutchman-solidcraft/src/tolerances.rs`, and the

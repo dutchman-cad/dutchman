@@ -331,6 +331,17 @@ pub(crate) fn history_design(
         "next_id": next_id,
         "features": features,
     });
+    // The rollback bar of the source: SolidCraft's timeline marker counts the features kept
+    // active. Only a design whose last feature is the live one can carry it: with the original
+    // alongside (`Original`, `Partial`, `Unverified`) the features after the bar would hide
+    // the original import appended after them.
+    if let (Some(marker), true, Some(fields)) = (
+        history.timeline_marker(),
+        matches!(live, Live::History | Live::Whole),
+        doc.as_object_mut(),
+    ) {
+        fields.insert("marker".to_owned(), json!(marker));
+    }
     if let (Some(first), Some(fields)) = (history.sheet_rules.first(), doc.as_object_mut()) {
         fields.insert(
             "sheet".to_owned(),
@@ -744,6 +755,7 @@ mod history_tests {
             unconfirmed: Default::default(),
             measured: Default::default(),
             growth: Vec::new(),
+            marker: None,
             stop: None,
             replayed_bodies: None,
             rest_from: None,

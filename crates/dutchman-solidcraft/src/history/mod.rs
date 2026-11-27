@@ -121,6 +121,11 @@ pub(crate) struct History {
     /// What each source row can do to the body's extent, by row, to tell whether the features
     /// after a stop can still make a retained prefix bigger ([`History::unreachable_prefix`]).
     pub(crate) growth: Vec<Growth>,
+    /// The source's rollback position: how many of `features` lie before the rollback bar.
+    /// The features after it are real history that stays unsuppressed and live, just past
+    /// the bar, so the document's timeline marker is written there and the body the source
+    /// stores is the body at the marker. `None` when the source rolls back nothing.
+    pub(crate) marker: Option<usize>,
 }
 
 /// What a source feature can do to the extent of the bodies before it.
@@ -265,13 +270,25 @@ fn stored_body_centers(feature: &Value) -> Option<Vec<crate::verify::StoredBody>
 }
 
 impl History {
+    /// The timeline marker to write: the rollback position when features of the history lie
+    /// past it, `None` when the marker would sit at the end.
+    pub(crate) fn timeline_marker(&self) -> Option<usize> {
+        self.marker.filter(|marker| *marker < self.features.len())
+    }
+
+    /// The features the source's current body is built from: those before the rollback bar.
+    pub(crate) fn live_features(&self) -> &[Value] {
+        let end = self.timeline_marker().unwrap_or(self.features.len());
+        self.features.get(..end).unwrap_or(&self.features)
+    }
+
     /// What the source features after this history's last body-building feature can do to its
     /// extent, when none of them can build beyond it: `Some(true)` when they only remove
     /// material, `Some(false)` when some round edges. `None` when a later feature may build,
     /// when nothing builds a body in this history, or when no feature follows.
     pub(crate) fn unreachable_prefix(&self) -> Option<bool> {
         let last = self
-            .features
+            .live_features()
             .iter()
             .filter(|feature| feature.get("type").and_then(Value::as_str) != Some("sketch"))
             .filter_map(|feature| self.sources.get(&feature.get("id")?.as_u64()?))
@@ -288,7 +305,7 @@ impl History {
     /// feature that isn't a sketch says. An earlier feature's count can't speak for a later one.
     pub(crate) fn stored_bodies_at_end(&self) -> Option<&[crate::verify::StoredBody]> {
         let last = self
-            .features
+            .live_features()
             .iter()
             .rev()
             .find(|feature| feature.get("type").and_then(Value::as_str) != Some("sketch"))?;
@@ -1421,6 +1438,49 @@ fn hidden_bodies(ctx: &Context) -> Vec<String> {
     names
 }
 
+/// The position, among `features` in timeline order, of the first feature the source's
+/// rollback bar leaves out, from the design's ordered timeline container. `None` when no
+/// timeline is rolled back, or the bar sits at the end or at a member that is no row of
+/// `features`.
+fn rollback_position(ctx: &Context, features: &[&Value]) -> Option<usize> {
+    let containers = ctx.design.get("containers")?.as_array()?;
+    let ordered = |container: &Value| -> Option<Value> {
+        (container.get("kind")?.as_str()? == "ordered").then(|| container.get("value").cloned())?
+    };
+    let ordered: Vec<Value> = containers.iter().filter_map(ordered).collect();
+    fn by_id<'a>(ordered: &'a [Value], id: &str) -> Option<&'a Value> {
+        ordered
+            .iter()
+            .find(|container| container.get("id").and_then(Value::as_str) == Some(id))
+    }
+    // The first feature a member stands for: itself, or the first one inside a container.
+    fn first_feature(member: &Value, ordered: &[Value], depth: u8) -> Option<String> {
+        let value = member.get("value")?.as_str()?;
+        match member.get("kind")?.as_str()? {
+            "feature" => Some(value.to_owned()),
+            "container" if depth < 16 => by_id(ordered, value)?
+                .get("members")?
+                .as_array()?
+                .iter()
+                .find_map(|member| first_feature(member, ordered, depth + 1)),
+            _ => None,
+        }
+    }
+    ordered
+        .iter()
+        .filter(|container| container.get("kind").and_then(Value::as_str) == Some("timeline"))
+        .find_map(|container| {
+            let rollback = container.get("rollback")?;
+            if rollback.get("kind")?.as_str()? != "before" {
+                return None;
+            }
+            let id = first_feature(rollback.get("value")?, &ordered, 0)?;
+            features
+                .iter()
+                .position(|feature| feature.get("id").and_then(Value::as_str) == Some(id.as_str()))
+        })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn map_into(
     model: &Model,
@@ -1484,7 +1544,11 @@ fn map_into(
 
     let mut history = History::default();
     let mut blocked: Option<String> = None;
-    let last_builder = features.iter().rposition(|feature| {
+    let rollback = rollback_position(&ctx, &features);
+    // What the source's body holds is built by the features before the rollback bar; the ones
+    // after it are mapped as history but never count as the last builder.
+    let live = rollback.unwrap_or(features.len());
+    let last_builder = features.iter().take(live).rposition(|feature| {
         let kind = kind(feature);
         feature.get("suppressed").and_then(Value::as_bool) != Some(true)
             && !unchanged_geometry(feature)
@@ -1508,10 +1572,24 @@ fn map_into(
         })
         .collect();
     let timeline = progress.map(|p| p.features(features.len() as u64));
-    let growth: Vec<Growth> = features.iter().map(|feature| growth_of(feature)).collect();
+    let growth: Vec<Growth> = features
+        .iter()
+        .enumerate()
+        .map(|(position, feature)| {
+            if position < live {
+                growth_of(feature)
+            } else {
+                // Past the bar: it builds nothing in the body the source stores.
+                Growth::Inert
+            }
+        })
+        .collect();
     for (position, feature) in features.into_iter().enumerate() {
         if let Some(timeline) = &timeline {
             timeline.at(position as u64 + 1, name(feature));
+        }
+        if rollback == Some(position) {
+            history.marker = Some(history.features.len());
         }
         if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
             return Err("planning time budget reached".to_owned());
