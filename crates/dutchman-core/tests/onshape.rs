@@ -1897,28 +1897,20 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
             }
         });
         let (model, report) = read(&bytes).unwrap();
-        if matches!(
-            failure,
-            "microversion" | "source-final-parts" | "unknown-source-body"
-        ) {
-            // The reference's records are refused or skipped, so the derived studio keeps its
-            // geometry as stored bodies with a combine instead of a native feature.
+        if failure == "microversion" {
+            // cadmpeg omits the mismatched reference member, so Derived and its dependent
+            // Boolean stay native; no neutral design reference reaches the history writer.
+            assert_eq!(kinds(&model), ["sketch", "extrude", "native", "native"]);
             assert!(
-                kinds(&model).contains(&"stored_geometry".into()),
+                report.losses().iter().any(|loss| loss.code.as_deref()
+                    == Some("onshape/member.unreadable")
+                    && loss.detail.contains("sourceMicroversion")
+                    && loss
+                        .detail
+                        .contains("does not match the pinned microversion")),
                 "{failure}: {:?}",
-                kinds(&model)
+                report.losses()
             );
-            if failure == "microversion" {
-                assert!(
-                    report.losses().iter().any(|loss| loss.code.as_deref()
-                        == Some("onshape/member.not-supported")
-                        && loss.detail.contains("sourceMicroversion")),
-                    "{failure}: {:?}",
-                    report.losses()
-                );
-            }
-            assert!(model.source_step.is_some());
-            continue;
         }
         assert!(kinds(&model).contains(&"native".into()), "{failure}");
         assert!(
