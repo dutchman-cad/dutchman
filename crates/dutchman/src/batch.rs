@@ -1892,6 +1892,7 @@ mod tests {
             input,
             output: dir.path().join("synthetic.sc"),
             replace: true,
+            requested: None,
             search: PartSearch::default(),
         };
         let limits = Limits {

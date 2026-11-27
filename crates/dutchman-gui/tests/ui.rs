@@ -423,7 +423,9 @@ fn replacing_asks_once_and_lists_only_files_dutchman_did_not_make() {
     std::env::set_var("DUTCHMAN_NO_TRASH", "1");
     for replace in [true, false] {
         let out = tempfile::tempdir().unwrap();
-        let mut harness = harness();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 1100.0))
+            .build_eframe(|cc| test_app(cc));
         harness.state_mut().add_inputs([
             fixture("generated_unit_cube.f3d"),
             fixture("synthetic_cube.ipt"),
@@ -2774,6 +2776,11 @@ fn ask_ai_copies_a_short_prompt_naming_files_that_exist() {
     assert!(prompt.matches(". ").count() <= 6, "{prompt}");
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
+    // The saved copy also carries the mark that ties it to its source.
+    let mut saved = saved;
+    if let Some(generator) = saved.get_mut("generator").and_then(|g| g.as_object_mut()) {
+        generator.remove("source");
+    }
     assert_eq!(Some(&saved), row.report.as_ref());
     // The same text is shown under the button, and Copy copies it again.
     assert_eq!(shown_prompt(&harness), prompt);

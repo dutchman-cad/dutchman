@@ -871,16 +871,7 @@ fn folder_outputs_mirror_nested_duplicate_names_and_rerun_in_place() {
             assert!(!output.join("part.sc").exists());
         }
     }
-    let preserved: Vec<_> = folders
-        .into_iter()
-        .flat_map(|folder| {
-            ["part.sc", "linked.sc"].map(|name| {
-                let path = output.join(folder).join(name);
-                let bytes = std::fs::read(&path).unwrap();
-                (path, bytes)
-            })
-        })
-        .collect();
+    // Without --replace, a rerun still replaces the designs this same folder made, in place.
     let result = dutchman(&[
         "convert-all",
         "--json",
@@ -890,8 +881,12 @@ fn folder_outputs_mirror_nested_duplicate_names_and_rerun_in_place() {
         input.to_str().unwrap(),
     ]);
     assert_eq!(json_of(&result)["failed"], 0);
-    for (path, bytes) in preserved {
-        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    for folder in folders {
+        for name in ["part.sc", "linked.sc"] {
+            assert!(output.join(folder).join(name).is_file());
+        }
+        assert!(!output.join(folder).join("part (2).sc").exists());
+        assert!(!output.join(folder).join("linked (2).sc").exists());
     }
 }
 
@@ -1878,7 +1873,10 @@ fn bare_and_explicit_conversion_derive_and_protect_default_outputs() {
         .status
         .success());
     assert_eq!(std::fs::read(&output).unwrap(), b"sentinel");
-    assert!(dir.path().join("part (3).sc").is_file());
+    // `part (2).sc` is a design Dutchman made from this file, so it is replaced in place
+    // rather than numbered past.
+    assert!(!dir.path().join("part (3).sc").exists());
+    assert!(dir.path().join("part (2).sc").is_file());
     assert!(run(&["part.f3d", "part.sc", "--no-verify", "--replace"])
         .status
         .success());
@@ -2947,8 +2945,12 @@ fn solidcraft_output_extensions_follow_the_target_and_accept_explicit_names() {
             ]);
             assert!(
                 out.status.success(),
-                "{}",
+                "{} {}",
+                String::from_utf8_lossy(&out.stdout),
                 String::from_utf8_lossy(&out.stderr)
+                    .lines()
+                    .last()
+                    .unwrap_or("")
             );
             let report = json_of(&out);
             assert_eq!(report["output"]["path"], output);

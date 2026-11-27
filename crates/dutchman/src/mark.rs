@@ -23,7 +23,6 @@ use sha2::{Digest, Sha256};
 
 /// The ZIP entry that holds the mark.
 const MARK: &str = "dutchman.json";
-const CONTAINER: &str = "container.json";
 const DOCUMENT: &str = "document.json";
 /// The most of the mark that is read.
 const MAX_CONTAINER: u64 = 1 << 20;
@@ -91,35 +90,6 @@ impl Made {
     }
 }
 
-/// The time as `2026-11-25T20:30:00Z`.
-fn timestamp() -> String {
-    let seconds = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
-    let (days, rest) = (seconds / 86_400, seconds % 86_400);
-    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
-    let z = i64::try_from(days).unwrap_or(0) + 719_468;
-    let era = z.div_euclid(146_097);
-    let day_of_era = z.rem_euclid(146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_part = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_part + 2) / 5 + 1;
-    let month = if month_part < 10 {
-        month_part + 3
-    } else {
-        month_part - 9
-    };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        rest / 3600,
-        rest % 3600 / 60,
-        rest % 60
-    )
-}
-
 /// `design` (a `.sc` container) with the mark added as the entry `dutchman.json`. Every other
 /// entry, `container.json` included, is copied as stored. `Err` when `design` is not a container.
 pub fn stamp(design: &[u8], made: &Made) -> Result<Vec<u8>, String> {
@@ -137,7 +107,6 @@ pub fn stamp(design: &[u8], made: &Made) -> Result<Vec<u8>, String> {
             "path_sha256": made.source_path_sha256,
         },
         "options": made.options,
-        "time": timestamp(),
         "document_crc32": format!("{document_crc:08x}"),
     });
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::with_capacity(
@@ -287,6 +256,8 @@ pub fn place(input: &Path, output: &Path, replace: bool) -> (std::path::PathBuf,
 mod tests {
     use super::*;
 
+    const CONTAINER: &str = "container.json";
+
     fn design(document: &str) -> Vec<u8> {
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let stored = zip::write::SimpleFileOptions::default()
@@ -344,7 +315,6 @@ mod tests {
         let container: Value = serde_json::from_str(&record).unwrap();
         assert_eq!(container["generator"], "Dutchman");
         assert_eq!(container["source"]["name"], "Toob v2.f3z");
-        assert!(container["time"].as_str().unwrap().ends_with('Z'));
     }
 
     #[test]
@@ -382,12 +352,5 @@ mod tests {
         std::fs::write(&path, edited.finish().unwrap().into_inner()).unwrap();
         assert!(!read(&path).unwrap().untouched);
         assert!(!made_from(&path, &source));
-    }
-
-    #[test]
-    fn timestamps_are_utc_dates() {
-        let now = timestamp();
-        assert_eq!(now.len(), 20, "{now}");
-        assert!(now.starts_with("20"), "{now}");
     }
 }

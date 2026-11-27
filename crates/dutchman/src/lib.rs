@@ -438,7 +438,6 @@ impl PreparedWriter {
         let Some((input, options, target)) = &self.made else {
             return self.write_unmarked(model, out, report, progress);
         };
-        use std::io::Write as _;
         let mut bytes = Vec::new();
         self.write_unmarked(model, &mut bytes, report, progress)?;
         let stamped = mark::Made::of(input, options.clone(), target.clone())

@@ -1905,6 +1905,7 @@ mod output_kept_tests {
             input: input.to_path_buf(),
             output: output.to_path_buf(),
             replace: false,
+            requested: None,
             search: PartSearch::default(),
         }
     }
