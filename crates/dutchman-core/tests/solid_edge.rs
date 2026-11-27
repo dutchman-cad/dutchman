@@ -88,6 +88,8 @@ fn entry(
 /// A compound file whose root has the given class and holds `PSMroots` and `JSitesList`,
 /// followed by one `.P_B` stream for each partition.
 fn document(class: [u8; 16], partitions: &[Vec<u8>]) -> Vec<u8> {
+    // Two directory sectors hold the root, three named entries and up to four streams.
+    assert!(partitions.len() <= 4);
     let fat = 2 + 8 * partitions.len();
     let mut file = vec![0u8; (fat + 2) * 512];
     file[..8].copy_from_slice(&[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
@@ -106,16 +108,18 @@ fn document(class: [u8; 16], partitions: &[Vec<u8>]) -> Vec<u8> {
     }
     put_u32(&mut file, 76, u32::try_from(fat).unwrap());
     let directory = &mut file[512..1536];
-    for slot in directory.chunks_exact_mut(128) {
+    for slot in directory.as_chunks_mut::<128>().0 {
         slot[68..80].fill(0xff);
     }
-    entry(directory, 0, "Root Entry", 5, 1, None);
+    entry(directory, 0, "Root Entry", 5, 3, None);
     directory[80..96].copy_from_slice(&class);
     entry(directory, 1, "PSMroots", 2, u32::MAX, None);
-    put_u32(directory, 128 + 72, 3);
     entry(directory, 2, "JSitesList", 2, u32::MAX, None);
+    // CFB orders names by UTF-16 length, then uppercase spelling. All three
+    // root children are black, with PARASOLID between PSMroots and JSitesList.
+    entry(directory, 3, "PARASOLID", 1, CFB_FREE, None);
+    put_u32(directory, 384 + 68, 1);
     put_u32(directory, 384 + 72, 2);
-    entry(directory, 3, "PARASOLID", 1, 4, None);
     for (index, stream) in partitions.iter().enumerate() {
         assert!(stream.len() <= 4096);
         let slot = 4 + index;
@@ -127,10 +131,17 @@ fn document(class: [u8; 16], partitions: &[Vec<u8>]) -> Vec<u8> {
             u32::MAX,
             Some(2 + 8 * index),
         );
-        if index + 1 < partitions.len() {
-            put_u32(directory, slot * 128 + 72, u32::try_from(slot + 1).unwrap());
-        }
     }
+    // STREAM0.P_B through STREAM3.P_B are already in CFB name order. An empty
+    // storage must have NO_STREAM as its child, never a pointer to a free slot.
+    let slots: Vec<usize> = (4..4 + partitions.len()).collect();
+    let red_depth = if slots.is_empty() {
+        0
+    } else {
+        slots.len().ilog2()
+    };
+    let child = sibling_tree(directory, &slots, 0, red_depth);
+    put_u32(directory, 384 + 76, child);
     for (index, stream) in partitions.iter().enumerate() {
         let start = (3 + 8 * index) * 512;
         file[start..start + stream.len()].copy_from_slice(stream);
@@ -151,6 +162,22 @@ fn document(class: [u8; 16], partitions: &[Vec<u8>]) -> Vec<u8> {
     }
     put_u32(table, fat * 4, CFB_FAT);
     file
+}
+
+/// Build a balanced sibling tree, coloring its deepest leaves red so every
+/// path to a missing child has the same black height.
+fn sibling_tree(directory: &mut [u8], slots: &[usize], depth: u32, red_depth: u32) -> u32 {
+    if slots.is_empty() {
+        return CFB_FREE;
+    }
+    let middle = slots.len() / 2;
+    let slot = slots[middle];
+    let left = sibling_tree(directory, &slots[..middle], depth + 1, red_depth);
+    let right = sibling_tree(directory, &slots[middle + 1..], depth + 1, red_depth);
+    directory[slot * 128 + 67] = u8::from(depth == 0 || depth != red_depth);
+    put_u32(directory, slot * 128 + 68, left);
+    put_u32(directory, slot * 128 + 72, right);
+    u32::try_from(slot).unwrap()
 }
 
 fn node(bytes: &mut Vec<u8>, kind: u16, index: u16) {
@@ -475,6 +502,22 @@ fn a_document_without_a_body_is_refused_with_what_to_do_next() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("feature history"), "{err}");
+}
+
+#[test]
+fn documents_with_up_to_four_partition_streams_have_valid_sibling_trees() {
+    for count in 1..=4 {
+        let partitions = vec![cube_partition(); count];
+        let bytes = document(PART_CLASS, &partitions);
+        let model = read_bytes(
+            Format::SolidEdgePart,
+            Path::new("partitions.par"),
+            &bytes,
+            &mut Report::default(),
+        )
+        .unwrap();
+        assert_eq!(model.ir.geometry.bodies.len(), count);
+    }
 }
 
 #[test]
