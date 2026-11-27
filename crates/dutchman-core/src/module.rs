@@ -668,37 +668,42 @@ cat "$out/manifest.json""#
         assert!(error.to_string().contains("no manifest.json"), "{error}");
     }
 
-    /// A module whose manifest name says which `--copper` setting it was given.
+    /// A module that records each `read` command line it is given beside the board.
     fn copper_echo() -> String {
-        r#"mode=outer
-case "$*" in *"--copper all"*) mode=all ;; esac
+        r#"echo "$*" >> "$(dirname "$in")/calls.log"
 echo step > "$out/b.step"
-printf '{"schema":"dutchman.parts/1","name":"copper-%s","models":[{"id":"m","file":"b.step"}],"parts":[{"name":"Board","model":"m"}]}' "$mode" > "$out/manifest.json"
+printf '%s' '{"schema":"dutchman.parts/1","name":"Tiny","models":[{"id":"m","file":"b.step"}],"parts":[{"name":"Board","model":"m"}]}' > "$out/manifest.json"
 cat "$out/manifest.json""#
             .to_owned()
     }
 
-    fn read_copper(read: &str, copper: CopperLayers) -> (Result<Model, Error>, Report) {
+    /// Reads with the module `read` script and returns the report and each command line the
+    /// module was run with. The package itself is not what these tests are about.
+    fn read_copper(read: &str, copper: CopperLayers) -> (Report, Vec<String>) {
         let dir = tempfile::tempdir().unwrap();
         let program = fake(dir.path(), 1, read);
         let mut report = Report::default();
-        let model = read_with(
+        read_with(
             &program,
             &board(dir.path()),
             copper,
             &Limits::default(),
             &mut report,
-        );
-        (model, report)
+        )
+        .ok();
+        let calls = std::fs::read_to_string(dir.path().join("calls.log")).unwrap_or_default();
+        (report, calls.lines().map(str::to_owned).collect())
     }
 
     #[test]
     fn copper_all_is_passed_to_the_module_and_outer_is_not() {
         let _scripts = scripts();
-        let (all, _) = read_copper(&copper_echo(), CopperLayers::All);
-        assert_eq!(all.unwrap().name, "copper-all");
-        let (outer, _) = read_copper(&copper_echo(), CopperLayers::Outer);
-        assert_eq!(outer.unwrap().name, "copper-outer");
+        let (_, all) = read_copper(&copper_echo(), CopperLayers::All);
+        assert_eq!(all.len(), 1, "{all:?}");
+        assert!(all[0].ends_with("--json --copper all"), "{all:?}");
+        let (_, outer) = read_copper(&copper_echo(), CopperLayers::Outer);
+        assert_eq!(outer.len(), 1, "{outer:?}");
+        assert!(!outer[0].contains("--copper"), "{outer:?}");
         assert_eq!("all".parse::<CopperLayers>(), Ok(CopperLayers::All));
         assert!("inner".parse::<CopperLayers>().is_err());
     }
@@ -707,11 +712,14 @@ cat "$out/manifest.json""#
     fn an_older_module_without_copper_falls_back_to_outer_with_a_note() {
         let _scripts = scripts();
         let older = format!(
-            "case \"$*\" in *--copper*) echo \"error: unexpected argument '--copper' found\" >&2; exit 2 ;; esac\n{}",
+            "echo \"$*\" >> \"$(dirname \"$in\")/calls.log\"\ncase \"$*\" in *--copper*) echo \"error: unexpected argument '--copper' found\" >&2; exit 2 ;; esac\n{}",
             copper_echo()
         );
-        let (model, report) = read_copper(&older, CopperLayers::All);
-        assert_eq!(model.unwrap().name, "copper-outer");
+        let (report, calls) = read_copper(&older, CopperLayers::All);
+        // Asked with `--copper all`, refused, then asked again without it.
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert!(calls[0].contains("--copper all"), "{calls:?}");
+        assert!(!calls[2].contains("--copper"), "{calls:?}");
         let note = report
             .losses()
             .iter()
