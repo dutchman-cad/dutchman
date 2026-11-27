@@ -491,7 +491,7 @@ fn fusion_designs_do_not_trap() -> Result<(), Box<dyn std::error::Error + Send +
             let mut fixtures = Vec::new();
             collect_fixtures(&root, &mut fixtures)?;
             fixtures.sort();
-            let mut converted = 0;
+            let mut refused = Vec::new();
             for source in fixtures
                 .iter()
                 .filter(|path| path.extension().is_some_and(|e| e == "f3d"))
@@ -502,17 +502,42 @@ fn fusion_designs_do_not_trap() -> Result<(), Box<dyn std::error::Error + Send +
                 let host = host(source.parent().unwrap(), bytes);
                 let (result, _) = convert_in(&engine, &component, &linker, host, name, size, "{}")
                     .map_err(|trap| format!("{name}: the component trapped: {trap}"))?;
-                eprintln!(
-                    "{name}: {}",
-                    if result.is_ok() {
-                        "converted"
-                    } else {
-                        "refused"
+                // What the native pipeline (the app) does with the same file.
+                let mut native_report = Report::default();
+                let mut native_out = Vec::new();
+                let native = dutchman_core::read_in(
+                    Format::from_path(source).unwrap(),
+                    source,
+                    &PartSearch {
+                        threads: 1,
+                        project: source.parent().map(Into::into),
+                        ..PartSearch::default()
+                    },
+                    &mut native_report,
+                )
+                .and_then(|model| {
+                    SolidCraftWriter::new()
+                        .threads(1)
+                        .target_version(Some(SolidCraftVersion::default()))
+                        .verification(Verification::Off)
+                        .hide_unverified_history(true)
+                        .write(&model, &mut native_out, &mut native_report)
+                });
+                match (result, native) {
+                    (Ok(_), _) => eprintln!("{name}: converted"),
+                    (Err(reason), native) => {
+                        eprintln!("{name}: plugin refused: {reason:?}; native: {native:?}");
+                        if native.is_ok() {
+                            refused.push(format!("{name}: {reason:?}"));
+                        }
                     }
-                );
-                converted += usize::from(result.is_ok());
+                }
             }
-            assert!(converted >= 2, "only {converted} Fusion fixtures converted");
+            let unexpected = &refused;
+            assert!(
+                unexpected.is_empty(),
+                "Fusion fixtures the app converts but the plugin refused: {unexpected:#?}"
+            );
             Ok(())
         })?
         .join()
