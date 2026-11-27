@@ -996,7 +996,9 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
             "documentId": DID,
             "elementId": AS,
             "documentMicroversion": MID,
-            "instances": [{
+            "instances": []
+        },
+        "subAssemblies": [{"instances": [{
                 "type": "Part",
                 "documentId": OTHER,
                 "elementId": OTHER_ELEMENT,
@@ -1004,8 +1006,8 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
                 "documentMicroversion": OTHER_MID,
                 "configuration": "size=large;length=25mm;",
                 "linkDocumentId": DID
-            }]
-        }
+            }]}],
+        "parts": [{"documentId": OTHER, "elementId": OTHER_ELEMENT}]
     }))
     .unwrap();
     mock.replies.extend([
@@ -1142,6 +1144,68 @@ fn assembly_fetch_rejects_external_reference_without_document_version() {
         .expect("missing version should fail");
     assert_eq!(error.kind, ErrorKind::Unsupported);
     assert!(error.to_string().contains("did not provide a version"));
+    assert!(mock.sent.iter().all(|(_, path, _)| !path.contains(OTHER)));
+}
+
+#[test]
+fn assembly_fetch_ignores_external_parts_rows_without_document_version() {
+    const OTHER: &str = "777777777777777777777777";
+    const OTHER_ELEMENT: &str = "999999999999999999999999";
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = assembly_mock();
+    mock.replies.get_mut(3).unwrap().body = serde_json::to_vec(&json!({
+        "rootAssembly": {
+            "documentId": DID,
+            "elementId": AS,
+            "documentMicroversion": MID,
+            "instances": []
+        },
+        "subAssemblies": [],
+        "parts": [{"documentId": OTHER, "elementId": OTHER_ELEMENT}]
+    }))
+    .unwrap();
+
+    run(&mut mock, &dir, AS, 50).unwrap();
+    let mut archive = open_bundle(&dir);
+    let manifest = zip_value(&mut archive, "manifest.json");
+    assert_eq!(manifest["external"], json!([]));
+    assert!(mock.sent.iter().all(|(_, path, _)| !path.contains(OTHER)));
+}
+
+#[test]
+fn assembly_fetch_refuses_external_assembly_references() {
+    const OTHER: &str = "777777777777777777777777";
+    const OTHER_VERSION: &str = "888888888888888888888888";
+    const OTHER_ELEMENT: &str = "999999999999999999999999";
+    const OTHER_MID: &str = "aaaaaaaaaaaaaaaaaaaaaaaa";
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = assembly_mock();
+    mock.replies.get_mut(3).unwrap().body = serde_json::to_vec(&json!({
+        "rootAssembly": {
+            "documentId": DID,
+            "elementId": AS,
+            "documentMicroversion": MID,
+            "instances": [{
+                "type": "Assembly",
+                "documentId": OTHER,
+                "elementId": OTHER_ELEMENT,
+                "documentVersion": OTHER_VERSION,
+                "documentMicroversion": OTHER_MID,
+                "configuration": "size=large;"
+            }]
+        },
+        "subAssemblies": [],
+        "parts": []
+    }))
+    .unwrap();
+
+    let error = run(&mut mock, &dir, AS, 50)
+        .err()
+        .expect("assembly is unsupported");
+    assert_eq!(error.kind, ErrorKind::Unsupported);
+    assert!(error
+        .to_string()
+        .contains("External assembly references are not supported"));
     assert!(mock.sent.iter().all(|(_, path, _)| !path.contains(OTHER)));
 }
 

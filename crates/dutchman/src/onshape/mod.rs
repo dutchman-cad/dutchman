@@ -118,13 +118,13 @@ fn part_query(query: &str, configuration: Option<&str>, linked_document: Option<
             params.append_pair(&key, &value);
         }
     }
-    if let Some(configuration) = configuration {
+    if let Some(configuration) = configuration.filter(|value| !value.is_empty()) {
         params.append_pair("configuration", configuration);
     }
     if let Some(document) = linked_document {
         params.append_pair("linkDocumentId", document);
     }
-    params.finish()
+    params.finish().replace('+', "%20")
 }
 fn id(value: &str) -> Result<String> {
     if value.len() != 24 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -540,7 +540,6 @@ pub fn estimate_calls<C: HttpClient>(
                 &mid,
                 &mut queue,
                 &mut external,
-                0,
             )?;
         }
         elements = elements.saturating_add(external.len());
@@ -1141,11 +1140,7 @@ fn fetch_inner<C: HttpClient>(
             &scope,
             &mid,
             &mut hits,
-            &BTreeSet::from([(
-                source.document.clone(),
-                source.version.clone(),
-                source.element.clone(),
-            )]),
+            &BTreeSet::from([(source.document.clone(), mid.clone(), source.element.clone())]),
             None,
             None,
         )?;
@@ -1439,7 +1434,7 @@ fn capture<C: HttpClient>(
                 let file = format!("assemblies/{eid}/features.json");
                 fetcher.raw(&format!("{base}/features"), "", file.clone(), false)?;
                 paths.insert("features", file);
-                references(&data, &source.document, mid, &mut queue, &mut external, 0)?;
+                references(&data, &source.document, mid, &mut queue, &mut external)?;
             }
             _ => {
                 return Err(Error::new(
@@ -1741,13 +1736,28 @@ fn references(
     mid: &str,
     queue: &mut VecDeque<String>,
     external: &mut BTreeSet<ExternalReference>,
-    depth: usize,
 ) -> Result<()> {
-    if depth > 100 {
-        return Err(response_error());
+    let root = value.get("rootAssembly").ok_or_else(response_error)?;
+    let mut instances = Vec::new();
+    instances.extend(
+        root.get("instances")
+            .and_then(Value::as_array)
+            .ok_or_else(response_error)?,
+    );
+    for subassembly in value
+        .get("subAssemblies")
+        .and_then(Value::as_array)
+        .ok_or_else(response_error)?
+    {
+        instances.extend(
+            subassembly
+                .get("instances")
+                .and_then(Value::as_array)
+                .ok_or_else(response_error)?,
+        );
     }
-    match value {
-        Value::Object(map) => {
+    for instance in instances {
+        if let Value::Object(map) = instance {
             if let (Some(d), Some(e)) = (
                 map.get("documentId").and_then(Value::as_str),
                 map.get("elementId").and_then(Value::as_str),
@@ -1800,8 +1810,13 @@ fn references(
                         .get("linkDocumentId")
                         .and_then(Value::as_str)
                         .map(id)
-                        .transpose()?
-                        .or_else(|| Some(did.to_owned()));
+                        .transpose()?;
+                    if map.get("type").and_then(Value::as_str) == Some("Assembly") && d != did {
+                        return Err(Error::new(
+                            ErrorKind::Unsupported,
+                            "External assembly references are not supported yet; fetch an assembly without external assemblies.",
+                        ));
+                    }
                     external.insert((
                         d,
                         e,
@@ -1812,16 +1827,7 @@ fn references(
                     ));
                 }
             }
-            for child in map.values() {
-                references(child, did, mid, queue, external, depth + 1)?;
-            }
         }
-        Value::Array(list) => {
-            for child in list {
-                references(child, did, mid, queue, external, depth + 1)?;
-            }
-        }
-        _ => {}
     }
     Ok(())
 }
