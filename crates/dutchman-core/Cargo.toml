@@ -52,7 +52,7 @@ freecad = ["cadmpeg-registry/fcstd"]
 sysinfo.workspace = true
 
 [dev-dependencies]
-cadmpeg-ir = { workspace = true, features = ["examples"] }
+cadmpeg-ir = { workspace = true }
 zip.workspace = true
 
 [lints]
