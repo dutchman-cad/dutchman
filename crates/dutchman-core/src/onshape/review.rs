@@ -604,7 +604,7 @@ fn caller_context_bounds_json_and_history_before_step() {
         let mut policy = crate::decode::policy();
         match resource {
             "depth" => policy.limits.max_recursion_depth = 7,
-            "storage" => policy.limits.max_decompressed_bytes_per_expand = 32_768,
+            "storage" => policy.limits.max_decompressed_bytes_total = 32_768,
             "history" => policy.limits.max_entities = 3,
             "topology" => policy.limits.max_entities = 32,
             _ => panic!("unknown synthetic resource"),
@@ -631,14 +631,6 @@ fn caller_context_bounds_json_and_history_before_step() {
             &mut report,
             None,
         );
-        if resource == "storage" {
-            assert!(result.is_ok());
-            assert!(report
-                .losses()
-                .iter()
-                .any(|loss| loss.code.as_deref() == Some("onshape/member.not-supported")));
-            continue;
-        }
         let error = result.unwrap_err();
         let message = error.to_string();
         assert!(

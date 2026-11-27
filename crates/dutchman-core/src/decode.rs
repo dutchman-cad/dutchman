@@ -9,7 +9,6 @@ use cadmpeg_core::decode::{
 };
 use cadmpeg_core::CodecError;
 use cadmpeg_ir::codec::{Codec, DecodeFailure, DecodeOptions};
-use cadmpeg_ir::report::strictness::Strictness;
 use cadmpeg_ir::report::Severity as CadmpegSeverity;
 use cadmpeg_ir::validate::validate_neutral_for_decode;
 use cadmpeg_registry::{

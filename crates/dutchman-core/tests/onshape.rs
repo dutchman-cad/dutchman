@@ -1825,6 +1825,29 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
             }
         });
         let (model, report) = read(&bytes).unwrap();
+        if matches!(
+            failure,
+            "microversion" | "source-final-parts" | "unknown-source-body"
+        ) {
+            // The reference's records are refused or skipped, so the derived studio keeps its
+            // geometry as stored bodies with a combine instead of a native feature.
+            assert!(
+                kinds(&model).contains(&"stored_geometry".into()),
+                "{failure}: {:?}",
+                kinds(&model)
+            );
+            if failure == "microversion" {
+                assert!(
+                    report.losses().iter().any(|loss| loss.code.as_deref()
+                        == Some("onshape/member.not-supported")
+                        && loss.detail.contains("sourceMicroversion")),
+                    "{failure}: {:?}",
+                    report.losses()
+                );
+            }
+            assert!(model.source_step.is_some());
+            continue;
+        }
         assert!(kinds(&model).contains(&"native".into()), "{failure}");
         assert!(
             report
