@@ -669,7 +669,8 @@ pub(super) fn mirror(
     let bodies: Vec<String> = seeds_found.into_iter().map(|(_, name)| name).collect();
     // One copied body and one new output have an unambiguous correspondence. A result
     // already named before this mirror is not a new copy, and duplicate display names
-    // cannot identify the copy in SolidCraft.
+    // cannot identify the copy in SolidCraft. A copy the final model leaves out (a later
+    // Combine consumes it) has no output; its one result body names it instead.
     let names = if crate::VersionGate::ScopedBodies.supported(ctx.target_version)
         && !combine
         && bodies.len() == 1
@@ -677,19 +678,20 @@ pub(super) fn mirror(
             .get("outputs")
             .and_then(Value::as_array)
             .is_some_and(|outputs| {
-                outputs.len() == 1
-                    && outputs.iter().all(|output| {
-                        output.as_str().is_some_and(|id| {
-                            !ctx.named_bodies.iter().any(|(known, _)| known == id)
-                                && ctx
-                                    .row("bodies", id)
-                                    .and_then(|row| row.get("name"))
-                                    .and_then(Value::as_str)
-                                    .is_none_or(|name| {
-                                        !ctx.named_bodies.iter().any(|(_, known)| known == name)
-                                    })
+                outputs.is_empty()
+                    || outputs.len() == 1
+                        && outputs.iter().all(|output| {
+                            output.as_str().is_some_and(|id| {
+                                !ctx.named_bodies.iter().any(|(known, _)| known == id)
+                                    && ctx
+                                        .row("bodies", id)
+                                        .and_then(|row| row.get("name"))
+                                        .and_then(Value::as_str)
+                                        .is_none_or(|name| {
+                                            !ctx.named_bodies.iter().any(|(_, known)| known == name)
+                                        })
+                            })
                         })
-                    })
             }) {
         super::extrude::body_names(source, ctx, "new_body")
     } else {
@@ -1165,6 +1167,35 @@ mod tests {
         assert_eq!(body_names(&source, &pick("s:4"), &ctx).unwrap(), ["New"]);
         // A writer with neither a result state nor an input state names nothing.
         assert!(body_names(&source, &pick("s:3"), &ctx).is_err());
+    }
+
+    #[test]
+    fn a_mirror_copy_a_later_combine_consumes_is_named_by_its_result_body() {
+        let model = json!({
+            "features": [{"id": "f:mirror", "outputs": []}],
+            "feature_result_topologies": [{"id": "r", "output_of": "f:mirror",
+                "members": [{"kind": "body", "id": "2"}]}]
+        });
+        let mut ctx = Context::testing(&model);
+        ctx.named_bodies.push(("seed".into(), "Seed".into()));
+        let definition = json!({
+            "seeds": [{"kind": "bodies", "value": {"kind": "bodies", "value": ["seed"]}}],
+            "pattern": {"plane_origin": {"x": 5.0, "y": 0.0, "z": 0.0},
+                "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}
+        });
+        let source = json!({"id": "f:mirror", "outputs": []});
+        let mapped = mirror(&source, &definition, &mut ctx).unwrap();
+        assert_eq!(mapped["combine"], false);
+        let names = mapped["body_names"].as_array().unwrap();
+        assert_eq!(names.len(), 1);
+        assert_eq!(
+            ctx.generated_bodies,
+            [(
+                ("f:mirror".to_owned(), "2".to_owned()),
+                names[0].as_str().unwrap().to_owned()
+            )]
+        );
+        assert!(!ctx.unnamed_bodies);
     }
 
     #[test]

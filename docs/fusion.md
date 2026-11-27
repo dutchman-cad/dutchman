@@ -371,6 +371,14 @@ with their producing or consuming feature, without mixing their topology into fi
 They carry each kept feature's input and result states (`feature_input_topologies`,
 `feature_result_topologies`) the same way, though no other row points at them, so a component's
 features can still name a body by the feature that made or last wrote it.
+
+A Combine whose tools another component's history builds, and which uses them up (keep tools
+off), rebuilds those tools itself: Fusion moves a consumed tool into the Combine's component.
+The features that build the tool (its producer and that component's earlier features it
+depends on, with their sketches) are written in the Combine's part instead of their own.
+This happens only when nothing else in their component refers to them, no feature of it
+before the Combine depends on them (it could change the tool first), and both components sit
+at the same single place in the design; otherwise the Combine stops as before.
 The current Fusion reader pin emits produced snapshots but does not populate `consumed_by`.
 A native target without a consumed body association remains a reported loss; consumed-body
 preservation and mapping are covered by synthetic tests against the current neutral model API.
