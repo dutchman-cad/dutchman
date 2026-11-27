@@ -267,7 +267,8 @@ mod tests {
             ] {
                 let state_file = file.clone();
                 let mut harness = egui_kittest::Harness::builder()
-                    .with_size(egui::vec2(SIZE[0], SIZE[1]))
+                    // Taller than the opening window so the folder list shows, and still landscape.
+                    .with_size(egui::vec2(720.0, 560.0))
                     .build_eframe(move |cc| Window::new(cc, state_file));
                 harness.ctx.set_theme(theme);
                 harness.run_steps(8);
