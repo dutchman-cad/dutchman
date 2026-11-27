@@ -145,7 +145,7 @@ impl Scope {
     fn id(self) -> &'static str {
         match self {
             Self::Alone => "alone",
-            Self::Neighbours => "neighbours",
+            Self::Neighbours => "neighbors",
             Self::Design => "design",
         }
     }
@@ -712,7 +712,7 @@ fn summary(found: &Value, state: &Checkpoint) -> String {
         _ => {
             let place = match (found["part"].as_u64(), found["scope"].as_str()) {
                 (None, _) => "the whole design".to_owned(),
-                (Some(part), Some("neighbours")) => {
+                (Some(part), Some("neighbors" | "neighbours")) => {
                     format!("part {part}, only with its neighbors")
                 }
                 (Some(part), _) => format!("part {part}"),
@@ -859,12 +859,12 @@ pub fn run(
     Ok(result)
 }
 
-/// Converts a numbered part (optionally with neighbours), discarding geometry. A history
+/// Converts a numbered part (optionally with neighbors), discarding geometry. A history
 /// prefix uses the same guarded worker and limits as automatic narrowing.
 pub fn trial(
     input: &Path,
     part: usize,
-    neighbours: bool,
+    neighbors: bool,
     stop_at: Option<usize>,
     settings: &NarrowSettings,
 ) -> Result<Value, String> {
@@ -877,7 +877,7 @@ pub fn trial(
     let attempt = children.attempt(
         Trial {
             part: Some(part),
-            scope: if neighbours {
+            scope: if neighbors {
                 Scope::Neighbours
             } else {
                 Scope::Alone
@@ -899,7 +899,7 @@ pub fn trial(
         .failure
         .map(|failure| Signature::new(failure.code(), shape));
     Ok(json!({"schema": wire::PART_TRIAL, "ok": true, "part": part,
-        "neighbours": neighbours, "stop_at_feature": stop_at, "features": attempt.features,
+        "neighbors": neighbors, "stop_at_feature": stop_at, "features": attempt.features,
         "converted": signature.is_none(), "signature": signature}))
 }
 
@@ -1087,8 +1087,7 @@ impl<'a> Children<'a> {
 
     fn start(&self, memory: Option<u64>) -> Result<Child, String> {
         let options = &self.settings.rank.options;
-        let mut command = Command::new(&self.program);
-        command
+        let mut process = Command::new(&self.program)
             .arg(WORKER_ARG)
             .arg(self.input)
             .arg("--serve")
@@ -1096,8 +1095,8 @@ impl<'a> Children<'a> {
             .args(worker::search_args(&options.part_search()))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped());
-        let mut process = worker::spawn_retrying(&mut command)
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|err| format!("cannot start the converter: {err}"))?;
         let stderr = process.stderr.take();
         let stdin = process.stdin.take().ok_or("cannot talk to the converter")?;
@@ -1307,7 +1306,7 @@ fn trial_model(
     };
     let alone = parts::select(model, number, false);
     let features = alone.as_ref().map_or(0, parts::history_length);
-    if scope == "neighbours" {
+    if matches!(scope, "neighbors" | "neighbours") {
         let view = parts::with_neighbours(model, number, stop_at).map_err(|e| e.to_string())?;
         return Ok((view, features));
     }

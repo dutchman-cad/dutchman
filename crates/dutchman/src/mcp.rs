@@ -182,7 +182,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                         "feature must be a whole number of at least 0", "feature number is beyond this part's history",
                         "time_limit must be a duration",
                         "the time limit is too large; use a smaller number of seconds", "memory_limit_mb must be a whole number of at least 1",
-                        "memory_limit_mb is too large", "neighbours must be true or false"];
+                        "memory_limit_mb is too large", "neighbors must be true or false", "neighbours must be true or false"];
                     let message = if safe.contains(&message.as_str()) { &message } else {
                         "The diagnostic step could not finish. Check the arguments and local diagnose folder, then retry; no file was sent."
                     };
@@ -625,6 +625,11 @@ fn flag(arguments: &Arguments, key: &str, default: bool) -> Result<bool, String>
     }
 }
 
+/// `neighbors`, or its older spelling `neighbours`.
+fn neighbors(arguments: &Arguments) -> Result<bool, String> {
+    Ok(flag(arguments, "neighbors", false)? || flag(arguments, "neighbours", false)?)
+}
+
 fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, String> {
     match arguments.get(key) {
         None | Some(Value::Null) => Ok(None),
@@ -809,14 +814,15 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
             "fits": estimate.zip(available).map(|(e, free)| e.peak_bytes <= free),
         }));
     }
-    let output = crate::resolve_output(&path(arguments, "output")?, options.replace);
+    let (output, replaces) =
+        crate::mark::place(&input, &path(arguments, "output")?, options.replace);
     // A unit test's own program is not a converter.
     #[cfg(test)]
     return Ok(crate::convert_options_with_progress(
         &input,
         &output,
         &options,
-        options.replace,
+        options.replace || replaces,
         &options.part_search(),
         &|_| {},
     ));
@@ -830,7 +836,8 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
             fallback: None,
             input,
             output,
-            replace: options.replace,
+            replace: options.replace || replaces,
+            requested: None,
             search: options.part_search(),
         };
         let limits = crate::worker::Limits {
@@ -1434,7 +1441,8 @@ fn diagnostic_tools() -> Vec<Value> {
             } else { json!({"type": "string", "description": "Absolute local path; never returned to the assistant."}) });
         }
         if matches!(name, "convert_part" | "stop_at_feature") {
-            properties.insert("neighbours".into(), json!({"type": "boolean", "default": false}));
+            properties.insert("neighbors".into(), json!({"type": "boolean", "default": false}));
+            properties.insert("neighbours".into(), json!({"type": "boolean", "default": false, "description": "Accepted spelling of neighbors."}));
         }
         if !matches!(name, "make_report" | "verify_repro") {
             properties.insert("time_limit".into(), json!({"type": ["string", "integer"], "description": "Time per trial, such as 30s or 5m, or positive whole seconds."}));
@@ -1455,7 +1463,7 @@ fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
     use crate::diagnose::{self, narrow};
     let mut allowed = vec!["input"];
     if matches!(name, "convert_part" | "stop_at_feature") {
-        allowed.extend(["part", "neighbours"]);
+        allowed.extend(["part", "neighbors", "neighbours"]);
         if name == "stop_at_feature" {
             allowed.push("feature");
         }
@@ -1488,13 +1496,7 @@ fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
         } else {
             None
         };
-        return narrow::trial(
-            &input,
-            part,
-            flag(arguments, "neighbours", false)?,
-            feature,
-            &settings,
-        );
+        return narrow::trial(&input, part, neighbors(arguments)?, feature, &settings);
     }
     let out = path(arguments, "out")?;
     let result = match name {

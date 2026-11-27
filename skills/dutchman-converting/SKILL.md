@@ -1015,8 +1015,8 @@ the ZIP directory is allocated; entry budgets count every declared entry.
 Use MCP `diagnose_narrow(input, out)` to rank, isolate and bisect with checkpoints. Results
 include a numbered recipe for Fusion, Inventor, SolidWorks and FreeCAD and any exact shipped
 known-failure advice. Prefer a workaround when one is reported. For individual trials use
-`convert_part(input, part, neighbours?)` and `stop_at_feature(input, part, feature,
-neighbours?)`; output geometry is discarded. Trial feature 0 keeps stored shape only.
+`convert_part(input, part, neighbors?)` and `stop_at_feature(input, part, feature,
+neighbors?)`; output geometry is discarded. Trial feature 0 keeps stored shape only.
 `diagnose(input, out)` ranks without narrowing. These tools accept `time_limit` and
 `memory_limit_mb`; their responses exclude names, paths and geometry.
 

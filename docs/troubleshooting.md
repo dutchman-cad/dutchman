@@ -102,7 +102,7 @@ a design holds without opening SolidCraft.
 The history stopped because SolidCraft itself would not rebuild that feature; it is not a
 Dutchman mapping limit. The rest of the model is kept as the imported shape. The report's
 `history.features[]` entry carries `source: "solidcraft"` and a `category`. For
-`fillet-overflows-neighbouring-face` (the blend is larger than the neighbouring faces) the
+`fillet-overflows-neighboring-face` (older reports spell it `fillet-overflows-neighbouring-face`; the blend is larger than the neighboring faces) the
 `upstream` link is https://github.com/tangency-labs/solidcraft/issues/4782. Shrinking that fillet
 in the source usually avoids it.
 

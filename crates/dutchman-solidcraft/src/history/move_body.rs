@@ -16,10 +16,13 @@ pub(super) fn map(
     if !crate::VersionGate::MoveBody.supported(ctx.target_version) {
         return Err("body moves require SolidCraft 0.45 or newer; choose a newer target to keep this feature editable".into());
     }
-    match definition.get("copies").and_then(Value::as_u64) {
-        None | Some(0) => (),
-        Some(_) => return Err("copied body result identities are not supported yet".into()),
-    }
+    let copy = match definition.get("copies").and_then(Value::as_u64) {
+        None | Some(0) => false,
+        Some(1) => true,
+        Some(_) => {
+            return Err("a move that makes several copies of a body is not supported yet".into())
+        }
+    };
     let bodies = modify::body_names(
         feature,
         definition
@@ -80,17 +83,66 @@ pub(super) fn map(
     if translation.iter().any(|v| !v.is_finite()) {
         return Err("its body transform exceeds finite coordinates".into());
     }
+    let copy_name = if copy {
+        Some(copy_name(feature, &bodies, ctx)?)
+    } else {
+        None
+    };
     let id = ctx.id();
     let mut out = json!({
         "id": id, "name": name(feature).map(str::to_owned).unwrap_or_else(|| format!("Move{id}")),
         "type": "move", "suppressed": false, "bodies": bodies,
-        "translate": translation.map(|v| format!("{v} mm")), "copy": false,
+        "translate": translation.map(|v| format!("{v} mm")), "copy": copy,
     });
+    if let (Some((output, copy_name)), Some(fields)) = (copy_name, out.as_object_mut()) {
+        // SolidCraft names the copy by the feature's stored name when that name is free.
+        fields.insert("body_names".into(), json!([copy_name]));
+        ctx.named_bodies.push((output, copy_name));
+    }
     if let (Some((axis, angle)), Some(fields)) = (rotation_fields, out.as_object_mut()) {
         fields.insert("rotate_axis".into(), json!(axis));
         fields.insert("angle".into(), json!(format!("{angle} rad")));
     }
     Ok(out)
+}
+
+/// The copy a move makes of its one selected body: the feature's one output that no earlier
+/// feature named, under the source's own name for it when that name is free.
+fn copy_name(
+    feature: &Value,
+    bodies: &[String],
+    ctx: &Context,
+) -> Result<(String, String), String> {
+    let [source] = bodies else {
+        return Err("copying several bodies in one move is not supported yet: CADIR does not pair each copy with its source".into());
+    };
+    let outputs: Vec<&str> = feature
+        .get("outputs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let [output] = outputs.as_slice() else {
+        return Err("its copied body is not its one output".into());
+    };
+    if ctx.named_bodies.iter().any(|(id, _)| id == output) {
+        return Err("its copied body is not its one output".into());
+    }
+    let base = ctx
+        .row("bodies", output)
+        .and_then(|row| row.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| source.clone(), str::to_owned);
+    let mut name = base.clone();
+    let mut n = 2;
+    while ctx.body_name_taken(&name) {
+        name = format!("{base} ({n})");
+        n += 1;
+    }
+    Ok(((*output).to_owned(), name))
 }
 
 #[cfg(test)]
@@ -122,6 +174,36 @@ mod tests {
         assert!(map(&json!({}), &duplicated, &mut ctx, &[])
             .unwrap_err()
             .contains("twice"));
+    }
+
+    #[test]
+    fn a_copying_move_names_its_one_output() {
+        let model = json!({});
+        let mut ctx = Context::testing(&model);
+        ctx.named_bodies.push(("body".into(), "Block".into()));
+        let definition = json!({"bodies": {"kind": "bodies", "value": ["body"]},
+            "copies": 1, "translation": {"x": 0.0, "y": 0.0, "z": 0.0}});
+        let feature = json!({"outputs": ["copy"]});
+        let moved = map(&feature, &definition, &mut ctx, &[]).unwrap();
+        assert_eq!(moved["copy"], json!(true));
+        assert_eq!(moved["bodies"], json!(["Block"]));
+        assert_eq!(moved["body_names"], json!(["Block (2)"]));
+        assert!(ctx
+            .named_bodies
+            .contains(&("copy".to_owned(), "Block (2)".to_owned())));
+        // The output is the copy only when no earlier feature named it.
+        let again = map(&feature, &definition, &mut ctx, &[]).unwrap_err();
+        assert!(again.contains("not its one output"), "{again}");
+        for (outputs, copies, reason) in [
+            (json!([]), 1, "not its one output"),
+            (json!(["a", "b"]), 1, "not its one output"),
+            (json!(["fresh"]), 2, "several copies"),
+        ] {
+            let mut definition = definition.clone();
+            definition["copies"] = json!(copies);
+            let error = map(&json!({"outputs": outputs}), &definition, &mut ctx, &[]).unwrap_err();
+            assert!(error.contains(reason), "{error}");
+        }
     }
 
     #[test]

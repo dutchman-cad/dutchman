@@ -519,7 +519,7 @@ and what Dutchman converts. Inputs without geometry support or a codec in this b
 return a failure describing the reader's current capability. Creo and NX `.prt` inputs
 are distinguished by contents. CATIA, Creo, NX, Creo View, Rhino, ACIS and STEP use the geometry
 path. Each conversion report's `input` also carries `words`, `program` and `extension`.
-Status words are `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`,
+Status words are `reads geometry`, `opens, no geometry yet`, `recognized, not read yet`,
 or `open it in SolidCraft directly` for IGES (`.igs`, `.iges`). IGES is recognized and
 refused before decoding by `inspect`, `convert` and `convert_all`, with `error.message`:
 `Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).`
@@ -1113,7 +1113,7 @@ CLI locally for detailed errors. Paths supplied as arguments stay on the local m
 | `make_report` | `input`, `out` | Write the checked small file and anonymous facts to a local ZIP; send nothing. |
 
 All except `make_report` accept `time_limit` (whole seconds or, for example, `30s` or `5m`) and a positive
-`memory_limit_mb`. The two part-trial tools also accept `neighbours: true`. They return
+`memory_limit_mb`. The two part-trial tools also accept `neighbors: true`; the older spelling `neighbours` is still accepted. They return
 `dutchman.part-trial/1`: `converted` records the trial outcome; `ok` says the tool ran.
 The other tools use the existing diagnose, narrow, same-failure and made-report schemas,
 with local `paths` omitted. No tool submits a report. The local report ZIP has the fixed

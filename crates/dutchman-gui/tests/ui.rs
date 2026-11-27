@@ -388,6 +388,91 @@ fn designs_convert_from_the_window() {
 }
 
 #[test]
+fn an_existing_file_in_the_output_folder_is_kept_and_the_new_design_is_numbered() {
+    let out = tempfile::tempdir().unwrap();
+    std::fs::write(out.path().join("synthetic_cube.sc"), b"MY OWN DESIGN").unwrap();
+    std::fs::write(
+        out.path().join("synthetic_cube.report.json"),
+        b"MY OWN REPORT",
+    )
+    .unwrap();
+    let mut harness = harness();
+    harness
+        .state_mut()
+        .add_inputs([fixture("synthetic_cube.ipt")]);
+    harness.state_mut().set_out_dir(out.path().to_path_buf());
+    harness.state_mut().set_verify(false);
+    convert(&mut harness);
+    assert_eq!(harness.state().rows()[0].status, Status::Converted);
+    assert_eq!(
+        std::fs::read(out.path().join("synthetic_cube.sc")).unwrap(),
+        b"MY OWN DESIGN"
+    );
+    assert_eq!(
+        std::fs::read(out.path().join("synthetic_cube.report.json")).unwrap(),
+        b"MY OWN REPORT"
+    );
+    assert!(out.path().join("synthetic_cube (2).sc").is_file());
+    assert!(out.path().join("synthetic_cube (2).report.json").is_file());
+}
+
+/// Replacing is asked once, and the question names only the files Dutchman did not make from
+/// the files being converted. "Replace" replaces them; "Cancel" keeps them and numbers.
+#[test]
+fn replacing_asks_once_and_lists_only_files_dutchman_did_not_make() {
+    std::env::set_var("DUTCHMAN_NO_TRASH", "1");
+    for replace in [true, false] {
+        let out = tempfile::tempdir().unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 1100.0))
+            .build_eframe(|cc| test_app(cc));
+        harness.state_mut().add_inputs([
+            fixture("generated_unit_cube.f3d"),
+            fixture("synthetic_cube.ipt"),
+        ]);
+        harness.state_mut().set_out_dir(out.path().to_path_buf());
+        harness.state_mut().set_verify(false);
+        convert(&mut harness);
+        // One of the two is now a design the person made themselves.
+        std::fs::write(out.path().join("synthetic_cube.sc"), b"MY OWN DESIGN").unwrap();
+        // The results fold the output choices away; "Change…" opens them again.
+        harness.get_by_label("Change…").click_accesskit();
+        harness.run_steps(8);
+        harness.get_by_label("Advanced").click_accesskit();
+        harness.run_steps(8);
+        harness
+            .get_by_label("Replace existing files")
+            .click_accesskit();
+        harness.run_steps(8);
+        harness.get_by_label("Convert").click_accesskit();
+        harness.run_steps(8);
+        assert!(harness
+            .query_by_label("Replace 1 file you made yourself?")
+            .is_some());
+        assert!(harness.query_by_label("synthetic_cube.sc").is_some());
+        assert!(harness.query_by_label("generated_unit_cube.sc").is_none());
+        harness
+            .get_by_label(if replace { "Replace" } else { "Cancel" })
+            .click_accesskit();
+        harness.step();
+        wait_for_conversion(&mut harness);
+        assert!(harness
+            .query_by_label("Replace 1 file you made yourself?")
+            .is_none());
+        let mine = std::fs::read(out.path().join("synthetic_cube.sc")).unwrap();
+        if replace {
+            assert_ne!(mine, b"MY OWN DESIGN");
+            assert!(!out.path().join("synthetic_cube (2).sc").exists());
+        } else {
+            assert_eq!(mine, b"MY OWN DESIGN");
+            assert!(out.path().join("synthetic_cube (2).sc").is_file());
+        }
+        // The design made from its own file is replaced in place, never numbered.
+        assert!(!out.path().join("generated_unit_cube (2).sc").exists());
+    }
+}
+
+#[test]
 fn the_format_list_shows_headlines_beside_reader_status() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 1800.0))
@@ -640,6 +725,96 @@ fn converting_again_never_overwrites_a_file_changed_since_it_was_written() {
         b"THE PERSON'S OWN DESIGN, SAVED OVER IT"
     );
     assert!(out.path().join("synthetic_cube (2).sc").is_file());
+}
+
+/// The "Replace existing files" setting and the question before it replaces a file the person made,
+/// at 1280x800, Day and Night. The app has no German text yet: the German set shows a long German
+/// design name.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn replace_existing_files_screenshots() {
+    // Settings and paths are neutral, so the images show nothing of this machine.
+    let demo = PathBuf::from("/tmp/demo");
+    if std::env::var_os("DUTCHMAN_REPLACE_SHOTS_CHILD").is_none() {
+        std::fs::create_dir_all(&demo).unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "replace_existing_files_screenshots"])
+            .env("DUTCHMAN_REPLACE_SHOTS_CHILD", "1")
+            .env("HOME", &demo)
+            .env("LOCALAPPDATA", &demo)
+            .env("XDG_CONFIG_HOME", demo.join("config"))
+            .env("XDG_CACHE_HOME", demo.join("cache"))
+            .env("XDG_DATA_HOME", demo.join("data"))
+            .env("XDG_STATE_HOME", demo.join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    std::env::set_var("DUTCHMAN_NO_TRASH", "1");
+    let mut index = String::new();
+    for (set, design) in [
+        ("en", "Toob v2"),
+        (
+            "de",
+            "Gehäuse-Rückwand für das Mehrzweck-Fräsgerät, Fassung 2",
+        ),
+    ] {
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let work = tempfile::tempdir().unwrap();
+            let input = work.path().join(format!("{design}.ipt"));
+            std::fs::copy(fixture("synthetic_cube.ipt"), &input).unwrap();
+            let out = demo.join("out");
+            let _ = std::fs::remove_dir_all(&out);
+            std::fs::create_dir_all(&out).unwrap();
+            std::fs::write(out.join(format!("{design}.sc")), b"MY OWN DESIGN").unwrap();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().add_inputs([input]);
+            harness.state_mut().set_out_dir(out);
+            harness.state_mut().set_verify(false);
+            harness.state_mut().set_checker_for_test(true);
+            harness.state_mut().preview_solidcraft(Some("0.50.0"));
+            harness.run_steps(8);
+            harness.get_by_label("Advanced").click_accesskit();
+            harness.run_steps(8);
+            harness
+                .get_by_label("Replace existing files")
+                .scroll_to_me();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("replace-setting-{set}"),
+                name,
+                "Advanced: Replace existing files, off by default",
+            );
+            harness
+                .get_by_label("Replace existing files")
+                .click_accesskit();
+            harness.run_steps(8);
+            harness.get_by_label("Convert").click_accesskit();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("replace-confirmation-{set}"),
+                name,
+                "One question names the file Dutchman did not make; Cancel keeps it",
+            );
+        }
+    }
+    std::fs::write(dir.join("replace-existing-files.md"), index).unwrap();
 }
 
 #[test]
@@ -3641,7 +3816,7 @@ fn assert_main_screen_in_view(h: &mut Harness<'_, App>, size: [f32; 2]) {
         "Feature history",
         "Joints",
         "Output format",
-        "Replace designs already in the output folder",
+        "Replace existing files",
         "Open diagnostics folder",
         "RESULTS",
         "Open in SolidCraft",
@@ -6625,7 +6800,7 @@ fn a_drawing_that_is_not_read_yet_is_not_supported_yet_not_failed() {
             harness.query_by_label_contains("0 failed").is_none(),
             "{name}"
         );
-        // One statement: recognised, but not supported yet. Never "accepted" beside "cannot".
+        // One statement: recognized, but not supported yet. Never "accepted" beside "cannot".
         // The design list line and the card both say it, in the same words.
         assert_eq!(
             harness
@@ -6694,13 +6869,15 @@ fn failed_card_for_drawing(name: &str) -> (Harness<'static, App>, tempfile::Temp
 #[ignore = "renders the drawing result cards with a GPU; set DUTCHMAN_GUI_SCREENSHOTS"]
 fn drawing_screenshots() {
     if std::env::var_os("DUTCHMAN_DRAWING_SCREENSHOT_CHILD").is_none() {
-        let state = tempfile::tempdir().unwrap();
+        // Neutral paths, so no screenshot shows the machine that rendered it.
+        let state = PathBuf::from("/tmp/demo");
+        std::fs::create_dir_all(&state).unwrap();
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", "drawing_screenshots"])
             .env("DUTCHMAN_DRAWING_SCREENSHOT_CHILD", "1")
-            .env("HOME", state.path())
-            .env("LOCALAPPDATA", state.path())
-            .env("XDG_STATE_HOME", state.path())
+            .env("HOME", &state)
+            .env("LOCALAPPDATA", &state)
+            .env("XDG_STATE_HOME", &state)
             .status()
             .unwrap();
         assert!(status.success());
@@ -6708,7 +6885,8 @@ fn drawing_screenshots() {
     }
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
-    let work = tempfile::tempdir().unwrap();
+    let work = PathBuf::from("/tmp/demo/in");
+    std::fs::create_dir_all(&work).unwrap();
     let mut index = String::new();
     // The app has no German text yet: the German set shows a long German file name.
     for (language, name) in [
@@ -6718,7 +6896,7 @@ fn drawing_screenshots() {
             "Zeichnung-Rahmenbaugruppe-Seitenwand-Ueberarbeitung-Fertigung.dwg",
         ),
     ] {
-        let input = work.path().join(name);
+        let input = work.join(name);
         let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
         if name.ends_with(".dwg") {
             bytes = b"AC1032\0\0\0\0\0\0\0".to_vec();
@@ -6736,7 +6914,11 @@ fn drawing_screenshots() {
             harness.state_mut().add_inputs([input.clone()]);
             harness
                 .state_mut()
-                .set_out_dir(work.path().join(format!("{language}-{mode}")));
+                .set_out_dir(PathBuf::from("/tmp/demo/out"));
+            harness
+                .state_mut()
+                .set_diagnostic_log(PathBuf::from("/tmp/demo/log.jsonl"));
+            harness.state_mut().preview_solidcraft(Some("0.50.0"));
             harness.state_mut().set_verify(false);
             convert(&mut harness);
             assert_eq!(harness.state().rows()[0].status, Status::Failed);
@@ -6747,7 +6929,7 @@ fn drawing_screenshots() {
                 &mut index,
                 &format!("drawing-not-decoded-{language}"),
                 mode,
-                "A drawing file that is recognised and reported as not supported yet.",
+                "A drawing file that is recognized and reported as not supported yet.",
             );
         }
     }

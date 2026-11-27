@@ -259,7 +259,7 @@ fn a_numbered_save_strips_one_suffix_and_uses_contents_for_its_program() {
         (
             b"unknown".as_slice(),
             Format::UnclassifiedPart,
-            "recognised, not read yet",
+            "recognized, not read yet",
         ),
     ] {
         std::fs::write(&path, bytes).unwrap();
