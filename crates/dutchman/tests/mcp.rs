@@ -680,6 +680,11 @@ fn read_report_preserves_saved_losses_after_original_and_design_are_deleted() {
         assert_eq!(reply["isError"], false);
         let mut read = reply["structuredContent"].clone();
         let groups = read.as_object_mut().unwrap().remove("loss_groups").unwrap();
+        // A saved report now also names Dutchman and the source it was made from, which is how
+        // a later conversion knows the report is its own to replace.
+        let generator = read.as_object_mut().unwrap().remove("generator").unwrap();
+        assert_eq!(generator["name"], "Dutchman");
+        assert!(generator["source"]["path_sha256"].is_string());
         assert_eq!(read, saved);
         let count: u64 = groups
             .as_array()
