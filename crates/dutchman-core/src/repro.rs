@@ -459,7 +459,10 @@ mod bundle_tests {
         );
         let mut encoded = Vec::new();
         cadmpeg_codec_f3d::F3dCodec
-            .plan(cadmpeg_ir::codec::write::EncodeInput::new(&doc, None).with_target(cadmpeg_ir::codec::write::target::TargetRequest::Inherit))
+            .plan(
+                cadmpeg_ir::codec::write::EncodeInput::new(&doc, None)
+                    .with_target(cadmpeg_ir::codec::write::target::TargetRequest::Inherit),
+            )
             .unwrap()
             .write_to(&mut encoded)
             .unwrap();
