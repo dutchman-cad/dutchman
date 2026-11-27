@@ -311,6 +311,8 @@ yourself. The route is there before a run, while files convert, and after, whate
 say: Dutchman never
 decides for you that a result has no problem. **Report a problem**, at the top right beside
 the **System / Day / Night** theme switch, brings the same panel into view.
+For a drawing whose sheets are not read yet, the panel's first line names the app from the file's
+format, for example "Dutchman doesn't read Inventor drawings yet. Sending it helps us build that:".
 
 The panel is about one file: the first that needs attention, or the one chosen. With several
 results, **About** chooses another; **Report this file…** on any finished card chooses that
