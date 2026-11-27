@@ -1,7 +1,9 @@
 //! Installing the Fusion exporter add-in: the pinned release is downloaded, its SHA-256 checked
 //! before anything is written, and the add-in put into Fusion's AddIns folder the way the
-//! exporter's own `scripts/install.py` does (unzip to a temporary folder beside the target,
-//! replace the old `FusionBulkExport`, rename the new one into place).
+//! exporter's own `scripts/install.py` does (unzip to a temporary folder beside the target, move
+//! the old `FusionBulkExport` aside, rename the new one into place). The old folder is never
+//! deleted: it stays as `FusionBulkExport.previous-<version>`, and only the two newest of those
+//! this installer made (marked by a file it writes) are kept.
 
 use std::fmt;
 use std::io::{Read, Write};
@@ -74,6 +76,21 @@ pub struct Options {
     pub deadline: Duration,
     /// Allow a plain `http` address (loopback test servers only); otherwise only `https`.
     pub allow_http: bool,
+    /// What to do about a copy that is already there.
+    pub mode: Mode,
+}
+
+/// What an install may do about an add-in folder that is already there.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mode {
+    /// Install or upgrade; the same version is left alone, a development copy is not touched.
+    #[default]
+    Install,
+    /// The person asked to reinstall the same version.
+    Repair,
+    /// The person confirmed: put the new add-in in place and keep their development copy beside
+    /// it as `FusionBulkExport.previous-dev-<time>`.
+    KeepDevCopy,
 }
 
 impl Options {
@@ -88,6 +105,7 @@ impl Options {
             stall_timeout: STALL_TIMEOUT,
             deadline: DOWNLOAD_DEADLINE,
             allow_http: false,
+            mode: Mode::Install,
         })
     }
 }
@@ -108,6 +126,11 @@ pub enum Failure {
     Busy,
     /// A newer exporter is already installed.
     Newer(String),
+    /// This version is already installed; nothing was done.
+    AlreadyInstalled(String),
+    /// The folder in Fusion's AddIns was not made by the exporter's installer (or has a version
+    /// that is not a release); it was not touched.
+    DevCopy,
     Download(String),
     /// The download's hash is not the pinned one; nothing was written.
     Checksum,
@@ -124,6 +147,15 @@ impl fmt::Display for Failure {
             Self::Newer(v) => write!(
                 f,
                 "A newer Fusion exporter ({v}) is already installed, so it was left alone."
+            ),
+            Self::AlreadyInstalled(v) => write!(
+                f,
+                "The Fusion exporter {v} is already installed, so nothing was changed."
+            ),
+            Self::DevCopy => f.write_str(
+                "The FusionBulkExport folder in Fusion's Add-Ins looks like a development copy, \
+                 so it was not touched. You can install the released exporter and keep that \
+                 folder beside it.",
             ),
             Self::Download(why) => write!(f, "Could not download the Fusion exporter: {why}"),
             Self::Checksum => f.write_str(
@@ -206,6 +238,96 @@ fn remove_stale_staging(addins: &Path) {
     }
 }
 
+/// What is in the add-in folder now.
+#[derive(Debug, PartialEq, Eq)]
+enum Existing {
+    Nothing,
+    /// Made by the exporter's installer (it left an `install-stamp.json`), with a release version.
+    Exporter(String),
+    /// Anything else: a development copy, or a folder this installer did not make.
+    Other,
+}
+
+fn existing(addins: &Path) -> Existing {
+    let folder = addins.join(ADDIN);
+    if !folder.exists() {
+        return Existing::Nothing;
+    }
+    let stamped = std::fs::read_to_string(folder.join("install-stamp.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.get("version")?.as_str().map(str::to_owned));
+    match stamped {
+        Some(v) if version_parts(&v).is_some() && !v.to_ascii_lowercase().contains("dev") => {
+            Existing::Exporter(v)
+        }
+        _ => Existing::Other,
+    }
+}
+
+/// Marker file in a `.previous-*` folder this installer made; only those are ever pruned.
+const PREVIOUS_MARKER: &str = ".dutchman-previous";
+const PREVIOUS_INFIX: &str = ".previous-";
+const KEEP_PREVIOUS: usize = 2;
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// A free name for the old folder: `FusionBulkExport.previous-<label>`.
+fn previous_path(addins: &Path, label: &str) -> PathBuf {
+    let safe: String = label
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let base = format!("{ADDIN}{PREVIOUS_INFIX}{safe}");
+    let mut path = addins.join(&base);
+    let mut n = 0u32;
+    while path.exists() {
+        n += 1;
+        path = addins.join(format!("{base}-{}-{n}", unix_now()));
+    }
+    path
+}
+
+/// Keeps the newest `KEEP_PREVIOUS` folders this installer marked; deletes older marked ones.
+/// A previous folder without the marker is never touched.
+fn prune_previous(addins: &Path) {
+    let Ok(entries) = std::fs::read_dir(addins) else {
+        return;
+    };
+    let mut marked: Vec<(u64, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let ours = name
+            .to_str()
+            .is_some_and(|n| n.starts_with(&format!("{ADDIN}{PREVIOUS_INFIX}")));
+        if !ours || !path.is_dir() {
+            continue;
+        }
+        let made = std::fs::read_to_string(path.join(PREVIOUS_MARKER))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|v| v.get("created")?.as_u64());
+        if let Some(made) = made {
+            marked.push((made, path));
+        }
+    }
+    marked.sort_by(|a, b| b.cmp(a));
+    for (_, path) in marked.into_iter().skip(KEEP_PREVIOUS) {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
 fn install_with(
     options: &Options,
     busy: &dyn Fn() -> bool,
@@ -215,9 +337,25 @@ fn install_with(
     if busy() {
         return Err(Failure::Busy);
     }
-    if let Some(have) = installed_version(&options.addins) {
-        if is_newer(&have, &options.version) {
-            return Err(Failure::Newer(have));
+    let found = existing(&options.addins);
+    // Where the old folder goes, and whether it is one this installer may later prune.
+    let mut set_aside: Option<(String, bool)> = None;
+    match &found {
+        Existing::Nothing => {}
+        Existing::Exporter(have) => {
+            if is_newer(have, &options.version) {
+                return Err(Failure::Newer(have.clone()));
+            }
+            if have == &options.version && options.mode != Mode::Repair {
+                return Err(Failure::AlreadyInstalled(have.clone()));
+            }
+            set_aside = Some((have.clone(), true));
+        }
+        Existing::Other => {
+            if options.mode != Mode::KeepDevCopy {
+                return Err(Failure::DevCopy);
+            }
+            set_aside = Some((format!("dev-{}", unix_now()), false));
         }
     }
     remove_stale_staging(&options.addins);
@@ -244,26 +382,30 @@ fn install_with(
         return Err(Failure::Busy);
     }
     let target = options.addins.join(ADDIN);
-    let old = staging.path().join("old");
-    let had_old = target.exists();
-    if had_old {
-        rename(&target, &old).map_err(|e| write(&e))?;
+    let kept = set_aside
+        .as_ref()
+        .map(|(label, marked)| (previous_path(&options.addins, label), *marked));
+    if let Some((previous, _)) = &kept {
+        rename(&target, previous).map_err(|e| write(&e))?;
     }
     if let Err(e) = rename(&staged, &target) {
-        if had_old {
-            if let Err(back) = rename(&old, &target) {
-                // The previous add-in is only in the staging folder now: keep it.
-                let kept = staging.keep().join("old");
+        if let Some((previous, _)) = &kept {
+            if let Err(back) = rename(previous, &target) {
                 return Err(Failure::Write(format!(
                     "{e}; putting the previous add-in back failed too ({back}). \
                      It is kept in {}",
-                    kept.display()
+                    previous.display()
                 )));
             }
         }
         return Err(write(&e));
     }
-    // The old folder and the staging folder go when `staging` drops.
+    if let Some((previous, true)) = &kept {
+        let marker = format!("{{\"created\": {}}}", unix_now());
+        let _ = std::fs::write(previous.join(PREVIOUS_MARKER), marker);
+        prune_previous(&options.addins);
+    }
+    // The staging folder goes when `staging` drops.
     Ok(Installed {
         version: installed_version(&options.addins).unwrap_or_else(|| options.version.clone()),
         folder: target,
@@ -510,6 +652,7 @@ mod tests {
             stall_timeout: Duration::from_secs(2),
             deadline: Duration::from_secs(20),
             allow_http: true,
+            mode: Mode::Install,
         }
     }
 
@@ -541,7 +684,7 @@ mod tests {
     }
 
     #[test]
-    fn a_good_install_lands_and_replaces_the_old_folder() {
+    fn a_good_install_lands_and_keeps_the_old_folder_as_previous() {
         let zip = release_zip("0.4.0");
         let url = serve(zip.clone());
         let addins = tempfile::tempdir().unwrap();
@@ -559,7 +702,140 @@ mod tests {
         assert!(folder.join("lib/a.py").is_file());
         assert!(!folder.join("old-file.py").exists());
         assert_eq!(installed_version(addins.path()).as_deref(), Some("0.4.0"));
-        assert_eq!(entries(addins.path()), [ADDIN], "no staging left behind");
+        let previous = addins.path().join("FusionBulkExport.previous-0.3.5");
+        assert_eq!(
+            std::fs::read_to_string(previous.join("old-file.py")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            entries(addins.path()),
+            [ADDIN, "FusionBulkExport.previous-0.3.5"],
+            "no staging left behind"
+        );
+    }
+
+    fn zip_and_url(version: &str) -> (Vec<u8>, String) {
+        let zip = release_zip(version);
+        let url = serve(zip.clone());
+        (zip, url)
+    }
+
+    #[test]
+    fn the_same_version_is_a_no_op_unless_repair_is_asked() {
+        let (zip, url) = zip_and_url("0.4.0");
+        let addins = tempfile::tempdir().unwrap();
+        plant(addins.path(), "0.4.0");
+        let mut o = options(addins.path(), url, &zip, "0.4.0");
+        assert_eq!(
+            run(&o, false),
+            Err(Failure::AlreadyInstalled("0.4.0".into()))
+        );
+        assert_eq!(entries(addins.path()), [ADDIN]);
+        assert!(addins.path().join(ADDIN).join("old-file.py").is_file());
+        o.mode = Mode::Repair;
+        run(&o, false).unwrap();
+        assert!(addins.path().join(ADDIN).join("lib/a.py").is_file());
+        assert!(addins
+            .path()
+            .join("FusionBulkExport.previous-0.4.0/old-file.py")
+            .is_file());
+    }
+
+    #[test]
+    fn a_development_copy_is_not_touched_unless_confirmed() {
+        let (zip, url) = zip_and_url("0.4.0");
+        let addins = tempfile::tempdir().unwrap();
+        // No install stamp: not made by the exporter's installer.
+        let folder = addins.path().join(ADDIN);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("FusionBulkExport.manifest"),
+            "{\"version\": \"0.3.0\"}",
+        )
+        .unwrap();
+        std::fs::write(folder.join("mine.py"), "my edit").unwrap();
+        let mut o = options(addins.path(), url, &zip, "0.4.0");
+        assert_eq!(run(&o, false), Err(Failure::DevCopy));
+        assert_eq!(entries(addins.path()), [ADDIN]);
+        assert_eq!(
+            std::fs::read_to_string(folder.join("mine.py")).unwrap(),
+            "my edit"
+        );
+        // A stamp with a developer version is one too.
+        std::fs::write(
+            folder.join("install-stamp.json"),
+            "{\"version\": \"0.4.0-dev\"}",
+        )
+        .unwrap();
+        assert_eq!(run(&o, false), Err(Failure::DevCopy));
+        std::fs::write(folder.join("install-stamp.json"), "{\"version\": \"junk\"}").unwrap();
+        assert_eq!(run(&o, false), Err(Failure::DevCopy));
+        // Confirmed: the copy is kept beside the new one, and never pruned.
+        o.mode = Mode::KeepDevCopy;
+        run(&o, false).unwrap();
+        let kept: Vec<_> = entries(addins.path())
+            .into_iter()
+            .filter(|n| n.starts_with("FusionBulkExport.previous-dev-"))
+            .collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(addins.path().join(&kept[0]).join("mine.py")).unwrap(),
+            "my edit"
+        );
+        assert!(!addins.path().join(&kept[0]).join(PREVIOUS_MARKER).exists());
+    }
+
+    #[test]
+    fn a_failed_install_restores_the_old_folder() {
+        let (zip, url) = zip_and_url("0.4.0");
+        let addins = tempfile::tempdir().unwrap();
+        plant(addins.path(), "0.3.5");
+        let calls = std::cell::Cell::new(0);
+        let result = install_with(
+            &options(addins.path(), url, &zip, "0.4.0"),
+            &|| false,
+            &mut |_| {},
+            &|from, to| {
+                calls.set(calls.get() + 1);
+                if calls.get() == 2 {
+                    Err(std::io::Error::other("simulated"))
+                } else {
+                    std::fs::rename(from, to)
+                }
+            },
+        );
+        assert!(matches!(result, Err(Failure::Write(_))));
+        assert!(addins.path().join(ADDIN).join("old-file.py").is_file());
+        assert_eq!(installed_version(addins.path()).as_deref(), Some("0.3.5"));
+        assert_eq!(entries(addins.path()), [ADDIN]);
+    }
+
+    #[test]
+    fn only_the_two_newest_previous_folders_this_installer_made_are_kept() {
+        let addins = tempfile::tempdir().unwrap();
+        for (name, made) in [("0.1.0", 10), ("0.2.0", 20), ("0.3.0", 30)] {
+            let dir = addins
+                .path()
+                .join(format!("FusionBulkExport.previous-{name}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(PREVIOUS_MARKER),
+                format!("{{\"created\": {made}}}"),
+            )
+            .unwrap();
+        }
+        // Not made by this installer: no marker.
+        let theirs = addins.path().join("FusionBulkExport.previous-mine");
+        std::fs::create_dir_all(&theirs).unwrap();
+        prune_previous(addins.path());
+        assert_eq!(
+            entries(addins.path()),
+            [
+                "FusionBulkExport.previous-0.2.0",
+                "FusionBulkExport.previous-0.3.0",
+                "FusionBulkExport.previous-mine"
+            ]
+        );
     }
 
     #[test]
@@ -689,9 +965,8 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_rollback_keeps_the_only_copy_of_the_old_add_in() {
-        let zip = release_zip("0.4.0");
-        let url = serve(zip.clone());
+    fn a_failed_rollback_says_where_the_old_add_in_is() {
+        let (zip, url) = zip_and_url("0.4.0");
         let addins = tempfile::tempdir().unwrap();
         plant(addins.path(), "0.3.5");
         let calls = std::cell::Cell::new(0);
@@ -711,27 +986,10 @@ mod tests {
         let Err(Failure::Write(why)) = result else {
             panic!("expected a write failure");
         };
+        let kept = addins.path().join("FusionBulkExport.previous-0.3.5");
         assert!(why.contains("It is kept in"), "{why}");
-        let kept = addins
-            .path()
-            .read_dir()
-            .unwrap()
-            .flatten()
-            .map(|e| e.path())
-            .find(|p| {
-                p.file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .starts_with(STAGING_PREFIX)
-            })
-            .expect("staging folder kept");
-        assert!(why.contains(kept.join("old").to_str().unwrap()), "{why}");
-        assert!(kept.join("old/old-file.py").is_file());
-        // The next install leaves that folder alone: it holds the previous add-in.
-        let url = serve(zip.clone());
-        run(&options(addins.path(), url, &zip, "0.4.0"), false).unwrap();
-        assert!(kept.join("old/old-file.py").is_file());
+        assert!(why.contains(kept.to_str().unwrap()), "{why}");
+        assert!(kept.join("old-file.py").is_file());
     }
 
     #[test]
@@ -941,6 +1199,7 @@ mod tests {
             stall_timeout: Duration::from_secs(5),
             deadline: Duration::from_secs(20),
             allow_http: true,
+            mode: Mode::Install,
         };
         let done = run(&o, false).unwrap();
         assert_eq!(done.version, "0.4.1");

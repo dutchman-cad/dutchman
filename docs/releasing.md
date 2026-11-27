@@ -305,6 +305,14 @@ the rolling `candidates` pre-release with the archives, their SHA-256 files and
 `candidates.json`. `dutchman investigate` compares a user's design against them and the
 nightly. Remove an entry once its fix is released; an empty list publishes an empty release.
 
+## SolidCraft Workshop listing
+
+`solidcraft-workshop.json` at the repository root is what the SolidCraft Workshop reads to list the
+plugin. Its `version` must equal the workspace version and `min_app_version` the plugin manifest's
+`min_host_version`; a unit test checks both, and that the package is `dutchman-plugin-<version>.zip`,
+the release's plugin file. The Workshop reads the file from the default branch and the package from
+the release tagged `v<version>`, so a version bump changes the listing file in the same pull request.
+
 ## Container image
 
 The Linux archive builds run in Debian bookworm so their glibc requirements fit the

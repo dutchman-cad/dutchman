@@ -6800,6 +6800,88 @@ fn body_patterns_use_names_assigned_by_earlier_features() {
     }
 }
 
+/// A body seed named by its producer, or as the one body of the pattern's input state,
+/// resolves to the name that producer gave it; a state holding another body is refused.
+#[test]
+fn body_patterns_resolve_generated_and_input_state_seeds() {
+    let linear = json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3, "omitted_instances": [], "symmetric": false});
+    let generated = json!({"kind": "generated", "value": {
+        "bodies": [{"feature": "f3d:model:feature#2", "local_id": "cube"}], "native": "selection"}});
+    let historical = json!({"kind": "historical", "value": {
+        "state": "synthetic:history-input:state#0", "bodies": ["synthetic:history-input:body#0"],
+        "native": "selection"}});
+    for (selection, state_bodies, mapped) in [
+        (
+            generated.clone(),
+            json!(["synthetic:history-input:body#0"]),
+            true,
+        ),
+        (
+            historical.clone(),
+            json!(["synthetic:history-input:body#0"]),
+            true,
+        ),
+        (
+            historical,
+            json!([
+                "synthetic:history-input:body#0",
+                "synthetic:history-input:body#1"
+            ]),
+            false,
+        ),
+    ] {
+        let input_state = selection["kind"] == "historical";
+        let mut model = pattern_seeds(
+            patterned(linear.clone()),
+            json!([{"kind": "bodies", "value": selection}]),
+        );
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["feature_result_topologies"] = json!([{
+            "id": "synthetic:history-result:state#0", "output_of": "f3d:model:feature#2",
+            "members": [{"kind": "body", "id": "cube"}]}]);
+        wire["model"]["feature_input_topologies"] = json!([{
+            "id": "synthetic:history-input:state#0", "input_of": "f3d:model:feature#3",
+            "bodies": state_bodies, "faces": [], "edges": [], "vertices": [],
+            "edge_geometry": [], "face_owners": []}]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some("0.44.0".parse().unwrap())),
+        );
+        if mapped {
+            assert!(
+                history_line(&report).starts_with("3 of 3 features rebuilt"),
+                "{}",
+                history_line(&report)
+            );
+            assert_eq!(document["features"][2]["bodies"], json!(["unit cube"]));
+            // The replay writes for the CLI's own version: before SolidCraft 0.44 a generated
+            // seed keeps the final geometry.
+            let replayable = |cli: &PathBuf| {
+                input_state
+                    || dutchman_solidcraft::VersionGate::ScopedBodies.supported(
+                        dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(
+                            cli.clone(),
+                        )),
+                    )
+            };
+            if let Some(cli) = solidcraft().filter(replayable) {
+                assert!(
+                    (volumes(&cli, &written(&model).0).iter().sum::<f64>() - 3000.0).abs() < 1e-6
+                );
+            }
+        } else {
+            assert!(
+                history_line(&report).contains("when that state holds several bodies"),
+                "{}",
+                history_line(&report)
+            );
+        }
+    }
+}
+
 #[test]
 fn regular_explicit_pattern_locations_map_to_spacing_and_span() {
     let direction = json!({"x": 1.0, "y": 0.0, "z": 0.0});
@@ -22104,6 +22186,72 @@ fn body_moves_keep_resolved_transforms_and_selected_bodies() {
     }
 }
 
+/// A captured base body is registered under its final id and its history-body id. A later
+/// feature that selects it by its final id finds one body, not an ambiguous name.
+#[test]
+fn a_resolved_selection_of_a_captured_base_body_is_not_ambiguous() {
+    let mut model = based_cube_changed_later(true);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    let last = features.len() - 1;
+    features[last]["name"] = json!("Move");
+    features[last]["definition"]["value"] = body_move([5.0, 0.0, 0.0], None);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0)),
+    );
+    let moved = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|feature| feature["type"] == "move");
+    assert!(moved.is_some(), "{}", history_line(&report));
+    assert_eq!(
+        moved.unwrap()["bodies"],
+        document["features"][0]["body_names"],
+        "{}",
+        history_line(&report)
+    );
+}
+
+/// A copying move keeps its source and names the copy, its one output, for later features.
+#[test]
+fn copying_body_moves_keep_the_source_and_name_the_copy() {
+    let mut definition = body_move([20.0, 0.0, 0.0], None);
+    definition["value"]["copies"] = json!(1);
+    let mut model = modifying(definition);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][2]["outputs"] = json!(["synthetic:copy:body#0"]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0)),
+    );
+    let moved = &document["features"][2];
+    assert_eq!(moved["type"], "move", "{}", history_line(&report));
+    assert_eq!(moved["copy"], true);
+    assert_eq!(moved["bodies"], json!(["unit cube"]));
+    assert_eq!(moved["body_names"], json!(["unit cube (2)"]));
+    // The replay writes for the CLI's own version; older ones keep the final geometry.
+    if let Some(cli) = solidcraft().filter(|cli| {
+        dutchman_solidcraft::VersionGate::MoveBody.supported(
+            dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone())),
+        )
+    }) {
+        let mut starts: Vec<f64> = bounds(&cli, &written(&model).0)
+            .iter()
+            .map(|(min, _)| min[0])
+            .collect();
+        starts.sort_by(f64::total_cmp);
+        assert_eq!(starts, [0.0, 20.0]);
+    }
+}
+
 #[test]
 fn body_moves_rebuild_from_a_captured_base_with_two_identity_aliases() {
     let base = based_cube_changed_later(true);
@@ -22172,7 +22320,12 @@ fn body_moves_rebuild_from_a_captured_base_with_two_identity_aliases() {
 #[test]
 fn body_moves_refuse_copies_unresolved_bodies_and_older_targets() {
     for (change, reason) in [
-        (json!({"copies": 1}), "copied body result identities"),
+        // The fixture's move has no outputs, so nothing names its copy.
+        (
+            json!({"copies": 1}),
+            "its copied body is not its one output",
+        ),
+        (json!({"copies": 2}), "several copies of a body"),
         (
             json!({"bodies": {"kind": "native", "value": "synthetic unresolved selection"}}),
             "native body reference",

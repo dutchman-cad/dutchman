@@ -142,7 +142,7 @@ impl FakeAddin {
         failed: u64,
         output: &Path,
     ) {
-        let finished = matches!(state, "done" | "failed" | "cancelled");
+        let finished = matches!(state, "done" | "failed" | "cancelled" | "canceled");
         let mut status = json!({
             "protocol": 1, "id": id, "agent": "fusion-bulk-export", "agent_version": "0.3.5",
             "agent_pid": std::process::id(), "state": state, "reason": reason, "message": message,

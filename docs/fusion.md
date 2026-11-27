@@ -93,9 +93,13 @@ It runs only in Fusion, so the entry appears on Windows and macOS.
    release (Fusion Bulk Export 0.4.1, which records each design's up axis in the export
    manifest), checks its SHA-256 before writing anything, and puts it in Fusion's Add-Ins folder
    (macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns`; Windows:
-   `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns`), replacing an older
-   `FusionBulkExport` folder. It never installs while the exporter is exporting, and never puts an
-   older version over a newer one.
+   `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns`). An older `FusionBulkExport` folder is
+   never deleted: it is renamed to `FusionBulkExport.previous-<version>` (the two newest of those
+   are kept) and put back if the install fails. The same version is left alone unless you choose
+   **Repair**. A `FusionBulkExport` folder the installer did not make, such as a development
+   copy, is not touched; Dutchman says so and offers to install the release and keep your folder
+   beside it. It never installs while the exporter is exporting, and never puts an older version
+   over a newer one.
 3. Switch it on once in Fusion. No program can do this for you: press Shift+S (Utilities,
    Add-Ins, Scripts and Add-Ins), find FusionBulkExport, tick **Run on Startup**, then switch
    **Run** on. Dutchman keeps waiting and updates when the add-in starts. Fusion keeps the
@@ -211,7 +215,8 @@ and axis-angle rotations, including explicit pivots, when every selected body ha
 a proven earlier name; in a design state that holds several bodies, a moved body is the
 one earlier named body whose creating feature affected exactly its history slot. CADIR supplies millimeters and radians; the writer never
 infers a transform from final geometry. Unresolved body selections, unresolved
-point-to-point motion, and copied body result identities remain blockers. Bodies
+point-to-point motion, several copies, and copies of several bodies in one move remain
+blockers; a move that copies one body keeps the original and names the copy. Bodies
 available only as final geometry also require a captured pre-move body. Older
 targets keep the original final geometry with a named version refusal.
 
@@ -920,7 +925,8 @@ A captured base import can name the same body by its final and historical geomet
 identities. A Move selecting the sole body in its own input state resolves those
 aliases to one earlier SolidCraft body name. Distinct earlier body names remain
 ambiguous and are refused; native identifiers and final geometry do not establish
-a historical match.
+a historical match. A Combine, Mirror, Move or pattern that selects that body by its final
+identity also finds the one body, not two bodies sharing a name.
 
 Modeled thread history remains blocked even on SolidCraft 0.45: the available nominal
 thread data cannot prove an exact helical reconstruction. The final modeled geometry is

@@ -10,7 +10,7 @@ from pathlib import Path
 # may be taken while GitHub calls it a pre-release; nightlies and any other pre-release stay
 # refused. Once upstream publishes the version as a full release its entry changes nothing, and
 # it is removed.
-ACCEPTED_PRERELEASES = ["0.50.0"]
+ACCEPTED_PRERELEASES = []
 
 
 def newest(minor, releases):

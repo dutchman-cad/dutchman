@@ -31,7 +31,7 @@ pub enum Status {
     Flattened,
     Incomplete,
     Failed,
-    /// A drawing file that is recognised but whose sheets are not read yet: not a failure.
+    /// A drawing file that is recognized but whose sheets are not read yet: not a failure.
     NotSupported,
     /// Stopped at a limit and resumable: not a failure.
     Stopped,
@@ -185,7 +185,7 @@ pub enum Surface {
 pub struct SendSteps {
     /// What to do in the DM.
     pub dm_text: String,
-    pub intro: &'static str,
+    pub intro: String,
     /// Whether the file goes in by hand, so the desktop app shows its folder.
     pub drag: bool,
     /// Whether to ask for a STEP export too.
@@ -219,11 +219,13 @@ impl SendSteps {
         Self {
             dm_text,
             intro: if crate::tool_library::is_report(report) {
-                SEND_TOOLS_INTRO
+                SEND_TOOLS_INTRO.to_owned()
+            } else if let Some(intro) = drawing_intro(report) {
+                intro
             } else if report.get("ok").and_then(Value::as_bool) == Some(true) {
-                SEND_CONVERTED_INTRO
+                SEND_CONVERTED_INTRO.to_owned()
             } else {
-                SEND_INTRO
+                SEND_INTRO.to_owned()
             },
             drag,
             step_card: !source_is_step(report),
@@ -245,9 +247,24 @@ impl SendSteps {
     }
 }
 
-/// Whether `report` is of a drawing file that is recognised but whose sheets are not read yet.
+/// Whether `report` is of a drawing file that is recognized but whose sheets are not read yet.
 pub fn not_supported_yet(report: &Value) -> bool {
     report.pointer("/drawing/status").and_then(Value::as_str) == Some("not_decoded")
+}
+
+/// The panel's intro for a drawing that is not read yet, naming the app from the file's format.
+fn drawing_intro(report: &Value) -> Option<String> {
+    if !not_supported_yet(report) {
+        return None;
+    }
+    let id = report.pointer("/input/format").and_then(Value::as_str)?;
+    let format = dutchman_core::Format::ALL
+        .into_iter()
+        .find(|f| f.id() == id)?;
+    Some(format!(
+        "Dutchman doesn't read {} drawings yet. Sending it helps us build that:",
+        format.family()
+    ))
 }
 
 /// Whether the file of `report` is itself a STEP file.
@@ -504,7 +521,7 @@ pub struct Counts {
     pub converted: usize,
     pub incomplete: usize,
     pub failed: usize,
-    /// Drawing files that are recognised but not read yet.
+    /// Drawing files that are recognized but not read yet.
     pub not_supported: usize,
     pub stopped: usize,
     pub not_started: usize,
@@ -1018,6 +1035,7 @@ mod tests {
         json!({
             "ok": false,
             "error": {"kind": "not_supported_yet", "message": "Inventor drawing (.idw): no drawing was written"},
+            "input": {"format": "inventor_drawing"},
             "drawing": {"status": "not_decoded"},
         })
     }
@@ -1053,6 +1071,10 @@ mod tests {
             Some(1000),
             &drawing_report(),
             Surface::Desktop,
+        );
+        assert_eq!(
+            steps.intro,
+            "Dutchman doesn't read Inventor drawings yet. Sending it helps us build that:"
         );
         assert_eq!(steps.step_title, SEND_DRAWING_TITLE);
         assert_eq!(steps.step_note, Some(SEND_DRAWING_TEXT));

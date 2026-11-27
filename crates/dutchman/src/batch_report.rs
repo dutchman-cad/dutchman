@@ -236,7 +236,7 @@ pub fn write_reports(reports: &[Value], folder: &Path) -> Result<usize, String> 
     ] {
         let save = || -> std::io::Result<()> {
             // The summary names are Dutchman's own, rewritten whole by every run.
-            dutchman_core::safe_output::write(&folder.join(name), content.as_bytes(), true)
+            dutchman_core::safe_output::write_own(&folder.join(name), content.as_bytes())
         };
         save().map_err(|err| format!("Could not write {name}: {err}. Check the output folder's permissions and free space."))?;
     }

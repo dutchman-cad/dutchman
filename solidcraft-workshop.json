@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "id": "dutchman",
+  "name": "Dutchman",
+  "kind": "plugin",
+  "version": "0.4.0",
+  "licence": "Apache-2.0",
+  "min_app_version": "0.50.0",
+  "summary": "Open Fusion, Inventor, SolidWorks and FreeCAD files in SolidCraft with editable history where possible.",
+  "description": "docs/solidcraft-plugin.md",
+  "category": "importers",
+  "tags": ["fusion", "inventor", "solidworks", "freecad", "import"],
+  "permissions": ["input_folder"],
+  "files": [
+    { "asset": "dutchman-plugin-0.4.0.zip", "role": "package" }
+  ]
+}

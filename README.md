@@ -136,7 +136,7 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 | Onshape bundle | `.onshape-bundle` | Reads geometry | – | One offline Part Studio; geometry and editable history where features map |
 | IGES | `.igs`, `.iges` | Recognized, not converted | – | Import it in SolidCraft directly (File > Import) |
 | Circuit board | `.PcbDoc` | Reads geometry with the electronics module | – | Placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately) |
-| Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
+| Unidentified part (Creo or NX) | `.prt` | Recognized, not read yet | – | Not yet |
 | Inventor drawing | `.idw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
 | SolidWorks drawing | `.slddrw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
 | Fusion drawing | `.f2d` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |

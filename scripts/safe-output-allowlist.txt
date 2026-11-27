@@ -18,7 +18,7 @@ crates/dutchman-core/src/companion.rs	1	companion staging: exclusive create, nev
 crates/dutchman-core/src/module.rs	5	module cache Dutchman owns
 crates/dutchman-freecad/src/run.rs	1	FreeCAD run scratch folder Dutchman made
 crates/dutchman-gui/src/app.rs	1	a file the user chose in a save dialog (audit)
-crates/dutchman-gui/src/fusion_export/install.rs	3	Fusion exporter install files (audit: move onto safe_output)
+crates/dutchman-gui/src/fusion_export/install.rs	5	Fusion exporter install files; the old folder is renamed to .previous-<version>, never deleted, and only marked .previous-* folders this installer made are pruned (audit: move onto safe_output)
 crates/dutchman-gui/src/lib.rs	1	settings, pasted-file and platform state Dutchman owns (audit)
 crates/dutchman-gui/src/paste.rs	2	settings, pasted-file and platform state Dutchman owns (audit)
 crates/dutchman-gui/src/platform.rs	1	settings, pasted-file and platform state Dutchman owns (audit)
