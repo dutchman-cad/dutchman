@@ -12,6 +12,7 @@ crates/dutchman/src/onshape/store.rs	5	Onshape bundle cache and credentials Dutc
 crates/dutchman/src/report_send.rs	1	private local report copy (exclusive create)
 crates/dutchman/src/repro.rs	3	a new reproduction kit folder (exclusive create)
 crates/dutchman/src/share_scratch.rs	1	scratch folder Dutchman made
+crates/dutchman/src/sync.rs	1	publishes a re-converted design over the one its own link record says Dutchman wrote, when the user asked to update it (audit: move onto safe_output)
 crates/dutchman/src/watch.rs	6	watch publishes only through its ownership ledger of files it wrote itself (audit: move onto safe_output)
 crates/dutchman/src/worker.rs	1	a private temporary copy of an archive the converter reads
 crates/dutchman-core/src/companion.rs	1	companion staging: exclusive create, never over an edited file
