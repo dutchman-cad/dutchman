@@ -20382,7 +20382,7 @@ fn counted_intermediate_join(before: &str, after: &str) -> Model {
         .as_array_mut()
         .unwrap()
         .push(later);
-    model.ir = dutchman_core::ir_wire::from_value(wire).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model
 }
 
