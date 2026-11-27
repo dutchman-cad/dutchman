@@ -1804,7 +1804,7 @@ fn sketch_owners(model: &Model) -> BTreeMap<String, String> {
     use cadmpeg_ir::features::{FeatureDefinition, FeatureOperation};
 
     let mut owners = BTreeMap::new();
-    if model.ir.check_scope().is_err() {
+    if !model.ir.scope_violations().is_empty() {
         return owners;
     }
     // Ownership does not require expanding geometry or native payloads. Match the

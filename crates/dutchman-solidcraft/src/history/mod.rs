@@ -1873,7 +1873,7 @@ pub(crate) fn sketches_where(
     if count == 0 {
         return (kept, 0);
     }
-    if model.ir.check_scope().is_err() || !IR_VERSIONS.contains(&model.ir.ir_version()) {
+    if !model.ir.scope_violations().is_empty() || !IR_VERSIONS.contains(&model.ir.ir_version()) {
         return (kept, count);
     }
     // Reference sketches read only the neutral arenas in `wire::SKETCH_ARENAS`. Keep those

@@ -3771,8 +3771,7 @@ fn typed_part(
             sketch.placement = moved.ok_or("a carried sketch's plane is malformed")?;
         }
     }
-    ir.set_scope(source.scope())
-        .map_err(|err| err.to_string())?;
+    ir.set_scope(source.scope());
     Ok(ir)
 }
 

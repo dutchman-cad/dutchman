@@ -1041,6 +1041,13 @@ fn read_studio(
     Ok(model)
 }
 
+/// The annotation key of the top-level entity `id`.
+fn annotation_key(id: &str) -> Result<cadmpeg_ir::annotations::AnnotationKey, String> {
+    cadmpeg_ir::ids::Identity::try_from(id)
+        .map(|identity| cadmpeg_ir::annotations::AnnotationKey::from(&identity))
+        .map_err(|err| err.to_string())
+}
+
 fn annotation_result<T, E: std::fmt::Display>(
     result: Result<T, E>,
     report: &mut Report,
@@ -1156,15 +1163,19 @@ fn annotate(model: &mut Model, features: &[Value], report: &mut Report) {
                         })
             });
             annotation_result(
-                annotations.field_exactness(
-                    &sketch_id,
-                    "placement",
-                    if inferred {
-                        Exactness::Inferred
-                    } else {
-                        Exactness::Derived
-                    },
-                ),
+                annotation_key(&sketch_id).and_then(|key| {
+                    annotations
+                        .field_exactness(
+                            key,
+                            "placement",
+                            if inferred {
+                                Exactness::Inferred
+                            } else {
+                                Exactness::Derived
+                            },
+                        )
+                        .map_err(|err| err.to_string())
+                }),
                 report,
                 sketch_id.as_str(),
                 has_step,
@@ -1172,11 +1183,11 @@ fn annotate(model: &mut Model, features: &[Value], report: &mut Report) {
         }
         if source.get("suppressed").is_none() && source.get("parentSuppressed").is_none() {
             annotation_result(
-                annotations.field_exactness(
-                    id("feature", native),
-                    "suppressed",
-                    Exactness::Inferred,
-                ),
+                annotation_key(&id("feature", native)).and_then(|key| {
+                    annotations
+                        .field_exactness(key, "suppressed", Exactness::Inferred)
+                        .map_err(|err| err.to_string())
+                }),
                 report,
                 id("feature", native).as_str(),
                 has_step,
