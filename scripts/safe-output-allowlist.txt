@@ -35,3 +35,6 @@ crates/dutchman-web/src/lib.rs	5	web job folders (fresh) and the numbered save i
 crates/dutchman-web/src/save.rs	2	web job folders (fresh) and the numbered save into the output folder (audit: move onto safe_output)
 crates/dutchman-gui/src/fusion_export/job.rs	5	Fusion exporter job folder Dutchman owns (its own atomic job, status and cancel files)
 crates/dutchman-gui/src/fusion_export/mod.rs	1	Fusion export inventory folder Dutchman owns (clears its own stale inventory.json)
+crates/dutchman/src/sync_state.rs	1	the shared sync settings file Dutchman owns (atomic replace of its own file)
+crates/dutchman-gui/src/sync_helper/instance.rs	5	the helper single-instance lock file Dutchman owns
+crates/dutchman-gui/src/sync_helper/login.rs	2	the helper start-at-login entry Dutchman owns
