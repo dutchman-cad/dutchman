@@ -2213,3 +2213,131 @@ fn derived_boolean_dependencies_follow_stored_operand_order() {
         json!([features[2]["id"], features[1]["id"]])
     );
 }
+
+#[path = "support/onshape_assembly.rs"]
+mod assembly_bundle;
+
+// Millimetres for translations and dimensionless rotation coefficients.
+const ASSEMBLY_POSE_TOLERANCE: f64 = 1e-9;
+fn placed_bodies(model: &Model, parent: [[f64; 4]; 3], out: &mut Vec<(String, [[f64; 4]; 3])>) {
+    if let Some(assembly) = &model.assembly {
+        for placement in &assembly.placements {
+            assert!(!placement.unproven);
+            let local = placement.transform;
+            let mut world = [[0.; 4]; 3];
+            for r in 0..3 {
+                for c in 0..4 {
+                    world[r][c] = (0..3).map(|k| parent[r][k] * local[k][c]).sum::<f64>()
+                        + if c == 3 { parent[r][3] } else { 0. };
+                }
+            }
+            let part = &assembly.parts[placement.part];
+            if part.assembly.is_some() {
+                placed_bodies(part, world, out);
+            } else {
+                assert_eq!(part.ir.geometry.bodies.len(), 1);
+                out.push((placement.name.clone().unwrap(), world));
+            }
+        }
+    }
+}
+
+fn assert_assembly_placements_and_mates(ring: bool) {
+    let identity = [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.]];
+    {
+        let bytes = assembly_bundle::bundle(&fixture("default-plane-regions"), ring);
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(model.ir.geometry.bodies.len(), 1, "{report:?}");
+        assert_eq!(model.ir.model.occurrences.len(), if ring { 8 } else { 4 });
+        let mut placed = Vec::new();
+        placed_bodies(&model, identity, &mut placed);
+        assert_eq!(placed.len(), if ring { 8 } else { 3 });
+        let expected_names: std::collections::BTreeSet<String> = if ring {
+            (0..8).map(|i| format!("ring{i}")).collect()
+        } else {
+            ["base", "middle", "upper"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        };
+        assert_eq!(
+            placed
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected_names
+        );
+        for (name, world) in placed {
+            // Stack plates are 5 mm thick: base + Tz(5), then + Tz(5).
+            // Ring is Rz(theta) * Tx(60 mm): t=(60 cos theta,60 sin theta,0).
+            let (angle, xyz) = if ring {
+                let i: usize = name.strip_prefix("ring").unwrap().parse().unwrap();
+                let angle = i as f64 * std::f64::consts::TAU / 8.;
+                (angle, [60. * angle.cos(), 60. * angle.sin(), 0.])
+            } else {
+                (
+                    0.,
+                    [
+                        0.,
+                        0.,
+                        match name.as_str() {
+                            "base" => 0.,
+                            "middle" => 5.,
+                            "upper" => 10.,
+                            _ => panic!("unexpected part {name}"),
+                        },
+                    ],
+                )
+            };
+            let (s, c) = angle.sin_cos();
+            let expected = [
+                [c, -s, 0., xyz[0]],
+                [s, c, 0., xyz[1]],
+                [0., 0., 1., xyz[2]],
+            ];
+            for r in 0..3 {
+                for col in 0..4 {
+                    assert!(
+                        (world[r][col] - expected[r][col]).abs() < ASSEMBLY_POSE_TOLERANCE,
+                        "{name}: {world:?}"
+                    );
+                }
+            }
+        }
+        fn motions(model: &Model, out: &mut Vec<dutchman_core::Joint>) {
+            if let Some(a) = &model.assembly {
+                out.extend(a.joints.iter().cloned());
+                for p in &a.parts {
+                    motions(p, out);
+                }
+            }
+        }
+        let mut joints = Vec::new();
+        motions(&model, &mut joints);
+        assert_eq!(joints.len(), 1);
+        assert!(!joints[0].a.is_empty() && !joints[0].b.is_empty());
+        assert_ne!(joints[0].a, joints[0].b);
+        assert!(!joints[0].suppressed);
+        // The first connector is on the top face of middle, or 60 mm
+        // inward along local X to the ring's common axis.
+        let expected_origin = if ring { [-60., 0., 0.] } else { [0., 0., 5.] };
+        for (r, expected) in expected_origin.into_iter().enumerate() {
+            assert!((joints[0].frame_a[r][3] - expected).abs() < ASSEMBLY_POSE_TOLERANCE);
+        }
+        assert!(if ring {
+            matches!(joints[0].motion, dutchman_core::Motion::Revolute { .. })
+        } else {
+            matches!(joints[0].motion, dutchman_core::Motion::Rigid)
+        });
+    }
+}
+
+#[test]
+fn stacked_assembly_places_every_plate_through_a_subassembly_and_maps_its_mate() {
+    assert_assembly_placements_and_mates(false);
+}
+
+#[test]
+fn ring_assembly_places_eight_rotated_instances_and_maps_its_mate() {
+    assert_assembly_placements_and_mates(true);
+}

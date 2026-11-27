@@ -25,8 +25,8 @@ Sketch midpoint admission reserves one carrier and three relations per midpoint
 before construction, including when several midpoints share a sketch.
 
 
-Dutchman reads a local `.onshape-bundle` containing a root Part Studio at one pinned
-microversion, plus any captured Derived studios at their own pinned versions, through cadmpeg's
+Dutchman reads a local `.onshape-bundle` containing a root Part Studio or assembly at one pinned
+microversion, plus captured Part Studios and any Derived studios at their own pinned versions, through cadmpeg's
 Onshape codec, the same decode path as every other format. Conversion is offline. No account, API keys, network connection, or
 Onshape installation is used by this reader.
 
@@ -41,7 +41,10 @@ Sketch-only bundles omit STEP. Fresh bundles also include `sketches.json`, the r
 Part Studio sketch-information response. These are additive v1 members; older
 bundles keep their existing behavior. Features and bodydetails are raw REST responses.
 The reader accepts stored and deflated members, without
-extracting them to disk. Assemblies are not supported yet. A manifest with several Part Studio elements must
+extracting them to disk. Assembly bundles place captured parts at their stored world poses, including repeated
+instances and nested subassemblies. Fastened, revolute and slider mates map through
+the shared joint path; other mate families retain named losses. Uncaptured references
+remain unresolved. A manifest with several Part Studio elements must
 name its root with `root_element`; conversion starts with that studio.
 
 A Part Studio with several parts converts as one design holding every part as a

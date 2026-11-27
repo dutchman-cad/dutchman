@@ -2887,3 +2887,96 @@ fn a_continued_fetch_estimates_only_the_calls_it_has_left() {
         (1..=4).map(|sent| (sent, Some(4))).collect::<Vec<_>>()
     );
 }
+
+#[path = "../../dutchman-core/tests/support/onshape_assembly.rs"]
+mod assembly_bundle;
+
+#[test]
+fn synthetic_stack_and_ring_convert_to_solidcraft_with_every_placement() {
+    let plate = include_bytes!(
+        "../../dutchman-core/tests/fixtures/onshape-default-plane-regions.onshape-bundle"
+    );
+    for ring in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.onshape-bundle");
+        let target = dir.path().join("assembly.sc");
+        std::fs::write(&input, assembly_bundle::bundle(plate, ring)).unwrap();
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_dutchman"))
+            .arg("convert")
+            .arg(&input)
+            .arg("-o")
+            .arg(&target)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["ok"], true, "{report:#}");
+        assert_eq!(
+            report["joints"][if ring { "revolute" } else { "rigid" }],
+            1,
+            "{report:#}"
+        );
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&target).unwrap()).unwrap();
+        let doc: Value =
+            serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        fn worlds(doc: &Value, o: &Value, depth: usize) -> Vec<[[f64; 4]; 3]> {
+            assert!(depth < 8);
+            let own = std::array::from_fn(|r| {
+                std::array::from_fn(|c| o["transform"][c][r].as_f64().unwrap())
+            });
+            if o["parent"] == 0 {
+                return vec![own];
+            }
+            doc["occurrences"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|p| p["component"] == o["parent"])
+                .flat_map(|p| worlds(doc, p, depth + 1))
+                .map(|parent| dutchman_core::placement::compose(&parent, &own))
+                .collect()
+        }
+        let mut found: Vec<_> = doc["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|o| worlds(&doc, o, 0))
+            .collect();
+        // Include the holder at Z=5 as well as its two leaves at Z=5 and Z=10.
+        // Ring frames are Rz(theta)*Tx(60 mm), theta=i*TAU/8.
+        let expected: Vec<_> = if ring {
+            (0..8)
+                .map(|i| {
+                    let a = i as f64 * std::f64::consts::TAU / 8.;
+                    let (s, c) = a.sin_cos();
+                    [[c, -s, 0., 60. * c], [s, c, 0., 60. * s], [0., 0., 1., 0.]]
+                })
+                .collect()
+        } else {
+            [0., 5., 5., 10.]
+                .into_iter()
+                .map(|z| [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., z]])
+                .collect()
+        };
+        const WRITTEN_POSE_TOLERANCE: f64 = 1e-9;
+        assert_eq!(found.len(), expected.len(), "{doc:#}");
+        for pose in expected {
+            let i = found
+                .iter()
+                .position(|p| {
+                    p.iter()
+                        .flatten()
+                        .zip(pose.iter().flatten())
+                        .all(|(a, b)| (a - b).abs() < WRITTEN_POSE_TOLERANCE)
+                })
+                .unwrap_or_else(|| panic!("missing {pose:?} in {found:?}"));
+            found.remove(i);
+        }
+    }
+}
