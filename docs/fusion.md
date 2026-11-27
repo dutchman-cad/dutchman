@@ -934,7 +934,9 @@ identity also finds the one body, not two bodies sharing a name.
 cadmpeg records, for each body of a feature's input state, the earlier feature that last
 inserted or updated it (`body_writers`). A body selected in that state, such as a Shell,
 Mirror, Move or pattern seed, is the one result body of its writer, under the name that
-writer's body took; this also holds beside bodies the history could not name. A Shell
+writer's body took; this also holds beside bodies the history could not name. A writer with
+no result state, such as a cut that only changes the body, is followed back through its own
+input state, at the same history slot, to the feature that made the body. A Shell
 that selects no body uses the input-state body holding its removed faces (`face_owners`).
 A Shell whose removed-face set is empty is a closed hollow shell (SolidCraft 0.45 or
 newer).

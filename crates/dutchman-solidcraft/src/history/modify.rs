@@ -275,7 +275,7 @@ fn written_bodies(
     selection: &Value,
     ctx: &Context,
 ) -> Option<Result<NamedBodies, String>> {
-    let writers = state.get("body_writers").and_then(Value::as_array)?;
+    state.get("body_writers").and_then(Value::as_array)?;
     let selected = selection
         .pointer("/value/bodies")
         .and_then(Value::as_array)
@@ -285,16 +285,59 @@ fn written_bodies(
         if !held.contains(body) {
             return None;
         }
-        let writer = writers
-            .iter()
-            .find(|entry| entry.get("body") == Some(body))?
-            .get("writer")
-            .and_then(Value::as_str)?;
-        let local = sole_result_body(writer, ctx)?;
+        let (writer, local) = written_body(state, body, ctx)?;
         refs.push(json!({"feature": writer, "local_id": local}));
     }
     let generated = json!({"kind": "generated", "value": {"bodies": refs}});
     Some(generated_names(source, &generated, ctx))
+}
+
+/// The feature that made a body of an input state, and the body's local id in that
+/// feature's one result state. A writer with no result state, such as a cut that only
+/// changes the body, wrote the body it found in its own input state at the same history
+/// slot: that body's writer is followed instead, as far back as the history goes.
+fn written_body<'a: 'b, 'b>(
+    state: &'b Value,
+    body: &'b Value,
+    ctx: &Context<'a>,
+) -> Option<(&'b str, &'b str)> {
+    let slot = |body: &Value| body.as_str()?.rsplit(':').next().map(str::to_owned);
+    let (mut state, mut body) = (state, body);
+    for _ in 0..=ctx.arena("features").len() {
+        let writer = state
+            .get("body_writers")
+            .and_then(Value::as_array)?
+            .iter()
+            .find(|entry| entry.get("body") == Some(body))?
+            .get("writer")
+            .and_then(Value::as_str)?;
+        let has_result = ctx
+            .arena("feature_result_topologies")
+            .iter()
+            .any(|row| row.get("output_of").and_then(Value::as_str) == Some(writer));
+        if has_result {
+            return Some((writer, sole_result_body(writer, ctx)?));
+        }
+        let inputs: Vec<&Value> = ctx
+            .arena("feature_input_topologies")
+            .iter()
+            .filter(|row| row.get("input_of").and_then(Value::as_str) == Some(writer))
+            .collect();
+        let [input] = inputs.as_slice() else {
+            return None;
+        };
+        let wanted = slot(body)?;
+        let mut same = input
+            .get("bodies")
+            .and_then(Value::as_array)?
+            .iter()
+            .filter(|held| slot(held).as_deref() == Some(wanted.as_str()));
+        let (Some(earlier), None) = (same.next(), same.next()) else {
+            return None;
+        };
+        (state, body) = (input, earlier);
+    }
+    None
 }
 
 /// The local id of the one body in a feature's one result state.
@@ -1062,6 +1105,40 @@ mod tests {
         let mut ctx = Context::testing(&model);
         ctx.named_bodies.push(("a".into(), "Body A".into()));
         assert!(body_names(&source, &pick(&["s:2"]), &ctx).is_err());
+    }
+
+    #[test]
+    fn a_body_last_written_by_a_cut_is_named_by_the_feature_that_made_it() {
+        let model = json!({
+            "features": [{"id": "f:new", "outputs": ["n"]}, {"id": "f:other", "outputs": ["o"]},
+                {"id": "f:cut", "outputs": []}, {"id": "f:lost", "outputs": []}],
+            "feature_result_topologies": [
+                {"id": "rn", "output_of": "f:new", "members": [{"kind": "body", "id": "1"}]},
+                {"id": "ro", "output_of": "f:other", "members": [{"kind": "body", "id": "1"}]}],
+            "feature_input_topologies": [
+                {"id": "cut-in", "input_of": "f:cut", "bodies": ["c:1", "c:2"],
+                    "body_writers": [{"body": "c:1", "writer": "f:new"}, {"body": "c:2", "writer": "f:other"}]},
+                {"id": "s", "input_of": "f:mirror", "bodies": ["s:1", "s:2", "s:3"],
+                    "body_writers": [{"body": "s:1", "writer": "f:cut"}, {"body": "s:2", "writer": "f:other"},
+                        {"body": "s:3", "writer": "f:lost"}]}]
+        });
+        let mut ctx = Context::testing(&model);
+        for feature in ["f:new", "f:other"] {
+            ctx.feature_names.insert(feature.into(), feature.into());
+        }
+        ctx.named_bodies
+            .extend([("n".into(), "New".into()), ("o".into(), "Other".into())]);
+        ctx.unnamed_bodies = true;
+        let source = json!({"id": "f:mirror", "ordinal": 5});
+        let pick = |body: &str| {
+            json!({"kind": "historical",
+            "value": {"state": "s", "bodies": [body], "native": "n"}})
+        };
+        // The cut wrote slot 1 last; the body it found there was made by f:new.
+        assert_eq!(body_names(&source, &pick("s:1"), &ctx).unwrap(), ["New"]);
+        assert_eq!(body_names(&source, &pick("s:2"), &ctx).unwrap(), ["Other"]);
+        // A writer with neither a result state nor an input state names nothing.
+        assert!(body_names(&source, &pick("s:3"), &ctx).is_err());
     }
 
     #[test]
