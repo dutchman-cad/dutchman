@@ -491,7 +491,7 @@ mod bearer_tests {
             json!({"microversion": MID}),
             json!({"name": "Synthetic assembly"}),
             json!([{"id": EID, "elementType": "ASSEMBLY", "name": "Synthetic tab"}]),
-            json!({"rootAssembly": {"instances": [], "occurrences": []}}),
+            json!({"rootAssembly": {"instances": [], "occurrences": []}, "subAssemblies": []}),
             json!({"features": []}),
         ];
         let (mut client, server) = server(
