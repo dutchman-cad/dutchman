@@ -67,7 +67,7 @@ keyring = { version = "3.6", default-features = false, features = ["async-secret
 sysinfo.workspace = true
 
 [dev-dependencies]
-cadmpeg-ir = { workspace = true, features = ["examples"] }
+cadmpeg-ir = { workspace = true }
 cadmpeg-registry.workspace = true
 log = "0.4"
 serde_json.workspace = true
