@@ -1,5 +1,7 @@
 //! Electronics updates own only the executable in the per-user modules folder.
-use crate::update::package::{download, replace, verify};
+#[cfg(test)]
+use crate::update::package::replace;
+use crate::update::package::{download, verify};
 use eframe::egui;
 use serde::Deserialize;
 use std::{collections::BTreeMap, io::Read, path::Path, sync::mpsc};
@@ -20,7 +22,13 @@ struct Manifest {
     assets: BTreeMap<String, Asset>,
 }
 fn version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = v.trim_start_matches('v').split('.');
+    if !v
+        .split('.')
+        .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return None;
+    }
+    let mut parts = v.split('.');
     let result = (
         parts.next()?.parse().ok()?,
         parts.next()?.parse().ok()?,
@@ -57,7 +65,14 @@ impl Manifest {
             version(&self.version).ok_or("The module release version is not supported yet.")?;
         Ok(current.is_empty()
             || next
-                > version(current).ok_or("The installed module version is not supported yet.")?)
+                > version(
+                    current
+                        .trim_start_matches('v')
+                        .split(['-', '+'])
+                        .next()
+                        .unwrap_or(current),
+                )
+                .ok_or("The installed module version is not supported yet.")?)
     }
     fn asset(&self, target: &str) -> Result<&Asset, String> {
         let a = self
@@ -82,7 +97,8 @@ fn current() -> Result<(String, String), String> {
     let Some(p) = dutchman_core::module::find() else {
         return Ok((String::new(), "Electronics module: not found".into()));
     };
-    let info = dutchman_core::module::info(&p, &Default::default()).map_err(|e| e.to_string())?;
+    let info = dutchman_core::module::info(&p, &Default::default())
+        .map_err(|_| "The installed module could not be run. Check for an update to repair it.")?;
     let source = if dutchman_launcher::modules_folder().is_some_and(|d| p.starts_with(d)) {
         "your modules folder"
     } else {
@@ -104,7 +120,21 @@ fn check() -> Result<Option<Manifest>, String> {
     let m: Manifest = serde_json::from_slice(&bytes)
         .map_err(|_| "The module release manifest could not be read.")?;
     m.asset(t)?;
-    Ok(m.newer(&current()?.0)?.then_some(m))
+    offer(m, current(), t)
+}
+fn offer(
+    m: Manifest,
+    installed: Result<(String, String), String>,
+    t: &str,
+) -> Result<Option<Manifest>, String> {
+    m.asset(t)?;
+    let current = installed.map(|(v, _)| v).unwrap_or_default();
+    Ok(m.newer(&current)?.then_some(m))
+}
+fn downloaded_info(path: &Path) -> Result<dutchman_core::module::Info, String> {
+    dutchman_core::module::info(path, &Default::default()).map_err(|_| {
+        "The downloaded module could not be run. Try installing the update again.".into()
+    })
 }
 fn extract(archive: &Path, expected: &str, zip: bool) -> Result<Vec<u8>, String> {
     let file = std::fs::File::open(archive).map_err(|e| e.to_string())?;
@@ -182,7 +212,7 @@ fn extract(archive: &Path, expected: &str, zip: bool) -> Result<Vec<u8>, String>
     Err("The module archive has too many entries.".into())
 }
 fn install(m: &Manifest, folder: &Path) -> Result<(), String> {
-    if !m.newer(&current()?.0)? {
+    if !m.newer(&current().map(|(v, _)| v).unwrap_or_default())? {
         return Err("The electronics module is already up to date.".into());
     }
     let t = platform().ok_or("no update for this platform")?;
@@ -190,8 +220,23 @@ fn install(m: &Manifest, folder: &Path) -> Result<(), String> {
 }
 type Fetch<'a> = dyn Fn(&str, u64, &mut dyn std::io::Write) -> Result<(), String> + 'a;
 fn install_with(m: &Manifest, folder: &Path, t: &str, fetch: &Fetch<'_>) -> Result<(), String> {
+    m.newer("")?;
     let a = m.asset(t)?;
-    let stage = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let program = if t.contains("windows") {
+        "dutchman-electronics.exe"
+    } else {
+        "dutchman-electronics"
+    };
+    let exe = std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .map_err(|_| "The included program folder could not be found.")?;
+    let bundled = exe
+        .parent()
+        .ok_or("The included program folder could not be found.")?
+        .join(program);
+    let target = owned_target(folder, program, &bundled)?;
+    std::fs::create_dir_all(folder).map_err(|_| "Your modules folder could not be created.")?;
+    let stage = download_stage(&std::env::temp_dir())?;
     let archive = stage.path().join("archive");
     let mut file = std::fs::File::create(&archive).map_err(|e| e.to_string())?;
     fetch(
@@ -201,50 +246,64 @@ fn install_with(m: &Manifest, folder: &Path, t: &str, fetch: &Fetch<'_>) -> Resu
     )?;
     drop(file);
     verify(&archive, &a.sha256.to_ascii_lowercase())?;
-    let program = if t.contains("windows") {
-        "dutchman-electronics.exe"
-    } else {
-        "dutchman-electronics"
-    };
     let bytes = extract(
         &archive,
         &format!("dutchman-electronics-{}-{t}/{program}", m.version),
         t.contains("windows"),
     )?;
-    let unpacked = stage.path().join(program);
-    std::fs::write(&unpacked, bytes).map_err(|e| e.to_string())?;
+    let mut staged = tempfile::Builder::new()
+        .prefix(".dutchman-module-")
+        .suffix(std::env::consts::EXE_SUFFIX)
+        .tempfile_in(folder)
+        .map_err(|_| "The module update could not be prepared in your modules folder.")?;
+    std::io::Write::write_all(&mut staged, &bytes)
+        .map_err(|_| "The module update could not be written.")?;
+    staged
+        .as_file()
+        .sync_all()
+        .map_err(|_| "The module update could not be written.")?;
+    // Close the writable handle before executing (ETXTBSY on Unix).
+    let unpacked = staged.into_temp_path();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&unpacked, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| e.to_string())?;
+            .map_err(|_| "The module update could not be prepared.")?;
     }
-    let info =
-        dutchman_core::module::info(&unpacked, &Default::default()).map_err(|e| e.to_string())?;
+    let info = downloaded_info(&unpacked)?;
     if info.version != m.version || info.interface != dutchman_core::module::INTERFACE {
         return Err("The downloaded module does not match its release.".into());
     }
-    std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
-    let exe = std::env::current_exe()
-        .and_then(std::fs::canonicalize)
-        .map_err(|e| e.to_string())?;
-    let bundled = exe
-        .parent()
-        .ok_or("The included program folder could not be found.")?
-        .join(program);
-    let target = owned_target(folder, program, &bundled)?;
-    replace(&unpacked, &target).map_err(|_| {
+    unpacked.persist(&target).map_err(|_| {
         "The module could not be replaced. Close other programs using it and try again.".into()
     })
+}
+fn download_stage(root: &Path) -> Result<tempfile::TempDir, String> {
+    tempfile::Builder::new()
+        .prefix("dutchman-download-")
+        .tempdir_in(root)
+        .map_err(|_| "The module download could not be prepared.".into())
+}
+fn future_path(path: &Path) -> Result<std::path::PathBuf, String> {
+    if let Ok(path) = path.canonicalize() {
+        return Ok(path);
+    }
+    let parent = path
+        .parent()
+        .ok_or("Your modules folder could not be resolved.")?;
+    let name = path
+        .file_name()
+        .ok_or("Your modules folder could not be resolved.")?;
+    Ok(future_path(parent)?.join(name))
 }
 fn owned_target(
     folder: &Path,
     program: &str,
     bundled: &Path,
 ) -> Result<std::path::PathBuf, String> {
-    let folder = folder.canonicalize().map_err(|e| e.to_string())?;
+    let folder = future_path(folder)?;
     let target = folder.join(program);
-    let included_folder = bundled.parent().and_then(|p| p.canonicalize().ok());
+    let included_folder = bundled.parent().and_then(|p| future_path(p).ok());
     let same_program = target
         .canonicalize()
         .ok()
@@ -330,6 +389,16 @@ impl Updater {
             ctx.request_repaint();
         });
     }
+    fn receive(&mut self) -> Option<Result<Event, String>> {
+        match self.rx.as_ref()?.try_recv() {
+            Ok(event) => Some(event),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.rx = None;
+                Some(Err("The update check stopped unexpectedly.".into()))
+            }
+        }
+    }
     pub(crate) fn ui(&mut self, ui: &mut egui::Ui) {
         if self.label.is_empty() && self.rx.is_none() {
             let (tx, rx) = mpsc::channel();
@@ -340,7 +409,7 @@ impl Updater {
                 ctx.request_repaint();
             });
         }
-        if let Some(result) = self.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+        if let Some(result) = self.receive() {
             self.rx = None;
             match result {
                 Ok(Event::Status(label)) => self.label = label,
@@ -408,6 +477,84 @@ mod tests {
             }}
         }))
         .unwrap()
+    }
+    #[test]
+    fn disconnected_worker_stops_waiting() {
+        let (tx, rx) = mpsc::channel();
+        let mut updater = Updater {
+            rx: Some(rx),
+            ..Default::default()
+        };
+        assert!(updater.receive().is_none());
+        drop(tx);
+        assert!(
+            matches!(updater.receive(), Some(Err(e)) if e == "The update check stopped unexpectedly.")
+        );
+        assert!(updater.rx.is_none());
+    }
+    #[test]
+    fn failed_installed_info_offers_repair() {
+        assert!(offer(
+            manifest(),
+            Err("private path".into()),
+            "x86_64-unknown-linux-gnu"
+        )
+        .unwrap()
+        .is_some());
+    }
+    #[test]
+    fn installed_suffixes_are_accepted_but_release_suffixes_are_rejected() {
+        let mut m = manifest();
+        m.version = "0.4.0".into();
+        for v in ["0.3.0-rc.1", "0.3.0+build", "v0.3.0"] {
+            assert!(m.newer(v).unwrap());
+        }
+        for v in ["v0.4.0", "0.4.0-rc.1", "0.4.0+build", "+0.4.0", "0.4"] {
+            m.version = v.into();
+            assert!(m.newer("").is_err());
+        }
+    }
+    #[test]
+    fn preparation_and_info_errors_hide_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("private-missing-program");
+        assert_eq!(
+            downloaded_info(&missing).unwrap_err(),
+            "The downloaded module could not be run. Try installing the update again."
+        );
+        let file = dir.path().join("private-file");
+        std::fs::write(&file, b"x").unwrap();
+        assert_eq!(
+            download_stage(&file).unwrap_err(),
+            "The module download could not be prepared."
+        );
+        let folder = file.join("modules");
+        let err = install_with(
+            &manifest(),
+            &folder,
+            "x86_64-unknown-linux-gnu",
+            &|_, _, _| Err("Download must not start.".into()),
+        )
+        .unwrap_err();
+        assert_eq!(err, "Your modules folder could not be created.");
+        assert!(!folder.exists());
+    }
+    #[test]
+    fn refused_update_does_not_create_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("not-created");
+        let mut m = manifest();
+        m.version = "v0.2.0".into();
+        assert!(
+            install_with(&m, &folder, "x86_64-unknown-linux-gnu", &|_, _, _| Err(
+                "Download must not start.".into()
+            ))
+            .is_err()
+        );
+        assert!(!folder.exists());
+        let bundled = folder.join("dutchman-electronics");
+        assert!(owned_target(&folder, "dutchman-electronics", &bundled).is_err());
+        assert!(!folder.exists());
     }
     #[test]
     fn manifest_compares_versions_and_interface() {
@@ -513,7 +660,7 @@ mod install_tests {
     fn local_manifest_archive_installs_only_the_user_program() {
         let target = "x86_64-unknown-linux-gnu";
         let program =
-            b"#!/bin/sh\necho '{\"name\":\"electronics\",\"version\":\"0.2.0\",\"interface\":1}'\n";
+            b"#!/bin/sh\ncase \"$0\" in */modules/.dutchman-module-*) ;; *) exit 8;; esac\necho '{\"name\":\"electronics\",\"version\":\"0.2.0\",\"interface\":1}'\n";
         let name = format!("dutchman-electronics-0.2.0-{target}/dutchman-electronics");
         let mut header = [0u8; 512];
         header[..name.len()].copy_from_slice(name.as_bytes());
