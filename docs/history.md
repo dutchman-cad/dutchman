@@ -457,9 +457,10 @@ regions, is not mapped yet").
 
 Patterns can repeat earlier features or named bodies in one or two linear directions,
 around an axis, or at fixed spacing along curves of an earlier planar sketch. A body seed
-may also be a body cadmpeg names by the feature that made it, or the one body of the
-pattern's own input state; a seed in an input state that holds several bodies stops the
-history there. Explicit
+may also be a body cadmpeg names by the feature that made it, or a body of the pattern's
+own input state: the body its recorded last writer made, or the state's one body; a seed in
+an input state that holds several bodies and records no writer for it stops the history
+there. Explicit
 linear offsets and circular angles map when their intervals are equal; two linear composite
 stages map to a rectangular grid. Composite feature patterns containing resolved mirrors
 map to an ordered chain: each stage repeats the preceding stage's entire instance set.

@@ -3508,6 +3508,22 @@ fn slice(
             .is_some_and(|ids| !ids.is_empty())
             && !ours(row.get("outputs"))
     };
+    // Tool chains another component's Combine consumes are rebuilt there, not here.
+    let moved = if history {
+        consumed_tool_chains(wire, &root_definitions)
+    } else {
+        BTreeMap::new()
+    };
+    let moved_here = |id: &str| {
+        moved
+            .get(id)
+            .is_some_and(|to| Some(to.as_str()) == definition)
+    };
+    let moved_away = |id: &str| {
+        moved
+            .get(id)
+            .is_some_and(|to| Some(to.as_str()) != definition)
+    };
     // Each sketch's features: a profile reaches its sketch, not the feature that builds it.
     let mut binders: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     if history && !bodies.is_empty() {
@@ -3519,9 +3535,9 @@ fn slice(
             if let Some(sketch) = sketched(row) {
                 binders.entry(sketch).or_default().push(id);
             }
-            if (owned(row) || (ours(row.get("outputs")) && !foreign(row)))
-                && keep.insert(id, ()).is_none()
-            {
+            let kept = moved_here(id)
+                || (!moved_away(id) && (owned(row) || (ours(row.get("outputs")) && !foreign(row))));
+            if kept && keep.insert(id, ()).is_none() {
                 queue.push(id);
             }
         }
@@ -3582,11 +3598,12 @@ fn slice(
         }
         for reference in refs {
             if let Some((id, entry)) = rows.get_key_value(reference) {
-                let follow = !NOT_GEOMETRY.contains(&entry.arena)
+                let follow = (!NOT_GEOMETRY.contains(&entry.arena)
                     || (history
                         && !bodies.is_empty()
                         && entry.arena == "features"
-                        && !foreign(entry.row.value()?.as_ref()));
+                        && !foreign(entry.row.value()?.as_ref())))
+                    && !moved_away(id);
                 if follow && keep.insert(id.as_str(), ()).is_none() {
                     queue.push(id.as_str());
                 }
@@ -3611,7 +3628,8 @@ fn slice(
     // that component's coordinates into this one's. Repeated using components need a unique
     // instance whose selected profile fits the stored part.
     let mut carried: BTreeMap<String, Placement3x4> = BTreeMap::new();
-    let mut carried_features: BTreeSet<String> = BTreeSet::new();
+    let mut carried_features: BTreeSet<String> =
+        moved.keys().filter(|id| moved_here(id)).cloned().collect();
     if history && !bodies.is_empty() {
         let occurrences = wire
             .get("occurrences")
@@ -3806,6 +3824,141 @@ fn edit_feature(
         feature.source_properties.remove("body_centers");
     }
     Ok(())
+}
+
+/// The features that build the tools another component's Combine consumes, each with the
+/// component that consumes them. Fusion moves a consumed tool into the Combine's component,
+/// so that component's history rebuilds the tool: its producer and the producer's earlier
+/// features of the same component, with the sketches they build. A chain moves only when
+/// no other feature of its own component refers to a feature or sketch of it, when no
+/// other feature of that component before the Combine depends on it (it may change the tool
+/// after the producer made it), and when both components sit at the same single place in
+/// the world, so its geometry needs no transform.
+fn consumed_tool_chains(
+    wire: &serde_json::Map<String, Value>,
+    roots: &BTreeSet<&str>,
+) -> BTreeMap<String, String> {
+    let owner_of = |row: &Value| {
+        row.get("product_definition")
+            .and_then(Value::as_str)
+            .filter(|id| !roots.contains(id))
+            .map(str::to_owned)
+    };
+    let features = wire
+        .get("features")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let occurrences = wire
+        .get("occurrences")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let by_id: BTreeMap<&str, &Value> = features
+        .iter()
+        .filter_map(|row| Some((row.get("id")?.as_str()?, row)))
+        .collect();
+    let same_place = |a: &str, b: &str| match (
+        single_world(occurrences, Some(a)),
+        single_world(occurrences, Some(b)),
+    ) {
+        (Some(a), Some(b)) => a
+            .iter()
+            .flatten()
+            .zip(b.iter().flatten())
+            .all(|(x, y)| (x - y).abs() <= 1e-9),
+        _ => false,
+    };
+    let mut moved: BTreeMap<String, String> = BTreeMap::new();
+    for combine in features {
+        let Some(operation) = combine
+            .pointer("/definition/value")
+            .filter(|op| op.get("kind").and_then(Value::as_str) == Some("combine"))
+            .and_then(|op| op.get("value"))
+        else {
+            continue;
+        };
+        let Some(consumer) = owner_of(combine) else {
+            continue;
+        };
+        if operation.get("keep_tools").and_then(Value::as_bool) != Some(false) {
+            continue;
+        }
+        let tools = operation.pointer("/operands/tools");
+        if tools.and_then(|t| t.get("kind")).and_then(Value::as_str) != Some("generated") {
+            continue;
+        }
+        let producers = tools
+            .and_then(|t| t.pointer("/value/bodies"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|body| body.get("feature").and_then(Value::as_str));
+        for producer in producers {
+            let Some(source) = by_id.get(producer).and_then(|row| owner_of(row)) else {
+                continue;
+            };
+            if source == consumer || !same_place(&source, &consumer) {
+                continue;
+            }
+            // The producer and the earlier features of its component it depends on.
+            let mut chain: BTreeSet<&str> = BTreeSet::new();
+            let mut stack = vec![producer];
+            while let Some(id) = stack.pop() {
+                let Some(row) = by_id.get(id) else { continue };
+                if owner_of(row).as_deref() != Some(source.as_str()) || !chain.insert(id) {
+                    continue;
+                }
+                stack.extend(
+                    row.get("dependencies")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str),
+                );
+            }
+            let mut names: BTreeSet<&str> = chain.clone();
+            names.extend(
+                chain
+                    .iter()
+                    .filter_map(|id| by_id.get(id).and_then(|row| sketched(row))),
+            );
+            let consumed_at = combine.get("ordinal").and_then(Value::as_u64);
+            let used_elsewhere = features.iter().any(|row| {
+                let Some(id) = row.get("id").and_then(Value::as_str) else {
+                    return false;
+                };
+                if chain.contains(id)
+                    || row == combine
+                    || owner_of(row).as_deref() != Some(source.as_str())
+                {
+                    return false;
+                }
+                let earlier = match (row.get("ordinal").and_then(Value::as_u64), consumed_at) {
+                    (Some(at), Some(consumed)) => at < consumed,
+                    _ => true,
+                };
+                let depends = row
+                    .get("dependencies")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .any(|dependency| chain.contains(dependency));
+                if earlier && depends {
+                    return true;
+                }
+                let mut refs = Vec::new();
+                strings(row.get("definition").unwrap_or(&Value::Null), &mut refs);
+                refs.iter().any(|reference| names.contains(reference))
+            });
+            if used_elsewhere {
+                continue;
+            }
+            for id in chain {
+                moved.insert(id.to_owned(), consumer.clone());
+            }
+        }
+    }
+    moved
 }
 
 /// The sketch a feature builds, when it builds one.
@@ -5158,7 +5311,7 @@ mod tests {
         let input = |id: &str, of: &Value| {
             json!({"id": format!("synthetic:input:state#{id}"),
             "input_of": of, "bodies": [], "faces": [], "edges": [], "vertices": [],
-            "edge_geometry": [], "face_owners": []})
+            "edge_geometry": [], "face_owners": [], "face_geometry": [], "body_writers": []})
         };
         // Nothing points at these rows: each names only its feature.
         wire["model"]["feature_result_topologies"] =
@@ -5207,6 +5360,76 @@ mod tests {
         let compact = only_indexed(&model, &index, &bodies, owner, "part".to_owned()).unwrap();
         assert_eq!(states(&value), states(&assembly.parts[0]));
         assert_eq!(states(&compact), states(&value));
+    }
+
+    #[test]
+    fn another_components_consumed_tool_chain_moves_to_the_combine() {
+        let (frame, hanger) = ("test:component#frame", "test:component#hanger");
+        let place = |id: &str, definition: &str, x: f64| {
+            json!({"id": id,
+            "prototype": {"kind": "local", "definition": definition},
+            "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]})
+        };
+        let feature = |id: &str, ordinal: u64, owner: &str, deps: &[&str], definition: Value| {
+            json!({
+            "id": id, "ordinal": ordinal, "product_definition": owner, "dependencies": deps,
+            "definition": definition})
+        };
+        let extrude = json!({"kind": "operation", "value": {"kind": "extrude", "value": {}}});
+        let combine = |keep_tools: bool| {
+            json!({"kind": "operation", "value": {"kind": "combine",
+            "value": {"keep_tools": keep_tools, "operands": {
+                "target": {"kind": "resolved", "value": {"bodies": ["frame-body"]}},
+                "tools": {"kind": "generated", "value": {"bodies": [
+                    {"feature": "f:mirror", "local_id": "2"}, {"feature": "f:new", "local_id": "1"}]}}}}}})
+        };
+        let model = |features: Vec<Value>, hanger_x: f64| {
+            let wire = json!({"features": features, "occurrences": [
+                place("o:frame", frame, 0.0), place("o:hanger", hanger, hanger_x)]});
+            wire.as_object().unwrap().clone()
+        };
+        let chain = |extra: Vec<Value>, keep_tools: bool, hanger_x: f64| {
+            let mut features = vec![
+                feature("f:new", 1, hanger, &[], extrude.clone()),
+                feature("f:cut", 2, hanger, &["f:new"], extrude.clone()),
+                feature("f:mirror", 3, hanger, &["f:cut"], extrude.clone()),
+                feature(
+                    "f:combine",
+                    5,
+                    frame,
+                    &["f:mirror", "f:new"],
+                    combine(keep_tools),
+                ),
+                // A later feature of the hanger that only orders after the chain.
+                feature("f:later", 6, hanger, &["f:mirror"], extrude.clone()),
+            ];
+            features.extend(extra);
+            consumed_tool_chains(&model(features, hanger_x), &BTreeSet::new())
+        };
+        let moved = chain(Vec::new(), false, 0.0);
+        assert_eq!(
+            moved.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["f:cut", "f:mirror", "f:new"]
+        );
+        assert!(moved.values().all(|to| to == frame));
+        // Tools the Combine keeps stay where they are.
+        assert!(chain(Vec::new(), true, 0.0).is_empty());
+        // So does a chain whose components sit apart: its geometry would need moving.
+        assert!(chain(Vec::new(), false, 5.0).is_empty());
+        // And one an earlier feature of its own component may change before the Combine.
+        let changes = feature("f:changes", 4, hanger, &["f:mirror"], extrude.clone());
+        assert!(chain(vec![changes], false, 0.0).is_empty());
+        // Or one another feature of its own component refers to.
+        let refers = feature(
+            "f:refers",
+            7,
+            hanger,
+            &[],
+            json!({"kind": "operation",
+            "value": {"kind": "combine", "value": {"operands": {"target": {"kind": "generated",
+                "value": {"bodies": [{"feature": "f:new", "local_id": "1"}]}}}}}}),
+        );
+        assert!(chain(vec![refers], false, 0.0).is_empty());
     }
 
     #[test]

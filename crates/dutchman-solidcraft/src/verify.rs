@@ -426,6 +426,10 @@ pub enum VersionGate {
     /// Rigid moves of resolved earlier bodies. This feature-specific gate does not
     /// count towards an installed release's general history notice.
     MoveBody,
+    /// Shells that remove no face, leaving a closed hollow body. 0.18.2 refuses an empty
+    /// face set; 0.45.0's release notes already fix closed shells, so the gate starts there.
+    /// Like `MoveBody`, it does not count towards the general history notice.
+    ClosedShell,
     /// Linked Insert Design with cached bodies and a source file.
     LinkedDesign,
     /// Thin walls verified against the current SolidCraft document format.
@@ -473,7 +477,7 @@ impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
             Self::UnifiedThread => SolidCraftVersion::V0_50_0,
-            Self::MoveBody => SolidCraftVersion::V0_45_0,
+            Self::MoveBody | Self::ClosedShell => SolidCraftVersion::V0_45_0,
             Self::LinkedDesign => SolidCraftVersion::V0_44_0,
             Self::ThinExtrude => SolidCraftVersion::V0_44_0,
             Self::TopologicalEdges => SolidCraftVersion::V0_44_0,
@@ -4214,6 +4218,7 @@ mod version_tests {
             VersionGate::ScopedBodies,
             VersionGate::ClosedCircleBlend,
             VersionGate::MoveBody,
+            VersionGate::ClosedShell,
         ] {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
@@ -4235,6 +4240,7 @@ mod version_tests {
             VersionGate::ScopedBodies,
             VersionGate::ClosedCircleBlend,
             VersionGate::MoveBody,
+            VersionGate::ClosedShell,
         ] {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
@@ -4256,6 +4262,7 @@ mod version_tests {
             VersionGate::ScopedBodies,
             VersionGate::ClosedCircleBlend,
             VersionGate::MoveBody,
+            VersionGate::ClosedShell,
         ] {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
@@ -4277,6 +4284,7 @@ mod version_tests {
             VersionGate::ScopedBodies,
             VersionGate::ClosedCircleBlend,
             VersionGate::MoveBody,
+            VersionGate::ClosedShell,
         ] {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
@@ -4298,6 +4306,7 @@ mod version_tests {
             VersionGate::ScopedBodies,
             VersionGate::ClosedCircleBlend,
             VersionGate::MoveBody,
+            VersionGate::ClosedShell,
         ] {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }

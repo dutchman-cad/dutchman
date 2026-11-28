@@ -371,6 +371,14 @@ with their producing or consuming feature, without mixing their topology into fi
 They carry each kept feature's input and result states (`feature_input_topologies`,
 `feature_result_topologies`) the same way, though no other row points at them, so a component's
 features can still name a body by the feature that made or last wrote it.
+
+A Combine whose tools another component's history builds, and which uses them up (keep tools
+off), rebuilds those tools itself: Fusion moves a consumed tool into the Combine's component.
+The features that build the tool (its producer and that component's earlier features it
+depends on, with their sketches) are written in the Combine's part instead of their own.
+This happens only when nothing else in their component refers to them, no feature of it
+before the Combine depends on them (it could change the tool first), and both components sit
+at the same single place in the design; otherwise the Combine stops as before.
 The current Fusion reader pin emits produced snapshots but does not populate `consumed_by`.
 A native target without a consumed body association remains a reported loss; consumed-body
 preservation and mapping are covered by synthetic tests against the current neutral model API.
@@ -930,6 +938,17 @@ aliases to one earlier SolidCraft body name. Distinct earlier body names remain
 ambiguous and are refused; native identifiers and final geometry do not establish
 a historical match. A Combine, Mirror, Move or pattern that selects that body by its final
 identity also finds the one body, not two bodies sharing a name.
+
+cadmpeg records, for each body of a feature's input state, the earlier feature that last
+inserted or updated it (`body_writers`). A body selected in that state, such as a Shell,
+Mirror, Move or pattern seed, is the one result body of its writer, under the name that
+writer's body took; this also holds beside bodies the history could not name. A writer that
+only changed the body, such as a cut, holds it in its own input state at the same history
+slot; that body's writer is followed back to the feature that made it, whose name is tried
+first, then each later writer's. A Shell
+that selects no body uses the input-state body holding its removed faces (`face_owners`).
+A Shell whose removed-face set is empty is a closed hollow shell (SolidCraft 0.45 or
+newer).
 
 Modeled thread history remains blocked even on SolidCraft 0.45: the available nominal
 thread data cannot prove an exact helical reconstruction. The final modeled geometry is

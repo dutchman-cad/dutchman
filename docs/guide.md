@@ -765,7 +765,11 @@ selecting among several input bodies is not supported yet. The original geometry
 Older targets keep the previous point-only representation.
 
 Shells require removed faces from their own historical input topology, a resolved
-thickness and inward or outward direction, and one earlier named body. A shell input-face
+thickness and inward or outward direction, and a target body. A shell that selects no body
+acts on the body of its input state holding the removed faces, named through the feature
+that last wrote it, or else on the one earlier named body; when that state's one body has
+no name yet, SolidCraft shells its only body. A shell that removes no face hollows its
+body into a closed solid, for SolidCraft 0.45 or newer. A shell input-face
 blocker means the source selection or historical boundary is not supported yet; final-body
 faces cannot establish which face existed before shelling.
 
