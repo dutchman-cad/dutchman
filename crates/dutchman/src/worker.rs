@@ -1930,6 +1930,32 @@ mod output_kept_tests {
         convert_isolated(program, job, &options, limits)
     }
 
+    /// The progress line a fake child prints when it reaches the write stage.
+    const WRITE_STAGE: &str = "echo '{\"schema\":\"dutchman.progress/1\",\"stage\":\"write\",\
+        \"elapsed_ms\":0,\"designs_read\":0,\"designs_total\":null,\"heartbeat\":false}' >&2";
+
+    /// Runs the child and stops it as soon as it reports the write stage. The time limit is only
+    /// a backstop, so a busy machine can't stop the child before it gets there.
+    fn run_until_write_stage(program: &Path, job: &Job) -> Value {
+        let options = ConvertOptions {
+            no_memory_check: true,
+            ..ConvertOptions::default()
+        };
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        convert_isolated_with_stop(
+            program,
+            job,
+            &options,
+            &limits(120_000, None),
+            Some(StopSignal::Cancel(&stop)),
+            &|event| {
+                if event.stage == dutchman_core::Stage::Write {
+                    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            },
+        )
+    }
+
     #[test]
     fn a_child_stopped_after_a_complete_write_leaves_the_design() {
         let dir = tempfile::tempdir().unwrap();
@@ -1941,28 +1967,9 @@ mod output_kept_tests {
         // cannot stop the child before it has written.
         let program = fake_child(
             dir.path(),
-            "printf finished > \"$3\"\n\
-             echo '{\"schema\":\"dutchman.progress/1\",\"stage\":\"write\",\"elapsed_ms\":0,\
-             \"designs_read\":0,\"designs_total\":null,\"heartbeat\":false}' >&2\n\
-             sleep 30",
+            &format!("printf finished > \"$3\"\n{WRITE_STAGE}\nsleep 30"),
         );
-        let options = ConvertOptions {
-            no_memory_check: true,
-            ..ConvertOptions::default()
-        };
-        let stop = std::sync::atomic::AtomicBool::new(false);
-        let report = convert_isolated_with_stop(
-            &program,
-            &job(&input, &output),
-            &options,
-            &limits(120_000, None),
-            Some(StopSignal::Cancel(&stop)),
-            &|event| {
-                if event.stage == dutchman_core::Stage::Write {
-                    stop.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-            },
-        );
+        let report = run_until_write_stage(&program, &job(&input, &output));
         assert_eq!(report["ok"], false);
         assert_eq!(report["error"]["stage"], "write");
         assert_eq!(std::fs::read_to_string(&output).unwrap(), "finished");
@@ -1975,8 +1982,9 @@ mod output_kept_tests {
         let output = dir.path().join("out.sc");
         std::fs::write(&input, "x").unwrap();
         std::fs::write(&output, "someone else's").unwrap();
-        let program = fake_child(dir.path(), "echo 'dutchman-stage: write' >&2\nsleep 30");
-        let report = run(&program, &job(&input, &output), &limits(1500, None));
+        // As above, the stop comes when the child reports the write stage, not after a guess.
+        let program = fake_child(dir.path(), &format!("{WRITE_STAGE}\nsleep 30"));
+        let report = run_until_write_stage(&program, &job(&input, &output));
         assert_eq!(report["error"]["stage"], "write");
         assert_eq!(std::fs::read_to_string(&output).unwrap(), "someone else's");
     }
