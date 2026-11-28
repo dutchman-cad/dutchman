@@ -1,8 +1,7 @@
 //! Optional modules: separate programs that read a file Dutchman does not.
 //!
-//! A module is found the way every Dutchman companion program is: `dutchman-<name>` beside the
-//! running executable, in the per-user modules folder, then on `PATH`. A newer compatible
-//! electronics program in the user folder takes precedence over the included copy. It answers `info --json` (what it reads), `detect <file>
+//! Modules use the newer bundled or per-user `dutchman-<name>` copy, with bundled winning ties.
+//! PATH is used only when neither installed copy exists. It answers `info --json` (what it reads), `detect <file>
 //! --json` (does it read this one) and `read <file> --out <dir> --json` (write a placed-parts
 //! package, see [`crate::package`]). Dutchman reads that package like any other input.
 
@@ -84,39 +83,42 @@ pub fn missing_message() -> String {
 
 /// The electronics module, when it is installed.
 pub fn find() -> Option<PathBuf> {
-    let bundled = dutchman_launcher::find_tool(ELECTRONICS);
-    let Some(folder) = dutchman_launcher::modules_folder() else {
-        return bundled;
-    };
-    let user = folder.join(if cfg!(windows) {
-        "dutchman-electronics.exe"
-    } else {
-        "dutchman-electronics"
-    });
-    if let Ok(candidate) = info(&user, &Limits::default()) {
-        let old = bundled
-            .as_ref()
-            .and_then(|p| info(p, &Limits::default()).ok());
-        if prefer_user(&candidate, old.as_ref()) {
-            return Some(user);
-        }
-    }
-    bundled
+    select(
+        dutchman_launcher::module_candidates(ELECTRONICS),
+        &mut Report::default(),
+    )
 }
 
-fn prefer_user(candidate: &Info, old: Option<&Info>) -> bool {
-    let parse = |v: &str| -> Option<Vec<u64>> {
-        v.trim_start_matches('v')
-            .split('.')
-            .map(str::parse)
-            .collect::<Result<Vec<u64>, _>>()
-            .ok()
-            .filter(|v| v.len() == 3)
-    };
-    candidate.interface == INTERFACE
-        && parse(&candidate.version).is_some_and(|new| {
-            old.is_none_or(|old| parse(&old.version).is_some_and(|old| new > old))
-        })
+/// Skip copies whose info cannot be read; equal versions keep the bundled copy.
+fn select(candidates: Vec<PathBuf>, report: &mut Report) -> Option<PathBuf> {
+    let mut selected: Option<(PathBuf, semver::Version)> = None;
+    for path in candidates {
+        let version = info(&path, &Limits::default()).and_then(|info| {
+            semver::Version::parse(&info.version).map_err(|err| {
+                Error::Module(format!(
+                    "module version {} is not supported: {err}",
+                    info.version
+                ))
+            })
+        });
+        match version {
+            Ok(version) => {
+                if selected
+                    .as_ref()
+                    .is_none_or(|(_, current)| version.cmp_precedence(current).is_gt())
+                {
+                    selected = Some((path, version));
+                }
+            }
+            Err(err) => report.push_at(
+                Stage::Decode,
+                Severity::Info,
+                "electronics module",
+                format!("Skipped electronics module at {}: {err}", path.display()),
+            ),
+        }
+    }
+    selected.map(|(path, _)| path)
 }
 
 /// Whether the electronics module is installed.
@@ -259,9 +261,11 @@ impl std::str::FromStr for CopperLayers {
 
 /// Reads `input` with the installed electronics module.
 pub fn read(input: &Path, copper: CopperLayers, report: &mut Report) -> Result<Model, Error> {
-    let program = find().ok_or(Error::NotSupportedYet {
-        format: Format::ModuleBoard,
-    })?;
+    let program = select(dutchman_launcher::module_candidates(ELECTRONICS), report).ok_or(
+        Error::NotSupportedYet {
+            format: Format::ModuleBoard,
+        },
+    )?;
     read_with(&program, input, copper, &Limits::default(), report)
 }
 
@@ -628,7 +632,7 @@ mod tests {
     /// Held by every test here: each writes a module script and runs it. A script still open
     /// for writing when another test forks is inherited by that child, and running it then
     /// fails with "text file busy".
-    fn scripts() -> std::sync::MutexGuard<'static, ()> {
+    pub(super) fn scripts() -> std::sync::MutexGuard<'static, ()> {
         static SCRIPTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
         SCRIPTS
             .lock()
@@ -935,7 +939,20 @@ cat "$out/manifest.json""#
 /// Read-only description of module discovery for Settings.
 pub fn location_description() -> String {
     if let Some(path) = find() {
-        return format!("Electronics module: {}", path.display());
+        let source = if dutchman_launcher::modules_folder()
+            .is_some_and(|folder| path.parent() == Some(folder.as_path()))
+        {
+            "your modules folder"
+        } else if std::env::current_exe()
+            .and_then(std::fs::canonicalize)
+            .ok()
+            .is_some_and(|exe| exe.parent() == path.parent())
+        {
+            "bundled"
+        } else {
+            "PATH"
+        };
+        return format!("Electronics module: {} ({source})", path.display());
     }
     let folder = dutchman_launcher::modules_folder().map_or_else(
         || "user modules folder (unavailable)".to_owned(),
@@ -953,22 +970,84 @@ mod location_tests {
 }
 
 #[cfg(test)]
-mod update_selection_tests {
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod selection_tests {
     use super::*;
+
+    fn stub(dir: &Path, version: Option<&str>) -> PathBuf {
+        let path = dir.join(format!(
+            "dutchman-electronics{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        let json =
+            serde_json::json!({"version": version, "interface": 1, "extensions": ["PcbDoc"]})
+                .to_string();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let body = version.map_or_else(|| "exit 3".to_owned(), |_| format!("echo '{json}'"));
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            // Use a real executable, as production discovery accepts .exe rather than .cmd.
+            let source = dir.join("stub.rs");
+            let body = version.map_or_else(
+                || "std::process::exit(3);".to_owned(),
+                |_| format!("println!(\"{{}}\", {json:?});"),
+            );
+            std::fs::write(&source, format!("fn main() {{ {body} }}")).unwrap();
+            assert!(Command::new("rustc")
+                .arg(&source)
+                .arg("-o")
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success());
+        }
+        path
+    }
+
     #[test]
-    fn newer_compatible_user_module_wins() {
-        let make = |version: &str, interface| Info {
-            name: "electronics".into(),
-            version: version.into(),
-            interface,
-            extensions: vec![],
-        };
-        let included = make("0.1.0", INTERFACE);
-        assert!(prefer_user(&make("0.2.0", INTERFACE), Some(&included)));
-        assert!(!prefer_user(&make("0.1.0", INTERFACE), Some(&included)));
-        assert!(!prefer_user(&make("0.0.9", INTERFACE), Some(&included)));
-        assert!(!prefer_user(&make("0.2.0", INTERFACE + 1), Some(&included)));
-        assert!(!prefer_user(&make("unknown", INTERFACE), None));
-        assert!(prefer_user(&make("0.2.0", INTERFACE), None));
+    fn module_versions_and_failed_info_choose_the_usable_copy() {
+        #[cfg(unix)]
+        let _scripts = super::tests::scripts();
+        for (bundled_version, user_version, user_wins, skipped) in [
+            ("1.9.0", Some("1.10.0"), true, false),
+            ("1.0.0", Some("1.0.0"), false, false),
+            ("1.0.0", Some("1.0.0+update"), false, false),
+            ("1.0.0", None, false, true),
+            ("1.0.0", Some("unknown"), false, true),
+        ] {
+            let bundled_dir = tempfile::tempdir().unwrap();
+            let user_dir = tempfile::tempdir().unwrap();
+            let bundled = stub(bundled_dir.path(), Some(bundled_version));
+            let user = stub(user_dir.path(), user_version);
+            let mut report = Report::default();
+            assert_eq!(
+                select(vec![bundled.clone(), user.clone()], &mut report),
+                Some(if user_wins { user } else { bundled })
+            );
+            assert_eq!(
+                report
+                    .losses()
+                    .iter()
+                    .any(|loss| loss.detail.contains("Skipped electronics module")),
+                skipped
+            );
+        }
+    }
+
+    #[test]
+    fn only_path_module_is_used() {
+        #[cfg(unix)]
+        let _scripts = super::tests::scripts();
+        let dir = tempfile::tempdir().unwrap();
+        let path = stub(dir.path(), Some("1.0.0"));
+        assert_eq!(
+            select(vec![path.clone()], &mut Report::default()),
+            Some(path)
+        );
     }
 }

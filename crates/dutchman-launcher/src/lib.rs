@@ -102,12 +102,73 @@ fn executable(path: &Path) -> bool {
 }
 
 /// Find a command beside the running executable, then in the user modules folder, then PATH.
+/// Programs answering `info --json` with a SemVer version are modules: the newer installed
+/// copy wins, with bundled winning ties and PATH used only without installed copies.
 /// Names contain at most 64 lowercase ASCII letters, digits or hyphens and start with a letter or digit.
 pub fn find_tool(name: &str) -> Option<PathBuf> {
     if !valid_name(name) {
         return None;
     }
+    let candidates = module_candidates(name);
+    let mut selected: Option<(PathBuf, semver::Version)> = None;
+    for path in &candidates {
+        let version = query(path, &["info", "--json"], false).and_then(|text| {
+            let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+            semver::Version::parse(value.get("version")?.as_str()?).ok()
+        });
+        if let Some(version) = version {
+            if selected
+                .as_ref()
+                .is_none_or(|(_, current)| version.cmp_precedence(current).is_gt())
+            {
+                selected = Some((path.clone(), version));
+            }
+        }
+    }
+    if let Some((path, _)) = selected {
+        return Some(path);
+    }
+    // Electronics is a module even when every installed copy fails info.
+    if name == "electronics" {
+        return None;
+    }
     find_in_dirs(name, search_dirs())
+}
+
+/// Module candidates keep bundled and per-user copies separate from PATH.
+/// PATH is considered only when neither installed copy exists.
+pub fn module_candidates(name: &str) -> Vec<PathBuf> {
+    if !valid_name(name) {
+        return Vec::new();
+    }
+    let bundled = std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf));
+    let path = std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect())
+        .unwrap_or_default();
+    module_candidates_in(name, bundled, modules_folder(), path)
+}
+
+fn module_candidates_in(
+    name: &str,
+    bundled: Option<PathBuf>,
+    user: Option<PathBuf>,
+    path: Vec<PathBuf>,
+) -> Vec<PathBuf> {
+    let filename = format!("dutchman-{name}{}", std::env::consts::EXE_SUFFIX);
+    let installed: Vec<_> = bundled
+        .into_iter()
+        .chain(user)
+        .map(|dir| dir.join(&filename))
+        .filter(|path| path.is_file())
+        .collect();
+    if installed.is_empty() {
+        find_in_dirs(name, path).into_iter().collect()
+    } else {
+        installed
+    }
 }
 
 fn find_in_dirs(name: &str, dirs: Vec<PathBuf>) -> Option<PathBuf> {
@@ -117,7 +178,7 @@ fn find_in_dirs(name: &str, dirs: Vec<PathBuf>) -> Option<PathBuf> {
         .find(|path| executable(path))
 }
 
-/// List executable commands in search order, keeping the first of each name, sorted by name.
+/// List executable commands sorted by name, resolving each with the module version rules.
 pub fn installed_tools() -> Vec<Tool> {
     let mut tools = BTreeMap::new();
     for dir in search_dirs() {
@@ -143,15 +204,20 @@ pub fn installed_tools() -> Vec<Tool> {
         }
     }
     tools
-        .into_iter()
-        .map(|(name, path)| Tool { name, path })
+        .into_keys()
+        .filter_map(|name| find_tool(&name).map(|path| Tool { name, path }))
         .collect()
 }
 
 /// Read the first stdout line of `--version`, allowing three seconds and at most 4096 bytes.
 pub fn tool_version(path: &Path) -> Option<String> {
+    query(path, &["--version"], true)
+        .and_then(|text| text.lines().next().map(|line| line.trim().to_owned()))
+}
+
+fn query(path: &Path, args: &[&str], first_line: bool) -> Option<String> {
     let mut child = Command::new(path)
-        .arg("--version")
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -163,7 +229,11 @@ pub fn tool_version(path: &Path) -> Option<String> {
     let reader = std::thread::Builder::new().spawn(move || {
         let mut line = Vec::new();
         let mut stdout = io::BufReader::new(stdout);
-        let result = (&mut stdout).take(4096).read_until(b'\n', &mut line);
+        let result = if first_line {
+            (&mut stdout).take(4096).read_until(b'\n', &mut line)
+        } else {
+            (&mut stdout).take(4096).read_to_end(&mut line)
+        };
         // Drain remaining output so a second line cannot terminate the child with SIGPIPE.
         if result.is_ok() {
             let _ = io::copy(&mut stdout, &mut io::sink());
@@ -237,6 +307,7 @@ pub fn tools_listing() -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod folder_tests {
     use super::*;
 
@@ -265,6 +336,44 @@ mod folder_tests {
             std::fs::remove_dir_all(dir).unwrap();
         }
         assert_eq!(find_in_dirs("demo", dirs), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn modules_consider_path_only_without_installed_copies() {
+        let root =
+            std::env::temp_dir().join(format!("dutchman-module-search-{}", std::process::id()));
+        let dirs: Vec<_> = ["bundled", "user", "path"]
+            .iter()
+            .map(|name| root.join(name))
+            .collect();
+        let filename = format!("dutchman-demo{}", std::env::consts::EXE_SUFFIX);
+        for dir in &dirs {
+            std::fs::create_dir_all(dir).unwrap();
+            let file = dir.join(&filename);
+            std::fs::write(&file, "").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let candidates = || {
+            module_candidates_in(
+                "demo",
+                Some(dirs[0].clone()),
+                Some(dirs[1].clone()),
+                vec![dirs[2].clone()],
+            )
+        };
+        assert_eq!(
+            candidates(),
+            vec![dirs[0].join(&filename), dirs[1].join(&filename)]
+        );
+        std::fs::remove_dir_all(&dirs[0]).unwrap();
+        assert_eq!(candidates(), vec![dirs[1].join(&filename)]);
+        std::fs::remove_dir_all(&dirs[1]).unwrap();
+        assert_eq!(candidates(), vec![dirs[2].join(&filename)]);
         std::fs::remove_dir_all(root).unwrap();
     }
 

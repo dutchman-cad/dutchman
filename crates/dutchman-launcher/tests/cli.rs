@@ -97,6 +97,69 @@ mod unix {
     }
 
     #[test]
+    fn dispatch_uses_the_newer_module_and_keeps_bundled_on_ties_or_failed_info() {
+        let _guard = executable_guard();
+        let root = Temp::new();
+        let bundled = root.0.join("bin");
+        let home = root.0.join("home");
+        let user = if cfg!(target_os = "macos") {
+            home.join("Library/Application Support/Dutchman/modules")
+        } else {
+            home.join("dutchman/modules")
+        };
+        std::fs::create_dir_all(&bundled).unwrap();
+        std::fs::create_dir_all(&user).unwrap();
+        let launcher = copy_launcher(&bundled);
+        for (version, expected) in [
+            (Some("1.10.0"), "user"),
+            (Some("1.9.0"), "bundled"),
+            (None, "bundled"),
+        ] {
+            script(
+                &bundled,
+                "electronics",
+                "if [ \"$1\" = info ]; then echo '{\"version\":\"1.9.0\"}'; else echo bundled; fi",
+            );
+            let info = version.map_or_else(
+                || "exit 3".to_owned(),
+                |v| format!("echo '{{\"version\":\"{v}\"}}'"),
+            );
+            script(
+                &user,
+                "electronics",
+                &format!("if [ \"$1\" = info ]; then {info}; else echo user; fi"),
+            );
+            let output = Command::new(&launcher)
+                .arg("electronics")
+                .env("HOME", &home)
+                .env("XDG_DATA_HOME", &home)
+                .env("PATH", "")
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), expected);
+        }
+        std::fs::remove_file(bundled.join("dutchman-electronics")).unwrap();
+        std::fs::remove_file(user.join("dutchman-electronics")).unwrap();
+        let path_dir = root.0.join("path");
+        std::fs::create_dir_all(&path_dir).unwrap();
+        script(
+            &path_dir,
+            "electronics",
+            "if [ \"$1\" = info ]; then echo '{\"version\":\"1.0.0\"}'; else echo path; fi",
+        );
+        let output = Command::new(&launcher)
+            .arg("electronics")
+            .env("HOME", &home)
+            .env("XDG_DATA_HOME", &home)
+            .env("PATH", &path_dir)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "path");
+    }
+
+    #[test]
     fn dispatch_preserves_arguments_stdin_and_exit_code() {
         let _guard = executable_guard();
         let dir = Temp::new();

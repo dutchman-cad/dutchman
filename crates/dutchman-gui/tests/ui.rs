@@ -7445,6 +7445,7 @@ fn electronics_settings_screenshots() {
         return;
     }
     let state = std::env::var("DUTCHMAN_MODULE_SHOTS_CHILD").unwrap();
+    assert_eq!(dutchman_core::module::installed(), state == "found");
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
     for (theme, name) in [

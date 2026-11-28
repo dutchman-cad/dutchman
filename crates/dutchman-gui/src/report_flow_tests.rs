@@ -369,7 +369,7 @@ fn control_row_screenshots() {
 
 fn assert_separate(rects: &[(String, egui::Rect)]) {
     for (i, (name, rect)) in rects.iter().enumerate() {
-        for (other, other_rect) in rects.get(i + 1..).unwrap_or_default() {
+        for (other, other_rect) in rects.iter().skip(i + 1) {
             assert!(
                 !rect.shrink(0.25).intersects(other_rect.shrink(0.25)),
                 "{name} {rect:?} overlaps {other} {other_rect:?}"
@@ -380,7 +380,7 @@ fn assert_separate(rects: &[(String, egui::Rect)]) {
 
 fn assert_control_rows(rects: &[(String, egui::Rect)]) {
     for (i, (name, rect)) in rects.iter().enumerate() {
-        for (other, other_rect) in rects.get(i + 1..).unwrap_or_default() {
+        for (other, other_rect) in rects.iter().skip(i + 1) {
             assert!(
                 (rect.height() - other_rect.height()).abs() <= 0.5,
                 "{name} {rect:?} and {other} {other_rect:?} differ in height"
