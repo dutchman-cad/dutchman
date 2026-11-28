@@ -2,6 +2,52 @@
 
 Dutchman installs as three programs: `dutchman` (the command line), `dutchman-mcp` (the MCP server), and `dutchman-gui` (the desktop app, Dutchman Convert). Release archives, the Windows installer, the macOS disk image, Homebrew, and Scoop install all three; `cargo install` and Docker leave out the desktop app.
 
+## Circuit boards: the electronics module
+
+Converting Altium circuit boards (`.PcbDoc`) requires the optional electronics module,
+a separate program named `dutchman-electronics`. Download it from the
+[electronics module releases](https://github.com/dutchman-cad/dutchman-electronics/releases).
+
+Get [version 0.1.0](https://github.com/dutchman-cad/dutchman-electronics/releases/tag/v0.1.0).
+Each asset has a matching `.sha256`:
+
+- Windows: `dutchman-electronics-0.1.0-x86_64-pc-windows-msvc.zip`. No Windows arm64 build.
+- macOS: `dutchman-electronics-0.1.0-macos-universal.tar.gz`, or the
+  `-aarch64-apple-darwin.tar.gz` and `-x86_64-apple-darwin.tar.gz` variants.
+- Linux: `dutchman-electronics-0.1.0-x86_64-unknown-linux-gnu.tar.gz` or
+  `dutchman-electronics-0.1.0-aarch64-unknown-linux-gnu.tar.gz`.
+
+Each archive holds one `dutchman-electronics-0.1.0-<target>/` folder with the program,
+`README.md`, and `INSTALL.md`. The program is named `dutchman-electronics.exe` on
+Windows and `dutchman-electronics` elsewhere. It is not signed; the macOS program
+is ad hoc signed only.
+
+Copy the program into the **recommended per-user modules folder** (create it if needed).
+This folder survives Dutchman updates, and apps opened from Finder can find it:
+
+- Windows: `%LOCALAPPDATA%\Dutchman\modules`.
+- macOS: `~/Library/Application Support/Dutchman/modules`.
+- Linux: `$XDG_DATA_HOME/dutchman/modules`, or `~/.local/share/dutchman/modules`
+  when `XDG_DATA_HOME` is unset or empty.
+
+Alternatively, put it beside the running Dutchman program or on PATH.
+For the Windows MSI, the program folder is `%LOCALAPPDATA%\Programs\Dutchman\`
+and is on the user PATH; for the ZIP, put it beside `dutchman.exe`.
+For the macOS app, the program folder is
+`/Applications/Dutchman Convert.app/Contents/MacOS/`; for the command, use
+`Contents/Helpers/` or a PATH folder such as `/usr/local/bin`.
+Finder-opened apps do not see the Terminal PATH. An update replaces the app,
+so a module copied inside it must be copied again.
+For Linux AppImage, use a PATH folder such as `~/.local/bin` (log out and in if
+that folder is new); for the tarball, beside `dutchman`; for Arch, `/usr/bin`
+or any PATH folder.
+
+On macOS, run `xattr -d com.apple.quarantine <the copied dutchman-electronics>`.
+Tar preserves the executable bit, so no chmod is needed.
+Check with `dutchman-electronics --version`, then open a `.PcbDoc` or
+`.kicad_pcb` in Dutchman. Settings shows the module's path or the places searched.
+See [Optional modules](modules.md) for the search order.
+
 ## Included guidance
 
 Every release archive (including the Windows ZIP) includes `skills/`, the `docs/` Markdown,

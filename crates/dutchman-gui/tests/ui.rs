@@ -7389,3 +7389,73 @@ fn inner_copper_screenshots() {
     }
     std::fs::write(dir.join("inner-copper.md"), index).unwrap();
 }
+
+#[test]
+fn settings_names_the_electronics_module() {
+    let mut h = screenshot_harness(ThemePreference::Light);
+    h.get_by_label("Settings").click_accesskit();
+    h.run();
+    let text = dutchman_core::module::location_description();
+    h.get_by_label(&text);
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn electronics_settings_screenshots() {
+    if std::env::var_os("DUTCHMAN_MODULE_SHOTS_CHILD").is_none() {
+        for state in ["missing", "found"] {
+            let demo = PathBuf::from("/tmp/demo");
+            let modules = demo.join("data/dutchman/modules");
+            std::fs::create_dir_all(&modules).unwrap();
+            let module = modules.join("dutchman-electronics");
+            let _ = std::fs::remove_file(&module);
+            if state == "found" {
+                std::fs::write(&module, "#!/bin/sh\nexit 0\n").unwrap();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&module, std::fs::Permissions::from_mode(0o755))
+                        .unwrap();
+                }
+            }
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--ignored", "--exact", "electronics_settings_screenshots"])
+                .env("DUTCHMAN_MODULE_SHOTS_CHILD", state)
+                .env("HOME", &demo)
+                .env("XDG_DATA_HOME", demo.join("data"))
+                .env("XDG_CONFIG_HOME", demo.join("config"))
+                .env("XDG_STATE_HOME", demo.join("state"))
+                .env("PATH", "/tmp/demo/bin")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let _ = std::fs::remove_file(&module);
+        }
+        return;
+    }
+    let state = std::env::var("DUTCHMAN_MODULE_SHOTS_CHILD").unwrap();
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        h.ctx.set_theme(theme);
+        h.get_by_label("Settings").click_accesskit();
+        h.run();
+        let text = dutchman_core::module::location_description();
+        h.get_by_label(&text);
+        shot(
+            &mut h,
+            &dir,
+            &mut String::new(),
+            &format!("electronics-{state}"),
+            name,
+            "Electronics module location in Settings.",
+        );
+    }
+}

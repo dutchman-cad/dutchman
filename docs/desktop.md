@@ -663,3 +663,6 @@ from the selected placements. The report's Info note counts the placement rules 
 Smart's fallbacks. Smart and **As last shown in the original program** first use decoder-bound saved-scene
 displayed poses when available, without the current-pose guards. Ambiguous and unbound
 scene rows do not select placements; older decoders can omit the arena.
+
+Settings shows **Electronics module** with the program path, or “not found” and the
+search order: beside Dutchman, the per-user modules folder, then PATH. This text is read-only.

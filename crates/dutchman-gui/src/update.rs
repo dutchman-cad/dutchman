@@ -770,6 +770,7 @@ impl Updater {
                 {
                     self.start(ctx, true);
                 }
+                ui.label(dutchman_core::module::location_description());
                 ui.checkbox(&mut self.show_donate, "Show the Donate button");
                 ui.checkbox(&mut self.show_discord, "Show the Discord button");
                 if !self.allowed {

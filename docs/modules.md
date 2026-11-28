@@ -3,9 +3,12 @@
 ## How Dutchman finds and runs a module
 
 A module is a separate program named `dutchman-<name>` (the electronics module is
-`dutchman-electronics`). Dutchman looks beside its own executable first, then in PATH, the same
-way it finds every other companion program. Install it from
-https://github.com/dutchman-cad/dutchman-electronics.
+`dutchman-electronics`). Dutchman looks beside its own executable first, then in the per-user modules folder, then in PATH.
+The recommended modules folder survives updates: `~/Library/Application Support/Dutchman/modules`
+on macOS, `%LOCALAPPDATA%\Dutchman\modules` on Windows, and
+`$XDG_DATA_HOME/dutchman/modules` on Linux (default `~/.local/share/dutchman/modules`
+when unset or empty). Missing folders are skipped silently. Install it from
+https://github.com/dutchman-cad/dutchman-electronics/releases.
 
 Dutchman talks to a module with three commands, each with `--json`:
 

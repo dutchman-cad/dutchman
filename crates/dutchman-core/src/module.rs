@@ -898,3 +898,23 @@ cat "$out/manifest.json""#
         );
     }
 }
+
+/// Read-only description of module discovery for Settings.
+pub fn location_description() -> String {
+    if let Some(path) = find() {
+        return format!("Electronics module: {}", path.display());
+    }
+    let folder = dutchman_launcher::modules_folder().map_or_else(
+        || "user modules folder (unavailable)".to_owned(),
+        |p| p.display().to_string(),
+    );
+    format!("Electronics module: not found. Looked beside the Dutchman program, then in {folder}, then on PATH.")
+}
+
+#[cfg(test)]
+mod location_tests {
+    #[test]
+    fn settings_description_names_the_module() {
+        assert!(super::location_description().starts_with("Electronics module: "));
+    }
+}
