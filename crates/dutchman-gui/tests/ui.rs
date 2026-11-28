@@ -3657,7 +3657,7 @@ fn converted_tool_library(kinds: &[&str]) -> (dutchman_gui::app::Row, PathBuf, S
     let source = work.path().join("Shop tools.json");
     std::fs::write(&source, synthetic_tool_library(kinds)).unwrap();
     let made = work.path().join("Shop tools.camtools");
-    let summary = dutchman::batch::plan(&[source.clone()], work.path()).description;
+    let summary = dutchman::batch::plan(std::slice::from_ref(&source), work.path()).description;
     let mut report = dutchman::tool_library::convert(&source, &made, true);
     let docs = PathBuf::from("/Users/demo/Documents");
     let input = docs.join("Shop tools.json");
@@ -7388,4 +7388,106 @@ fn inner_copper_screenshots() {
         }
     }
     std::fs::write(dir.join("inner-copper.md"), index).unwrap();
+}
+
+#[test]
+fn settings_names_the_electronics_module() {
+    let mut h = screenshot_harness(ThemePreference::Light);
+    h.get_by_label("Settings").click_accesskit();
+    h.run();
+    let text = dutchman_core::module::location_description();
+    h.get_by_label(&text);
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn electronics_settings_screenshots() {
+    if std::env::var_os("DUTCHMAN_MODULE_SHOTS_CHILD").is_none() {
+        let demo = PathBuf::from("/tmp/demo");
+        let app = demo.join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        let child = app.join("settings-ui");
+        std::fs::copy(std::env::current_exe().unwrap(), &child).unwrap();
+        for state in ["missing", "bundled", "user-newer"] {
+            let modules = demo.join("data/dutchman/modules");
+            std::fs::create_dir_all(&modules).unwrap();
+            let module = modules.join("dutchman-electronics");
+            let bundled = app.join("dutchman-electronics");
+            let _ = std::fs::remove_file(&module);
+            let _ = std::fs::remove_file(&bundled);
+            if state != "missing" {
+                // Both copies exist: bundled wins ties, then the newer user copy wins.
+                for (path, version) in [
+                    (&bundled, "1.0.0"),
+                    (
+                        &module,
+                        if state == "user-newer" {
+                            "2.0.0"
+                        } else {
+                            "1.0.0"
+                        },
+                    ),
+                ] {
+                    std::fs::write(
+                        path,
+                        format!("#!/bin/sh\nprintf '%s\\n' '{{\"version\":\"{version}\"}}'\n"),
+                    )
+                    .unwrap();
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+                            .unwrap();
+                    }
+                }
+            }
+            let status = std::process::Command::new(&child)
+                .args(["--ignored", "--exact", "electronics_settings_screenshots"])
+                .env("DUTCHMAN_MODULE_SHOTS_CHILD", state)
+                .env("HOME", &demo)
+                .env("XDG_DATA_HOME", demo.join("data"))
+                .env("XDG_CONFIG_HOME", demo.join("config"))
+                .env("XDG_STATE_HOME", demo.join("state"))
+                .env("PATH", "/tmp/demo/bin")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let _ = std::fs::remove_file(&module);
+        }
+        return;
+    }
+    let state = std::env::var("DUTCHMAN_MODULE_SHOTS_CHILD").unwrap();
+    let expected = match state.as_str() {
+        "bundled" => Some(PathBuf::from("/tmp/demo/app/dutchman-electronics")),
+        "user-newer" => Some(PathBuf::from(
+            "/tmp/demo/data/dutchman/modules/dutchman-electronics",
+        )),
+        "missing" => None,
+        _ => panic!("unknown screenshot state"),
+    };
+    assert_eq!(dutchman_core::module::find(), expected);
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        h.ctx.set_theme(theme);
+        h.get_by_label("Settings").click_accesskit();
+        h.run();
+        let text = dutchman_core::module::location_description();
+        h.get_by_label(&text);
+        shot(
+            &mut h,
+            &dir,
+            &mut String::new(),
+            &format!("electronics-{state}"),
+            name,
+            "Electronics module location in Settings.",
+        );
+    }
 }
