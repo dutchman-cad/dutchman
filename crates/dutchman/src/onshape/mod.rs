@@ -9,12 +9,12 @@ use auth::Auth;
 pub use auth::{BearerToken, Credentials, FetchAuth};
 use http::Session;
 pub use http::{FetchProgress, HttpClient, NetworkClient, Request, Response};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-pub use store::{Backend, FileBackend, NOT_CONNECTED, Source, Store, SystemBackend};
+pub use store::{Backend, FileBackend, Source, Store, SystemBackend, NOT_CONNECTED};
 
 pub const SCHEMA: &str = "dutchman.onshape-fetch/1";
 const MAX_RESPONSE: u64 = 64 * 1024 * 1024;

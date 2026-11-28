@@ -2630,12 +2630,14 @@ fn a_fully_cached_assembly_with_two_local_studios_estimates_no_remaining_calls()
             ]
         },
         "subAssemblies": []
-    })).unwrap();
+    }))
+    .unwrap();
     let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
     assert_eq!(estimate.calls, 94);
     assert!(estimate.needs_approval());
 
-    mock.replies.push_back(response(200, json!({"features":[]})));
+    mock.replies
+        .push_back(response(200, json!({"features":[]})));
     for element in [PS, SECOND] {
         mock.replies.extend([
             response(200, json!({"sourceMicroversion":MID,"features":[]})),
@@ -2683,12 +2685,15 @@ fn discovery_stops_at_fifty_requests_before_request_fifty_one() {
     mock.replies.get_mut(3).unwrap().body = serde_json::to_vec(&json!({
         "rootAssembly":{"documentId":DID,"elementId":AS,"documentMicroversion":MID,"instances":instances},
         "subAssemblies":[]
-    })).unwrap();
+    }))
+    .unwrap();
     for index in 1..=16 {
-        mock.replies.push_back(response(200, json!({"name":format!("External {index}")})));
+        mock.replies
+            .push_back(response(200, json!({"name":format!("External {index}")})));
         if index <= 15 {
             mock.replies.push_back(response(200, json!([{"id":format!("{:024}", index + 100),"elementType":"PARTSTUDIO","name":"Part"}])));
-            mock.replies.push_back(response(200, json!({"features":[]})));
+            mock.replies
+                .push_back(response(200, json!({"features":[]})));
         }
     }
     let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
@@ -2778,16 +2783,23 @@ fn empty_external_configuration_uses_the_default_query_and_reference_prefix() {
             ]
         },
         "subAssemblies": []
-    })).unwrap();
+    }))
+    .unwrap();
     let root_features = mock.replies.pop_back().unwrap();
     mock.replies.extend([
         response(200, json!({"name":"External"})),
-        response(200, json!([{"id":OTHER_ELEMENT,"elementType":"PARTSTUDIO","name":"Part"}])),
+        response(
+            200,
+            json!([{"id":OTHER_ELEMENT,"elementType":"PARTSTUDIO","name":"Part"}]),
+        ),
         response(200, json!({"sourceMicroversion":OTHER_MID,"features":[]})),
         root_features,
     ]);
     let _ = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
-    assert!(mock.sent.iter().all(|(_, _, query)| !query.contains("configuration=")));
+    assert!(mock
+        .sent
+        .iter()
+        .all(|(_, _, query)| !query.contains("configuration=")));
     let mut idle = Mock::default();
     let repeated = estimate_calls(&mut idle, &auth, &source(AS), &cache).unwrap();
     assert!(idle.sent.is_empty());
