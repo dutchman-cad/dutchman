@@ -30,6 +30,7 @@ programs=(dutchman dutchman-mcp dutchman-gui)
 for program in "${programs[@]}"; do
   cp "${4:-target/$target/release}/$program$exe" "dist/$name/"
 done
+scripts/fetch-electronics.sh "$target" "dist/$name"
 cp LICENSE NOTICE "dist/$name/"
 python3 scripts/package-docs.py "dist/$name"
 # The archive holds none of the files the README links to: point them at the ref.

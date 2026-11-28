@@ -23,14 +23,36 @@ sum() { # <arch>: the archive's SHA-256
   [[ $line =~ ^[0-9a-f]{64}$ ]] || { echo "No SHA-256 in $file" >&2; exit 1; }
   echo "$line"
 }
+# Read only data from the reviewed lock; never accept an unpinned module.
+lock_value() {
+  python3 - "$1" "$2" <<'LOCKPY'
+import sys, tomllib, re
+from pathlib import Path
+lock = tomllib.loads(Path('../electronics.lock').read_text())
+e = lock['targets'][sys.argv[1] + '-unknown-linux-gnu']
+if not re.fullmatch('[0-9a-f]{64}', e['sha256']):
+    sys.exit('Fill packaging/electronics.lock before updating the Arch package')
+print(e[sys.argv[2]])
+LOCKPY
+}
+ex86=$(lock_value x86_64 sha256)
+earm=$(lock_value aarch64 sha256)
+ex86asset=$(lock_value x86_64 asset)
+earmasset=$(lock_value aarch64 asset)
+ex86url=$(lock_value x86_64 url)
+earmurl=$(lock_value aarch64 url)
+eversion=$(python3 -c "import tomllib; print(tomllib.load(open('../electronics.lock', 'rb'))['version'])")
 x86=$(sum x86_64)
 arm=$(sum aarch64)
 
 sed -i -E \
   -e "s/^pkgver=.*/pkgver=$version/" \
   -e "s/^pkgrel=.*/pkgrel=1/" \
-  -e "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('$x86')/" \
-  -e "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('$arm')/" \
+  -e "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('$x86' '$ex86')/" \
+  -e "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('$arm' '$earm')/" \
+  -e "s|^source_x86_64=.*|source_x86_64=(\"dutchman-\$pkgver-x86_64-unknown-linux-gnu.tar.gz::\$url/releases/download/v\$pkgver/dutchman-\$pkgver-x86_64-unknown-linux-gnu.tar.gz\" \"$ex86asset::$ex86url\")|" \
+  -e "s|^source_aarch64=.*|source_aarch64=(\"dutchman-\$pkgver-aarch64-unknown-linux-gnu.tar.gz::\$url/releases/download/v\$pkgver/dutchman-\$pkgver-aarch64-unknown-linux-gnu.tar.gz\" \"$earmasset::$earmurl\")|" \
+  -e "s|dutchman-electronics-[0-9.]*-\$CARCH|dutchman-electronics-$eversion-\$CARCH|" \
   PKGBUILD
 
 # .SRCINFO, in the documented format, from the same facts the PKGBUILD states.
@@ -62,8 +84,12 @@ f1=$(sed -n 1p <<<"$file_sums") f2=$(sed -n 2p <<<"$file_sums")
   echo "	sha256sums = $f2"
   echo "	source_x86_64 = dutchman-$version-x86_64-unknown-linux-gnu.tar.gz::$base/dutchman-$version-x86_64-unknown-linux-gnu.tar.gz"
   echo "	sha256sums_x86_64 = $x86"
+  echo "	source_x86_64 = $ex86asset::$ex86url"
+  echo "	sha256sums_x86_64 = $ex86"
   echo "	source_aarch64 = dutchman-$version-aarch64-unknown-linux-gnu.tar.gz::$base/dutchman-$version-aarch64-unknown-linux-gnu.tar.gz"
   echo "	sha256sums_aarch64 = $arm"
+  echo "	source_aarch64 = $earmasset::$earmurl"
+  echo "	sha256sums_aarch64 = $earm"
   echo
   echo "pkgname = dutchman-bin"
 } > .SRCINFO

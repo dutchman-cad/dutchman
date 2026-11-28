@@ -17,8 +17,10 @@ New-Item -ItemType Directory -Force (Split-Path -Parent $Output) | Out-Null
 $guides = Join-Path (Split-Path -Parent $Output) 'installer-guides'
 $fragment = Join-Path (Split-Path -Parent $Output) 'installer-guides.wxs'
 if (Test-Path $guides) { Remove-Item -Recurse -Force $guides }
-& python scripts/package-docs.py $guides --wix $fragment
-if ($LASTEXITCODE -ne 0) { throw 'Could not stage the installed guides' }
+& bash scripts/fetch-electronics.sh x86_64-pc-windows-msvc $BinDir
+if ($LASTEXITCODE -ne 0) { throw 'Could not stage the electronics module' }
+& python scripts/package-docs.py $guides --wix $fragment --extra-notices "$BinDir/THIRD-PARTY"
+if ($LASTEXITCODE -ne 0) { throw 'Could not stage the installed guides and module notices' }
 & wix build assets/windows/dutchman.wxs $fragment -arch x64 -d "Version=$Version" -d "BinDir=$BinDir" -d "Icon=$Icon" -o $Output
 if ($LASTEXITCODE -ne 0) { throw "WiX build failed: $LASTEXITCODE" }
 $hash = (Get-FileHash -LiteralPath $Output -Algorithm SHA256).Hash.ToLowerInvariant()

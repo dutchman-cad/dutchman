@@ -378,3 +378,24 @@ Use hashes of the exact diagnostic report ids, including their existing prefix.
 The app reads this through its normal release check and compares locally.
 Release builds send reports to the service address in `crates/dutchman/src/report_send.rs`.
 `DUTCHMAN_REPORT_ENDPOINT` at build time replaces it, for example for a staging service.
+
+## Bundled electronics module
+
+`packaging/electronics.lock` pins the module version, asset URL and SHA-256 for each target,
+including macOS universal. Before merging a version update, run
+`scripts/update-electronics-lock.sh 0.1.0` on a machine with network access and review the
+checksums fetched from the module release's `.sha256` files. PLACEHOLDER values fail packaging;
+all must be filled before merge. The module archives must include their license files.
+
+The shared archive, AppImage, MSI and disk image packagers fetch and verify the module before
+including it beside Dutchman's programs. The app includes it in both MacOS and Helpers before
+ad hoc deep signing. Notices go in THIRD-PARTY/dutchman-electronics (in the app's Resources
+or the AppImage's license folder). The container images inherit the module and notices from
+the Linux archives. Final release promotion reuses the candidate archives unchanged.
+`packaging/arch/update.sh` reads the same lock when updating PKGBUILD and .SRCINFO; run it
+after filling the lock and before publishing the Arch package.
+
+The candidate smoke check converts the synthetic `electronics-smoke.kicad_pcb` fixture with
+the packaged Dutchman command and asserts a nonempty SolidCraft output. Intel macOS is
+cross-compiled; the universal app's command is checked on the Apple silicon runner.
+Release workflow changes need a green dry run from the branch before merge.

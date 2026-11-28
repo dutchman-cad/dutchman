@@ -4,9 +4,10 @@ COPY image/${TARGETARCH}/ /archive/
 RUN install -D /archive/dutchman /out/bin/dutchman \
     && install -D /archive/dutchman-mcp /out/bin/dutchman-mcp \
     && if [ -f /archive/dutchman-web ]; then install -D /archive/dutchman-web /out/bin/dutchman-web; fi \
+    && install -D /archive/dutchman-electronics /out/bin/dutchman-electronics \
     && mkdir -p /out/doc \
     && cp /archive/LICENSE /archive/NOTICE /out/doc/ \
-    && cp -R /archive/licences /out/doc/
+    && cp -R /archive/licences /archive/THIRD-PARTY /out/doc/
 
 FROM debian:bookworm-slim AS slim
 ARG VERSION=unknown
