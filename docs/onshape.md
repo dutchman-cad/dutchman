@@ -228,9 +228,11 @@ convert without this field. Fetch an older bundle again if a reference is missin
 Repeated references share captured files; cycles and chains over eight levels are refused.
 The reader also caps the combined serialized neutral reference payloads at 256 MiB,
 so repeated inserts cannot expand their captured designs without a bound.
-Assembly bundles now include the referenced Part Studios, while the root `external` manifest
-entries continue to identify those cross-document assembly references. Conversion behavior for
-those assembly references is unchanged.
+Assembly bundles capture referenced Part Studios from their immutable version under
+`references/<document>/<version>/<element>/`. Configured references retain their
+configuration and linked-document context in API requests and use a configuration-specific
+bundle subdirectory. Cross-document references remain listed in the root manifest's
+`external` entries.
 
 Select a SolidCraft 0.44 target (for example, CLI `--solidcraft-version 0.44.0`)
 to retain the link. The existing default target stays unchanged; a target
@@ -471,10 +473,9 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
   Referenced elements in the same document are fetched too, including Part Studios.
   References to other documents appear in manifest `external` entries with
   `documentId`, `elementId`, `versionId`, and `microversionId`. Dutchman captures each
-  referenced Part Studio through its immutable version under
-  `references/<document>/<version>/<element>/`, preserving the instance's microversion pin.
-  Configured references retain their configuration and linked-document context in API requests
-  and use a configuration-specific bundle subdirectory.
+  referenced Part Studio through its immutable version, preserving the instance's
+  microversion pin. Configured references retain their configuration and linked-document
+  context in API requests and use a configuration-specific bundle subdirectory.
 
 No separate Parasolid, mass-property, FeatureScript, translation-status, or
 account metadata files are included. Dutchman follows assembly references within the document
@@ -532,16 +533,14 @@ All endpoints use API v17.
 
 Onshape's Free and Standard plans allow 2,500 API calls a year, so Dutchman tells you
 what a fetch will cost before it spends it. First it lists the document, which costs at
-most three calls (microversion, name, tab list) and is cached. For assemblies, it also reads
-reachable assembly definitions so it can count external references. From that listing it
-estimates the whole fetch: 30 calls for each ordinary Part Studio or assembly it will read
-(an assembly may use every Part Studio of the document; a Part Studio is read alone). For each
-external Part Studio, estimating reads its document name, tab list and configured feature
-list, then counts its missing body-detail, configuration, variables, sketch and STEP calls.
-Derived references in those external studios are included recursively; external assemblies
-are reported as unsupported. Estimating an assembly also reads reachable assembly definitions
-to find references; those calls and all external listing calls are included in the estimate.
-Cached replies are reused by the fetch and do not add to the remaining external-studio estimate.
+most three calls (microversion, name, tab list) and is cached. For assemblies it also reads
+reachable assembly definitions and external Part Studio listings. From that information it
+reserves 30 calls for each ordinary Part Studio or assembly and counts configured external
+feature histories, including their missing body-detail, configuration, variables, sketches
+and STEP calls. For local tabs with cached feature lists, it counts the missing body-detail,
+configuration, variables, sketches and STEP calls from cache. Cached replies cost no call and
+are reused by the fetch. Estimate-time discovery stops before request 51; if more information
+is needed, Dutchman asks first and reports a lower bound of at least 51 calls.
 
 - **Up to 50 estimated calls:** it prints the estimate and fetches.
 - **Above 50:** it asks first. On a terminal the command line prints the estimate and asks
@@ -550,10 +549,16 @@ Cached replies are reused by the fetch and do not add to the remaining external-
 - **`--max-calls N`** is a hard ceiling that nothing goes past, and it is also your go: with
   it the fetch runs without an estimate or a question and stops before call N+1.
   `--max-calls 0` permits cache reads only.
-- **Without `--max-calls`** (after the go) the limit starts at 50 and grows as Dutchman
-  finds work: 30 more for each Part Studio or assembly and one more for each body-detail
-  request, up to an automatic ceiling of 2000 calls that no document can raise. External
-  Part Studios use the per-feature count from their configured feature list.
+- **Without `--max-calls`** (after the go) the limit starts at 50 and grows as Dutchman finds
+  work: 30 more for each Part Studio or assembly and one more for each body-detail request,
+  up to an automatic ceiling of 2000 calls, including estimate-time discovery. After approval,
+  the fetch continues from cached discovery replies. `--yes` skips the approval prompt and uses
+  the same automatic ceiling.
+- **A stop at the limit** says how many calls were spent and about how many the document
+  needs. An approval estimate may be a lower bound when discovery stopped at request 50. On
+  the command line: "Onshape call budget reached after 50 API calls; this document
+  needs about 51. Rerun with --max-calls 51 to finish"; the replies already fetched cost
+  nothing on the rerun. With `--json` the report has `estimated_calls` beside `calls`.
 
 Calls count every HTTP attempt, including metadata, consistency checks, export creation,
 polling, download, retries, and a refetch; the calls that listed the document count against
@@ -565,7 +570,7 @@ its user and calls again with an explicit `max_calls`. In the desktop app, a fet
 estimated calls asks "This document needs about N of your yearly Onshape API calls (2,500 on
 Free plans). Continue?" with Continue and Cancel before it fetches anything. If a fetch
 stops at the call limit, the Results card is titled Stopped (not Failed), says how many
-calls were made and about how many more are needed, and offers only Continue fetching; the
+calls were made, about how many more are needed and how many the document needs in all, and offers only Continue fetching (which confirms the larger estimate); the
 footer reads "0 converted, 1 stopped". Continue fetching asks the same way with that number
 (or says it may use up to 2,000 more calls when it is unknown) and carries on over the
 cached replies (which cost nothing). While it fetches, the Results card counts the calls sent and, once the root Part Studio's feature list is read, the estimated total: one per body-detail state, configuration, variables, sketches, the STEP export (request, one poll, download) and, for a workspace, the final microversion check. Slow export polls and retries can take it past the estimate. `--json`

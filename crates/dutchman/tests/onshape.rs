@@ -997,7 +997,15 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
             "documentId": DID,
             "elementId": AS,
             "documentMicroversion": MID,
-            "instances": []
+            "instances": [{
+                "type": "Part",
+                "documentId": OTHER,
+                "elementId": OTHER_ELEMENT,
+                "documentVersion": OTHER_VERSION,
+                "documentMicroversion": OTHER_MID,
+                "configuration": "size=large;length=25mm;",
+                "linkDocumentId": "aaaaaaaaaaaaaaaaaaaaaaaa"
+            }]
         },
         "subAssemblies": [{"instances": [{
                 "type": "Part",
@@ -1050,6 +1058,10 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
         Response { status: 200, headers: BTreeMap::new(), body: b"ISO-10303-21; synthetic external solid".to_vec() },
         response(200, sketch_information(OTHER_MID)),
     ]);
+    let listing_replies: Vec<_> = external_replies.drain(..3).collect();
+    let root_features = mock.replies.pop_back().unwrap();
+    mock.replies.extend(listing_replies);
+    mock.replies.push_back(root_features);
     mock.replies.extend(external_replies);
     let auth = FetchAuth::ApiKeys(credentials());
     let output = dir.path().join("external.onshape-bundle");
@@ -2531,6 +2543,117 @@ fn the_estimate_counts_the_listing_calls_and_the_elements_and_skips_cached_repli
 }
 
 #[test]
+fn a_fully_cached_assembly_with_two_local_studios_estimates_no_remaining_calls() {
+    const SECOND: &str = "666666666666666666666666";
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache");
+    let auth = FetchAuth::ApiKeys(credentials());
+    let mut mock = listing_mock(json!([
+        {"id": AS, "elementType": "ASSEMBLY", "name": "Assembly"},
+        {"id": PS, "elementType": "PARTSTUDIO", "name": "First"},
+        {"id": SECOND, "elementType": "PARTSTUDIO", "name": "Second"}
+    ]));
+    mock.replies.get_mut(3).unwrap().body = serde_json::to_vec(&json!({
+        "rootAssembly": {
+            "documentId": DID, "elementId": AS, "documentMicroversion": MID,
+            "instances": [
+                {"type":"Part", "documentId":DID, "elementId":PS,
+                    "documentMicroversion":MID},
+                {"type":"Part", "documentId":DID, "elementId":SECOND,
+                    "documentMicroversion":MID}
+            ]
+        },
+        "subAssemblies": []
+    })).unwrap();
+    let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
+    assert_eq!(estimate.calls, 94);
+    assert!(estimate.needs_approval());
+
+    mock.replies.push_back(response(200, json!({"features":[]})));
+    for element in [PS, SECOND] {
+        mock.replies.extend([
+            response(200, json!({"sourceMicroversion":MID,"features":[]})),
+            response(200, json!({"sourceMicroversion":MID,"configurationParameters":[],"currentConfiguration":[]})),
+            response(200, json!({"variables":[]})),
+            response(200, json!({"id":format!("export-{element}"),"requestState":"ACTIVE","documentId":DID,"requestElementId":element})),
+            response(200, json!({"id":format!("export-{element}"),"requestState":"DONE","documentId":DID,"resultDocumentId":DID,"requestElementId":element,"resultExternalDataIds":[format!("step-{element}")]})),
+            Response { status: 200, headers: BTreeMap::new(), body: b"ISO-10303-21; synthetic solid".to_vec() },
+            response(200, sketch_information(MID)),
+        ]);
+    }
+    let report = fetch_approved(
+        &mut mock,
+        &auth,
+        &source(AS),
+        &dir.path().join("assembly.onshape-bundle"),
+        &cache,
+        &estimate,
+    )
+    .unwrap();
+    assert_eq!(report.calls, 19);
+    let mut idle = Mock::default();
+    let cached = estimate_calls(&mut idle, &auth, &source(AS), &cache).unwrap();
+    assert!(idle.sent.is_empty());
+    assert_eq!(cached.listing_calls, 0);
+    assert_eq!(cached.calls, 0);
+}
+
+#[test]
+fn discovery_stops_at_fifty_requests_before_request_fifty_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache");
+    let auth = FetchAuth::ApiKeys(credentials());
+    let mut mock = listing_mock(json!([{"id":AS,"elementType":"ASSEMBLY","name":"Assembly"}]));
+    let instances: Vec<_> = (1..=20)
+        .map(|index| {
+            let suffix = format!("{index:024}");
+            json!({
+                "type":"Part", "documentId":suffix, "elementId":format!("{:024}", index + 100),
+                "documentVersion":format!("{:024}", index + 200),
+                "documentMicroversion":format!("{:024}", index + 300)
+            })
+        })
+        .collect();
+    mock.replies.get_mut(3).unwrap().body = serde_json::to_vec(&json!({
+        "rootAssembly":{"documentId":DID,"elementId":AS,"documentMicroversion":MID,"instances":instances},
+        "subAssemblies":[]
+    })).unwrap();
+    for index in 1..=16 {
+        mock.replies.push_back(response(200, json!({"name":format!("External {index}")})));
+        if index <= 15 {
+            mock.replies.push_back(response(200, json!([{"id":format!("{:024}", index + 100),"elementType":"PARTSTUDIO","name":"Part"}])));
+            mock.replies.push_back(response(200, json!({"features":[]})));
+        }
+    }
+    let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
+    assert_eq!(mock.sent.len(), 50);
+    assert_eq!(estimate.listing_calls, 50);
+    assert_eq!(estimate.calls, 51);
+    assert!(estimate.needs_approval());
+    assert!(estimate.question().contains("at least 51"));
+    let error = approval(&estimate, false, false, |_| false).unwrap_err();
+    assert_eq!(error.calls, 50);
+    assert_eq!(error.estimate, Some(51));
+    assert!(approval(&estimate, true, false, |_| false).is_ok());
+    // The post-consent fetch continues from cached listings and is allowed past call 50.
+    mock.replies.extend([
+        response(200, json!({"features":[]})),
+        response(500, json!({})),
+    ]);
+    let error = fetch_approved(
+        &mut mock,
+        &auth,
+        &source(AS),
+        &dir.path().join("assembly.onshape-bundle"),
+        &cache,
+        &estimate,
+    )
+    .unwrap_err();
+    assert_eq!(mock.sent.len(), 52);
+    assert_eq!(error.calls, 52);
+}
+
+#[test]
 fn the_assembly_estimate_counts_external_configurations_and_reuses_definitions() {
     const OTHER: &str = "777777777777777777777777";
     const OTHER_VERSION: &str = "666666666666666666666666";
@@ -2559,12 +2682,50 @@ fn the_assembly_estimate_counts_external_configurations_and_reuses_definitions()
     let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
     assert_eq!(estimate.elements, 2);
     assert_eq!(estimate.listing_calls, 7);
-    assert_eq!(estimate.calls, 43);
+    assert_eq!(estimate.calls, 44);
 
     let mut cached = Mock::default();
     let again = estimate_calls(&mut cached, &auth, &source(AS), &cache).unwrap();
     assert_eq!(again.listing_calls, 0);
     assert_eq!(again.calls, 36);
+}
+
+#[test]
+fn empty_external_configuration_uses_the_default_query_and_reference_prefix() {
+    const OTHER: &str = "777777777777777777777777";
+    const OTHER_VERSION: &str = "666666666666666666666666";
+    const OTHER_MID: &str = "888888888888888888888888";
+    const OTHER_ELEMENT: &str = "999999999999999999999999";
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache");
+    let auth = FetchAuth::ApiKeys(credentials());
+    let mut mock = assembly_mock();
+    mock.replies.get_mut(3).unwrap().body = serde_json::to_vec(&json!({
+        "rootAssembly": {
+            "documentId": DID, "elementId": AS, "documentMicroversion": MID,
+            "instances": [
+                {"type":"Part", "documentId":OTHER, "elementId":OTHER_ELEMENT,
+                "documentVersion":OTHER_VERSION, "documentMicroversion":OTHER_MID,
+                "configuration":""},
+                {"type":"Part", "documentId":OTHER, "elementId":OTHER_ELEMENT,
+                "documentVersion":OTHER_VERSION, "documentMicroversion":OTHER_MID}
+            ]
+        },
+        "subAssemblies": []
+    })).unwrap();
+    let root_features = mock.replies.pop_back().unwrap();
+    mock.replies.extend([
+        response(200, json!({"name":"External"})),
+        response(200, json!([{"id":OTHER_ELEMENT,"elementType":"PARTSTUDIO","name":"Part"}])),
+        response(200, json!({"sourceMicroversion":OTHER_MID,"features":[]})),
+        root_features,
+    ]);
+    let _ = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
+    assert!(mock.sent.iter().all(|(_, _, query)| !query.contains("configuration=")));
+    let mut idle = Mock::default();
+    let repeated = estimate_calls(&mut idle, &auth, &source(AS), &cache).unwrap();
+    assert!(idle.sent.is_empty());
+    assert_eq!(repeated.listing_calls, 0);
 }
 
 #[test]

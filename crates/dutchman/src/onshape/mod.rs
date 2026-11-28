@@ -9,12 +9,12 @@ use auth::Auth;
 pub use auth::{BearerToken, Credentials, FetchAuth};
 use http::Session;
 pub use http::{FetchProgress, HttpClient, NetworkClient, Request, Response};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-pub use store::{Backend, FileBackend, Source, Store, SystemBackend, NOT_CONNECTED};
+pub use store::{Backend, FileBackend, NOT_CONNECTED, Source, Store, SystemBackend};
 
 pub const SCHEMA: &str = "dutchman.onshape-fetch/1";
 const MAX_RESPONSE: u64 = 64 * 1024 * 1024;
@@ -417,17 +417,23 @@ pub struct Estimate {
     /// Part Studios and assemblies the fetch is expected to read.
     pub elements: u32,
     mid: String,
+    /// Whether reference discovery completed before the approval boundary.
+    discovery_complete: bool,
 }
 impl Estimate {
     pub fn needs_approval(&self) -> bool {
-        self.calls > ASK_ABOVE_CALLS
+        !self.discovery_complete || self.calls > ASK_ABOVE_CALLS
     }
 
     /// The text that asks for the user's go, without naming a command-line option.
     pub fn question(&self) -> String {
+        let estimate = if self.discovery_complete {
+            format!("about {}", calls_text(self.calls))
+        } else {
+            format!("at least {}", calls_text(self.calls))
+        };
         format!(
-            "This document needs about {} of your yearly Onshape API calls ({} on Free plans). Continue?",
-            calls_text(self.calls),
+            "This document needs {estimate} of your yearly Onshape API calls ({} on Free plans). Continue?",
             calls_text(FREE_PLAN_YEARLY_CALLS)
         )
     }
@@ -452,143 +458,269 @@ pub fn estimate_calls<C: HttpClient>(
     source: &DocumentUrl,
     cache: &Path,
 ) -> Result<Estimate> {
+    estimate_calls_with_limit(client, credentials, source, cache, ASK_ABOVE_CALLS)
+}
+
+fn estimate_calls_with_limit<C: HttpClient>(
+    client: &mut C,
+    credentials: &FetchAuth,
+    source: &DocumentUrl,
+    cache: &Path,
+    listing_limit: u32,
+) -> Result<Estimate> {
     let credentials = credentials.as_auth();
     check_source(&credentials, source)?;
     let mut session = Session {
         client,
         credentials,
         calls: 0,
-        max_calls: http::AUTO_CEILING_CALLS,
+        max_calls: listing_limit,
         auto: false,
         progress: None,
         needed: None,
     };
     let (scope, mid) = resolve(&mut session, source, cache)?;
-    let content_kind = if source.kind == "v" { "v" } else { "m" };
-    let content_id = if source.kind == "v" {
-        source.version.clone()
-    } else {
-        mid.clone()
-    };
-    let mut fetcher = Fetcher::new(&mut session, &scope, source, &mid, content_kind);
-    document_name(&mut fetcher, source)?;
-    let tabs = fetcher.json(
-        &format!(
-            "{API}/documents/d/{}/{content_kind}/{content_id}/elements",
-            source.document
-        ),
-        "",
-    )?;
-    let tabs = tabs.as_array().ok_or_else(response_error)?;
-    let kind_of = |tab: &Value| {
-        tab.get("elementType")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
-    let linked = tabs
-        .iter()
-        .find(|tab| tab.get("id").and_then(Value::as_str) == Some(&source.element))
-        .ok_or_else(response_error)?;
-    let studios = |tabs: &[Value]| {
-        tabs.iter()
-            .filter(|tab| matches!(kind_of(tab).as_deref(), Some("PARTSTUDIO" | "ASSEMBLY")))
-            .count()
-    };
-    // An assembly may use any studio of the document; a studio is read alone.
-    let mut elements = if kind_of(linked).as_deref() == Some("ASSEMBLY") {
-        studios(tabs)
-    } else {
-        1
-    };
-    let mut remaining = u32::try_from(elements)
-        .unwrap_or(u32::MAX)
-        .saturating_mul(http::AUTO_ELEMENT_CALLS);
-    if kind_of(linked).as_deref() == Some("ASSEMBLY") {
-        let mut queue = VecDeque::from([source.element.clone()]);
-        let mut visited = BTreeSet::new();
-        let mut external = BTreeSet::new();
-        while let Some(element) = queue.pop_front() {
-            if !visited.insert(element.clone()) {
-                continue;
-            }
-            if visited.len() > 1000 {
-                return Err(Error::new(
-                    ErrorKind::Limit,
-                    "The Onshape assembly references too many assemblies to estimate; choose a smaller assembly.",
-                ));
-            }
-            let Some(tab) = tabs
-                .iter()
-                .find(|tab| tab.get("id").and_then(Value::as_str) == Some(&element))
-            else {
-                return Err(response_error());
-            };
-            if kind_of(tab).as_deref() != Some("ASSEMBLY") {
-                continue;
-            }
-            let definition_path = format!(
-                "{API}/assemblies/d/{}/{content_kind}/{content_id}/e/{element}",
+    let mut discovered_elements = 0usize;
+    let result = (|| {
+        let content_kind = if source.kind == "v" { "v" } else { "m" };
+        let content_id = if source.kind == "v" {
+            source.version.clone()
+        } else {
+            mid.clone()
+        };
+        let mut fetcher = Fetcher::new(&mut session, &scope, source, &mid, content_kind);
+        document_name(&mut fetcher, source)?;
+        let tabs = fetcher.json(
+            &format!(
+                "{API}/documents/d/{}/{content_kind}/{content_id}/elements",
                 source.document
-            );
-            let definition = fetcher.json(
-                &definition_path,
-                "includeMateFeatures=true&includeMateConnectors=true",
-            )?;
-            references(
-                &definition,
-                &source.document,
-                &mid,
-                &mut queue,
-                &mut external,
-            )?;
-        }
-        let mut estimated = BTreeSet::new();
-        let mut ancestry =
-            BTreeSet::from([(source.document.clone(), mid.clone(), source.element.clone())]);
-        for (document, element, external_version, external_mid, configuration, linked_document) in
-            external
-        {
-            let identity = (document.clone(), external_version.clone(), element.clone());
-            ancestry.insert(identity.clone());
-            remaining = remaining.saturating_add(estimate_external_partstudio(
-                fetcher.session,
-                &scope,
-                &document,
-                &external_version,
-                &element,
-                &external_mid,
-                configuration.as_deref(),
-                linked_document.as_deref(),
-                &ancestry,
-                &mut estimated,
-                &mut elements,
-            )?);
-            ancestry.remove(&identity);
-        }
-    }
-    if kind_of(linked).as_deref() == Some("PARTSTUDIO") {
-        // Replies already cached cost nothing.
-        let base = format!(
-            "{API}/partstudios/d/{}/{content_kind}/{content_id}/e/{}",
-            source.document, source.element
-        );
-        let features = format!("{base}/features");
-        let cached = [
-            fetcher.is_cached(
-                &features,
-                "rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false",
             ),
-            fetcher.is_cached(&format!("{base}/sketches"), ""),
-        ];
-        remaining = remaining.saturating_sub(u32::from(cached[0]) + u32::from(cached[1]));
+            "",
+        )?;
+        let tabs = tabs.as_array().ok_or_else(response_error)?;
+        let kind_of = |tab: &Value| {
+            tab.get("elementType")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        let linked = tabs
+            .iter()
+            .find(|tab| tab.get("id").and_then(Value::as_str) == Some(&source.element))
+            .ok_or_else(response_error)?;
+        let studios = |tabs: &[Value]| {
+            tabs.iter()
+                .filter(|tab| matches!(kind_of(tab).as_deref(), Some("PARTSTUDIO" | "ASSEMBLY")))
+                .count()
+        };
+        // An assembly may use any studio of the document; a studio is read alone.
+        let mut elements = if kind_of(linked).as_deref() == Some("ASSEMBLY") {
+            studios(tabs)
+        } else {
+            1
+        };
+        discovered_elements = elements;
+        let mut remaining = u32::try_from(elements)
+            .unwrap_or(u32::MAX)
+            .saturating_mul(http::AUTO_ELEMENT_CALLS);
+        for tab in tabs {
+            let Some(element) = tab.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if kind_of(linked).as_deref() != Some("ASSEMBLY") && element != source.element {
+                continue;
+            }
+            match kind_of(tab).as_deref() {
+                Some("ASSEMBLY") => {
+                    let base = format!(
+                        "{API}/assemblies/d/{}/{content_kind}/{content_id}/e/{element}/features",
+                        source.document
+                    );
+                    if fetcher.is_cached(&base, "") {
+                        remaining = remaining.saturating_sub(http::AUTO_ELEMENT_CALLS);
+                    }
+                }
+                Some("PARTSTUDIO") => {
+                    if let Some(missing) = cached_partstudio_missing(
+                        &mut fetcher,
+                        source,
+                        element,
+                        content_kind,
+                        &content_id,
+                    )? {
+                        remaining = remaining
+                            .saturating_sub(http::AUTO_ELEMENT_CALLS)
+                            .saturating_add(missing);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if kind_of(linked).as_deref() == Some("ASSEMBLY") {
+            let mut queue = VecDeque::from([source.element.clone()]);
+            let mut visited = BTreeSet::new();
+            let mut external = BTreeSet::new();
+            while let Some(element) = queue.pop_front() {
+                if !visited.insert(element.clone()) {
+                    continue;
+                }
+                if visited.len() > 1000 {
+                    return Err(Error::new(
+                        ErrorKind::Limit,
+                        "The Onshape assembly references too many assemblies to estimate; choose a smaller assembly.",
+                    ));
+                }
+                let Some(tab) = tabs
+                    .iter()
+                    .find(|tab| tab.get("id").and_then(Value::as_str) == Some(&element))
+                else {
+                    return Err(response_error());
+                };
+                if kind_of(tab).as_deref() != Some("ASSEMBLY") {
+                    continue;
+                }
+                let definition_path = format!(
+                    "{API}/assemblies/d/{}/{content_kind}/{content_id}/e/{element}",
+                    source.document
+                );
+                let definition = fetcher.json(
+                    &definition_path,
+                    "includeMateFeatures=true&includeMateConnectors=true",
+                )?;
+                references(
+                    &definition,
+                    &source.document,
+                    &mid,
+                    &mut queue,
+                    &mut external,
+                )?;
+            }
+            let mut estimated = BTreeSet::new();
+            let mut ancestry =
+                BTreeSet::from([(source.document.clone(), mid.clone(), source.element.clone())]);
+            for (
+                document,
+                element,
+                external_version,
+                external_mid,
+                configuration,
+                linked_document,
+            ) in external
+            {
+                let identity = (document.clone(), external_version.clone(), element.clone());
+                ancestry.insert(identity.clone());
+                remaining = remaining.saturating_add(estimate_external_partstudio(
+                    fetcher.session,
+                    &scope,
+                    &document,
+                    &external_version,
+                    &element,
+                    &external_mid,
+                    configuration.as_deref(),
+                    linked_document.as_deref(),
+                    &ancestry,
+                    &mut estimated,
+                    &mut elements,
+                )?);
+                discovered_elements = elements;
+                ancestry.remove(&identity);
+            }
+        }
+        let listing_calls = session.calls;
+        Ok(Estimate {
+            calls: listing_calls.saturating_add(remaining),
+            listing_calls,
+            elements: u32::try_from(elements).unwrap_or(u32::MAX),
+            mid: mid.clone(),
+            discovery_complete: true,
+        })
+    })();
+    match result {
+        Err(error)
+            if listing_limit == ASK_ABOVE_CALLS
+                && error.kind == ErrorKind::Budget
+                && session.calls >= listing_limit =>
+        {
+            Ok(Estimate {
+                calls: ASK_ABOVE_CALLS.saturating_add(1),
+                listing_calls: session.calls,
+                elements: u32::try_from(discovered_elements).unwrap_or(u32::MAX),
+                mid,
+                discovery_complete: false,
+            })
+        }
+        result => result,
     }
-    let listing_calls = session.calls;
-    Ok(Estimate {
-        calls: listing_calls.saturating_add(remaining),
-        listing_calls,
-        elements: u32::try_from(elements).unwrap_or(u32::MAX),
-        mid,
-    })
+}
+
+/// Replaces the conservative reservation when a local Part Studio's feature history is
+/// already cached, counting the remaining reads using the same rules as capture.
+fn cached_partstudio_missing<C: HttpClient>(
+    fetcher: &mut Fetcher<'_, '_, C>,
+    source: &DocumentUrl,
+    element: &str,
+    content_kind: &str,
+    content_id: &str,
+) -> Result<Option<u32>> {
+    let base = format!(
+        "{API}/partstudios/d/{}/{content_kind}/{content_id}/e/{element}",
+        source.document
+    );
+    let features_path = format!("{base}/features");
+    let features_query = "rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false";
+    if !fetcher.is_cached(&features_path, features_query) {
+        return Ok(None);
+    }
+    let features = fetcher.json(&features_path, features_query)?;
+    let list = features
+        .get("features")
+        .and_then(Value::as_array)
+        .ok_or_else(response_error)?;
+    if list.len() > 10000 {
+        return Err(Error::new(
+            ErrorKind::Limit,
+            "The Onshape Part Studio has too many features to estimate; fetch a smaller element.",
+        ));
+    }
+    let mut wanted = BTreeSet::new();
+    for (index, feature) in list.iter().enumerate() {
+        if feature.get("suppressed").and_then(Value::as_bool) != Some(true)
+            && needs_topology(feature, 0)?
+        {
+            wanted.insert(index);
+        }
+    }
+    for index in part_creators(list) {
+        wanted.insert(index);
+        wanted.insert(index.saturating_add(1));
+    }
+    let mut missing = wanted
+        .iter()
+        .map(|index| {
+            fetcher.missing(
+                &format!("{base}/bodydetails"),
+                &bodydetails_query(*index, list.len()),
+            )
+        })
+        .sum::<u32>();
+    let configuration = format!(
+        "{API}/elements/d/{}/{content_kind}/{content_id}/e/{element}/configuration",
+        source.document
+    );
+    let variables = format!(
+        "{API}/variables/d/{}/{content_kind}/{content_id}/e/{element}/variables",
+        source.document
+    );
+    missing = missing
+        .saturating_add(fetcher.missing(&configuration, ""))
+        .saturating_add(fetcher.missing(&variables, "includeValuesAndReferencedVariables=true"))
+        .saturating_add(fetcher.missing(&format!("{base}/sketches"), ""));
+    if !sketch_only(list) {
+        missing = missing.saturating_add(fetcher.step_calls_missing(source, element, None, None)?);
+    }
+    if source.kind == "w" && element == source.element {
+        missing = missing.saturating_add(1);
+    }
+    Ok(Some(missing))
 }
 
 /// Estimates the uncached calls for a referenced Part Studio without fetching its body
@@ -1676,9 +1808,26 @@ fn capture<C: HttpClient>(
     }
     // External references are pinned to immutable versions. Capture them under
     // references/ so the assembly bundle remains self-contained.
+    let mut captured_prefixes = BTreeSet::new();
     for (document, element, external_version, external_mid, configuration, linked_document) in
         external.clone()
     {
+        let config_segment = configuration
+            .as_deref()
+            .map(|value| {
+                hash(value.as_bytes())
+                    .get(..16)
+                    .map(|hash| format!("config-{hash}"))
+                    .ok_or_else(response_error)
+            })
+            .transpose()?;
+        let prefix = match config_segment {
+            Some(config) => format!("references/{document}/{external_version}/{element}/{config}/"),
+            None => format!("references/{document}/{external_version}/{element}/"),
+        };
+        if !captured_prefixes.insert(prefix.clone()) {
+            continue;
+        }
         fetcher.session.allow(http::AUTO_ELEMENT_CALLS);
         let identity = (document.clone(), external_mid.clone(), element.clone());
         if ancestry.contains(&identity) || ancestry.len() >= 8 {
@@ -1718,13 +1867,6 @@ fn capture<C: HttpClient>(
         if archive.len() > 4096 {
             return Err(response_error());
         }
-        let config_segment = configuration
-            .as_deref()
-            .map(|value| format!("config-{}", &hash(value.as_bytes())[..16]));
-        let prefix = match config_segment {
-            Some(config) => format!("references/{document}/{external_version}/{element}/{config}/"),
-            None => format!("references/{document}/{external_version}/{element}/"),
-        };
         let mut reference_sources = BTreeMap::new();
         for i in 0..archive.len() {
             let mut member = archive.by_index(i).map_err(io_error)?;
@@ -2027,6 +2169,7 @@ fn references(
                     let configuration = map
                         .get("configuration")
                         .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
                         .map(|value| {
                             if value.len() > 16 * 1024 {
                                 Err(response_error())
