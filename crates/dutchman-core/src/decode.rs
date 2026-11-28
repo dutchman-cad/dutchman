@@ -1172,6 +1172,63 @@ fn geometry_only(ir: &mut cadmpeg_ir::CadIr) {
     }
 }
 
+/// Leave out failing stored states until cadmpeg can mark a derived history-body
+/// tolerance through the CADIR annotation-key extension in cadmpeg/cadmpeg#2454;
+/// remove this rule once history nests carry those derived vertex tolerances.
+fn omit_inconsistent_history_states(
+    ir: &mut cadmpeg_ir::CadIr,
+    findings: &mut Vec<cadmpeg_ir::report::check::Finding>,
+    report: &mut Report,
+) {
+    use cadmpeg_ir::report::check::Check;
+    use std::collections::BTreeSet;
+
+    let errors: Vec<_> = findings
+        .iter()
+        .filter(|f| f.severity >= CadmpegSeverity::Error)
+        .collect();
+    if errors.is_empty() {
+        return;
+    }
+    let mut bodies = BTreeSet::new();
+    for finding in errors {
+        let body = finding.related.first().and_then(|id| {
+            ir.model
+                .history_bodies
+                .iter()
+                .find(|body| body.id.as_str() == id)
+        });
+        let Some(body) = body.filter(|_| finding.check == Check::GeometricConsistency) else {
+            return;
+        };
+        bodies.insert(body.id.as_str().to_owned());
+    }
+    let steps: BTreeSet<_> = ir
+        .model
+        .history_bodies
+        .iter()
+        .filter(|body| bodies.contains(body.id.as_str()))
+        .filter_map(|body| body.produced_by.as_ref().or(body.consumed_by.as_ref()))
+        .map(|id| id.as_str().to_owned())
+        .collect();
+    for step in &steps {
+        report.push_at(Stage::Project, Severity::Degraded, step.clone(), format!(
+            "{} history steps' stored states left out: this step's stored states were left out because their edges don't meet their vertices within cadmpeg's tolerance; history checks that need them are skipped", steps.len()
+        ));
+    }
+    ir.model
+        .history_bodies
+        .retain(|body| !bodies.contains(body.id.as_str()));
+    findings.retain(|finding| {
+        !(finding.severity >= CadmpegSeverity::Error
+            && finding.check == Check::GeometricConsistency
+            && finding
+                .related
+                .first()
+                .is_some_and(|id| bodies.contains(id)))
+    });
+}
+
 pub(crate) fn validate_decoded(
     ir: &mut cadmpeg_ir::CadIr,
     depth: DecodeDepth,
@@ -1188,9 +1245,10 @@ pub(crate) fn validate_decoded(
     let decode_error = |err: &dyn std::fmt::Display| Error::Decode(err.to_string());
     let ctx = DecodeContext::for_loaded_input(&arena, policy, input_bytes)
         .map_err(|err| decode_error(&err))?;
-    let validation =
+    let mut validation =
         validate_neutral_for_decode(&ctx, ir, Vec::new()).map_err(|err| decode_error(&err))?;
     ctx.finish_session().map_err(|err| decode_error(&err))?;
+    omit_inconsistent_history_states(ir, &mut validation.findings, report);
     if !validation.is_ok() {
         let first = validation
             .findings
@@ -2042,6 +2100,96 @@ mod tests {
             .product_definitions
             .iter()
             .all(|definition| definition.sketches.is_empty()));
+    }
+
+    #[test]
+    fn decode_gate_accepts_only_history_geometry_failures() {
+        for (history, final_model) in [(true, false), (false, true), (true, true)] {
+            let mut ir = cadmpeg_ir::examples::unit_cube_with_history_body().unwrap();
+            let move_point = |point: &mut cadmpeg_ir::topology::Point| {
+                let mut wire = serde_json::to_value(&*point).unwrap();
+                wire["position"] = serde_json::json!({"x": 100.0, "y": 100.0, "z": 100.0});
+                *point = serde_json::from_value(wire).unwrap();
+            };
+            if history {
+                move_point(&mut ir.model.history_bodies[0].topology.points[0]);
+            }
+            if final_model {
+                move_point(&mut ir.geometry.points[0]);
+            }
+            let geometry = ir.geometry.clone();
+            let mut report = Report::default();
+            let result = validate_decoded(&mut ir, DecodeDepth::Full, &policy(), 0, &mut report);
+            assert_eq!(result.is_ok(), !final_model, "{result:?}");
+            assert_eq!(ir.geometry, geometry);
+            if final_model {
+                assert!(report.losses().is_empty());
+                assert_eq!(ir.model.history_bodies.len(), 1);
+            } else {
+                assert!(ir.model.history_bodies.is_empty());
+                assert_eq!(
+                    report
+                        .losses()
+                        .iter()
+                        .filter(|l| l.severity == Severity::Degraded)
+                        .count(),
+                    1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn history_state_exception_is_scoped_and_counts_steps() {
+        use cadmpeg_ir::report::check::{Check, Finding};
+        for count in [1, 2] {
+            for final_error in [false, true] {
+                let mut ir = cadmpeg_ir::examples::unit_cube_with_history_body().unwrap();
+                if count == 2 {
+                    let mut body = ir.model.history_bodies[0].clone();
+                    body.id = cadmpeg_ir::ids::HistoryBodyId::mint("test:history-body:nest#second")
+                        .unwrap();
+                    body.produced_by = Some(
+                        cadmpeg_ir::features::FeatureId::mint("test:model:feature#second").unwrap(),
+                    );
+                    ir.model.history_bodies.push(body);
+                }
+                let mut findings: Vec<_> = ir
+                    .model
+                    .history_bodies
+                    .iter()
+                    .map(|body| Finding {
+                        check: Check::GeometricConsistency,
+                        rule: cadmpeg_ir::rule_name!("test.geometry"),
+                        severity: CadmpegSeverity::Error,
+                        message: "synthetic geometric mismatch".into(),
+                        entity: None,
+                        related: vec![body.id.as_str().to_owned()],
+                    })
+                    .collect();
+                if final_error {
+                    let mut finding = findings[0].clone();
+                    finding.related.clear();
+                    findings.push(finding);
+                }
+                let mut report = Report::default();
+                omit_inconsistent_history_states(&mut ir, &mut findings, &mut report);
+                if final_error {
+                    assert_eq!(ir.model.history_bodies.len(), count);
+                    assert!(report.losses().is_empty());
+                    assert!(!findings.is_empty());
+                } else {
+                    assert!(ir.model.history_bodies.is_empty());
+                    assert!(findings.is_empty());
+                    assert_eq!(report.losses().len(), count);
+                    assert!(report
+                        .losses()
+                        .iter()
+                        .all(|loss| loss.severity == Severity::Degraded
+                            && loss.detail.starts_with(&format!("{count} history steps'"))));
+                }
+            }
+        }
     }
 
     #[test]
