@@ -73,7 +73,45 @@ keeps `onshape/history.not-supported` and the final STEP geometry. Fetch the bun
 again to capture the missing placement. Legacy explicit feature planes and built-in
 plane behavior remain supported.
 
+## What is verified
+
+On 2026-11-27, Dutchman converted all 25 available Onshape-built
+bundles to SolidCraft. Six had full editable history checked against the bundle's
+final STEP shape. Eleven had partial history. Eight kept the final geometry without
+editable body history. A successful conversion does not mean that all features map.
+
+| Recipe family and feature | Files tested | Result |
+|---|---:|---|
+| E02a–e: extrude as a new body, join, cut, intersect, and through-all cut | 5 | Full editable history; STEP check passed for all five. |
+| X15b: fillet after removal of an earlier chamfer | 1 | Full editable history; STEP check passed. |
+| P08a/b: circular hole pattern | 2 | Partial history; pattern history is not verified. |
+| X11a/b: extrude up to a curved or flat face | 2 | Partial history; up-to-face construction is not verified. |
+| X12a/b: rectangular hole pattern and direction change | 2 | Partial history; pattern history is not verified. |
+| X15a: chamfer followed by fillet | 1 | Partial history; the complete chain is not verified. |
+| E03b–e: solid trim, face split, and surface split tool | 4 | Partial history; split and trim history is not verified. |
+| E01a–e: offset planes and extrude bounds | 5 | Geometry only; editable body history is not verified. |
+| S01a/b: sheet metal base; S02b: flange variant | 3 | Geometry only; sheet metal history is not verified. |
+
+Partial history retains some editable features and the final STEP geometry. These
+11 results report `partial`, not a passed check for the complete history. Mapping
+counts alone do not prove that a feature was written as editable history. These
+checks compare with the captured STEP shape; they do not prove the recipe answer
+key or every possible use of a feature.
+
+P04d, P04e and S02a failed in the Onshape builder. Their builder fixes still need a
+retest. E01f built with a volume that differs from its answer key; its builder fix
+also needs a retest. It was not in the 25 measured bundles. None of these four recipes
+is verified here.
+
+These recipes have not run yet: S02c, S03a/d/e, S04a/b/f/g, S07a/b/c, S13a/b/c,
+O04a and O08a. Their conversion is not verified. Features outside this measured
+set are also not verified by this check. The reader mappings below describe
+available code paths and their limits; they do not extend this measured set.
+
 ## Editable history
+
+The table describes reader mappings. Use the verification results above to see
+which complete conversions were checked on this Onshape-built set.
 
 | Source construction | Reader mapping | Limits and named losses |
 |---|---|---|
