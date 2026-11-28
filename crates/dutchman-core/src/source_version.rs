@@ -53,9 +53,7 @@ mod tests {
     fn native(databases: serde_json::Value) -> Native {
         let mut wire = serde_json::to_value(cadmpeg_ir::CadIr::empty()).unwrap();
         wire["native"]["inventor"] = json!({ "databases": databases });
-        cadmpeg_ir::CadIr::from_json(&wire.to_string())
-            .unwrap()
-            .native
+        crate::ir_wire::from_str(&wire.to_string()).unwrap().native
     }
 
     fn database(band: u32, major: u64) -> serde_json::Value {

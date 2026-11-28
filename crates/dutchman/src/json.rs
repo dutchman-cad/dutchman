@@ -2384,7 +2384,7 @@ mod compact_loss_tests {
             }
         }
         fn records(mut model: Model, keys: &[u32]) -> Model {
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
             wire["model"]["features"] =
                 json!(keys.iter().map(|key| json!({
                 "id": format!("synthetic:model:feature#{key}"), "ordinal": key,
@@ -2401,7 +2401,7 @@ mod compact_loss_tests {
                     "dependencies": [], "properties": {}
                 }))
                 .collect::<Vec<_>>());
-            model.ir = serde_json::from_value(wire).unwrap();
+            model.ir = dutchman_core::ir_wire::from_value(wire).unwrap();
             model
         }
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))

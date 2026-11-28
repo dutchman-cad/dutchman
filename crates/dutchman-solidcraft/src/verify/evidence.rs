@@ -722,7 +722,7 @@ mod tests {
             "dependencies":[],"properties":{}
         }]);
         Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
             fidelity: None,
             name: "Cube".to_owned(),
             source_file: None,
@@ -789,13 +789,13 @@ mod tests {
             assert!(!failed(&report));
         }
         let mut model = model();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["parameters"][0]["expression"] = json!("unsupported()");
         wire["model"]["parameters"][0]
             .as_object_mut()
             .unwrap()
             .remove("value");
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let report = parameters(&model, Ok(vec![json!({"parameters":[]})]));
         assert_eq!(report[0]["name"], Value::Null);
         assert_eq!(report[0]["check"]["status"], "not_checked");
@@ -818,7 +818,7 @@ mod tests {
     #[test]
     fn renamed_parameter_identity_is_retained_without_checking_its_value() {
         let mut model = model();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         wire["model"]["parameters"][0]["name"] = json!("depth value");
         let mut angle = wire["model"]["parameters"][0].clone();
         angle["id"] = json!("f3d:model:parameter#2");
@@ -830,7 +830,7 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .push(angle);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         let report = parameters(
             &model,
             Ok(vec![json!({"parameters":[
@@ -888,7 +888,7 @@ mod tests {
             ("depth", "2 + 2"),
         ] {
             let mut model = model();
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
             wire["model"]["parameters"][0]["name"] = json!(name);
             wire["model"]["parameters"][0]["expression"] = json!(expression);
             if name == "depth" {
@@ -897,7 +897,7 @@ mod tests {
                     .unwrap()
                     .remove("value");
             }
-            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
             let mut report = Report::default();
             let outcome = compare_report(
                 &NoParameterReplay,

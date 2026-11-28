@@ -24,10 +24,7 @@ fn cube_step() -> Vec<u8> {
     let encoder = build_encoder(Format::Step);
     let (_, target) = encoder.targets().default().unwrap();
     let plan = encoder
-        .plan(
-            EncodeInput::new(&ir, None),
-            TargetRequest::Explicit(target.id.as_str()),
-        )
+        .plan(EncodeInput::new(&ir, None).with_target(TargetRequest::Explicit(target.id.as_str())))
         .unwrap();
     let mut bytes = Vec::new();
     plan.write_to(&mut bytes).unwrap();
@@ -533,15 +530,18 @@ fn metallic_and_roughness_reach_the_design_look_as_pbr() {
         assert_eq!(found.len(), 1, "{what}: {bodies:?}");
         found[0]["pbr"].clone()
     };
+    // Each body carries the name its source states: an overlay's own, and the board's STEP
+    // product name (the bodies were "Body", "Body (Copper)" and "Body (Silk)" before cadmpeg
+    // 4062d266 named a STEP body by its product).
     assert_eq!(
-        pbr_of("Body (Copper)"),
+        pbr_of("Copper"),
         json!({"metallic": 0.0, "roughness": 0.45, "dielectric_ior": 1.5})
     );
     assert_eq!(
-        pbr_of("Body"),
+        pbr_of("unit cube"),
         json!({"metallic": 0.0, "roughness": 0.5, "dielectric_ior": 1.5})
     );
-    assert!(pbr_of("Body (Silk)").is_null(), "no values, no pbr");
+    assert!(pbr_of("Silk").is_null(), "no values, no pbr");
     if let Some(cli) = cli() {
         assert_eq!(evaluate(&cli, &bytes).len(), 3);
     }

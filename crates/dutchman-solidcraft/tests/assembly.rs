@@ -207,9 +207,9 @@ fn each_parts_history_is_reported() {
     let assembly = model.assembly.as_mut().unwrap();
     let mut part = assembly.parts[0].clone();
     part.name = "Ball".to_owned();
-    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&part.ir).unwrap();
     wire["model"]["features"] = serde_json::json!([{"id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false, "outputs": [wire["geometry"]["bodies"][0]["id"]], "definition": {"kind": "operation", "value": {"kind": "sphere", "value": {"center": {"x": 5.0, "y": 5.0, "z": 5.0}, "radius": 5.0, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": []}]);
-    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    part.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     assembly.parts.push(part);
     assembly.placements[1].part = 1;
     let (bytes, report) = written(&model);
@@ -245,9 +245,9 @@ fn folders_keep_mapped_history_and_its_suppressed_original() {
     let mut model = placed_twice();
     let assembly = model.assembly.as_mut().unwrap();
     let mut part = assembly.parts[0].clone();
-    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&part.ir).unwrap();
     wire["model"]["features"] = serde_json::json!([{"id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false, "outputs": [wire["geometry"]["bodies"][0]["id"]], "definition": {"kind": "operation", "value": {"kind": "sphere", "value": {"center": {"x": 5.0, "y": 5.0, "z": 5.0}, "radius": 5.0, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": []}]);
-    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    part.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     assembly.parts.push(part);
     assembly.placements[1].part = 1;
     let (bytes, _) = written(&model);
@@ -275,9 +275,9 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
     let mut model = placed_twice();
     let assembly = model.assembly.as_mut().unwrap();
     let mut part = assembly.parts[0].clone();
-    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&part.ir).unwrap();
     wire["model"]["features"] = serde_json::json!([{"id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false, "outputs": [wire["geometry"]["bodies"][0]["id"]], "definition": {"kind": "operation", "value": {"kind": "sphere", "value": {"center": {"x": 5.0, "y": 5.0, "z": 5.0}, "radius": 5.0, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": []}]);
-    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    part.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     assembly.parts.push(part);
     assembly.placements[1].part = 1;
     for target in [
@@ -395,7 +395,7 @@ fn a_part_with_no_bodies_is_an_empty_component_its_joints_still_join() {
     let mut model = placed_twice();
     if let Some(assembly) = &mut model.assembly {
         let mut empty = assembly.parts[0].clone();
-        let mut wire = serde_json::to_value(&empty.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&empty.ir).unwrap();
         // Every arena emptied: a component with nothing in it.
         for home in ["geometry", "model"] {
             for arena in wire[home].as_object_mut().unwrap().values_mut() {
@@ -404,7 +404,7 @@ fn a_part_with_no_bodies_is_an_empty_component_its_joints_still_join() {
                 }
             }
         }
-        empty.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        empty.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         empty.name = "Spacer".to_owned();
         assembly.parts.push(empty);
         assembly.placements[1].part = 1;
@@ -466,7 +466,7 @@ fn empty_leaf_numbers_include_holders_and_are_stable_across_workers() {
     let mut model = placed_twice();
     let top = model.assembly.as_mut().unwrap();
     let mut empty = top.parts[0].clone();
-    let mut wire = serde_json::to_value(&empty.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&empty.ir).unwrap();
     for home in ["geometry", "model"] {
         for arena in wire[home].as_object_mut().unwrap().values_mut() {
             if arena.is_array() {
@@ -474,7 +474,7 @@ fn empty_leaf_numbers_include_holders_and_are_stable_across_workers() {
             }
         }
     }
-    empty.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    empty.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     empty.name = "Synthetic empty leaf".into();
     let mut holder = empty.clone();
     holder.name = "Synthetic holder".into();
@@ -792,7 +792,7 @@ fn evaluate(cli: &Path, design: &[u8]) -> Vec<Value> {
 /// 100 mm along X, as cadmpeg places the components a Fusion root component contains.
 fn with_components(nested: bool) -> Model {
     let part = placed_twice().assembly.unwrap().parts[0].clone();
-    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&part.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     wire["model"]["product_definitions"] = serde_json::json!([
         {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body], "bom_properties": {}, "sketches": []},
@@ -801,12 +801,7 @@ fn with_components(nested: bool) -> Model {
     let definitions = wire["model"]["product_definitions"].as_array_mut().unwrap();
     for definition in definitions.iter_mut() {
         definition["storage"] = serde_json::json!({"kind":"embedded"});
-        for field in [
-            "tessellations",
-            "occurrences",
-            "instance_bodies",
-            "representations",
-        ] {
+        for field in ["occurrences", "instance_bodies", "representations"] {
             definition[field] = serde_json::json!([]);
         }
     }
@@ -841,7 +836,7 @@ fn with_components(nested: bool) -> Model {
         serde_json::json!([placed(0, "block", 0.0), placed(1, "block", 30.0)])
     };
     let mut model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         name: "blocks".to_owned(),
         ..part
     };
@@ -869,7 +864,7 @@ fn a_design_with_components_becomes_components_and_occurrences() {
 /// sketch uses.
 fn with_sketches() -> Model {
     let model = with_components(false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let sketch = |key: u32, placement: Value| serde_json::json!({"id": format!("f3d:model:sketch#{key}"), "name": format!("Layout {key}"), "visible": false, "placement": placement, "profiles": []});
     wire["model"]["sketches"] = serde_json::json!([
         sketch(
@@ -893,7 +888,7 @@ fn with_sketches() -> Model {
     wire["model"]["parameters"] =
         serde_json::json!([parameter(1, "span", 20.0), parameter(2, "spare", 5.0)]);
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }
@@ -940,7 +935,7 @@ fn an_assemblys_own_sketches_are_kept_hidden_in_the_design() {
 /// listing the first as its own.
 fn with_owned_sketch() -> Model {
     let model = with_sketches();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["product_definitions"][0]["sketches"] = serde_json::json!(["f3d:model:sketch#1"]);
     let mut third = wire["model"]["sketches"][0].clone();
     third["id"] = "f3d:model:sketch#3".into();
@@ -950,7 +945,7 @@ fn with_owned_sketch() -> Model {
         .unwrap()
         .push(third);
     let mut model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
@@ -995,7 +990,7 @@ fn a_sketch_a_component_owns_is_written_once_under_it_and_the_rest_stay_at_the_r
 /// owns, and one with no owner.
 fn with_sketch_of_a_component_without_bodies() -> Model {
     let model = with_components(true);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let ids = [
         "f3d:model:sketch#1",
         "f3d:model:sketch#2",
@@ -1017,9 +1012,9 @@ fn with_sketch_of_a_component_without_bodies() -> Model {
         .collect::<Vec<_>>());
     let definitions = wire["model"]["product_definitions"].as_array_mut().unwrap();
     definitions[1]["sketches"] = serde_json::json!([ids[0]]);
-    definitions.push(serde_json::json!({"id": "f3d:model:component#ghost", "kind": "part", "label": "Ghost", "bodies": [], "sketches": [ids[1]], "bom_properties": {}, "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}));
+    definitions.push(serde_json::json!({"id": "f3d:model:component#ghost", "kind": "part", "label": "Ghost", "bodies": [], "sketches": [ids[1]], "bom_properties": {}, "storage":{"kind":"embedded"}, "occurrences":[], "instance_bodies":[], "representations":[]}));
     let mut model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     };
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
@@ -1180,7 +1175,7 @@ fn components_inside_a_component_stay_beneath_it() {
 /// fixed to the design itself.
 fn jointed() -> Model {
     let mut model = with_components(true);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["occurrences"][2]["transform"] = serde_json::json!([
         [0.0, -1.0, 0.0, 30.0],
         [1.0, 0.0, 0.0, 0.0],
@@ -1223,7 +1218,7 @@ fn jointed() -> Model {
         joint(1, side(Some(0)), side(Some(1))),
         joint(2, side(None), side(Some(9))),
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
     model
 }
@@ -1340,7 +1335,7 @@ fn solidcraft_reads_each_joint_as_built_and_solves_without_moving_anything() {
 /// own part, the second facing the first.
 fn hinged(kind: Value) -> Model {
     let mut model = with_components(false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     // The hinge at (20, 0, 0): 20 mm along A (at the origin), 10 mm back from B (at x = 30).
     let at = |x: f64| {
         serde_json::json!([
@@ -1383,7 +1378,7 @@ fn hinged(kind: Value) -> Model {
             side(Some(1), facing(-10.0))
         ),
     ]);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
     model
 }
@@ -1522,12 +1517,12 @@ fn joint_offsets_keep_the_written_snaps_closed() {
     ] {
         for sense in ["opposed", "aligned"] {
             let mut model = hinged(kind.clone());
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
             wire["model"]["assembly_joints"][1]["operands"]["value"]["frame_sense"] = json!(sense);
             // Start off the joint axis so each kind must place the unposed second part.
             wire["model"]["assembly_joints"][1]["operands"]["value"]["connectors"][1]["frame"][1]
                 [3] = json!(4.0);
-            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
             model.assembly = dutchman_core::local_assembly(&model).unwrap();
             let (bytes, _) = written(&model);
             let doc = document(&bytes);
@@ -1616,7 +1611,7 @@ fn joint_offsets_keep_the_written_snaps_closed() {
 /// A grounded base and a hinge, both turned a quarter turn about Z and translated.
 fn grounded_hinge() -> Model {
     let mut model = hinged(serde_json::json!({"kind": "revolute"}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let connector =
         wire["model"]["assembly_joints"][0]["operands"]["value"]["connectors"][1].clone();
     wire["model"]["assembly_joints"][0]["operands"] =
@@ -1628,7 +1623,7 @@ fn grounded_hinge() -> Model {
             [0.0, 0.0, 1.0, 7.0],
         ]);
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
     model
 }
@@ -1763,9 +1758,9 @@ fn solidcraft_moves_the_part_when_the_joint_is_driven() {
 fn a_joined_part_is_placed_where_its_joint_puts_it_not_where_it_was_stored() {
     // Store B 40 mm further on than its joint puts it, as an unsolved placement would be.
     let mut model = hinged(serde_json::json!({"kind": "revolute"}));
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["occurrences"][1]["transform"][0][3] = serde_json::json!(70.0);
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
     let placed = &model.assembly.as_ref().unwrap().placements;
     assert_eq!(placed[1].transform[0][3], 30.0, "{placed:?}");
@@ -1879,12 +1874,12 @@ fn placed_twice_shows_nothing_hidden() -> bool {
 fn flattened_parts_keep_helper_info_once_per_part() {
     let mut model = placed_twice();
     let part = &mut model.assembly.as_mut().unwrap().parts[0];
-    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&part.ir).unwrap();
     wire["model"]["features"] = serde_json::json!([
         {"id": "test:model:feature#helper", "ordinal": 0, "name": "Unused point", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "datum_point", "value": {"position": {"x": 0.0, "y": 0.0, "z": 0.0}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []},
         {"id": "test:model:feature#later", "ordinal": 1, "name": "Later", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}
     ]);
-    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    part.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (_, report) = written(&model);
     let notes: Vec<_> = report
         .losses()
@@ -2095,16 +2090,16 @@ fn mixed_histories() -> Model {
     let assembly = model.assembly.as_mut().unwrap();
     let mut part = assembly.parts[0].clone();
     part.name = "Repeated name".to_owned();
-    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&part.ir).unwrap();
     let sphere = serde_json::json!({"id": "test:model:feature#sphere", "ordinal": 0, "name": "Ball", "suppressed": false, "outputs": [wire["geometry"]["bodies"][0]["id"]], "definition": {"kind": "operation", "value": {"kind": "sphere", "value": {"center": {"x": 5.0, "y": 5.0, "z": 5.0}, "radius": 5.0, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": []});
     wire["model"]["features"] = serde_json::json!([sphere]);
-    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    part.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     assembly.parts.push(part.clone());
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
         .push(serde_json::json!({"id": "test:model:feature#later", "ordinal": 1, "name": "Later", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
-    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    part.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     assembly.parts.push(part.clone());
     // A restatement failure must retry serially and keep its Dropped note at this position.
     part.ir.geometry.faces.clear();
@@ -2154,7 +2149,7 @@ fn parallel_replay_checks_keep_partial_histories_and_reports_identical() {
 /// CADIR face bindings use a BREP namespace independent of the component/body ids.
 fn bound_components(mode: &str, stored: bool) -> Model {
     let mut model = with_components(false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let face_ids: Vec<_> = wire["geometry"]["faces"]
         .as_array()
         .unwrap()
@@ -2198,7 +2193,7 @@ fn bound_components(mode: &str, stored: bool) -> Model {
     } else {
         json!([])
     };
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
     model
 }
@@ -2302,9 +2297,9 @@ fn component_appearance_bindings_colour_imports_and_stored_solids() {
 #[test]
 fn missing_face_appearance_bindings_are_reported() {
     let mut model = bound_components("uniform", false);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({"id": "synthetic:test:appearance-binding#missing", "target": {"entity": {"kind": "face", "value": "f3d:brep/component.smb/brep:entity#missing"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}));
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
     let (_, report) = written(&model);
     assert!(
@@ -3149,7 +3144,7 @@ fn a_part_placed_at_a_changed_layout_is_not_repeated() {
 /// A saved free edge beside a painted solid, in the same component definition.
 fn bound_components_with_wire(stored: bool) -> Model {
     let mut model = bound_components("body", stored);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let edge = wire["geometry"]["edges"][0]["id"].clone();
     let body = "synthetic:test:body#saved-edge";
     let region = "synthetic:test:region#saved-edge";
@@ -3185,7 +3180,7 @@ fn bound_components_with_wire(stored: bool) -> Model {
             .unwrap()
             .push(json!(body));
     }
-    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
     model
 }
@@ -3275,7 +3270,7 @@ fn an_unwritable_sibling_keeps_the_written_bodys_appearance() {
         } else {
             bound_components("body", stored)
         };
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
         let body = "synthetic:test:body#unresolved-solid";
         let region = "synthetic:test:region#unresolved-solid";
         let shell = "synthetic:test:shell#unresolved-solid";
@@ -3314,7 +3309,7 @@ fn an_unwritable_sibling_keeps_the_written_bodys_appearance() {
                 .push(json!(body));
         }
         wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({"id": "synthetic:test:binding#unresolved-solid", "target": {"entity": {"kind":"body","value":body}}, "appearance": "synthetic:test:appearance#blue", "channels": {}}));
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
         model.assembly = dutchman_core::local_assembly(&model).unwrap();
         let part = &model.assembly.as_ref().unwrap().parts[0];
         assert!(

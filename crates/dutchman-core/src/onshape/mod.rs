@@ -130,7 +130,9 @@ fn part_studio_bodies(model: &mut Model) {
     if roots.next().is_some()
         || !root.bodies.is_empty()
         || !root.sketches.is_empty()
-        || !root.tessellations.is_empty()
+        || rows.tessellations.iter().any(|mesh| {
+            matches!(&mesh.of, cadmpeg_ir::tessellation::Meshed::Display { definition } if *definition == root.id)
+        })
         || !root.instance_bodies.is_empty()
         || !root.representations.is_empty()
         || root.active == Some(false)
@@ -166,7 +168,7 @@ fn part_studio_bodies(model: &mut Model) {
     }
     // Each placement is named by its row and its owner; any other mention keeps the
     // product structure as decoded. The file wrapper must also have no other users.
-    let Ok(text) = serde_json::to_string(&model.ir) else {
+    let Ok(text) = crate::ir_wire::to_string(&model.ir) else {
         return;
     };
     let named = |id: &str| text.matches(&format!("\"{id}\"")).count();
@@ -1039,6 +1041,13 @@ fn read_studio(
     Ok(model)
 }
 
+/// The annotation key of the top-level entity `id`.
+fn annotation_key(id: &str) -> Result<cadmpeg_ir::annotations::AnnotationKey, String> {
+    cadmpeg_ir::ids::Identity::try_from(id)
+        .map(|identity| cadmpeg_ir::annotations::AnnotationKey::from(&identity))
+        .map_err(|err| err.to_string())
+}
+
 fn annotation_result<T, E: std::fmt::Display>(
     result: Result<T, E>,
     report: &mut Report,
@@ -1154,15 +1163,19 @@ fn annotate(model: &mut Model, features: &[Value], report: &mut Report) {
                         })
             });
             annotation_result(
-                annotations.field_exactness(
-                    &sketch_id,
-                    "placement",
-                    if inferred {
-                        Exactness::Inferred
-                    } else {
-                        Exactness::Derived
-                    },
-                ),
+                annotation_key(&sketch_id).and_then(|key| {
+                    annotations
+                        .field_exactness(
+                            key,
+                            "placement",
+                            if inferred {
+                                Exactness::Inferred
+                            } else {
+                                Exactness::Derived
+                            },
+                        )
+                        .map_err(|err| err.to_string())
+                }),
                 report,
                 sketch_id.as_str(),
                 has_step,
@@ -1170,11 +1183,11 @@ fn annotate(model: &mut Model, features: &[Value], report: &mut Report) {
         }
         if source.get("suppressed").is_none() && source.get("parentSuppressed").is_none() {
             annotation_result(
-                annotations.field_exactness(
-                    id("feature", native),
-                    "suppressed",
-                    Exactness::Inferred,
-                ),
+                annotation_key(&id("feature", native)).and_then(|key| {
+                    annotations
+                        .field_exactness(key, "suppressed", Exactness::Inferred)
+                        .map_err(|err| err.to_string())
+                }),
                 report,
                 id("feature", native).as_str(),
                 has_step,

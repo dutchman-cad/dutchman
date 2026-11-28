@@ -115,7 +115,6 @@ pub(crate) fn read(wire: &Value) -> cadmpeg_ir::CadIr {
         for field in [
             "bodies",
             "sketches",
-            "tessellations",
             "occurrences",
             "instance_bodies",
             "representations",
@@ -125,5 +124,5 @@ pub(crate) fn read(wire: &Value) -> cadmpeg_ir::CadIr {
     }
     model["product_definitions"] = json!(definitions);
     model["occurrences"] = json!(rows);
-    cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap()
+    crate::ir_wire::from_str(&wire.to_string()).unwrap()
 }

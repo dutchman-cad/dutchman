@@ -27,7 +27,7 @@ fn seam_model(count: usize) -> Model {
         .map(|body| body.id.as_str())
         .collect();
     model = dutchman_core::with_bodies(&model, &body_ids, "Synthetic".into()).unwrap();
-    let source = serde_json::to_value(&model.ir).unwrap();
+    let source = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let mut document = source.clone();
     let coedges_per_cube = model.ir.geometry.coedges.len();
     let failing_cubes = count.div_ceil(coedges_per_cube).max(1);
@@ -79,7 +79,7 @@ fn seam_model(count: usize) -> Model {
         }
     }
     document["geometry"] = Value::Object(combined);
-    model.ir = serde_json::from_value(document).unwrap();
+    model.ir = dutchman_core::ir_wire::from_value(document).unwrap();
     // One failing body may contain several disjoint cube regions; this allows the
     // worked example to produce exactly 88 findings without changing the check.
     let extra_regions: Vec<_> = model
@@ -93,7 +93,7 @@ fn seam_model(count: usize) -> Model {
             model
                 .ir
                 .geometry
-                .body_regions(&body.id)
+                .stated_body_regions(&body.id)
                 .map(|region| region.id.clone())
         })
         .collect();
@@ -209,7 +209,7 @@ fn repro_seam_check_narrows_to_second_body_and_never_leaks_private_data() {
     );
     let text = serde_json::to_string(&anon).unwrap();
     let steps = next_steps(&anon);
-    let source = serde_json::to_value(&model.ir).unwrap();
+    let source = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let arenas = ["geometry", "model"].map(|home| source[home].as_object().unwrap());
     for id in arenas
         .iter()

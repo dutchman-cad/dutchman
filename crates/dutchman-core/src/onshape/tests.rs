@@ -42,7 +42,7 @@ fn read(bytes: &[u8]) -> (Value, Report) {
         &mut report,
     )
     .unwrap();
-    let mut wire = serde_json::to_value(model.ir.model).unwrap();
+    let mut wire = crate::ir_wire::to_value(&model.ir).unwrap()["model"].clone();
     wire["features"]
         .as_array_mut()
         .unwrap()
@@ -927,7 +927,7 @@ fn two_part_studio(x: f64) -> Model {
         &mut report,
     )
     .unwrap();
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     // As in a Part Studio's export, the part's name is on its product, not its body.
     wire["geometry"]["bodies"][0]
@@ -947,12 +947,7 @@ fn two_part_studio(x: f64) -> Model {
     wire["model"]["occurrences"] = json!([placed(0, "first", 0.0), placed(1, "second", x)]);
     for definition in wire["model"]["product_definitions"].as_array_mut().unwrap() {
         definition["storage"] = json!({"kind":"embedded"});
-        for field in [
-            "tessellations",
-            "occurrences",
-            "instance_bodies",
-            "representations",
-        ] {
+        for field in ["occurrences", "instance_bodies", "representations"] {
             definition[field] = json!([]);
         }
     }
@@ -960,13 +955,13 @@ fn two_part_studio(x: f64) -> Model {
         .as_array_mut()
         .unwrap()
         .push(json!({
-            "id":"synthetic:test:component#file", "storage":{"kind":"file", "document":{}},
-            "bodies":[], "sketches":[], "bom_properties":{}, "tessellations":[],
+            "id":"synthetic:test:component#zfile", "storage":{"kind":"file", "document":{}},
+            "bodies":[], "sketches":[], "bom_properties":{},
             "occurrences":["synthetic:test:occurrence#0", "synthetic:test:occurrence#1"],
             "instance_bodies":[], "representations":[]
         }));
     Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: crate::ir_wire::from_str(&wire.to_string()).unwrap(),
         ..model
     }
 }

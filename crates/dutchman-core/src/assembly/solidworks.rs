@@ -216,7 +216,7 @@ mod tests {
     }
 
     fn assembly_wire(cube: &Model, rows: Vec<Value>) -> Value {
-        let mut wire = serde_json::to_value(&cube.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&cube.ir).unwrap();
         wire["geometry"]["bodies"] = json!([]);
         wire["model"]["product_definitions"] = json!([]);
         wire["model"]["occurrences"] = json!(rows);
@@ -289,7 +289,7 @@ mod tests {
                 occurrence(5, "bad.sldprt", json!({"kind":"root"})),
             ],
         );
-        let mut wire = serde_json::to_value(&source.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&source.ir).unwrap();
         let prototype = wire["model"]["occurrences"][1]["prototype"].clone();
         wire["model"]["product_definitions"]
             .as_array_mut()
@@ -395,10 +395,13 @@ mod tests {
                 Vec::new(),
             )
             .unwrap()
-            .with_source_object(Some(serde_json::from_value(json!({
-                "format":"sldprt", "object_id":"synthetic-object", "name":"Synthetic display name",
-                "instance_path":["Synthetic Folder/Synthetic Part"]
-            })).unwrap())),
+            .with_source_object(Some(
+                serde_json::from_value(json!({
+                    "format":"sldprt", "object_id":"synthetic-object",
+                    "instance_path":["Synthetic Folder/Synthetic Part"]
+                }))
+                .unwrap(),
+            )),
         );
         for (key, target) in [
             (
@@ -430,7 +433,6 @@ mod tests {
             &mut Vec::new(),
         )
         .unwrap();
-        assert!(report.names().contains("Synthetic display name"));
         assert!(report.names().contains("Synthetic Part"));
         assert!(result.ir.model.tessellations.is_empty());
         assert_eq!(result.ir.model.appearance_bindings.len(), 1);

@@ -1636,7 +1636,7 @@ fn a_sketch_only_part_studio_fetches_without_step_and_keeps_every_sketch_kind() 
         .collect();
     assert!(onshape_losses.is_empty(), "{onshape_losses:?}");
     assert!(model.source_step.is_none());
-    let wire = serde_json::to_value(&model.ir.model).unwrap();
+    let wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap()["model"].clone();
     let mut kinds: Vec<_> = wire["sketch_entities"]
         .as_array()
         .unwrap()
@@ -2003,7 +2003,7 @@ fn face_sketch_matrix() -> Value {
 #[test]
 fn a_fetched_face_sketch_uses_its_stored_placement_during_offline_reading() {
     let (model, report) = fetched_face_sketch(Some(face_sketch_matrix()));
-    let wire = serde_json::to_value(&model.ir).unwrap();
+    let wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     assert_eq!(
         wire["model"]["sketches"][0]["placement"]["frame"]["origin"],
         json!({"x":40.0,"y":70.0,"z":5.0})
@@ -2059,7 +2059,7 @@ fn a_fetched_face_sketch_with_a_malformed_matrix_keeps_the_final_shape() {
 }
 
 fn assert_face_sketch_refused(model: &dutchman_core::Model, report: &dutchman_core::Report) {
-    let wire = serde_json::to_value(&model.ir).unwrap();
+    let wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     assert!(model.ir.model.sketches.is_empty());
     assert_eq!(
         wire["model"]["features"][0]["definition"]["value"]["kind"],
