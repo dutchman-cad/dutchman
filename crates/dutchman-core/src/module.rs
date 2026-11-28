@@ -1059,9 +1059,9 @@ mod selection_tests {
         )
         .unwrap_err();
         assert!(
-            error.to_string().contains(
-                "the electronics module is installed but could not be run:"
-            ),
+            error
+                .to_string()
+                .contains("the electronics module is installed but could not be run:"),
             "{error}"
         );
     }
