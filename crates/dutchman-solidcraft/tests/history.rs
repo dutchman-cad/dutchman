@@ -10988,6 +10988,54 @@ fn plane_ended_extrudes_keep_start_offsets_and_two_sided_travel() {
     }
 }
 
+/// A two-sided extrude whose end against the normal reaches a plane runs negative to it,
+/// with the blind side as `distance2` along the normal.
+#[test]
+fn two_sided_extrudes_reach_an_object_against_the_normal() {
+    // The object end is the second side, or the first side of a reversed extrude.
+    for reversed in [false, true] {
+        two_sided_extrude_reaching_against_the_normal(reversed);
+    }
+}
+
+fn two_sided_extrude_reaching_against_the_normal(reversed: bool) {
+    let model = plane_ended_extrude(-10.0, false, |definition| {
+        let side = definition["extent"]["side"].clone();
+        let blind = json!({"termination": {"kind": "blind", "length": 2.0}});
+        definition["extent"] = if reversed {
+            definition["direction"] = json!({"kind": "reversed_profile_normal"});
+            json!({"kind": "two_sided", "first": side, "second": blind})
+        } else {
+            json!({"kind": "two_sided", "first": blind, "second": side})
+        };
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let extent = &document["features"][1]["extent"];
+    assert_eq!(extent["direction"], "negative");
+    assert_eq!(extent["to"], json!([37.0, -23.0, -10.0]));
+    assert_eq!(extent["distance2"], "2 mm");
+    if let Some(cli) = solidcraft() {
+        let actual = volumes(&cli, &written(&model).0);
+        assert_eq!(actual.len(), 1);
+        assert!((actual[0] - 1200.0).abs() < 1e-4, "{actual:?}");
+        let bodies = bounds(&cli, &written(&model).0);
+        assert_eq!(bodies.len(), 1, "{bodies:?}");
+        let (min, max) = bodies[0];
+        assert!(
+            (min[2] + 10.0).abs() < 1e-6 && (max[2] - 2.0).abs() < 1e-6,
+            "{min:?} {max:?}"
+        );
+    }
+}
+
 #[test]
 fn unsupported_plane_and_vertex_extrude_ends_name_the_blocker() {
     for (termination, reason) in [
@@ -11017,10 +11065,16 @@ fn unsupported_plane_and_vertex_extrude_ends_name_the_blocker() {
     for (z, change, reason) in [
         (-10.0, "wrong_side", "not along the selected extrude side"),
         (10.0, "symmetric", "symmetric extrude to an object"),
+        (10.0, "negative_end", "not along the selected extrude side"),
         (
             10.0,
-            "negative_end",
-            "non-blind extrude end against the sketch normal",
+            "both_ends",
+            "ends both reach an object or run through all",
+        ),
+        (
+            10.0,
+            "through_all_end",
+            "running through all against the sketch normal",
         ),
     ] {
         let model = plane_ended_extrude(z, false, |definition| {
@@ -11030,6 +11084,13 @@ fn unsupported_plane_and_vertex_extrude_ends_name_the_blocker() {
             } else if change == "negative_end" {
                 definition["extent"] = json!({"kind": "two_sided",
                     "first": {"termination": {"kind": "blind", "length": 2.0}}, "second": side});
+            } else if change == "through_all_end" {
+                definition["extent"] = json!({"kind": "two_sided",
+                    "first": {"termination": {"kind": "blind", "length": 2.0}},
+                    "second": {"termination": {"kind": "through_all"}}});
+            } else if change == "both_ends" {
+                definition["extent"] = json!({"kind": "two_sided",
+                    "first": side, "second": {"termination": {"kind": "through_all"}}});
             }
         });
         let (_, report) = convert(
