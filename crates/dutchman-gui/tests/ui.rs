@@ -7394,7 +7394,7 @@ fn inner_copper_screenshots() {
 fn settings_names_the_electronics_module() {
     let mut h = screenshot_harness(ThemePreference::Light);
     h.get_by_label("Settings").click_accesskit();
-    h.run();
+    h.run_steps(4);
     h.get_by_label("Check for update");
     let deadline = Instant::now() + Duration::from_secs(5);
     while h.query_all_by_label_contains("Electronics module:").count() == 0
