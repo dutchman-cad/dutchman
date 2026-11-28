@@ -164,12 +164,23 @@ jobs:
             | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dutchman"))')
           archive=$(scripts/package-archive.sh ${{ matrix.target }} "dutchman-${version}-${{ matrix.target }}" "v$version")
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      - name: Smoke packaged electronics board conversion
+        shell: bash
+        run: |
+          if [[ '${{ matrix.target }}' == x86_64-apple-darwin ]]; then exit 0; fi
+          name=${ARCHIVE%.tar.gz}
+          name=${name%.zip}
+          exe=""
+          [[ '${{ matrix.target }}' == *windows* ]] && exe=.exe
+          bash scripts/smoke-electronics.sh "dist/$name/dutchman$exe"
       - name: Package the AppImage
         if: runner.os == 'Linux'
         run: |
           version=$(cargo metadata --format-version 1 --no-deps \
             | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dutchman"))')
           scripts/package-appimage.sh ${{ matrix.target }} "$version"
+          arch=${{ matrix.target }}
+          APPIMAGE_EXTRACT_AND_RUN=1 bash scripts/smoke-electronics.sh "dist/dutchman-$version-${arch%%-*}.AppImage" --run dutchman
       - uses: actions/setup-dotnet@v6
         if: runner.os == 'Windows'
         with:
@@ -253,6 +264,15 @@ jobs:
           fi
           archive=$(scripts/package-archive.sh ${{ matrix.target }} "dutchman-${version}-${{ matrix.target }}" "v$version")
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      - name: Smoke packaged electronics board conversion
+        shell: bash
+        run: |
+          if [[ '${{ matrix.target }}' == x86_64-apple-darwin ]]; then exit 0; fi
+          name=${ARCHIVE%.tar.gz}
+          name=${name%.zip}
+          exe=""
+          [[ '${{ matrix.target }}' == *windows* ]] && exe=.exe
+          bash scripts/smoke-electronics.sh "dist/$name/dutchman$exe"
       - uses: actions/upload-artifact@v7
         with:
           name: macos-archive-${{ matrix.target }}

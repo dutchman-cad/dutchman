@@ -189,6 +189,7 @@ jobs:
         with:
           name: dutchman-plugin
           path: artifacts/plugin
+      # Promotion retains the module pinned in the candidate's packaging/electronics.lock.
       - name: Flatten artifacts and check checksums and version
         shell: bash
         run: |
@@ -303,7 +304,7 @@ jobs:
       TAG: ${{ needs.find.outputs.tag }}
     steps:
       - name: Install the build tools
-        run: pacman -Syu --noconfirm --needed base-devel git github-cli
+        run: pacman -Syu --noconfirm --needed base-devel git github-cli python
       - uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ needs.find.outputs.tag }}

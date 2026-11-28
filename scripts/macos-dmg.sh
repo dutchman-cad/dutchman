@@ -81,13 +81,24 @@ CFBundleDisplayName = "Dutchman";
 STRINGS
 plutil -lint "$app/Contents/Resources/en.lproj/InfoPlist.strings"
 
+# A supplied module folder is already fetched; packaging must not download it again.
+if [[ ${DUTCHMAN_ELECTRONICS_DIR+x} ]]; then
+  cp "$DUTCHMAN_ELECTRONICS_DIR/dutchman-electronics" "$app/Contents/MacOS/"
+  cp -R "$DUTCHMAN_ELECTRONICS_DIR/THIRD-PARTY" "$app/Contents/MacOS/"
+else
+  "$root/scripts/fetch-electronics.sh" macos-universal "$app/Contents/MacOS"
+fi
+cp "$app/Contents/MacOS/dutchman-electronics" "$app/Contents/Helpers/"
+mv "$app/Contents/MacOS/THIRD-PARTY" "$app/Contents/Resources/"
+codesign --force --sign - --timestamp=none "$app/Contents/MacOS/dutchman-electronics"
 # Ad hoc: the helpers first, then the bundle, which seals them with the app.
-for program in dutchman dutchman-mcp; do
+for program in dutchman dutchman-mcp dutchman-electronics; do
   codesign --force --sign - --timestamp=none "$app/Contents/Helpers/$program"
 done
-codesign --force --sign - --timestamp=none "$app"
+codesign --force --deep --sign - --timestamp=none "$app"
 codesign --verify --strict --verbose=2 "$app"
 "$app/Contents/Helpers/dutchman" --version
+bash "$root/scripts/smoke-electronics.sh" "$app/Contents/Helpers/dutchman"
 
 ln -s /Applications "$stage/Applications"
 cat > "$stage/Read me first.txt" <<'NOTE'
