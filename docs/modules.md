@@ -3,7 +3,14 @@
 ## How Dutchman finds and runs a module
 
 A module is a separate program named `dutchman-<name>` (the electronics module is
-`dutchman-electronics`). Dutchman looks beside its own executable first, then in the per-user modules folder, then in PATH.
+`dutchman-electronics`). Every installer bundles the electronics module beside the Dutchman executables.
+Dutchman compares the bundled and per-user copies using the SemVer version from `info --json`
+and uses the newer copy; equal versions use the bundled copy (build metadata does not break a tie).
+A copy whose info fails or whose version is not SemVer is skipped with a report note, allowing the
+other copy to run. PATH is used only when neither copy exists, even if both copies fail info.
+Non-module companion programs keep the order: beside the program, per-user folder, then PATH.
+Settings shows the selected path and whether it is bundled, in your modules folder, or on PATH.
+The per-user folder is also where a future in-app module updater will write newer versions.
 The recommended modules folder survives updates: `~/Library/Application Support/Dutchman/modules`
 on macOS, `%LOCALAPPDATA%\Dutchman\modules` on Windows, and
 `$XDG_DATA_HOME/dutchman/modules` on Linux (default `~/.local/share/dutchman/modules`

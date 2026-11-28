@@ -3657,7 +3657,7 @@ fn converted_tool_library(kinds: &[&str]) -> (dutchman_gui::app::Row, PathBuf, S
     let source = work.path().join("Shop tools.json");
     std::fs::write(&source, synthetic_tool_library(kinds)).unwrap();
     let made = work.path().join("Shop tools.camtools");
-    let summary = dutchman::batch::plan(&[source.clone()], work.path()).description;
+    let summary = dutchman::batch::plan(std::slice::from_ref(&source), work.path()).description;
     let mut report = dutchman::tool_library::convert(&source, &made, true);
     let docs = PathBuf::from("/Users/demo/Documents");
     let input = docs.join("Shop tools.json");
@@ -7411,7 +7411,11 @@ fn electronics_settings_screenshots() {
             let module = modules.join("dutchman-electronics");
             let _ = std::fs::remove_file(&module);
             if state == "found" {
-                std::fs::write(&module, "#!/bin/sh\nexit 0\n").unwrap();
+                std::fs::write(
+                    &module,
+                    "#!/bin/sh\nprintf '%s\\n' '{\"version\":\"1.0.0\"}'\n",
+                )
+                .unwrap();
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -7435,6 +7439,7 @@ fn electronics_settings_screenshots() {
         return;
     }
     let state = std::env::var("DUTCHMAN_MODULE_SHOTS_CHILD").unwrap();
+    assert_eq!(dutchman_core::module::installed(), state == "found");
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
     std::fs::create_dir_all(&dir).unwrap();
     for (theme, name) in [
