@@ -109,6 +109,7 @@ CAD extension selects conversion.
 | `--no-sketches` | Leave reference sketches out; sketches needed by retained history stay. |
 | `--no-joints` | Leave assembly joints out and retain the selected placements before joint solving. |
 | `--part-positions MODE` | Part positions: `smart` (default), `last-shown`, or `first-placed`. |
+| `--copper LAYERS` | Circuit boards: `outer` (default) reads the top and bottom copper; `all` also reads each inner copper layer, as its own overlay named like `Inner copper (In1.Cu)`. It passes `--copper all` to `dutchman-electronics read`; a module too old to know it is read for the outer layers, and the report says so. |
 | `--stored-placements` | Alias of `--part-positions first-placed`: place parts where they were first placed, ignoring later moves. |
 | `--stand-up`, `--keep-axes` | The up axis. By default (automatic) a design is stood up (+90° about +X, so +Y becomes SolidCraft's +Z) when its source states that it is Y-up, as a Fusion export's manifest does; a design that is Z-up, or whose up axis is unknown, keeps its axes. `--stand-up` always rotates; `--keep-axes` never rotates (`--no-stand-up` is the same option). The report's `up_axis` states what was found, where, and what was done. |
 | `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |
@@ -620,6 +621,6 @@ Both summaries list each relative input path, output path, outcome (Full
 history, Partial N of M, Geometry only, or Failed), and first reason. Counts
 exclude features that need no rebuilding when the saved report provides those
 counts. The output folder's most recent report for each input wins. The desktop
-app offers the same export through **Batch report** under **Output folder**.
+app offers the same export through **Batch report** under **2. Choose where to save them**.
 Summaries contain names, paths, and reasons; keep them local unless you choose
 to share them. See [the report contract](json.md#whole-folder-summaries).

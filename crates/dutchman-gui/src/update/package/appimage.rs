@@ -69,7 +69,7 @@ pub(super) fn asset_url(tag: &str, arch: &str) -> Result<String, String> {
 
 /// Writes the verified download beside `target`, makes it executable and renames it over
 /// `target`. Any failure leaves `target` as it was.
-pub(super) fn replace(downloaded: &Path, target: &Path) -> Result<(), String> {
+pub(crate) fn replace(downloaded: &Path, target: &Path) -> Result<(), String> {
     let folder = target
         .parent()
         .ok_or("The AppImage has no folder. Open the release page for a manual update.")?;

@@ -2721,10 +2721,38 @@ fn helical_sweeps_keep_the_profile_axis_law_hand_and_operation() {
                             .verification(Verification::Off)
                             .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1)),
                     );
-                    let coil = &document["features"][1 + first];
+                    let coil = document["features"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|feature| feature["type"] == "coil")
+                        .unwrap();
                     assert!(history_line(&report).contains("target SolidCraft 0.25"));
-                    assert_eq!(coil["type"], "coil");
-                    assert_eq!(coil["sketch"], document["features"][0]["id"]);
+                    // The profile moves to a plane through the axis: in place when only the
+                    // coil uses its sketch, else in a copy beside the sketch the block uses.
+                    let sketch = document["features"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|feature| feature["id"] == coil["sketch"])
+                        .unwrap();
+                    assert_eq!(sketch["type"], "sketch");
+                    assert_eq!(
+                        coil["sketch"] == document["features"][0]["id"],
+                        first == 0,
+                        "{sketch}"
+                    );
+                    let plane = &sketch["plane"]["plane"];
+                    let (x, y) = (&plane["x_dir"], &plane["y_dir"]);
+                    let normal = [
+                        x[1].as_f64().unwrap() * y[2].as_f64().unwrap()
+                            - x[2].as_f64().unwrap() * y[1].as_f64().unwrap(),
+                        x[2].as_f64().unwrap() * y[0].as_f64().unwrap()
+                            - x[0].as_f64().unwrap() * y[2].as_f64().unwrap(),
+                        x[0].as_f64().unwrap() * y[1].as_f64().unwrap()
+                            - x[1].as_f64().unwrap() * y[0].as_f64().unwrap(),
+                    ];
+                    assert!(normal[2].abs() < 1e-9, "{plane}");
                     assert_eq!(coil["profiles"], json!({"type": "all"}));
                     assert_eq!(
                         coil["axis"],
@@ -22528,4 +22556,48 @@ fn a_prefix_that_holds_the_source_shape_stays_when_only_a_blend_follows() {
             .any(|f| f["type"] == "extrude"),
         "{document}"
     );
+}
+
+fn coil_profile_notes(report: &Report) -> usize {
+    report
+        .losses()
+        .iter()
+        .filter(|loss| loss.code.as_deref() == Some("history/coil-profile-moved"))
+        .count()
+}
+
+#[test]
+fn a_tilted_coil_profile_is_moved_with_a_note_and_an_axial_one_is_untouched() {
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1));
+    let tilted = helical_history(|_| {});
+    let (document, report) = convert(&tilted, &writer);
+    assert_eq!(coil_profile_notes(&report), 1, "{report:?}");
+    let loss = report
+        .losses()
+        .iter()
+        .find(|loss| loss.code.as_deref() == Some("history/coil-profile-moved"))
+        .unwrap();
+    assert!(loss.detail.contains("its sketch dimensions were not kept"));
+    assert_eq!(document["features"][0]["plane"]["type"], "custom");
+
+    let mut axial = helical_history(|_| {});
+    let mut wire = serde_json::to_value(&axial.ir).unwrap();
+    wire["model"]["sketches"][0]["placement"]["frame"]["normal"] =
+        json!({"x": 0.0, "y": -1.0, "z": 0.0});
+    axial.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(&axial, &writer);
+    assert_eq!(coil_profile_notes(&report), 0, "{report:?}");
+    let features = document["features"].as_array().unwrap();
+    assert_eq!(features.iter().filter(|f| f["type"] == "sketch").count(), 1);
+    // The source frame, exactly: u along X, v along +Z (the normal is -Y).
+    assert_eq!(
+        features[0]["plane"],
+        json!({"type": "custom", "plane": {
+            "origin": [0.0, 0.0, 0.0], "x_dir": [1.0, 0.0, 0.0], "y_dir": [0.0, 0.0, 1.0]
+        }})
+    );
+    let coil = features.iter().find(|f| f["type"] == "coil").unwrap();
+    assert_eq!(coil["sketch"], features[0]["id"]);
 }

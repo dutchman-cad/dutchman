@@ -1014,7 +1014,8 @@ fn member_error_code(error: &CodecError) -> &'static str {
 /// Leaves out the bodies an active Remove feature deletes. Fusion keeps a removed body in its
 /// B-rep and only stops showing it, and cadmpeg still lists it among the model's bodies, so it
 /// would otherwise be converted as part of the design. Only a Remove whose bodies cadmpeg
-/// resolves can say which bodies those are; any other is left as it is.
+/// resolves can say which bodies those are; any other is left as it is. A stored body
+/// produced again later has the same identity but is no longer the deleted state.
 fn drop_removed_bodies(ir: &mut cadmpeg_ir::CadIr, report: &mut Report) {
     use cadmpeg_ir::features::operation_settings::BodyRetentionMode;
     use cadmpeg_ir::features::selections::BodySelection;
@@ -1043,6 +1044,12 @@ fn drop_removed_bodies(ir: &mut cadmpeg_ir::CadIr, report: &mut Report) {
             .unwrap_or_else(|| "a Remove feature".to_owned());
         for id in ids {
             if ir.geometry.bodies.iter().any(|body| &body.id == id)
+                && !ir.model.features.iter().any(|producer| {
+                    producer.suppressed != Some(true)
+                        && producer.ordinal >= feature.ordinal
+                        && producer.id != feature.id
+                        && producer.evaluation.outputs().contains(id)
+                })
                 && !removed.iter().any(|(known, _)| known == id)
             {
                 removed.push((id.clone(), name.clone()));
@@ -1848,6 +1855,57 @@ mod tests {
             loss.detail,
             "1 body it removes left out of the converted design"
         );
+    }
+
+    #[test]
+    fn recreated_stored_solid_survives_earlier_delete_with_open_mesh() {
+        for (producer_ordinal, suppressed, kept) in
+            [(10, false, true), (8, false, false), (10, true, false)]
+        {
+            let mut model = cube();
+            let id = model.ir.geometry.bodies[0].id.clone();
+            let feature = |ordinal, operation, outputs| -> cadmpeg_ir::Feature {
+                serde_json::from_value(serde_json::json!({
+                    "id": format!("test:model:feature#{ordinal}"), "ordinal": ordinal,
+                    "suppressed": false, "definition": {"kind": "operation", "value": operation},
+                    "dependencies": [], "source_properties": {}, "source_content": [], "outputs": outputs
+                })).unwrap()
+            };
+            let delete = feature(
+                9,
+                serde_json::json!({"kind":"delete_body", "value": {
+                    "bodies":{"kind":"bodies", "value":[id.clone()]}, "mode":"delete_selected"
+                }}),
+                serde_json::json!([]),
+            );
+            let mut producer = feature(
+                producer_ordinal,
+                serde_json::json!({"kind":"sketch", "value": {
+                    "sketch":{"kind":"planar", "sketch":"test:model:sketch#1"}
+                }}),
+                serde_json::json!([id]),
+            );
+            producer.suppressed = Some(suppressed);
+            // Deliberately reverse arena order: ordinal defines construction order.
+            model.ir.model.features = vec![producer, delete];
+            model.ir.model.tessellations = vec![tessellation("test:model:tessellation#1")];
+            let mut report = Report::default();
+            drop_removed_bodies(&mut model.ir, &mut report);
+            assert_eq!(model.ir.geometry.bodies.len(), usize::from(kept));
+            if kept {
+                assert!(mesh_only_error(Format::FusionArchive, &model.ir, false).is_none());
+                validate_decoded(
+                    &mut model.ir,
+                    DecodeDepth::Geometry,
+                    &policy(),
+                    0,
+                    &mut report,
+                )
+                .unwrap();
+                assert_eq!(model.ir.geometry.bodies.len(), 1);
+                assert!(report.losses().is_empty());
+            }
+        }
     }
 
     fn configuration_bodies() -> cadmpeg_ir::CadIr {

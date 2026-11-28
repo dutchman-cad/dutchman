@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+semver = "1"
 base64 = { version = "0.22", optional = true }
 flate2 = { version = "1", optional = true }
 dutchman-launcher.workspace = true

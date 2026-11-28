@@ -1730,6 +1730,7 @@ dependencies = [
  "flate2",
  "icu_normalizer",
  "roxmltree 0.21.2",
+ "semver",
  "serde",
  "serde_json",
  "sysinfo",
@@ -1764,10 +1765,12 @@ dependencies = [
  "arboard",
  "dutchman",
  "dutchman-core",
+ "dutchman-launcher",
  "dutchman-solidcraft",
  "eframe",
  "egui_extras",
  "egui_kittest",
+ "flate2",
  "image",
  "percent-encoding",
  "pollster 1.0.3",
@@ -1787,6 +1790,10 @@ dependencies = [
 [[package]]
 name = "dutchman-launcher"
 version = "0.4.0"
+dependencies = [
+ "semver",
+ "serde_json",
+]
 
 [[package]]
 name = "dutchman-pilot"

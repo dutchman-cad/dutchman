@@ -74,7 +74,7 @@ shows its own.
 ## Paste files and links
 
 With no text field focused, press ⌘V on macOS or Ctrl+V on Windows/Linux anywhere
-in the main window. The line under the Designs buttons, **Drop, or paste files or links**,
+in the main window. The line under the buttons that add designs, **Drop, or paste files or links**,
 is the reminder. Dutchman handles these clipboard contents in order:
 
 - Files or folders copied in Finder, Explorer, or your file manager: queued just like dropped files.
@@ -134,7 +134,7 @@ Inventor and SolidWorks assembly references select the top-level roots, which co
 with their parts resolved inside the project; unused parts convert afterwards. A same-name STEP export beside
 a native file is kept as a fallback if the native conversion fails.
 
-The Inventor project folder setting appears only for inputs containing Inventor files.
+The **Inventor project** row under **Advanced** (the folder, **Automatic** and **Choose…**) appears only for inputs containing Inventor files.
 Available memory is labeled as memory and hidden when unknown. Automatic SolidCraft
 selection compares the versions found on PATH, beside Dutchman and in installed applications, choosing
 the newest; `SOLIDCRAFT_CLI` remains an explicit override.
@@ -165,6 +165,16 @@ the Start menu, add `SOLIDCRAFT_CLI` as a user variable, and restart Dutchman.
 Dutchman Convert (`dutchman-gui`) converts without a terminal. [How to use it](../README.md#how-to-use-it) shows it step by step.
 
 ## Converting
+
+The window has three numbered steps, one under another, then a row with **Convert**.
+**1. Add your designs** groups the ways to add: **From this computer** (**Add files…**,
+**Add folder…**, **Check a folder**), **From a link** (the link field and **Add link**) and
+**From Onshape** (**Connect Onshape**). **Clear** sits under the list of added designs.
+**2. Choose where to save them** has **Save to**, the output folder (cut in the middle when
+it is long), and **Choose…**. **3. Pick how to convert them** holds the conversion options,
+each label before its control: **Preset**, **Advanced** (**Part positions**, **Up axis** and
+the **Keep** checkboxes), **Output format**, **Existing files** and **Checks**. Mechanical
+designs and other designs use the same layout.
 
 Open `dutchman-gui`, add design files, folders or project ZIPs, and press
 **Convert**. Convert stays visible while you scroll through settings or results. The
@@ -263,6 +273,11 @@ panel. **Advanced > SolidCraft version…** opens the same panel. Narrow windows
 the version or **not found**, shorten **Update**, and put theme choices in a menu.
 When space is limited, header controls sit on a second row below the title and version,
 so Settings, the SolidCraft status, themes, problem reports, and updates stay reachable.
+Settings, the SolidCraft status, **Update**, **Donate** and **Discord** share one button
+shape and height, and the theme choices and **Report a problem** sit on the same line.
+The header has **Donate** (opens the donate page at dutchmancad.xyz) and **Discord** (opens
+the Discord invite) beside Settings; each only opens your browser. **Settings** has **Show the
+Donate button** and **Show the Discord button**, both on by default, and the choice is saved.
 For an installed release newer than known, the panel has an **Update Dutchman** button, which
 opens the update window, when the update check already knows a newer Dutchman. Too-old releases have a
 [Download SolidCraft](https://github.com/tangency-labs/solidcraft/releases) link.
@@ -294,12 +309,12 @@ app's minimum, 520 by 420 points, is ignored, and the window opens at its defaul
 
 With no saved size, the window opens centerd at 1180 by 800 points, or 90% of the screen where
 that is smaller, which fits the whole main screen with the **Advanced** choices open and nothing
-scrolled. From 1100 points wide, **Designs** and **Output folder** stand in a left column, with
+scrolled. From 1100 points wide, steps 1 to 3 stand in a left column, with
 **Is there a problem? Is something missing?** in the room under them, and **Results** in a right
 column. Results that do not fit scroll inside their own column, the left column scrolls on to
-the report panel when the window is short, and a long list of designs scrolls inside **Designs**;
+the report panel when the window is short, and a long list of designs scrolls inside step 1;
 the rest of the screen stays in place. Below 1100 points the main screen is one column,
-**Designs**, **Output folder**, **Results**, then the report panel, and scrolls as one page
+the three steps, **Results**, then the report panel, and scrolls as one page
 (down to the 520 point minimum).
 
 ## Reporting a problem
@@ -310,8 +325,8 @@ The window's title and top row show its version beside **Dutchman Convert**, for
 with `dutchman --version`).
 
 **Is there a problem? Is something missing?** is always in the window: at the bottom left,
-under **Output folder**, in a wide window. With one result and compact output controls, it
-sits directly below **Output folder**; it stays visible with several results or expanded choices.
+under the steps, in a wide window. With one result and compact output controls, it
+sits directly below the steps; it stays visible with several results or expanded choices.
 In a narrow window, a compact bar above **Convert** keeps the question and **Report a problem…**
 visible. With a result selected, the button says **Report this design…**. Click it to scroll to
 the full panel and its three numbered cards at the end of the page; you can also scroll there
@@ -522,6 +537,10 @@ automatically** (on by default) and **Check now**, which also shows skipped rele
 `DUTCHMAN_UPDATE_CHECK=0` disables all checks, including **Check now**. Builds from source
 never check; only release-workflow builds enable this feature.
 
+### Electronics module updates
+
+Settings groups update controls under **Updates** and the Donate and Discord toggles under **Header buttons**. In **Updates**, **Electronics module** shows the version in use and whether it is included or in your modules folder. Choose **Check for update**, then review “Version X.Y.Z is available.” above **Update electronics module** to install a newer compatible release. After installation, Settings confirms “Updated to vX.Y.Z.” Checks and downloads run in the background; failures appear in Settings.
+
 ## Installing it
 
 On macOS it comes as **Dutchman Convert.app** in a disk image: open it and drag it onto Applications in the window that appears (see
@@ -648,3 +667,6 @@ from the selected placements. The report's Info note counts the placement rules 
 Smart's fallbacks. Smart and **As last shown in the original program** first use decoder-bound saved-scene
 displayed poses when available, without the current-pose guards. Ambiguous and unbound
 scene rows do not select placements; older decoders can omit the arena.
+
+Settings shows **Electronics module** with the program path, or “not found” and the
+search order: beside Dutchman, the per-user modules folder, then PATH. This text is read-only.

@@ -1961,10 +1961,10 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
         if option == Some("--json") {
             let report = json_of(&out);
             assert_eq!(report["input"]["format"], "unclassified_part");
-            assert_eq!(report["input"]["words"], "recognised, not read yet");
+            assert_eq!(report["input"]["words"], "recognized, not read yet");
             assert!(!stderr.contains("Want to help"));
         } else {
-            assert!(stdout.starts_with("Creo or NX .prt: recognised, not read yet\n"));
+            assert!(stdout.starts_with("Creo or NX .prt: recognized, not read yet\n"));
         }
         assert_eq!(
             stdout.matches("Want to help").count(),
@@ -2032,7 +2032,7 @@ fn an_inconclusive_part_is_recognised_and_refused() {
     assert_eq!(out.status.code(), Some(1));
     let report = json_of(&out);
     assert_eq!(report["input"]["format"], "unclassified_part");
-    assert_eq!(report["input"]["words"], "recognised, not read yet");
+    assert_eq!(report["input"]["words"], "recognized, not read yet");
     assert!(report["error"]["message"]
         .as_str()
         .unwrap()
@@ -2077,7 +2077,7 @@ fn numbered_saves_select_the_newest_and_report_the_older_revision() {
             );
         } else {
             let text = String::from_utf8(out.stdout).unwrap();
-            assert!(text.contains("Creo or NX .prt.7: recognised, not read yet"));
+            assert!(text.contains("Creo or NX .prt.7: recognized, not read yet"));
             assert!(text.contains("bracket.prt.3: older revision; using "));
             assert!(text.contains("1 skipped (older revisions)"));
             assert!(!text.contains("Creo or NX .prt.3:"));

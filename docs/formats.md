@@ -26,7 +26,7 @@ The **Designs** input row shows only the plain reader status.
 | Onshape bundle | `.onshape-bundle` | Reads geometry | – | One offline Part Studio; geometry and editable history where features map |
 | IGES | `.igs`, `.iges` | Recognized, not converted | – | Import it in SolidCraft directly (File > Import) |
 | Circuit board | `.PcbDoc` | Reads geometry with the electronics module | – | Placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately) |
-| Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
+| Unidentified part (Creo or NX) | `.prt` | Recognized, not read yet | – | Not yet |
 | Inventor drawing | `.idw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
 | SolidWorks drawing | `.slddrw` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
 | Fusion drawing | `.f2d` | Recognized, but reading its sheets isn't supported yet. The report lists what was found. | – | A report of what was found; reading the sheets and views isn't supported yet, so no drawing is written |
@@ -91,8 +91,8 @@ the mapping and bundle requirements.
 
 ## When a file doesn't convert
 
-After the results, a refused conversion (except IGES) or a history that didn't fully map
-prints one invitation to make [test files](https://dutchmancad.xyz/fixtures/) or type
+After the results, a refused conversion (except IGES and circuit boards) or a history that
+didn't fully map prints one invitation to make [test files](https://dutchmancad.xyz/fixtures/) or type
 `/volunteer` in [Discord](https://discord.gg/yTcseBEdeu); `--quiet` hides it, and with
 `--json` stdout holds only the report. The desktop app shows the same under its results.
 Got a file that converts wrong? Please send it, with a STEP export of the exact same design, to Dutchy in a Discord DM.

@@ -32,4 +32,9 @@ pkgbase = dutchman-bin
 	source_aarch64 = dutchman-0.2.9-aarch64-unknown-linux-gnu.tar.gz::https://github.com/dutchman-cad/dutchman/releases/download/v0.2.9/dutchman-0.2.9-aarch64-unknown-linux-gnu.tar.gz
 	sha256sums_aarch64 = 7a66f2214f9bc069af5d6d2a17e4ab206ae6c789eb747a1305e5c63a46793bc5
 
+	source_x86_64 = dutchman-electronics-0.1.0-x86_64-unknown-linux-gnu.tar.gz::https://github.com/dutchman-cad/dutchman-electronics/releases/download/v0.1.0/dutchman-electronics-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+	sha256sums_x86_64 = PLACEHOLDER
+	source_aarch64 = dutchman-electronics-0.1.0-aarch64-unknown-linux-gnu.tar.gz::https://github.com/dutchman-cad/dutchman-electronics/releases/download/v0.1.0/dutchman-electronics-0.1.0-aarch64-unknown-linux-gnu.tar.gz
+	sha256sums_aarch64 = PLACEHOLDER
+
 pkgname = dutchman-bin

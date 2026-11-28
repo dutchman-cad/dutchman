@@ -256,7 +256,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true' && (needs.changes.outputs.full == 'true' || needs.changes.outputs.plugin == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -355,6 +355,17 @@ jobs:
       # in one build; a separate `-p dutchman-gui` run resolves its dependencies' features apart
       # from the workspace and so compiled every crate a second time.
       - run: cargo test --workspace --locked --features dutchman-gui/test-support
+      # Releases convert the smoke board through the packaged module; do it here too with the
+      # locked module in the per-user modules folder, so a release is never the first place a
+      # module change or a fixture change shows up.
+      - name: Convert the smoke board with the locked electronics module
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          data=$(mktemp -d)
+          bash scripts/fetch-electronics.sh x86_64-unknown-linux-gnu "$data/dutchman/modules"
+          cargo build --locked -p dutchman
+          XDG_DATA_HOME="$data" bash scripts/smoke-electronics.sh "${CARGO_TARGET_DIR:-target}/debug/dutchman"
       # A build without FreeCAD says it leaves FreeCAD files out. This checks feature gating, not
       # the platform, and on another OS it would rebuild every crate a second time.
       - if: matrix.os == 'ubuntu-latest'

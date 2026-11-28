@@ -2619,7 +2619,7 @@ fn map_feature(
         Some("sphere") => primitive::sphere(feature, definition, ctx).map(Mapped::Feature),
         Some("torus") => primitive::torus(feature, definition, ctx).map(Mapped::Feature),
         Some("coil") => primitive::coil(feature, definition, ctx).map(Mapped::Feature),
-        Some("helical_sweep") => helix::map(feature, definition, ctx, report).map(Mapped::Feature),
+        Some("helical_sweep") => helix::map(feature, definition, ctx, report, preceding).map(Mapped::Feature),
         Some("primitive") => primitive::placed(feature, definition, ctx).map(Mapped::Feature),
         Some("block") => primitive::block(feature, definition, ctx).map(Mapped::Feature),
         Some("shell") => shell::map(feature, definition, ctx).map(Mapped::Feature),

@@ -78,10 +78,18 @@ fn archive(target: &str, web: bool) {
         .unwrap();
         fs::set_permissions(program, fs::Permissions::from_mode(0o755)).unwrap();
     }
+    let module = dir.join("electronics stub");
+    let notices = module.join("THIRD-PARTY/dutchman-electronics");
+    fs::create_dir_all(&notices).unwrap();
+    fs::write(notices.join("LICENSE"), "Module licence fixture\n").unwrap();
+    let executable = module.join("dutchman-electronics");
+    fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
     let output = Command::new("bash")
-        .arg("scripts/package-archive.sh")
+        .arg(dir.join("scripts/package-archive.sh"))
+        .env("DUTCHMAN_ELECTRONICS_DIR", &module)
         .args([target, "fixture", "test-ref"])
-        .current_dir(dir)
+        .current_dir(dir.join("scripts"))
         .output()
         .unwrap();
     assert!(
@@ -117,6 +125,30 @@ fn archive(target: &str, web: bool) {
             "Missing bundled guide: {name}"
         );
     }
+    for (name, expected) in [
+        ("dutchman-electronics", "#!/bin/sh\nexit 0\n"),
+        (
+            "THIRD-PARTY/dutchman-electronics/LICENSE",
+            "Module licence fixture\n",
+        ),
+    ] {
+        assert!(files.lines().any(|path| path == format!("fixture/{name}")));
+        let contents = Command::new("tar")
+            .args(["xzOf", "dist/fixture.tar.gz", &format!("fixture/{name}")])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(contents.status.success());
+        assert_eq!(contents.stdout, expected.as_bytes());
+    }
+    assert_ne!(
+        fs::metadata(dir.join("dist/fixture/dutchman-electronics"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o111,
+        0
+    );
     let guide = Command::new("tar")
         .args(["xzOf", "dist/fixture.tar.gz", "fixture/AGENTS.md"])
         .current_dir(dir)

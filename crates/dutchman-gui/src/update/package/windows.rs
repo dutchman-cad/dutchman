@@ -34,7 +34,8 @@ fn allowed_url(url: &str) -> bool {
     if url.starts_with("http://127.0.0.1:") {
         return true;
     }
-    url.starts_with(&format!("{RELEASES}/download/"))
+    url.starts_with("https://github.com/dutchman-cad/dutchman-electronics/releases/")
+        || url.starts_with(&format!("{RELEASES}/download/"))
         || [
             "release-assets.githubusercontent.com",
             "objects.githubusercontent.com",
@@ -61,7 +62,7 @@ fn timed_out(e: &std::io::Error) -> bool {
     )
 }
 
-pub(super) fn download(url: &str, limit: u64, out: &mut dyn Write) -> Result<(), String> {
+pub(crate) fn download(url: &str, limit: u64, out: &mut dyn Write) -> Result<(), String> {
     // The package has no total limit (a slow download that keeps moving must finish); small
     // files such as the checksum also get a deadline for the whole request.
     let timeouts = if limit <= SMALL_LIMIT {
@@ -215,32 +216,7 @@ fn prepare_in(
     let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
     fetch(&url, MAX_PACKAGE, &mut file)?;
     drop(file);
-    let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-    if file.metadata().map_err(|e| e.to_string())?.len() > MAX_PACKAGE {
-        return Err("The update download is too large.".into());
-    }
-    let mut digest = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
-    loop {
-        let n = file.read(&mut buffer).map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        digest.update(
-            buffer
-                .get(..n)
-                .ok_or("Could not read the update download.")?,
-        );
-    }
-    let actual: String = digest
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    drop(file);
-    if actual != expected {
-        return Err("The update checksum does not match. The download was deleted; your installed copy is unchanged. Open the release page to retry.".into());
-    }
+    verify(&path, &expected)?;
     if let Install::AppImage(target) = install {
         super::appimage::replace(&path, target)?;
         Ok(None)
@@ -487,3 +463,34 @@ pub(super) fn restart(install: &Install) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests;
+
+/// Verify before changing any installed file.
+pub(crate) fn verify(path: &Path, expected: &str) -> Result<(), String> {
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    if file.metadata().map_err(|e| e.to_string())?.len() > MAX_PACKAGE {
+        return Err("The update download is too large.".into());
+    }
+    let mut digest = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let n = file.read(&mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        digest.update(
+            buffer
+                .get(..n)
+                .ok_or("Could not read the update download.")?,
+        );
+    }
+    let actual: String = digest
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    drop(file);
+    if actual != expected {
+        return Err("The update checksum does not match. The download was deleted; your installed copy is unchanged. Open the release page to retry.".into());
+    }
+    Ok(())
+}

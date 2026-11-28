@@ -300,3 +300,5 @@ These tests add no fixture files.
 | File | What it is | Where it came from |
 |---|---|---|
 | `fusion_tool_library_cc0.json`, `fusion_tool_library_cc0.tools` | One Fusion tool library of 11 tools (mills, drill, tap, thread mill, and four turning tools, millimetres and inches), as a `.json` export and as a `.tools` archive. | Made from scratch in Autodesk Fusion for Dutchman's tests, 2026-11-22; no tool copied from Autodesk's sample libraries; CC0 1.0. |
+
+`electronics-smoke.kicad_pcb` is a synthetic rectangular board in the KiCad 9 format, written for the packaging smoke check (CI and releases), with generic dimensions and no third-party design data.

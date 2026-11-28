@@ -182,7 +182,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                         "feature must be a whole number of at least 0", "feature number is beyond this part's history",
                         "time_limit must be a duration",
                         "the time limit is too large; use a smaller number of seconds", "memory_limit_mb must be a whole number of at least 1",
-                        "memory_limit_mb is too large", "neighbours must be true or false"];
+                        "memory_limit_mb is too large", "neighbors must be true or false", "neighbours must be true or false"];
                     let message = if safe.contains(&message.as_str()) { &message } else {
                         "The diagnostic step could not finish. Check the arguments and local diagnose folder, then retry; no file was sent."
                     };
@@ -225,6 +225,7 @@ fn option_properties() -> Map<String, Value> {
         "sketches": {"type": "boolean", "default": true, "description": "Keep reference sketches when the preset allows it. Sketches needed by retained history stay."},
         "joints": {"type": "boolean", "default": true, "description": "Keep assembly joints when the preset allows it; false keeps the selected placements before joint solving."},
         "part_positions": {"type": "string", "enum": ["smart", "last-shown", "first-placed"], "default": "smart", "description": "Part positions: Smart, As last shown in the original program, or As first placed."},
+        "copper": {"type": "string", "enum": ["outer", "all"], "default": "outer", "description": "Circuit boards: copper layers to read. Outer is the top and bottom faces; all adds each inner copper layer (needs an electronics module that supports it, else the outer layers are read and the report says so)."},
         "stored_placements": {"type": "boolean", "default": false, "description": "Place parts where they were first placed, ignoring later moves"},
         "no_memory_check": {"type": "boolean", "default": false, "description": "Run and check history even when estimated peak memory exceeds available memory; also disables Standard's history budget and history-check skipping."},
         "import_only": {
@@ -625,6 +626,11 @@ fn flag(arguments: &Arguments, key: &str, default: bool) -> Result<bool, String>
     }
 }
 
+/// `neighbors`, or its older spelling `neighbours`.
+fn neighbors(arguments: &Arguments) -> Result<bool, String> {
+    Ok(flag(arguments, "neighbors", false)? || flag(arguments, "neighbours", false)?)
+}
+
 fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, String> {
     match arguments.get(key) {
         None | Some(Value::Null) => Ok(None),
@@ -637,7 +643,7 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 21] = [
+const OPTIONS: [&str; 22] = [
     "diagnostics",
     "diagnostics_default",
     "threads",
@@ -647,6 +653,7 @@ const OPTIONS: [&str; 21] = [
     "joints",
     "stored_placements",
     "part_positions",
+    "copper",
     "no_memory_check",
     "to",
     "import_only",
@@ -660,6 +667,15 @@ const OPTIONS: [&str; 21] = [
     "project",
     "search",
 ];
+
+/// The `copper` argument: `outer` (default) or `all`.
+fn copper_layers(arguments: &Arguments) -> Result<dutchman_core::CopperLayers, String> {
+    match arguments.get("copper") {
+        None | Some(Value::Null) => Ok(dutchman_core::CopperLayers::Outer),
+        Some(Value::String(value)) => value.parse(),
+        Some(_) => Err("copper must be outer or all".to_owned()),
+    }
+}
 
 /// The `project` and `search` arguments.
 fn part_search(arguments: &Arguments) -> Result<PartSearch, String> {
@@ -683,6 +699,7 @@ fn part_search(arguments: &Arguments) -> Result<PartSearch, String> {
         part_positions: dutchman_core::PartPositions::Smart,
         project,
         also,
+        copper: copper_layers(arguments)?,
     })
 }
 
@@ -779,6 +796,7 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
             .map_or(defaults.verify_timeout, |n| n.get() as u64),
         project: search.project,
         search: search.also,
+        copper: search.copper,
         part: None,
     })
 }
@@ -1051,6 +1069,18 @@ mod tests {
                 mode.name()
             );
         }
+        let all = options(json!({"copper": "all"}).as_object().unwrap()).unwrap();
+        assert_eq!(all.copper, dutchman_core::CopperLayers::All);
+        assert_eq!(all.part_search().copper, dutchman_core::CopperLayers::All);
+        assert_eq!(
+            options(json!({}).as_object().unwrap()).unwrap().copper,
+            dutchman_core::CopperLayers::Outer
+        );
+        assert!(all
+            .to_args()
+            .windows(2)
+            .any(|pair| pair[0] == "--copper" && pair[1] == "all"));
+        assert!(options(json!({"copper": "inner"}).as_object().unwrap()).is_err());
         let alias = options(json!({"stored_placements":true}).as_object().unwrap()).unwrap();
         assert_eq!(alias.effective_part_positions(), PartPositions::FirstPlaced);
         assert_eq!(
@@ -1436,7 +1466,8 @@ fn diagnostic_tools() -> Vec<Value> {
             } else { json!({"type": "string", "description": "Absolute local path; never returned to the assistant."}) });
         }
         if matches!(name, "convert_part" | "stop_at_feature") {
-            properties.insert("neighbours".into(), json!({"type": "boolean", "default": false}));
+            properties.insert("neighbors".into(), json!({"type": "boolean", "default": false}));
+            properties.insert("neighbours".into(), json!({"type": "boolean", "default": false, "description": "Accepted spelling of neighbors."}));
         }
         if !matches!(name, "make_report" | "verify_repro") {
             properties.insert("time_limit".into(), json!({"type": ["string", "integer"], "description": "Time per trial, such as 30s or 5m, or positive whole seconds."}));
@@ -1457,7 +1488,7 @@ fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
     use crate::diagnose::{self, narrow};
     let mut allowed = vec!["input"];
     if matches!(name, "convert_part" | "stop_at_feature") {
-        allowed.extend(["part", "neighbours"]);
+        allowed.extend(["part", "neighbors", "neighbours"]);
         if name == "stop_at_feature" {
             allowed.push("feature");
         }
@@ -1490,13 +1521,7 @@ fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
         } else {
             None
         };
-        return narrow::trial(
-            &input,
-            part,
-            flag(arguments, "neighbours", false)?,
-            feature,
-            &settings,
-        );
+        return narrow::trial(&input, part, neighbors(arguments)?, feature, &settings);
     }
     let out = path(arguments, "out")?;
     let result = match name {

@@ -30,6 +30,13 @@ programs=(dutchman dutchman-mcp dutchman-gui)
 for program in "${programs[@]}"; do
   cp "${4:-target/$target/release}/$program$exe" "dist/$name/"
 done
+# A supplied module folder is already fetched; packaging must not download it again.
+if [[ ${DUTCHMAN_ELECTRONICS_DIR+x} ]]; then
+  cp "$DUTCHMAN_ELECTRONICS_DIR/dutchman-electronics$exe" "dist/$name/"
+  cp -R "$DUTCHMAN_ELECTRONICS_DIR/THIRD-PARTY" "dist/$name/"
+else
+  "$root/scripts/fetch-electronics.sh" "$target" "dist/$name"
+fi
 cp LICENSE NOTICE "dist/$name/"
 python3 scripts/package-docs.py "dist/$name"
 # The archive holds none of the files the README links to: point them at the ref.

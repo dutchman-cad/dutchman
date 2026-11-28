@@ -369,7 +369,7 @@ fn control_row_screenshots() {
 
 fn assert_separate(rects: &[(String, egui::Rect)]) {
     for (i, (name, rect)) in rects.iter().enumerate() {
-        for (other, other_rect) in &rects[i + 1..] {
+        for (other, other_rect) in rects.iter().skip(i + 1) {
             assert!(
                 !rect.shrink(0.25).intersects(other_rect.shrink(0.25)),
                 "{name} {rect:?} overlaps {other} {other_rect:?}"
@@ -380,7 +380,7 @@ fn assert_separate(rects: &[(String, egui::Rect)]) {
 
 fn assert_control_rows(rects: &[(String, egui::Rect)]) {
     for (i, (name, rect)) in rects.iter().enumerate() {
-        for (other, other_rect) in &rects[i + 1..] {
+        for (other, other_rect) in rects.iter().skip(i + 1) {
             assert!(
                 (rect.height() - other_rect.height()).abs() <= 0.5,
                 "{name} {rect:?} and {other} {other_rect:?} differ in height"
@@ -413,7 +413,6 @@ fn main_panel_control_rows_align_without_overlaps() {
                 "Add files…",
                 "Check a folder",
                 "Add folder…",
-                "Clear",
             ];
             let mut controls: Vec<_> = designs
                 .iter()
@@ -447,11 +446,13 @@ fn main_panel_control_rows_align_without_overlaps() {
             // Query widget roles only; exclude containers and their inline text nodes.
             let sections = [
                 (
-                    h.get_by_label("DESIGNS").rect().bottom(),
+                    h.get_by_label("1. ADD YOUR DESIGNS").rect().bottom(),
                     hint_rect.bottom(),
                 ),
                 (
-                    h.get_by_label("OUTPUT FOLDER").rect().bottom(),
+                    h.get_by_label("2. CHOOSE WHERE TO SAVE THEM")
+                        .rect()
+                        .bottom(),
                     h.get_by_label("Change…").rect().bottom(),
                 ),
                 (

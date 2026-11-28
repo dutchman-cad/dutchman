@@ -353,8 +353,8 @@ invitation; JSON and MCP reports never include it.
 
 Directory conversion keeps the highest numbered `.prt.N` revision per part, reports older
 saves as skipped, and uses the part's base output name without replacing an existing file.
-After a refused conversion (except IGES) or a history that did not fully map, the invitation
-links to test-file recipes at <https://dutchmancad.xyz/fixtures/> and offers private help:
+After a refused conversion (except IGES and circuit boards) or a history that did not fully
+map, the invitation links to test-file recipes at <https://dutchmancad.xyz/fixtures/> and offers private help:
 send the file and its STEP export to Dutchy in Discord.
 
 What the installed build converts is what its `formats` says; check it rather than this
@@ -1015,8 +1015,8 @@ the ZIP directory is allocated; entry budgets count every declared entry.
 Use MCP `diagnose_narrow(input, out)` to rank, isolate and bisect with checkpoints. Results
 include a numbered recipe for Fusion, Inventor, SolidWorks and FreeCAD and any exact shipped
 known-failure advice. Prefer a workaround when one is reported. For individual trials use
-`convert_part(input, part, neighbours?)` and `stop_at_feature(input, part, feature,
-neighbours?)`; output geometry is discarded. Trial feature 0 keeps stored shape only.
+`convert_part(input, part, neighbors?)` and `stop_at_feature(input, part, feature,
+neighbors?)`; output geometry is discarded. Trial feature 0 keeps stored shape only.
 `diagnose(input, out)` ranks without narrowing. These tools accept `time_limit` and
 `memory_limit_mb`; their responses exclude names, paths and geometry.
 

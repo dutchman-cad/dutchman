@@ -457,6 +457,9 @@ profiles and sweep paths select the whole chain. Constraints that cannot apply t
 are left out with an Info message; the solved geometry remains exact. A loft through such a
 chain is not mapped yet (more edges in a section would change the lofted surface).
 
+Fusion Remove features leave out a stored body only when no later active feature produces
+that body again. This preserves solids re-created under the same body identity.
+
 Fusion Split Body keeps editable history when its tool is a resolved datum plane or
 input faces whose boundaries prove they lie on one plane. The faces' plane extends through
 the target body. Curved or noncoplanar tools, incomplete input selections, and final-body
@@ -913,9 +916,9 @@ top-bar **Report a problem** opens the same panel.
 Partial history says **Partly converted**; geometry-only or flattened results say
 **Converted, no history**, in amber. Full history keeps **Converted** in green unless
 degraded content needs review.
-With one result and compact output controls, the panel sits directly below **Output folder**;
+With one result and compact output controls, the panel sits directly below the steps;
 several results or expanded choices keep it pinned and visible.
-After a conversion, **Output folder** folds into a summary. Click its folder path or
+After a conversion, Step 2, **Choose where to save them**, folds into a summary. Click its folder path or
 **Change…** to reopen all output settings. **Clear** removes the designs and results and
 restores the expanded settings.
 

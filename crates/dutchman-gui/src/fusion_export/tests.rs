@@ -272,7 +272,7 @@ fn a_queued_job_is_cancelled_without_running() {
     let Update::Final(status) = receiver.recv_timeout(Duration::from_secs(5)).unwrap().1 else {
         panic!()
     };
-    assert_eq!(status.state, "cancelled");
+    assert_eq!(status.state, "canceled");
     assert!(
         !addin.cancel_requested(&id),
         "the .cancel file is cleaned up"
@@ -450,7 +450,7 @@ fn stop_while_running_cancels_and_keeps_what_was_exported() {
     wait_for(&mut panel, &ctx, "cancelled", |p| {
         p.stage() == Stage::Finished
     });
-    assert_eq!(panel.ended.as_ref().unwrap().status.state, "cancelled");
+    assert_eq!(panel.ended.as_ref().unwrap().status.state, "canceled");
     assert!(std::fs::read_dir(addin.jobs_dir())
         .unwrap()
         .next()
@@ -1125,4 +1125,16 @@ fn a_missing_download_in_the_window_says_so_plainly_and_nothing_hangs() {
     h.get_by_label("Install the Fusion exporter");
     assert_eq!(h.state().stage(), Stage::NoAgent);
     assert_eq!(std::fs::read_dir(addins.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn both_spellings_of_canceled_are_read_from_a_status_file() {
+    for word in ["cancelled", "canceled"] {
+        let value = serde_json::json!({"state": word, "reason": word, "message": "x"});
+        let status = job::Status::from_value(&value).unwrap();
+        assert_eq!(status.state, "canceled", "{word}");
+        assert_eq!(status.reason.as_deref(), Some("canceled"), "{word}");
+        assert!(status.is_final(), "{word}");
+        assert_eq!(job::reason_info(word, "x").1, Next::Nothing, "{word}");
+    }
 }

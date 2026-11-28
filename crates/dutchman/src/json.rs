@@ -105,7 +105,12 @@ pub fn fixtures_pitch<'a>(reports: impl IntoIterator<Item = &'a Value>) -> Optio
     let mut programs = std::collections::BTreeSet::new();
     for report in reports {
         let input = report.get("input");
-        if input.and_then(|i| i.get("format")).and_then(Value::as_str) == Some(Format::Iges.id()) {
+        // The test-file recipes are for CAD programs: none cover IGES or circuit boards yet.
+        let format = input.and_then(|i| i.get("format")).and_then(Value::as_str);
+        if [Format::Iges, Format::ModuleBoard]
+            .iter()
+            .any(|f| format == Some(f.id()))
+        {
             continue;
         }
         if report.get("ok").and_then(Value::as_bool) == Some(false)
@@ -1889,7 +1894,7 @@ mod tests {
         assert_eq!(row["reason"], json!(clean));
         assert_eq!(row["reason_raw"], json!(raw));
         assert_eq!(row["source"], "solidcraft");
-        assert_eq!(row["category"], "fillet-overflows-neighbouring-face");
+        assert_eq!(row["category"], "fillet-overflows-neighboring-face");
         assert_eq!(
             row["upstream"],
             "https://github.com/tangency-labs/solidcraft/issues/4782"
@@ -1944,6 +1949,27 @@ mod tests {
         );
         assert!(fixtures_pitch([&iges]).is_none());
         assert_eq!(fixtures_pitch([&iges, &creo]), fixtures_pitch([&creo]));
+    }
+
+    #[test]
+    fn board_results_do_not_invite_test_files_in_single_or_mixed_runs() {
+        let board = input(Path::new("board.PcbDoc"));
+        assert_eq!(board["format"], Format::ModuleBoard.id());
+        let refused = json!({"ok": false, "input": board});
+        let flattened = json!({"ok": true, "input": board,
+            "verification": {"status": "flattened"}});
+        let creo = error(
+            CONVERT,
+            input(Path::new("design.prt")),
+            &Error::NotSupportedYet {
+                format: Format::CreoPart,
+            },
+        );
+        assert!(fixtures_pitch([&refused]).is_none());
+        assert!(fixtures_pitch([&flattened]).is_none());
+        let mixed = fixtures_pitch([&refused, &flattened, &creo]);
+        assert_eq!(mixed, fixtures_pitch([&creo]));
+        assert!(!mixed.unwrap().contains("Circuit board"));
     }
 
     #[test]

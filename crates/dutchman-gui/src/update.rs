@@ -8,7 +8,7 @@ use eframe::egui;
 use serde_json::Value;
 
 mod notes;
-mod package;
+pub(crate) mod package;
 use package::{Action, Install, Job, Phase};
 
 const FEED: &str = "https://github.com/dutchman-cad/dutchman/releases.atom";
@@ -481,6 +481,7 @@ type Fetcher = std::sync::Arc<dyn Fn(&str, Option<&str>) -> Result<Response, Str
 
 pub struct Updater {
     pub report_ids: Vec<String>,
+    electronics: crate::module_update::Updater,
     install: Install,
     job: Job,
     closing: bool,
@@ -507,6 +508,10 @@ pub struct Updater {
     notes_epoch: u32,
     status: String,
     allowed: bool,
+    /// Whether the header shows the Donate and Discord buttons; chosen in Settings and saved
+    /// with the update choices.
+    pub show_donate: bool,
+    pub show_discord: bool,
 }
 
 impl Updater {
@@ -516,6 +521,7 @@ impl Updater {
         let failure = package::windows_startup(&install);
         let mut updater = Self {
             report_ids: Vec::new(),
+            electronics: Default::default(),
             install,
             job: Job::new(),
             closing: false,
@@ -524,6 +530,8 @@ impl Updater {
             msi_finish_confirmed: false,
             windows_failure: false,
             automatic: get("automatic").and_then(Value::as_bool).unwrap_or(true),
+            show_donate: get("show_donate").and_then(Value::as_bool).unwrap_or(true),
+            show_discord: get("show_discord").and_then(Value::as_bool).unwrap_or(true),
             skipped: get("skipped").and_then(Value::as_str).unwrap_or("").into(),
             remind_at: get("remind_at").and_then(Value::as_u64).unwrap_or(0),
             release: None,
@@ -587,7 +595,8 @@ impl Updater {
         self.release.is_some()
     }
     pub fn saved(&self) -> Value {
-        serde_json::json!({"automatic": self.automatic, "skipped": self.skipped, "remind_at": self.remind_at})
+        serde_json::json!({"automatic": self.automatic, "skipped": self.skipped, "remind_at": self.remind_at,
+            "show_donate": self.show_donate, "show_discord": self.show_discord})
     }
     fn offered(&self, time: u64) -> bool {
         self.release
@@ -715,6 +724,10 @@ impl Updater {
             ctx.request_repaint_after(Duration::from_secs(self.next.saturating_sub(now()).max(1)));
         }
     }
+    /// Whether the header shows its Update pill.
+    pub fn pill_shown(&self) -> bool {
+        self.offered(now())
+    }
     pub fn header(&mut self, ui: &mut egui::Ui, narrow: bool) {
         if self.offered(now()) {
             let label = if narrow {
@@ -728,18 +741,21 @@ impl Updater {
                         .unwrap_or("")
                 )
             };
-            if ui
-                .add(egui::Button::new(label).corner_radius(egui::CornerRadius::same(16)))
-                .clicked()
-            {
+            if crate::theme::header_button(ui, label).clicked() {
                 self.press(ui.ctx());
             }
         }
-        if ui.small_button("Settings").clicked() {
+        if crate::theme::header_button(ui, "Settings").clicked() {
             self.settings = true;
         }
     }
     /// `top` is the bottom edge of the header, so the update window opens below its controls.
+    #[cfg(feature = "test-support")]
+    pub fn preview_module(&mut self, state: u8) {
+        self.electronics.preview(state);
+        self.settings = true;
+    }
+
     pub fn windows(&mut self, ctx: &egui::Context, can_restart: bool, top: f32) {
         if !self.open {
             self.notes_epoch = self.notes_epoch.wrapping_add(1);
@@ -749,6 +765,11 @@ impl Updater {
             .open(&mut settings)
             .collapsible(false)
             .show(ctx, |ui| {
+                let heading = ui.heading("Updates");
+                heading.ctx.accesskit_node_builder(heading.id, |node| {
+                    node.set_role(egui::accesskit::Role::Heading);
+                    node.set_label("Updates");
+                });
                 ui.add_enabled(
                     self.allowed,
                     egui::Checkbox::new(&mut self.automatic, "Check for updates automatically"),
@@ -770,6 +791,14 @@ impl Updater {
                 if !self.status.is_empty() {
                     ui.label(&self.status);
                 }
+                self.electronics.ui(ui);
+                let heading = ui.heading("Header buttons");
+                heading.ctx.accesskit_node_builder(heading.id, |node| {
+                    node.set_role(egui::accesskit::Role::Heading);
+                    node.set_label("Header buttons");
+                });
+                ui.checkbox(&mut self.show_donate, "Show the Donate button");
+                ui.checkbox(&mut self.show_discord, "Show the Discord button");
             });
         self.settings = settings;
         let mut open = self.open;

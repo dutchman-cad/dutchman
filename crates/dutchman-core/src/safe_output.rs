@@ -323,8 +323,8 @@ mod tests {
     #[test]
     fn numbers_before_the_extension() {
         assert_eq!(
-            numbered(Path::new("a/Toob v2.sc"), 2),
-            Path::new("a/Toob v2 (2).sc")
+            numbered(Path::new("a/bracket.sc"), 2),
+            Path::new("a/bracket (2).sc")
         );
     }
 
