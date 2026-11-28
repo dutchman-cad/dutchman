@@ -482,6 +482,11 @@ when SolidCraft confirms it: the full history matches the original, or, in a par
 replay holds the bodies the source stores at that point. Otherwise the history stops before it,
 saying its profile is the whole of a sketch with several profiles.
 
+A helical sweep whose profile sketch is on a plane across the coil's axis is rewritten on a plane
+through the axis, because SolidCraft 0.51 needs that. The loss `history/coil-profile-moved` has level
+`Info`, names the helical sweep in `subject`, and says the sketch's dimensions were not kept. A profile
+already on a plane through the axis keeps its sketch and gets no such loss.
+
 An unresolved `sketch_selection` may retain a candidate built from selected neutral curve ids or
 its carrier sketch only after the same source body comparison confirms it. The loss
 `history/profile-region-inferred` has level `Degraded`, names the consuming feature in `subject`,
