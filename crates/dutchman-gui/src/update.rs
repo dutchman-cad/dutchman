@@ -765,6 +765,11 @@ impl Updater {
             .open(&mut settings)
             .collapsible(false)
             .show(ctx, |ui| {
+                let heading = ui.heading("Updates");
+                heading.ctx.accesskit_node_builder(heading.id, |node| {
+                    node.set_role(egui::accesskit::Role::Heading);
+                    node.set_label("Updates");
+                });
                 ui.add_enabled(
                     self.allowed,
                     egui::Checkbox::new(&mut self.automatic, "Check for updates automatically"),
@@ -778,9 +783,6 @@ impl Updater {
                 {
                     self.start(ctx, true);
                 }
-                self.electronics.ui(ui);
-                ui.checkbox(&mut self.show_donate, "Show the Donate button");
-                ui.checkbox(&mut self.show_discord, "Show the Discord button");
                 if !self.allowed {
                     ui.label(
                         "Update checks are off for source builds or when DUTCHMAN_UPDATE_CHECK=0.",
@@ -789,6 +791,14 @@ impl Updater {
                 if !self.status.is_empty() {
                     ui.label(&self.status);
                 }
+                self.electronics.ui(ui);
+                let heading = ui.heading("Header buttons");
+                heading.ctx.accesskit_node_builder(heading.id, |node| {
+                    node.set_role(egui::accesskit::Role::Heading);
+                    node.set_label("Header buttons");
+                });
+                ui.checkbox(&mut self.show_donate, "Show the Donate button");
+                ui.checkbox(&mut self.show_discord, "Show the Discord button");
             });
         self.settings = settings;
         let mut open = self.open;

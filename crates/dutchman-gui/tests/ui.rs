@@ -7525,6 +7525,37 @@ fn settings_names_the_electronics_module_controls() {
     h.state_mut().updater.preview_module(1);
     h.run_steps(8);
     h.get_by_label("Update electronics module");
+    for heading in ["Updates", "Header buttons"] {
+        assert_eq!(
+            egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(heading)).role(),
+            egui::accesskit::Role::Heading
+        );
+    }
+    let labels = [
+        "Updates",
+        "Check for updates automatically",
+        "Check now",
+        "Update checks are off for source builds or when DUTCHMAN_UPDATE_CHECK=0.",
+        "Electronics module: v0.1.0 (included)",
+        "Check for update",
+        "Version 0.2.0 is available.",
+        "Update electronics module",
+        "Header buttons",
+        "Show the Donate button",
+        "Show the Discord button",
+    ];
+    for pair in labels.windows(2) {
+        assert!(
+            h.get_by_label(pair[0]).rect().bottom() <= h.get_by_label(pair[1]).rect().top(),
+            "{} before {}",
+            pair[0],
+            pair[1]
+        );
+    }
+    h.state_mut().updater.preview_module(2);
+    h.run_steps(8);
+    h.get_by_label("Updated to v0.2.0.");
+    assert!(h.query_by_label("Update electronics module").is_none());
 }
 
 #[cfg(feature = "test-support")]
@@ -7571,6 +7602,13 @@ fn module_update_screenshots() {
                 h.state_mut().set_out_dir(demo.join("out"));
                 h.state_mut().updater.preview_module(state);
                 h.run_steps(8);
+                h.get_by_label("Updates");
+                h.get_by_label("Header buttons");
+                h.get_by_label(match state {
+                    1 => "Version 0.2.0 is available.",
+                    2 => "Updated to v0.2.0.",
+                    _ => "Electronics module is up to date.",
+                });
                 shot(
                     &mut h,
                     &dir,
@@ -7582,4 +7620,5 @@ fn module_update_screenshots() {
             }
         }
     }
+    std::fs::write(dir.join("index.md"), index).unwrap();
 }

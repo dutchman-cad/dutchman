@@ -321,7 +321,7 @@ fn owned_target(
 enum Event {
     Status(String),
     Checked(Option<Manifest>),
-    Installed(String),
+    Installed { label: String, version: String },
 }
 #[derive(Default)]
 pub(crate) struct Updater {
@@ -344,9 +344,9 @@ impl Updater {
             }
         );
         self.status = if state == 1 {
-            "Update available."
+            "Version 0.2.0 is available."
         } else if state == 2 {
-            "Electronics module updated."
+            "Updated to v0.2.0."
         } else {
             "Electronics module is up to date."
         }
@@ -376,11 +376,9 @@ impl Updater {
                 dutchman_launcher::modules_folder()
                     .ok_or("Your modules folder could not be found.".into())
                     .and_then(|folder| install(&m, &folder))
-                    .map(|()| {
-                        Event::Installed(format!(
-                            "Electronics module: v{} (your modules folder)",
-                            m.version
-                        ))
+                    .map(|()| Event::Installed {
+                        label: format!("Electronics module: v{} (your modules folder)", m.version),
+                        version: m.version.to_string(),
                     })
             } else {
                 check().map(Event::Checked)
@@ -413,18 +411,16 @@ impl Updater {
             self.rx = None;
             match result {
                 Ok(Event::Status(label)) => self.label = label,
-                Ok(Event::Installed(label)) => {
+                Ok(Event::Installed { label, version }) => {
                     self.label = label;
                     self.offer = None;
-                    self.status = "Electronics module updated.".into();
+                    self.status = format!("Updated to v{version}.");
                 }
                 Ok(Event::Checked(m)) => {
-                    self.status = if m.is_some() {
-                        "Update available."
-                    } else {
-                        "Electronics module is up to date."
-                    }
-                    .into();
+                    self.status = m.as_ref().map_or_else(
+                        || "Electronics module is up to date.".into(),
+                        |manifest| format!("Version {} is available.", manifest.version),
+                    );
                     self.offer = m;
                 }
                 Err(e) => {
@@ -446,6 +442,9 @@ impl Updater {
         {
             self.start(ui.ctx(), false);
         }
+        if !self.status.is_empty() {
+            ui.label(&self.status);
+        }
         if self.offer.is_some()
             && ui
                 .add_enabled(
@@ -458,9 +457,6 @@ impl Updater {
         }
         if self.rx.is_some() {
             ui.spinner();
-        }
-        if !self.status.is_empty() {
-            ui.label(&self.status);
         }
     }
 }

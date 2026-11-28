@@ -539,7 +539,7 @@ never check; only release-workflow builds enable this feature.
 
 ### Electronics module updates
 
-In Settings, **Electronics module** shows the version in use and whether it is included or in your modules folder. Choose **Check for update**, then **Update electronics module** to install a newer compatible release. Checks and downloads run in the background; failures appear in Settings.
+Settings groups update controls under **Updates** and the Donate and Discord toggles under **Header buttons**. In **Updates**, **Electronics module** shows the version in use and whether it is included or in your modules folder. Choose **Check for update**, then review “Version X.Y.Z is available.” above **Update electronics module** to install a newer compatible release. After installation, Settings confirms “Updated to vX.Y.Z.” Checks and downloads run in the background; failures appear in Settings.
 
 ## Installing it
 
