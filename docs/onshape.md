@@ -336,8 +336,10 @@ output is replaced only after a successful fetch.
   variables, the sketches, and the STEP export (request, one poll, download). A workspace link
   adds one final check. Each feature whose faces or parts the conversion needs adds one
   body-detail call, and a Derived Part Studio or an assembly adds the studios it reads. Before
-  fetching, Dutchman estimates 30 calls for each Part Studio or assembly and asks above 50; see
-  [Calls and cache](#calls-and-cache). Fetching the same version again is read from the cache and usually costs no calls.
+  fetching, Dutchman reserves 30 calls for each ordinary Part Studio or assembly; referenced
+  external studios use their configured feature history to count body-detail calls. It asks
+  above 50; see [Calls and cache](#calls-and-cache). Fetching the same version again is read
+  from the cache and usually costs no calls.
 - **Cap a fetch with `--max-calls N`** (`max_calls` in the MCP tool). The fetch stops before
   call N+1, and `--max-calls 0` reads only the cache. A stopped fetch picks up later with only
   the calls it is missing ([Continue a stopped fetch](#continue-a-stopped-fetch)).
@@ -532,13 +534,14 @@ Onshape's Free and Standard plans allow 2,500 API calls a year, so Dutchman tell
 what a fetch will cost before it spends it. First it lists the document, which costs at
 most three calls (microversion, name, tab list) and is cached. For assemblies, it also reads
 reachable assembly definitions so it can count external references. From that listing it
-estimates the whole fetch: 30 calls for each Part Studio or assembly it will read (an
-assembly may use every Part Studio of the document; a Part Studio is read alone), plus 30
-for each external Part Studio referenced by the selected assembly. Estimating an assembly
-also reads reachable assembly definitions to find those references; the replies are cached and reused by the
-fetch. Configured references are counted separately. Cached feature and sketch replies reduce
-the external-studio estimate; other cached immutable replies are reused by the fetch without
-another API request. The listing calls are included in the estimate.
+estimates the whole fetch: 30 calls for each ordinary Part Studio or assembly it will read
+(an assembly may use every Part Studio of the document; a Part Studio is read alone). For each
+external Part Studio, estimating reads its document name, tab list and configured feature
+list, then counts its missing body-detail, configuration, variables, sketch and STEP calls.
+Derived references in those external studios are included recursively; external assemblies
+are reported as unsupported. Estimating an assembly also reads reachable assembly definitions
+to find references; those calls and all external listing calls are included in the estimate.
+Cached replies are reused by the fetch and do not add to the remaining external-studio estimate.
 
 - **Up to 50 estimated calls:** it prints the estimate and fetches.
 - **Above 50:** it asks first. On a terminal the command line prints the estimate and asks
@@ -549,7 +552,8 @@ another API request. The listing calls are included in the estimate.
   `--max-calls 0` permits cache reads only.
 - **Without `--max-calls`** (after the go) the limit starts at 50 and grows as Dutchman
   finds work: 30 more for each Part Studio or assembly and one more for each body-detail
-  request, up to an automatic ceiling of 2000 calls that no document can raise.
+  request, up to an automatic ceiling of 2000 calls that no document can raise. External
+  Part Studios use the per-feature count from their configured feature list.
 
 Calls count every HTTP attempt, including metadata, consistency checks, export creation,
 polling, download, retries, and a refetch; the calls that listed the document count against

@@ -1011,12 +1011,38 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
         "parts": [{"documentId": OTHER, "elementId": OTHER_ELEMENT}]
     }))
     .unwrap();
-    mock.replies.extend([
+    let features: Vec<_> = (0..26)
+        .map(|_| {
+            json!({
+                "featureId":"extrude",
+                "featureType":"extrude",
+                "parameters":[{"parameterId":"operationType","value":"NEW"}]
+            })
+        })
+        .collect();
+    let mut external_replies = VecDeque::from([
         response(200, json!({"name":"Synthetic standard part"})),
-        response(200, json!([{"id":OTHER_ELEMENT,"elementType":"PARTSTUDIO","name":"Configured bolt"}])),
-        response(200, json!({"sourceMicroversion":OTHER_MID,"features":[{"featureId":"extrude","featureType":"extrude","parameters":[{"parameterId":"operationType","value":"NEW"}]}]})),
-        response(200, json!({"microversionId":OTHER_MID,"bodies":[]})),
-        response(200, json!({"microversionId":OTHER_MID,"bodies":[{"id":"bolt","type":"SOLID","properties":{"name":"Configured bolt"}}]})),
+        response(
+            200,
+            json!([{"id":OTHER_ELEMENT,"elementType":"PARTSTUDIO","name":"Configured bolt"}]),
+        ),
+        response(
+            200,
+            json!({"sourceMicroversion":OTHER_MID,"features":features}),
+        ),
+    ]);
+    for index in 0..=26 {
+        let bodies = if index == 26 {
+            json!([{"id":"bolt","type":"SOLID","properties":{"name":"Configured bolt"}}])
+        } else {
+            json!([])
+        };
+        external_replies.push_back(response(
+            200,
+            json!({"microversionId":OTHER_MID,"bodies":bodies}),
+        ));
+    }
+    external_replies.extend([
         response(200, json!({"sourceMicroversion":OTHER_MID,"configurationParameters":[],"currentConfiguration":[]})),
         response(200, json!({"variables":[{"name":"length","type":"NUMBER","expression":"25mm","value":"25mm"}]})),
         response(200, json!({"id":"external-export","requestState":"ACTIVE","documentId":OTHER,"versionId":OTHER_VERSION,"resultDocumentId":OTHER,"requestElementId":OTHER_ELEMENT})),
@@ -1024,7 +1050,13 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
         Response { status: 200, headers: BTreeMap::new(), body: b"ISO-10303-21; synthetic external solid".to_vec() },
         response(200, sketch_information(OTHER_MID)),
     ]);
-    let report = run(&mut mock, &dir, AS, 100).unwrap();
+    mock.replies.extend(external_replies);
+    let auth = FetchAuth::ApiKeys(credentials());
+    let output = dir.path().join("external.onshape-bundle");
+    let cache = dir.path().join("cache");
+    let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
+    assert_eq!(estimate.listing_calls, 7);
+    let report = fetch_approved(&mut mock, &auth, &source(AS), &output, &cache, &estimate).unwrap();
     assert_eq!(mock.replies.len(), 0);
     let feature_request = mock
         .sent
@@ -1062,7 +1094,13 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
     assert!(mock.sent.iter().any(|(_, path, _)| {
         path == &format!("/api/v17/documents/d/{OTHER}/externaldata/external-step")
     }));
-    assert!(report.calls >= 10);
+    // The estimate reserves 30 calls for the root assembly. The remainder matches the
+    // mock's actual external calls, including 27 body-detail reads for its feature history.
+    assert_eq!(
+        estimate.calls - estimate.listing_calls - 29,
+        report.calls - estimate.listing_calls
+    );
+    assert_eq!(report.calls, 41);
     let mut archive = open_bundle(&dir);
     let prefix = format!("references/{OTHER}/{OTHER_VERSION}/{OTHER_ELEMENT}/config-");
     assert!(archive
@@ -1075,7 +1113,7 @@ fn assembly_fetch_captures_configured_external_partstudio_and_reuses_its_cache()
             .map(|name| name.unwrap().into_owned())
             .filter(|name| name.starts_with(&prefix))
             .count(),
-        9
+        34
     );
     let external_manifest_path = archive
         .file_names()
@@ -2510,15 +2548,23 @@ fn the_assembly_estimate_counts_external_configurations_and_reuses_definitions()
         },
         "subAssemblies": []
     })).unwrap();
+    mock.replies.extend([
+        response(200, json!({"name":"Synthetic standard part"})),
+        response(
+            200,
+            json!([{"id":OTHER_ELEMENT,"elementType":"PARTSTUDIO","name":"Configured bolt"}]),
+        ),
+        response(200, json!({"sourceMicroversion":OTHER_MID,"features":[]})),
+    ]);
     let estimate = estimate_calls(&mut mock, &auth, &source(AS), &cache).unwrap();
     assert_eq!(estimate.elements, 2);
-    assert_eq!(estimate.listing_calls, 4);
-    assert_eq!(estimate.calls, 64);
+    assert_eq!(estimate.listing_calls, 7);
+    assert_eq!(estimate.calls, 43);
 
     let mut cached = Mock::default();
     let again = estimate_calls(&mut cached, &auth, &source(AS), &cache).unwrap();
     assert_eq!(again.listing_calls, 0);
-    assert_eq!(again.calls, 60);
+    assert_eq!(again.calls, 36);
 }
 
 #[test]
