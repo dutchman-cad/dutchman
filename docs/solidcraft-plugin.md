@@ -120,15 +120,18 @@ The dialog shows three options, and a folder field:
 - **Up axis**: **As in the file** keeps the file's coordinates. **Stand up (Y-up to Z-up)**
   turns a Y-up design to Z-up.
 - **Include hidden bodies** (off): also bring in hidden or consumed bodies.
-- **Folder with the parts** (empty, optional): for an assembly whose parts are not beside it, pick
+- **Folder with the parts** (empty, optional; shown only for files that can have parts:
+  `.iam`, `.sldasm`, `.f3d` and `.f3z`): for an assembly whose parts are not beside it, pick
   the folder that holds them with **Browse...**. Pick the export folder itself, with the parts
   where the assembly expects them. Leave it empty to use the folder that holds the file. A
   folder you type or paste counts as picked; a folder SolidCraft remembered from earlier does
   not, so you choose it each time. Scripts and the command line cannot grant it and use the
   install approval for the file's own folder.
 
-Dutchman remembers your last three options in your SolidCraft user settings, saved when
-SolidCraft accepts an import, and offers them as the defaults for the next file. A conversion
+Dutchman remembers your last three options for each format (Fusion, Inventor, SolidWorks and
+FreeCAD) in your SolidCraft user settings, saved when SolidCraft accepts an import. When you pick
+a file, the dialog offers the choices you made for that file's format as its defaults. A format
+you have not imported yet gets your latest choices. A conversion
 that fails or is canceled saves nothing. The parts folder is never remembered. Removing the
 plugin asks whether to keep these settings (it keeps them by default).
 ## Limits

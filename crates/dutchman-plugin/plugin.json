@@ -70,6 +70,10 @@
               "title": "Folder with the parts",
               "format": "directory",
               "x-solidcraft-grant": "read",
+              "x-solidcraft-visible-when": {
+                "file": "extension",
+                "in": ["iam", "sldasm", "f3d", "f3z"]
+              },
               "description": "Optional. For an assembly whose parts are not beside it, such as a Fusion export folder: pick the folder that holds them. Dutchman reads that folder for this file only and never writes. Leave it empty to read the folder that holds the file."
             }
           }

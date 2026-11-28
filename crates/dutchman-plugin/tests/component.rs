@@ -1386,7 +1386,12 @@ fn settings_are_saved_and_offered(
     let saved = store.data().settings.get("options").cloned().unwrap();
     assert_eq!(
         serde_json::from_str::<Value>(&saved)?,
-        json!({"editable_history":false,"up_axis":"stand_up","include_hidden_bodies":true})
+        json!({
+            "editable_history":false,"up_axis":"stand_up","include_hidden_bodies":true,
+            "formats":{"fusion":{
+                "editable_history":false,"up_axis":"stand_up","include_hidden_bodies":true
+            }}
+        })
     );
     assert_eq!(store.data().settings.len(), 1);
     // The next dialog offers them.

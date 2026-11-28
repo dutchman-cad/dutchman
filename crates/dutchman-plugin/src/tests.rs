@@ -555,13 +555,18 @@ fn only_the_three_dialog_options_are_saved_and_offered() {
         include_hidden_bodies: true,
         parts_folder: Some("/a/folder/that/is/not/saved".into()),
     };
-    let saved = encode(&options);
+    let saved = encode(&options, "f3d", None);
     assert_eq!(
         serde_json::from_str::<Value>(&saved).unwrap(),
-        serde_json::json!({"editable_history":false,"up_axis":"stand_up","include_hidden_bodies":true})
+        serde_json::json!({
+            "editable_history": false, "up_axis": "stand_up", "include_hidden_bodies": true,
+            "formats": {"fusion": {
+                "editable_history": false, "up_axis": "stand_up", "include_hidden_bodies": true
+            }}
+        })
     );
     // What is saved comes back as the form's defaults, and the manifest offers every one.
-    let offered: Value = serde_json::from_str(&field_defaults(Some(&saved))).unwrap();
+    let offered: Value = serde_json::from_str(&field_defaults(Some(&saved), "f3d")).unwrap();
     let schema = &manifest()["runtime"]["entries"][0]["input_schema"]["properties"];
     for (field, default) in [
         ("editable_history", serde_json::json!(false)),
@@ -572,14 +577,15 @@ fn only_the_three_dialog_options_are_saved_and_offered() {
         assert!(schema.get(field).is_some());
     }
     assert!(offered["fields"].get(crate::PARTS_FOLDER).is_none());
+    let stored: Value = serde_json::from_str(&saved).unwrap();
     assert!(
-        serde_json::from_str::<Options>(&saved).is_ok(),
+        serde_json::from_str::<Options>(&stored["formats"]["fusion"].to_string()).is_ok(),
         "stored options are valid options"
     );
     // The automatic axis, the default, is saved and offered like the others.
-    let automatic = encode(&Options::default());
+    let automatic = encode(&Options::default(), "ipt", None);
     assert_eq!(
-        serde_json::from_str::<Value>(&field_defaults(Some(&automatic))).unwrap()["fields"]
+        serde_json::from_str::<Value>(&field_defaults(Some(&automatic), "ipt")).unwrap()["fields"]
             ["up_axis"]["default"],
         "auto"
     );
@@ -591,14 +597,98 @@ fn only_the_three_dialog_options_are_saved_and_offered() {
         Some("{}"),
         Some(r#"{"up_axis":"left"}"#),
     ] {
-        assert_eq!(field_defaults(stored), r#"{"fields":{}}"#, "{stored:?}");
+        assert_eq!(
+            field_defaults(stored, "f3d"),
+            r#"{"fields":{}}"#,
+            "{stored:?}"
+        );
     }
     assert_eq!(
-        field_defaults(Some(
-            r#"{"editable_history":"yes","include_hidden_bodies":false}"#
-        )),
+        field_defaults(
+            Some(r#"{"editable_history":"yes","include_hidden_bodies":false}"#),
+            "f3d"
+        ),
         r#"{"fields":{"include_hidden_bodies":{"default":false}}}"#
     );
+}
+
+#[test]
+fn options_are_remembered_for_each_format_separately() {
+    use crate::settings::{encode, field_defaults, format_key};
+    let fusion = Options {
+        editable_history: false,
+        ..Options::default()
+    };
+    let inventor = Options {
+        up_axis: crate::UpAxis::StandUp,
+        include_hidden_bodies: true,
+        ..Options::default()
+    };
+    // An Inventor import after a Fusion one keeps both formats' choices.
+    let after_fusion = encode(&fusion, "F3D", None);
+    let both = encode(&inventor, "iam", Some(&after_fusion));
+    let defaults = |extension: &str| -> Value {
+        serde_json::from_str(&field_defaults(Some(&both), extension)).unwrap()
+    };
+    assert_eq!(
+        defaults("f3z")["fields"],
+        serde_json::json!({
+            "editable_history": {"default": false},
+            "include_hidden_bodies": {"default": false},
+            "up_axis": {"default": "auto"}
+        })
+    );
+    assert_eq!(
+        defaults("ipt")["fields"],
+        serde_json::json!({
+            "editable_history": {"default": true},
+            "include_hidden_bodies": {"default": true},
+            "up_axis": {"default": "stand_up"}
+        })
+    );
+    // A format with no choices of its own is offered the latest choice (Inventor's here).
+    assert_eq!(defaults("sldprt")["fields"], defaults("iam")["fields"]);
+    // So is a file of a format Dutchman does not know, or no file at all.
+    assert_eq!(defaults("")["fields"], defaults("iam")["fields"]);
+    // Damaged earlier settings are dropped instead of failing the save.
+    let fresh = encode(&fusion, "fcstd", Some("not json"));
+    assert_eq!(
+        serde_json::from_str::<Value>(&fresh).unwrap()["formats"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["freecad"]
+    );
+    // Every extension the manifest registers belongs to a format.
+    for extension in manifest()["runtime"]["entries"][0]["extensions"]
+        .as_array()
+        .unwrap()
+    {
+        assert!(
+            format_key(extension.as_str().unwrap()).is_some(),
+            "{extension}"
+        );
+    }
+}
+
+#[test]
+fn parts_folder_is_shown_only_for_files_that_can_have_parts() {
+    let folder =
+        &manifest()["runtime"]["entries"][0]["input_schema"]["properties"][crate::PARTS_FOLDER];
+    assert_eq!(
+        folder["x-solidcraft-visible-when"],
+        serde_json::json!({"file": "extension", "in": ["iam", "sldasm", "f3d", "f3z"]})
+    );
+    // The other options apply to every format and carry no condition.
+    for field in ["editable_history", "up_axis", "include_hidden_bodies"] {
+        assert!(
+            manifest()["runtime"]["entries"][0]["input_schema"]["properties"][field]
+                .get("x-solidcraft-visible-when")
+                .is_none(),
+            "{field}"
+        );
+    }
 }
 
 #[test]

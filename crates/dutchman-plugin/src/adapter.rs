@@ -164,10 +164,10 @@ mod guest {
 
     struct Importer;
     impl exports::craft::plugin::dialog_provider::Guest for Importer {
-        /// The form's defaults are the person's last accepted options. A file-aware update
-        /// needs nothing from the file itself, and a settings read that fails leaves the
+        /// The form's defaults are the person's last accepted options for the selected file's
+        /// format. A file-aware update reads only the file's extension, and a settings read that fails leaves the
         /// manifest's defaults rather than keeping the dialog from opening.
-        fn update_fields(entry: String, _context: String) -> Result<String, PluginError> {
+        fn update_fields(entry: String, context: String) -> Result<String, PluginError> {
             if entry != ENTRY {
                 return Err(invalid(
                     "entry",
@@ -175,7 +175,22 @@ mod guest {
                 ));
             }
             let stored = user_storage::get(crate::settings::KEY).ok().flatten();
-            Ok(crate::settings::field_defaults(stored.as_deref()))
+            // The selected file's extension picks that format's saved choices; a context without
+            // one offers the latest choice.
+            let extension = serde_json::from_str::<serde_json::Value>(&context)
+                .ok()
+                .and_then(|context| {
+                    context
+                        .get("file")?
+                        .get("extension")?
+                        .as_str()
+                        .map(str::to_owned)
+                })
+                .unwrap_or_default();
+            Ok(crate::settings::field_defaults(
+                stored.as_deref(),
+                &extension,
+            ))
         }
     }
     impl exports::craft::plugin::importer::Guest for Importer {
@@ -209,7 +224,12 @@ mod guest {
                 Some(path) if !path.is_empty() => Parts::Picked,
                 _ => Parts::Input,
             };
-            let saved = crate::settings::encode(&options);
+            let extension = Path::new(&file.name)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or_default();
+            let earlier = user_storage::get(crate::settings::KEY).ok().flatten();
+            let saved = crate::settings::encode(&options, extension, earlier.as_deref());
             // An assembly cannot convert without its parts: ask for the folder now, before
             // reading the assembly, instead of failing on the first missing part.
             if crate::notice::needs_part_folder(&file.name) || parts == Parts::Picked {
