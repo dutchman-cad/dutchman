@@ -2230,3 +2230,10 @@ sketch contains only points or reference axes is refused with "its sketch featur
 resolved non-construction profile curves; this is not supported yet". The decoder must
 supply the actual profile curves. An empty profile table can still use the complete bound
 sketch when its non-construction curves are decoded; no loop or contour is guessed.
+
+When all decode check errors are geometric consistency findings in stored history-body
+nests, Dutchman leaves out only those stored states. Each affected history step gets a
+`Degraded` loss at stage `project`, with the feature identity as `subject` and the total
+number of affected steps in `message` ("N history steps' stored states left out"). These
+notes have no loss code. History checks needing those states are skipped; final-model
+check failures still refuse the design.
