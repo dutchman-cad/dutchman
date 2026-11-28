@@ -72,8 +72,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("destination", type=Path)
     parser.add_argument("--wix", type=Path)
+    parser.add_argument("--extra-notices", type=Path)
     args = parser.parse_args()
     files = stage(args.destination)
+    if args.extra_notices:
+        for source in sorted(args.extra_notices.rglob("*")):
+            if source.is_file():
+                relative = Path("THIRD-PARTY") / source.relative_to(args.extra_notices)
+                target = args.destination / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+                files.append(relative)
     if args.wix:
         wix_fragment(args.destination, files, args.wix)
 

@@ -331,6 +331,8 @@ Expand-Archive dutchman-VERSION-x86_64-pc-windows-msvc.zip -DestinationPath .
   named `dutchman-nightly-TARGET` and install the same way. Use it when an issue says a fix is
   merged but not in a release yet; go back to stable once a stable release has it.
 
+Every Dutchman download includes the electronics module. Circuit boards convert with nothing extra to install.
+
 ## From source
 
 With Rust 1.88 or newer:
@@ -343,6 +345,8 @@ That builds the newest code on `main`. To build the newest published release ins
 `--branch latest-release`: the `latest-release` branch always points at the latest release. A Nix flake or
 other package manager that follows a branch can use the same branch
 (`github:dutchman-cad/dutchman/latest-release`), or a tag such as `v0.3.0` to pin one release.
+
+Source builds need the separate [electronics module](https://github.com/dutchman-cad/dutchman-electronics/releases) for circuit boards. Put its program beside Dutchman or on `PATH`.
 
 This installs both `dutchman` and `dutchman-mcp`. Check the install:
 
