@@ -89,8 +89,10 @@ pub fn find() -> Option<PathBuf> {
     )
 }
 
-/// Skip copies whose info cannot be read; equal versions keep the bundled copy.
+/// Prefer usable copies; equal versions keep the bundled copy.
+/// If none works, retain the first candidate so reading reports why it cannot run.
 fn select(candidates: Vec<PathBuf>, report: &mut Report) -> Option<PathBuf> {
+    let fallback = candidates.first().cloned();
     let mut selected: Option<(PathBuf, semver::Version)> = None;
     for path in candidates {
         let version = info(&path, &Limits::default()).and_then(|info| {
@@ -118,7 +120,7 @@ fn select(candidates: Vec<PathBuf>, report: &mut Report) -> Option<PathBuf> {
             ),
         }
     }
-    selected.map(|(path, _)| path)
+    selected.map(|(path, _)| path).or(fallback)
 }
 
 /// Whether the electronics module is installed.
@@ -1037,6 +1039,71 @@ mod selection_tests {
                 skipped
             );
         }
+    }
+
+    #[test]
+    fn a_broken_copy_reports_that_it_could_not_run() {
+        #[cfg(unix)]
+        let _scripts = super::tests::scripts();
+        let dir = tempfile::tempdir().unwrap();
+        let broken = stub(dir.path(), None);
+        let mut report = Report::default();
+        let selected = select(vec![broken.clone()], &mut report).unwrap();
+        assert_eq!(selected, broken);
+        let error = read_with(
+            &selected,
+            &dir.path().join("board.PcbDoc"),
+            CopperLayers::Outer,
+            &Limits::default(),
+            &mut report,
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains(
+                "the electronics module is installed but could not be run:"
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn all_broken_copies_keep_the_bundled_reason() {
+        #[cfg(unix)]
+        let _scripts = super::tests::scripts();
+        let bundled_dir = tempfile::tempdir().unwrap();
+        let user_dir = tempfile::tempdir().unwrap();
+        let bundled = stub(bundled_dir.path(), None);
+        let user = stub(user_dir.path(), None);
+        let mut report = Report::default();
+        let selected = select(vec![bundled.clone(), user.clone()], &mut report).unwrap();
+        let error = read_with(
+            &selected,
+            &bundled_dir.path().join("board.PcbDoc"),
+            CopperLayers::Outer,
+            &Limits::default(),
+            &mut report,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("installed but could not be run:"), "{error}");
+        assert!(error.contains(&bundled.display().to_string()), "{error}");
+        assert!(!error.contains(&user.display().to_string()), "{error}");
+    }
+
+    #[test]
+    fn a_broken_bundled_copy_uses_the_working_user_copy_with_a_note() {
+        #[cfg(unix)]
+        let _scripts = super::tests::scripts();
+        let bundled_dir = tempfile::tempdir().unwrap();
+        let user_dir = tempfile::tempdir().unwrap();
+        let bundled = stub(bundled_dir.path(), None);
+        let user = stub(user_dir.path(), Some("1.0.0"));
+        let mut report = Report::default();
+        assert_eq!(select(vec![bundled, user.clone()], &mut report), Some(user));
+        assert!(report.losses().iter().any(|loss| {
+            loss.detail.contains("Skipped electronics module")
+                && loss.detail.contains("did not answer")
+        }));
     }
 
     #[test]
