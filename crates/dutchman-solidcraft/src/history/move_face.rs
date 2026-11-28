@@ -54,28 +54,31 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     // the pick to its live historical body, never to a body inferred from the point
     // or the feature's final output. Older targets retain their existing encoding.
     let body = if ctx.target_version >= crate::SolidCraftVersion::V0_45_0 {
-        if selection
+        let topology = selection
             .pointer("/value/state")
             .and_then(Value::as_str)
-            .and_then(|state| ctx.row("feature_input_topologies", state))
+            .and_then(|state| ctx.row("feature_input_topologies", state));
+        let several = topology
             .and_then(|state| state.get("bodies"))
             .and_then(Value::as_array)
-            .is_some_and(|bodies| bodies.len() > 1)
-        {
-            return Err("its offset face input topology holds several bodies without face ownership; this is not supported yet".to_owned());
-        }
-        // Import and historical source IDs can name the same live written body.
-        // Keep those aliases for identity resolution, but count each body once.
-        let live: BTreeSet<_> = ctx
-            .named_bodies
-            .iter()
-            .map(|(_, name)| name)
-            .chain(ctx.generated_bodies.iter().map(|(_, name)| name))
-            .collect();
-        let mut live = live.into_iter();
-        match (live.next(), live.next()) {
+            .is_some_and(|bodies| bodies.len() > 1);
+        if several {
+            let faces = selection.pointer("/value/faces").and_then(Value::as_array);
+            Some(owned_body(topology, faces, &ctx.named_bodies)?)
+        } else {
+            // Import and historical source IDs can name the same live written body.
+            // Keep those aliases for identity resolution, but count each body once.
+            let live: BTreeSet<_> = ctx
+                .named_bodies
+                .iter()
+                .map(|(_, name)| name)
+                .chain(ctx.generated_bodies.iter().map(|(_, name)| name))
+                .collect();
+            let mut live = live.into_iter();
+            match (live.next(), live.next()) {
             (Some(name), None) => Some(name.clone()),
             _ => return Err("its offset face target is not a unique earlier named body; selecting among several input bodies is not supported yet".to_owned()),
+        }
         }
     } else {
         None
@@ -99,9 +102,95 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     Ok(Value::Object(out))
 }
 
+/// The written name of the one body that holds every selected face of an input state with
+/// several bodies, from the state's face ownership. Faces without an owner, faces of different
+/// bodies, and a body that is not one live named body are refused.
+fn owned_body(
+    topology: Option<&Value>,
+    faces: Option<&Vec<Value>>,
+    named_bodies: &[(String, String)],
+) -> Result<String, String> {
+    let owners = topology
+        .and_then(|state| state.get("face_owners"))
+        .and_then(Value::as_array)
+        .filter(|owners| !owners.is_empty())
+        .ok_or("its offset face input topology holds several bodies without face ownership")?;
+    let faces = faces
+        .filter(|faces| !faces.is_empty())
+        .ok_or("its face selection is empty")?;
+    let mut owner: Option<&str> = None;
+    for face in faces {
+        let body = owners
+            .iter()
+            .find(|entry| entry.get("face") == Some(face))
+            .and_then(|entry| entry.get("body"))
+            .and_then(Value::as_str)
+            .ok_or("a moved face has no owning body in its input topology")?;
+        match owner {
+            Some(known) if known != body => {
+                return Err("its moved faces belong to different input bodies".to_owned())
+            }
+            _ => owner = Some(body),
+        }
+    }
+    let owner = owner.ok_or("its face selection is empty")?;
+    let names: BTreeSet<_> = named_bodies
+        .iter()
+        .filter(|(id, _)| id == owner)
+        .map(|(_, name)| name)
+        .collect();
+    let mut names = names.into_iter();
+    match (names.next(), names.next()) {
+        (Some(name), None) => Ok(name.clone()),
+        _ => Err("the body that owns its moved faces is not one earlier named body".to_owned()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn two_bodies() -> Vec<(String, String)> {
+        vec![
+            ("b1".to_owned(), "Base".to_owned()),
+            ("b2".to_owned(), "Lid".to_owned()),
+        ]
+    }
+
+    #[test]
+    fn faces_of_one_owner_body_pick_that_body() {
+        let state = json!({"bodies": ["b1", "b2"], "face_owners": [
+            {"face": "f1", "body": "b2"}, {"face": "f2", "body": "b2"}, {"face": "f3", "body": "b1"}
+        ]});
+        let faces = vec![json!("f1"), json!("f2")];
+        assert_eq!(
+            owned_body(Some(&state), Some(&faces), &two_bodies()),
+            Ok("Lid".to_owned())
+        );
+    }
+
+    #[test]
+    fn faces_of_different_bodies_are_refused() {
+        let state = json!({"face_owners": [
+            {"face": "f1", "body": "b2"}, {"face": "f3", "body": "b1"}
+        ]});
+        let faces = vec![json!("f1"), json!("f3")];
+        assert_eq!(
+            owned_body(Some(&state), Some(&faces), &two_bodies()),
+            Err("its moved faces belong to different input bodies".to_owned())
+        );
+    }
+
+    #[test]
+    fn missing_ownership_is_refused() {
+        let faces = vec![json!("f1")];
+        let none = json!({"bodies": ["b1", "b2"]});
+        assert!(owned_body(Some(&none), Some(&faces), &two_bodies()).is_err());
+        let other = json!({"face_owners": [{"face": "f9", "body": "b1"}]});
+        assert!(owned_body(Some(&other), Some(&faces), &two_bodies()).is_err());
+        let unnamed = json!({"face_owners": [{"face": "f1", "body": "b7"}]});
+        assert!(owned_body(Some(&unnamed), Some(&faces), &two_bodies()).is_err());
+    }
 
     #[test]
     fn affine_face_moves_are_never_written_as_normal_offsets() {
