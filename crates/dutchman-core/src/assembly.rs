@@ -5158,7 +5158,7 @@ mod tests {
         let input = |id: &str, of: &Value| {
             json!({"id": format!("synthetic:input:state#{id}"),
             "input_of": of, "bodies": [], "faces": [], "edges": [], "vertices": [],
-            "edge_geometry": [], "face_owners": []})
+            "edge_geometry": [], "face_owners": [], "face_geometry": [], "body_writers": []})
         };
         // Nothing points at these rows: each names only its feature.
         wire["model"]["feature_result_topologies"] =
