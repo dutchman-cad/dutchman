@@ -225,8 +225,8 @@ fn interchange_codecs_convert_generated_geometry_through_step() {
         let (_, target) = encoder.targets().default().unwrap();
         let plan = encoder
             .plan(
-                EncodeInput::new(&ir, None),
-                TargetRequest::Explicit(target.id.as_str()),
+                EncodeInput::new(&ir, None)
+                    .with_target(TargetRequest::Explicit(target.id.as_str())),
             )
             .unwrap();
         let mut bytes = Vec::new();
@@ -259,10 +259,7 @@ fn a_step_input_is_stored_as_it_is() {
     let encoder = build_encoder(Format::Step);
     let (_, target) = encoder.targets().default().unwrap();
     let plan = encoder
-        .plan(
-            EncodeInput::new(&ir, None),
-            TargetRequest::Explicit(target.id.as_str()),
-        )
+        .plan(EncodeInput::new(&ir, None).with_target(TargetRequest::Explicit(target.id.as_str())))
         .unwrap();
     let mut bytes = Vec::new();
     plan.write_to(&mut bytes).unwrap();

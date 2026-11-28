@@ -136,7 +136,7 @@ pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
 
 fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, String> {
     let bodies = &model.ir.geometry.bodies;
-    let mut document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
+    let mut document = crate::ir_wire::to_value(&model.ir).map_err(|err| err.to_string())?;
     // FreeCAD hides what a hidden container holds. Other formats say each body's and each
     // occurrence's own visibility, and the assembly writer keeps hidden occurrences hidden.
     let freecad = document.pointer("/native/fcstd").is_some();
@@ -530,7 +530,7 @@ mod tests {
     #[test]
     fn consumed_geometry_appearance_targets_are_not_reported_as_decoder_omissions() {
         let mut model = two_cubes(Some(false));
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let body = wire["geometry"]["bodies"][1]["id"].clone();
         let face = wire["geometry"]["faces"]
             .as_array()
@@ -574,7 +574,7 @@ mod tests {
         let fixture =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic_cube.ipt");
         let part = crate::read(Format::InventorPart, &fixture, &mut Report::default()).unwrap();
-        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&part.ir).unwrap();
         let model = wire["geometry"].as_object_mut().unwrap();
         let ids: BTreeMap<String, String> = model
             .iter()
@@ -632,7 +632,7 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic_cube.ipt");
         let mut model =
             crate::read(Format::InventorPart, &fixture, &mut Report::default()).unwrap();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let m = &mut wire["geometry"];
         let id = |arena: &str, key: usize| format!("test:tool:{arena}#{key}");
         let point = |z: f64| json!({"x": 5.0, "y": 5.0, "z": z});
@@ -691,10 +691,10 @@ mod tests {
         let mut model = two_cubes(None);
         model.source_step = Some("stored source".to_owned());
         assert!(filtered(&model, true).unwrap().is_none());
-        let expected = serde_json::to_value(&model.ir).unwrap();
+        let expected = crate::ir_wire::to_value(&model.ir).unwrap();
         let mut report = Report::default();
         let kept = fusion(model, &mut report);
-        assert_eq!(serde_json::to_value(&kept.ir).unwrap(), expected);
+        assert_eq!(crate::ir_wire::to_value(&kept.ir).unwrap(), expected);
         assert_eq!(kept.source_step.as_deref(), Some("stored source"));
         assert!(report.losses().is_empty());
     }
@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn fusion_user_hidden_component_members_are_kept() {
         let mut model = fusion_cut();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let tool = wire["geometry"]["bodies"][1]["id"].clone();
         wire["model"]["product_definitions"][0]["bodies"]
             .as_array_mut()
@@ -738,7 +738,7 @@ mod tests {
     #[test]
     fn fusion_hidden_bodies_owned_by_placed_assembly_parts_are_kept() {
         let mut model = fusion_cut();
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let tool = wire["geometry"]["bodies"][1]["id"].clone();
         wire["model"]["product_definitions"]
             .as_array_mut()
@@ -762,18 +762,24 @@ mod tests {
         // Component membership is protected even when the occurrence itself is hidden.
         // The two component definitions plus the file definition that owns the placement.
         assert_eq!(kept.ir.model.product_definitions, definitions);
-        assert_eq!(
-            kept.ir.model.product_definitions[0].id.as_str(),
-            "test:model:component#box"
-        );
-        assert_eq!(
-            kept.ir.model.product_definitions[1].id.as_str(),
-            "test:model:component#tool"
-        );
-        assert!(matches!(
-            kept.ir.model.product_definitions[2].storage,
-            cadmpeg_ir::products::Storage::File { source: None, .. }
-        ));
+        let ids: Vec<_> = kept
+            .ir
+            .model
+            .product_definitions
+            .iter()
+            .map(|definition| definition.id.as_str())
+            .collect();
+        assert!(ids.contains(&"test:model:component#box"), "{ids:?}");
+        assert!(ids.contains(&"test:model:component#tool"), "{ids:?}");
+        assert!(kept
+            .ir
+            .model
+            .product_definitions
+            .iter()
+            .any(|definition| matches!(
+                definition.storage,
+                cadmpeg_ir::products::Storage::File { source: None, .. }
+            )));
     }
 
     #[test]
@@ -871,7 +877,7 @@ mod tests {
             Occurrence::new(occurrence("shown"), definition("holder"), None),
             child,
         ];
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["native"]["fcstd"] = json!({"objects":[{"id":"test:visibility:object#container", "type_name":"App::Part", "name":"Container"}]});
         model.ir = crate::test_products::read(&wire);
         assert!(
@@ -923,7 +929,7 @@ mod tests {
     #[test]
     fn hidden_ancestors_override_visible_children_but_shown_instances_survive() {
         let mut model = two_cubes(Some(true));
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let second = wire["geometry"]["bodies"][1]["id"].clone();
         wire["model"]["product_definitions"] = json!([
             {"id": "test:model:component#container", "kind": "group", "bom_properties": {}, "bodies": [], "sketches": []},
@@ -983,7 +989,7 @@ mod tests {
     #[test]
     fn a_shown_curve_keeps_its_construction_and_basis() {
         let model = two_cubes(Some(false));
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let m = wire["geometry"].as_object_mut().unwrap();
         // A subset construction of one shown and one hidden edge curve, each over a basis curve
         // of its own: the construction names the curve, nothing names the construction.
@@ -1017,7 +1023,7 @@ mod tests {
             ..model
         };
         let (shown, _) = shown(&model).unwrap().unwrap();
-        let kept = serde_json::to_value(&shown.ir).unwrap();
+        let kept = crate::ir_wire::to_value(&shown.ir).unwrap();
         let ids = |arena: &str| -> Vec<String> {
             listed(kept["geometry"].get(arena))
                 .iter()
@@ -1054,7 +1060,7 @@ mod tests {
     fn blends_keep_their_stored_base_edges_when_hidden_geometry_is_removed() {
         for kind in ["fillet", "chamfer"] {
             let mut model = two_cubes(Some(false));
-            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
             // The stored base is elsewhere: its sample cannot come from the visible cube.
             for (arena, path) in [
                 ("points", "/position/x"),
@@ -1101,7 +1107,7 @@ mod tests {
                 .edges
                 .iter()
                 .all(|e| e.id.as_str() != edge.as_str().unwrap()));
-            let kept = serde_json::to_value(&shown.ir).unwrap();
+            let kept = crate::ir_wire::to_value(&shown.ir).unwrap();
             let selection =
                 &kept["model"]["features"][1]["definition"]["value"]["value"]["groups"][0]["edges"];
             assert_eq!(selection["kind"], "historical");
@@ -1118,7 +1124,7 @@ mod tests {
     #[test]
     fn structure_naming_a_hidden_body_still_reads() {
         let mut model = two_cubes(Some(false));
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let ids: Vec<Value> = listed(wire["geometry"].get("bodies"))
             .iter()
             .map(|body| body["id"].clone())
@@ -1133,7 +1139,7 @@ mod tests {
     fn sketches_and_their_curves_are_kept_with_the_history() {
         // A FreeCAD sketch's own wire body is hidden; the sketch is still the history's.
         let mut model = two_cubes(Some(false));
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         let sketch = "fcstd:model:sketch#Sketch";
         wire["model"]["sketches"] = json!([{"id": sketch, "name": "Sketch", "placement": {"kind": "resolved", "frame": {
                 "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
@@ -1158,7 +1164,7 @@ mod tests {
     #[test]
     fn a_design_hiding_every_body_converts_as_stored() {
         let mut model = two_cubes(Some(false));
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&model.ir).unwrap();
         wire["geometry"]["bodies"][0]["visible"] = json!(false);
         model.ir = crate::test_products::read(&wire);
         assert!(shown(&model).unwrap().is_none());

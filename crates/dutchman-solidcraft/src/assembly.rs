@@ -1804,7 +1804,7 @@ fn sketch_owners(model: &Model) -> BTreeMap<String, String> {
     use cadmpeg_ir::features::{FeatureDefinition, FeatureOperation};
 
     let mut owners = BTreeMap::new();
-    if model.ir.check_scope().is_err() {
+    if !model.ir.scope_violations().is_empty() {
         return owners;
     }
     // Ownership does not require expanding geometry or native payloads. Match the
@@ -1856,8 +1856,8 @@ fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none(
     let listed = "test:model:sketch#listed";
     let feature_only = "test:model:sketch#feature";
     wire["model"]["product_definitions"] = json!([
-        {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed], "bom_properties": {}, "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]},
-        {"id": owner_b, "kind": "part", "bodies": [], "bom_properties": {}, "sketches": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}
+        {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed], "bom_properties": {}, "storage":{"kind":"embedded"}, "occurrences":[], "instance_bodies":[], "representations":[]},
+        {"id": owner_b, "kind": "part", "bodies": [], "bom_properties": {}, "sketches": [], "storage":{"kind":"embedded"}, "occurrences":[], "instance_bodies":[], "representations":[]}
     ]);
     wire["model"]["features"] = json!([
         {"id": "test:model:feature#listed", "ordinal": 0, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": listed}}}}, "dependencies": [], "source_properties": {}, "source_content": []},
@@ -1865,7 +1865,7 @@ fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none(
         {"id": "test:model:feature#unresolved", "ordinal": 2, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "unresolved"}}}}, "dependencies": [], "source_properties": {}, "source_content": []}
     ]);
     let model = Model {
-        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ir: dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap(),
         fidelity: None,
         name: "synthetic".to_owned(),
         source_file: None,

@@ -323,13 +323,14 @@ fn custom_feature_without_a_proven_shape_blocks_later_topology_features() {
     assert_eq!(outcome.features[2].status, FeatureStatus::Blocked);
     assert_eq!(outcome.features[2].name.as_deref(), Some("Custom shape"));
     // The format-neutral writer gives native rows a generic reason; the reader's
-    // named diagnostic must survive in the shared loss report.
+    // named diagnostic must survive in the shared loss report. cadmpeg carries the code as
+    // the loss subject and ends the detail with the feature name.
     let loss = report
         .losses()
         .iter()
         .find(|loss| {
-            loss.subject == "Custom shape"
-                && loss.code.as_deref() == Some("onshape/history.not-supported")
+            loss.code.as_deref() == Some("onshape/history.not-supported")
+                && loss.detail.ends_with("; subject: Custom shape")
         })
         .unwrap();
     assert!(loss
@@ -337,7 +338,7 @@ fn custom_feature_without_a_proven_shape_blocks_later_topology_features() {
         .contains("custom FeatureScript feature Custom shape"));
     assert!(loss
         .detail
-        .contains("lacks complete per-feature body geometry"));
+        .contains("do not say which operation it performs"));
     assert_eq!(loss.severity, dutchman_core::Severity::Degraded);
     // With no proven input edge the reader keeps the fillet as a native step.
     assert_eq!(outcome.features[3].kind, "native");
@@ -831,7 +832,7 @@ fn new_synthetic_sketches_and_inch_parameters_replay_against_the_source() {
 // Independently authored neutral thin construction for existing writer checks.
 // The Onshape reader refuses these records until source scope and sides resolve.
 fn neutral_thin(mut model: Model, midplane: bool, flip: bool, second: f64) -> Model {
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     let sketch = wire["model"]["sketches"][0]["id"].clone();
     let entities: Vec<Value> = wire["model"]["sketch_entities"]
         .as_array()
@@ -868,7 +869,7 @@ fn neutral_thin(mut model: Model, midplane: bool, flip: bool, second: f64) -> Mo
         "direction":{"kind":"profile_normal","reversed":{"kind":"literal","value":extrude["direction"]["kind"]=="reversed_profile_normal"}},
         "origin":{"kind":"profile_plane"},"span":{"kind":"between","start":{"kind":"at_origin"},"end":{"kind":"amount","value":literal(extrude["extent"]["side"]["termination"]["length"].as_f64().unwrap())}},
         "output":{"body":{"kind":"thin","thickness":thickness},"boolean":{"kind":"new_body"}},"native_options":{},"source_settings":{}}}}}]);
-    model.ir = serde_json::from_value(wire).unwrap();
+    model.ir = dutchman_core::ir_wire::from_value(wire).unwrap();
     model
 }
 fn thin_bundle(midplane: bool, flip: bool, second: f64) -> (Model, Report) {
@@ -917,11 +918,11 @@ fn thin_outputs_refuse_conflicting_projections_and_preserve_older_targets() {
     // A mismatched profile in an otherwise well-formed typed record is not
     // allowed to supply output semantics to a different model projection.
     let (model, _) = thin_bundle(false, false, 0.0);
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["design"]["features"][0]["definition"]["operation"]["value"]["profile"]["picks"] =
         json!({"kind":"named","value":[]});
     let model = Model {
-        ir: serde_json::from_value(wire).unwrap(),
+        ir: dutchman_core::ir_wire::from_value(wire).unwrap(),
         ..model
     };
     let doc = write_synthetic_latest(&model, &mut report);
@@ -1232,21 +1233,21 @@ fn derived_boolean_requires_captured_results() {
 #[test]
 fn derived_companion_conversion_losses_are_reported_under_the_insert() {
     let (mut source, mut report) = model("derived");
-    let mut wire = serde_json::to_value(&source.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&source.ir).unwrap();
     let mut reference: Value = serde_json::from_str(
         wire["model"]["features"][2]["source_properties"]["design_reference"]
             .as_str()
             .unwrap(),
     )
     .unwrap();
-    reference["ir"]["model"]["features"][1]["definition"] = json!({
+    reference["omitted"]["features"][1]["definition"] = json!({
         "kind":"operation", "value":{"kind":"native", "value":{
             "kind":"Synthetic unsupported source operation", "parameters":{}
         }}
     });
     wire["model"]["features"][2]["source_properties"]["design_reference"] =
         json!(serde_json::to_string(&reference).unwrap());
-    source.ir = serde_json::from_value(wire).unwrap();
+    source.ir = dutchman_core::ir_wire::from_value(wire).unwrap();
     let mut bytes = Vec::new();
     SolidCraftWriter::new()
         .target_version(Some(SolidCraftVersion::V0_44_0))

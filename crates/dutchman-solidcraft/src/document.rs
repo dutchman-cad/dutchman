@@ -187,6 +187,16 @@ pub(crate) fn keep_sketches(doc: &mut Value, references: &History, model: &Model
         return;
     }
     let mut references = references.clone();
+    if references.features.is_empty() {
+        // No sketch is kept, so a parameter a sketch dimension or a feature depth would
+        // drive has no user; only the design's own variables stay.
+        references
+            .params
+            .retain(|param| param.get("model").and_then(Value::as_bool) != Some(true));
+        if references.params.is_empty() {
+            return;
+        }
+    }
     references.relocate(FEATURE, COMPONENT, "", &mut Default::default());
     let hidden: Vec<Value> = references
         .features
@@ -1026,5 +1036,81 @@ mod history_tests {
         assert_eq!(features.len(), 3);
         assert!(features.iter().all(|f| f["type"] != "remove"));
         assert_eq!(features[2]["name"], "Rest of the design (from Hole 1)");
+    }
+
+    /// A Fusion design (no reader opt-in) and the same design with the opt-in that only
+    /// cadmpeg's Onshape reader sets, each with no kept sketch and one user variable beside
+    /// one dimension parameter.
+    fn fusion_parameters(opt_in: bool) -> Model {
+        let properties = if opt_in {
+            json!({"retain_without_sketches": "true"})
+        } else {
+            json!({})
+        };
+        let row = |key: u32, name: &str, owned: bool| {
+            let mut row = json!({"id": format!("f3d:model:parameter#{key}"), "ordinal": key,
+                "name": name, "expression": "10 mm", "value": {"kind": "length", "value": 10.0},
+                "dependencies": [], "properties": properties.clone()});
+            if owned {
+                row["owner"] = json!("f3d:model:feature#1");
+            }
+            row
+        };
+        crate::testing::with(
+            crate::testing::cube(),
+            json!([]),
+            json!([row(1, "width", false), row(2, "d1", true)]),
+        )
+    }
+
+    fn no_sketches(params: Vec<Value>) -> History {
+        History {
+            params,
+            features: Vec::new(),
+            ..history()
+        }
+    }
+
+    #[test]
+    fn sketchless_parameters_follow_the_reader_opt_in_and_keep_only_design_variables() {
+        let variable = json!({"name": "width", "expr": "10 mm", "unit": "mm", "model": false});
+        let dimension = json!({"name": "d1", "expr": "10 mm", "unit": "mm", "model": true});
+        let both = no_sketches(vec![variable.clone(), dimension.clone()]);
+        let blank = || import_design(&fusion_parameters(false), "blobs/x.step", false);
+
+        // Without the opt-in (every reader but Onshape) nothing is added, as before.
+        let mut doc = blank();
+        keep_sketches(&mut doc, &both, &fusion_parameters(false));
+        assert_eq!(doc, blank());
+
+        // With the opt-in only the design's own variable stays; the dimension has no user.
+        let mut doc = blank();
+        keep_sketches(&mut doc, &both, &fusion_parameters(true));
+        assert_eq!(doc["params"], json!([variable]));
+        assert_eq!(doc["visibility"]["hidden_sketches"], json!([]));
+
+        // Only dimension parameters and no sketch leave the import unchanged.
+        let mut doc = blank();
+        keep_sketches(
+            &mut doc,
+            &no_sketches(vec![dimension.clone()]),
+            &fusion_parameters(true),
+        );
+        assert_eq!(doc, blank());
+
+        // A kept sketch keeps every parameter, with or without the opt-in.
+        for opt_in in [false, true] {
+            let mut doc = blank();
+            let kept = History {
+                params: vec![variable.clone(), dimension.clone()],
+                ..history()
+            };
+            keep_sketches(&mut doc, &kept, &fusion_parameters(opt_in));
+            assert_eq!(
+                doc["params"],
+                json!([variable, dimension]),
+                "opt_in={opt_in}"
+            );
+        }
     }
 }

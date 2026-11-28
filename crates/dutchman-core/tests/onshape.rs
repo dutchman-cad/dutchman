@@ -50,7 +50,7 @@ fn changed(bytes: &[u8], mut edit: impl FnMut(&str, &mut Value)) -> Vec<u8> {
 }
 
 fn timeline(model: &Model) -> Value {
-    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&model.ir).unwrap();
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -84,9 +84,16 @@ fn synthetic_bundles_retain_the_expected_cadir_rows_and_final_step() {
         assert_eq!(kinds(&model), expected, "{name}: {:?}", report.losses());
         assert_eq!(model.ir.geometry.bodies.len(), 1);
         let wire = timeline(&model);
-        let roundtrip: cadmpeg_ir::CadIr =
-            serde_json::from_value(serde_json::to_value(&model.ir).unwrap()).unwrap();
+        // The CADIR wire reader refuses the design arenas the wire omits, so the full document
+        // is read back through `ir_wire`, and the bare wire is read as the reader states it.
+        let roundtrip = dutchman_core::ir_wire::from_value(
+            dutchman_core::ir_wire::to_value(&model.ir).unwrap(),
+        )
+        .unwrap();
         assert_eq!(roundtrip, model.ir);
+        let bare: cadmpeg_ir::CadIr =
+            serde_json::from_value(serde_json::to_value(&model.ir).unwrap()).unwrap();
+        assert_eq!(bare.geometry, model.ir.geometry);
         assert!(wire["model"].get("bodies").is_none());
         assert!(!wire["geometry"]["edges"].as_array().unwrap().is_empty());
         for edge in wire["geometry"]["edges"].as_array().unwrap() {
@@ -170,21 +177,30 @@ fn custom_features_name_the_missing_frozen_shape_even_with_rollback_details() {
             .skip(ordinal + 1)
             .filter_map(|f| f["name"].as_str())
             .collect();
-        let losses: Vec<_> = unsupported.iter().filter(|l| l.subject == name).collect();
+        // The codec ends each detail with the feature it names.
+        let suffix = format!("; subject: {name}");
+        let losses: Vec<_> = unsupported
+            .iter()
+            .filter(|l| l.detail.ends_with(&suffix))
+            .collect();
         assert_eq!(losses.len(), 1, "{unsupported:?}");
-        for other in unsupported.iter().filter(|l| l.subject != name) {
-            assert!(later.contains(&other.subject.as_str()), "{other:?}");
+        for other in unsupported.iter().filter(|l| !l.detail.ends_with(&suffix)) {
+            assert!(
+                later
+                    .iter()
+                    .any(|name| other.detail.ends_with(&format!("; subject: {name}"))),
+                "{other:?}"
+            );
         }
         let loss = losses[0];
-        assert_eq!(loss.subject, name);
         assert_eq!(loss.severity, Severity::Degraded);
         let reason = format!(
-            "custom FeatureScript feature {name} is not supported yet: bundle format 1 \
-             lacks complete per-feature body geometry to prove a frozen step"
+            "custom FeatureScript feature {name} is not supported yet: a namespaced \
+             feature's stored parameters do not say which operation it performs"
         );
         assert_eq!(
             loss.detail,
-            format!("{reason}; kept the final STEP geometry")
+            format!("{reason}; kept the final STEP geometry{suffix}")
         );
         assert!(feature["definition"]["value"]["value"]["kind"]
             .as_str()
@@ -203,9 +219,12 @@ fn custom_feature_stop_uses_its_id_when_the_name_is_absent() {
         }
     });
     let (_, report) = read(&bytes).unwrap();
-    assert!(report.losses().iter().any(|l| l.subject == "Custom feature"
-        && l.detail
-            .contains("custom FeatureScript feature Custom feature")));
+    assert!(report
+        .losses()
+        .iter()
+        .any(|l| l.detail.ends_with("; subject: Custom feature")
+            && l.detail
+                .contains("custom FeatureScript feature Custom feature")));
 }
 
 #[test]
@@ -348,6 +367,10 @@ fn wrong_magic_schema_and_microversion_are_refused() {
         if matches!(failure, "microversion" | "duplicate") {
             let (_, report) = read(&bytes).unwrap();
             assert!(!report.losses().is_empty(), "{failure}");
+        } else if failure == "multiple" {
+            // The codec reads a bundle that lists several Part Studios; only an element it
+            // cannot read as one is refused.
+            read(&bytes).unwrap();
         } else {
             assert!(read(&bytes).is_err(), "{failure}");
         }
@@ -366,34 +389,47 @@ fn wrong_magic_schema_and_microversion_are_refused() {
 }
 
 #[test]
-fn consistency_flag_refuses_mixed_snapshots_and_preserves_legacy_v1() {
+fn consistency_flag_reports_mixed_snapshots_and_preserves_legacy_v1() {
     // The checked-in v1 fixtures predate the optional consistency/provenance fields.
     let legacy = fixture("revolve");
-    let (original, _) = read(&legacy).unwrap();
+    let (mut original, _) = read(&legacy).unwrap();
     let consistent = changed(&legacy, |path, value| {
         if path == "manifest.json" {
             value["consistent"] = json!(true);
         }
     });
-    let (current, _) = read(&consistent).unwrap();
+    let (mut current, _) = read(&consistent).unwrap();
+    // The codec keeps each source member as an asset; the edit rewrote the manifest bytes.
+    original.ir.model.assets.clear();
+    current.ir.model.assets.clear();
     assert_eq!(current.ir, original.ir);
     assert_eq!(current.source_step, original.source_step);
 
+    // Each response is admitted against its own pinned microversion, so an inconsistent bundle
+    // keeps what it can read and reports the rest.
     let inconsistent = changed(&legacy, |path, value| {
         if path == "manifest.json" {
             value["consistent"] = json!(false);
         }
-        // This must be refused before trying to decode construction history.
         if path.ends_with("features.json") {
             value["features"] = Value::Null;
         }
     });
-    let reason = read(&inconsistent).unwrap_err().to_string();
-    assert!(reason.contains("marked inconsistent"), "{reason}");
-    assert!(
-        reason.contains("fetch it again, or use a version link"),
-        "{reason}"
+    let (model, report) = read(&inconsistent).unwrap();
+    assert!(model.ir.model.features.is_empty());
+    assert_eq!(
+        model.ir.geometry.bodies.len(),
+        original.ir.geometry.bodies.len()
     );
+    for code in ["onshape/history.not-supported", "onshape/record.malformed"] {
+        assert!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.code.as_deref() == Some(code)),
+            "{code}"
+        );
+    }
     for flag in [Value::Null, json!("false"), json!(0)] {
         let malformed = changed(&legacy, |path, value| {
             if path == "manifest.json" {
@@ -600,7 +636,7 @@ fn up_to_next(operation: &str, extra: Option<([f64; 3], [f64; 3])>) -> Vec<u8> {
 fn up_to_next_maps_exact_stored_coverage_and_refuses_an_earlier_recess() {
     for (bytes, typed) in [
         (up_to_next("REMOVE", None), true),
-        (up_to_next("NEW", None), false),
+        (up_to_next("NEW", None), true),
         (
             up_to_next(
                 "REMOVE",
@@ -1106,9 +1142,35 @@ fn missing_step_does_not_bypass_body_history_validation() {
         output.write_all(&data).unwrap();
     }
     let bytes = output.finish().unwrap().into_inner();
-    let (model, _) = read(&bytes).unwrap();
+    let (model, report) = read(&bytes).unwrap();
     assert_eq!(kinds(&model), ["sketch", "extrude", "fillet"]);
     assert!(model.source_step.is_none());
+    // The unchecked history is visible: the note names the missing root export.
+    let notes: Vec<_> = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.subject == "history check")
+        .collect();
+    assert_eq!(notes.len(), 1, "{:?}", report.losses());
+    assert_eq!(notes[0].severity, Severity::Degraded);
+    assert!(
+        notes[0]
+            .detail
+            .contains("without a check against the final Onshape shape")
+            && notes[0].detail.contains("export.step"),
+        "{}",
+        notes[0].detail
+    );
+}
+
+#[test]
+fn a_full_bundle_has_its_root_step_and_no_unchecked_history_note() {
+    let (model, report) = read(&fixture("plate-fillet")).unwrap();
+    assert!(model.source_step.is_some());
+    assert!(report
+        .losses()
+        .iter()
+        .all(|loss| loss.subject != "history check"));
 }
 
 #[test]
@@ -1362,15 +1424,22 @@ fn elliptical_curves_with_unresolved_axes_or_bounds_leave_a_named_loss() {
                 .push(curve);
         });
         let (model, report) = read(&bytes).unwrap();
-        assert_eq!(kinds(&model)[0], "native");
+        // One unresolved curve is a loss of that curve, not of the sketch.
+        assert_eq!(kinds(&model)[0], "sketch");
         assert!(report
             .losses()
             .iter()
-            .any(|l| l.code.as_deref() == Some("onshape/history.not-supported")));
-        assert!(timeline(&model)["model"]["sketch_entities"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+            .any(|l| l.code.as_deref() == Some("onshape/sketch.geometry-not-supported")));
+        let wire = timeline(&model);
+        let entities = wire["model"]["sketch_entities"].as_array().unwrap();
+        assert_eq!(
+            entities
+                .iter()
+                .filter(|e| e["geometry"]["kind"] == "line")
+                .count(),
+            4
+        );
+        assert!(entities.iter().any(|e| e["geometry"]["kind"] == "native"));
         assert!(model.source_step.is_some());
     }
 }
@@ -1659,10 +1728,7 @@ fn derived_studio_keeps_neutral_reference_and_generated_boolean_operands() {
     .unwrap();
     assert_eq!(reference["bodies"][0]["name"], "Tool");
     assert_eq!(
-        reference["ir"]["model"]["features"]
-            .as_array()
-            .unwrap()
-            .len(),
+        reference["omitted"]["features"].as_array().unwrap().len(),
         2
     );
     assert!(reference["step"]
@@ -1703,10 +1769,8 @@ fn derived_studio_keeps_neutral_reference_and_generated_boolean_operands() {
 fn derived_resolved_parts_can_select_the_entire_referenced_studio() {
     let bytes = changed(&fixture("derived"), |path, value| {
         if path == "partstudios/studio/features.json" {
-            value["features"][2]["parameters"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!({"parameterId":"parts", "queries":[{"deterministicIds":["tool"]}]}));
+            value["features"][2]["parameters"][1]["partQuery"]["queries"] =
+                json!([{"deterministicIds":["tool"]}]);
         }
     });
     let (model, report) = read(&bytes).unwrap();
@@ -1724,9 +1788,16 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
         "missing",
         "version",
         "microversion",
-        "source-final-parts",
         "configuration",
         "placement",
+        "location",
+        "mate-connectors-off",
+        "sheet-metal",
+        "old-ui",
+        "part-identity",
+        "unspecified-parameter",
+        "old-derived-type",
+        "old-boolean-type",
         "subset",
         "source-query",
         "tools",
@@ -1737,7 +1808,6 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
         "boolean-option",
         "changed-producer",
         "boolean-query-namespace",
-        "unknown-source-body",
     ] {
         let bytes = changed(&fixture("derived"), |path, value| {
             if path == "partstudios/studio/features.json" {
@@ -1752,26 +1822,50 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
                         .unwrap()
                         .push(json!({"parameterId":"offset","value":true})),
                     "missing" => {
-                        value["features"][2]["parameters"][0]["value"]["elementId"] =
+                        value["features"][2]["parameters"][1]["elementId"] =
                             json!("555555555555555555555555")
                     }
                     "version" => {
-                        value["features"][2]["parameters"][0]["value"]["versionId"] =
+                        value["features"][2]["parameters"][1]["versionId"] =
                             json!("666666666666666666666666")
                     }
                     "configuration" => {
-                        value["features"][2]["parameters"][0]["configuration"] = json!("size=large")
+                        value["features"][2]["parameters"][1]["configuration"] =
+                            json!([{"parameterId":"size","value":"large"}])
                     }
                     "placement" => value["features"][2]["parameters"]
                         .as_array_mut()
                         .unwrap()
+                        .push(json!({"btType":"BTMParameterEnum-145","parameterId":"placement","value":"AT_MATE_CONNECTOR"})),
+                    "location" => value["features"][2]["parameters"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({"parameterId":"location","queries":[{"deterministicIds":["connector"]}]})),
+                    "mate-connectors-off" => value["features"][2]["parameters"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({"parameterId":"includeMateConnectors","value":false})),
+                    "sheet-metal" => value["features"][2]["parameters"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({"parameterId":"preserveActiveSheetMetal","value":true})),
+                    "old-ui" => value["features"][2]["parameters"][0]["value"] = json!(false),
+                    "part-identity" => {
+                        value["features"][2]["parameters"][1]["partIdentity"] =
+                            json!({"id":"part"})
+                    }
+                    "unspecified-parameter" => value["features"][2]["parameters"]
+                        .as_array_mut()
+                        .unwrap()
                         .push(json!({"parameterId":"mateConnector","value":true})),
+                    "old-derived-type" => value["features"][2]["featureType"] = json!("derived"),
+                    "old-boolean-type" => value["features"][3]["featureType"] = json!("boolean"),
                     "subset" => {
-                        value["features"][2]["parameters"][0]["queries"] =
+                        value["features"][2]["parameters"][1]["partQuery"]["queries"] =
                             json!([{"deterministicIds":["another-source-part"]}])
                     }
                     "source-query" => {
-                        value["features"][2]["parameters"][0]["queries"] = json!([{"deterministicIds":["tool"],"queryString":"opaque source selection"}])
+                        value["features"][2]["parameters"][1]["partQuery"]["queries"] = json!([{"deterministicIds":["tool"],"queryString":"opaque source selection"}])
                     }
                     "tools" => {
                         value["features"][3]["parameters"][2]["queries"][0]["deterministicIds"] =
@@ -1795,29 +1889,29 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
                     value["bodies"].as_array_mut().unwrap().remove(0);
                 }
             }
-            if failure == "unknown-source-body"
-                && path.starts_with("references/")
-                && path.ends_with("bodydetails/2.json")
-            {
-                value["bodies"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(json!({"id":"unknown"}));
-            }
             if failure == "microversion"
                 && path.starts_with("references/")
                 && path.ends_with("features.json")
             {
                 value["sourceMicroversion"] = json!("other");
             }
-            if failure == "source-final-parts"
-                && path.starts_with("references/")
-                && path.ends_with("bodydetails/index.json")
-            {
-                *value = json!([0, 1]);
-            }
         });
         let (model, report) = read(&bytes).unwrap();
+        if failure == "microversion" {
+            // cadmpeg omits the mismatched reference member, so Derived and its dependent
+            // Boolean stay native; no neutral design reference reaches the history writer.
+            assert_eq!(kinds(&model), ["sketch", "extrude", "native", "native"]);
+            assert!(
+                report.losses().iter().any(|loss| loss.code.as_deref()
+                    == Some("onshape/member.unreadable")
+                    && loss.detail.contains("sourceMicroversion")
+                    && loss
+                        .detail
+                        .contains("does not match the pinned microversion")),
+                "{failure}: {:?}",
+                report.losses()
+            );
+        }
         assert!(kinds(&model).contains(&"native".into()), "{failure}");
         assert!(
             report
@@ -1832,15 +1926,10 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
 }
 
 #[test]
-fn derived_booleans_keep_operation_and_tools_choice_without_guessing_body_order() {
-    for (source, op, keep) in [
-        ("UNION", "join", false),
-        ("INTERSECTION", "intersect", true),
-        ("SUBTRACTION", "cut", true),
-    ] {
+fn derived_subtraction_keeps_the_tools_choice_and_reads_the_targets() {
+    for keep in [false, true] {
         let bytes = changed(&fixture("derived"), |path, value| {
             if path == "partstudios/studio/features.json" {
-                value["features"][3]["parameters"][0]["value"] = json!(source);
                 value["features"][3]["parameters"]
                     .as_array_mut()
                     .unwrap()
@@ -1852,9 +1941,95 @@ fn derived_booleans_keep_operation_and_tools_choice_without_guessing_body_order(
         let (model, report) = read(&bytes).unwrap();
         let wire = timeline(&model);
         let operation = &wire["model"]["features"][3]["definition"]["value"]["value"];
-        assert_eq!(operation["op"], op, "{:?}", report.losses());
+        assert_eq!(operation["op"], "cut", "{:?}", report.losses());
         assert_eq!(operation["keep_tools"], keep);
     }
+}
+
+#[test]
+fn derived_union_and_intersection_over_peer_tools_stay_native_and_ignore_stale_targets() {
+    for source in ["UNION", "INTERSECTION"] {
+        for stale_targets in [false, true] {
+            let bytes = changed(&fixture("derived"), |path, value| {
+                if path == "partstudios/studio/features.json" {
+                    let parameters = value["features"][3]["parameters"].as_array_mut().unwrap();
+                    parameters[0]["value"] = json!(source);
+                    if stale_targets {
+                        // `targets` is hidden unless the operation is SUBTRACTION.
+                        parameters[1]["queries"] = json!([{"deterministicIds":["absent"]}]);
+                    } else {
+                        parameters.remove(1);
+                    }
+                }
+            });
+            let (model, report) = read(&bytes).unwrap();
+            assert_eq!(
+                kinds(&model),
+                ["sketch", "extrude", "stored_geometry", "native"],
+                "{source}: {:?}",
+                report.losses()
+            );
+            assert!(
+                report.losses().iter().any(|loss| loss.code.as_deref()
+                    == Some("onshape/history.not-supported")
+                    && loss.detail.contains("as peers")),
+                "{source}: {:?}",
+                report.losses()
+            );
+        }
+    }
+}
+
+#[test]
+fn derived_boolean_operation_is_exactly_union_subtraction_or_intersection() {
+    for source in ["ADD", "REMOVE", "INTERSECT"] {
+        let bytes = changed(&fixture("derived"), |path, value| {
+            if path == "partstudios/studio/features.json" {
+                value["features"][3]["parameters"][0]["value"] = json!(source);
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(
+            kinds(&model),
+            ["sketch", "extrude", "stored_geometry", "native"],
+            "{source}"
+        );
+        assert!(
+            report.losses().iter().any(|loss| loss
+                .detail
+                .contains("this Boolean operation is not supported yet")),
+            "{source}: {:?}",
+            report.losses()
+        );
+    }
+}
+
+#[test]
+fn derived_insert_accepts_the_import_derived_parameter_set_at_its_defaults() {
+    let bytes = changed(&fixture("derived"), |path, value| {
+        if path == "partstudios/studio/features.json" {
+            let parameters = value["features"][2]["parameters"].as_array_mut().unwrap();
+            parameters.extend([
+                json!({"btType":"BTMParameterBoolean-144","parameterId":"preserveActiveSheetMetal","value":false}),
+                json!({"btType":"BTMParameterQueryList-148","parameterId":"location","queries":[]}),
+                json!({"btType":"BTMParameterEnum-145","enumName":"DerivedPlacementType","parameterId":"placement","value":"AT_ORIGIN"}),
+                json!({"btType":"BTMParameterQuantity-147","isInteger":false,"parameterId":"mateConnectorIndex","units":"","expression":"-1","value":-1.0}),
+                json!({"btType":"BTMParameterQuantity-147","isInteger":false,"parameterId":"mateConnectorId","units":"","expression":"0","value":0.0}),
+                json!({"btType":"BTMParameterQuantity-147","isInteger":false,"parameterId":"mateConnectorIndexInFeature","units":"","expression":"-1","value":-1.0}),
+                json!({"btType":"BTMParameterBoolean-144","parameterId":"includeMateConnectors","value":true}),
+                json!({"btType":"BTMParameterBoolean-144","parameterId":"includeProperties","value":true}),
+                json!({"btType":"BTMParameterQueryList-148","parameterId":"parts","queries":[]}),
+                json!({"btType":"BTMParameterDerived-864","configuration":[],"imports":[],"namespace":"","parameterId":"buildFunction"}),
+            ]);
+        }
+    });
+    let (model, report) = read(&bytes).unwrap();
+    assert_eq!(
+        kinds(&model),
+        ["sketch", "extrude", "stored_geometry", "combine"],
+        "{:?}",
+        report.losses()
+    );
 }
 
 #[test]
@@ -1894,17 +2069,21 @@ fn derived_studios_validate_their_own_pin_and_continue_after_a_bad_reference_rec
         )
         .unwrap();
         assert_eq!(
-            captured["ir"]["model"]["features"]
-                .as_array()
-                .unwrap()
-                .len(),
+            captured["omitted"]["features"].as_array().unwrap().len(),
             if bad_record { 1 } else { 2 }
         );
-        assert_eq!(
-            report
+        assert!(
+            !report
                 .losses()
                 .iter()
                 .any(|loss| loss.code.as_deref() == Some("onshape/history.not-supported")),
+            "{:?}",
+            report.losses()
+        );
+        assert_eq!(
+            report.losses().iter().any(|loss| loss.code.as_deref()
+                == Some("onshape/record.malformed")
+                && loss.detail.contains("featureId is missing")),
             bad_record,
             "{:?}",
             report.losses()
@@ -1932,19 +2111,33 @@ fn derived_boolean_requires_a_stored_keep_tools_choice_and_keeps_later_records()
             }
         });
         let (model, report) = read(&bytes).unwrap();
+        // An absent choice is false, which keeps the Boolean typed; a stored value that is not
+        // a boolean stays native.
         assert_eq!(
             kinds(&model),
-            ["sketch", "extrude", "stored_geometry", "native", "sketch"],
+            [
+                "sketch",
+                "extrude",
+                "stored_geometry",
+                if choice.is_null() {
+                    "combine"
+                } else {
+                    "native"
+                },
+                "sketch"
+            ],
             "{:?}",
             report.losses()
         );
-        assert!(
-            report.losses().iter().any(|loss| loss.code.as_deref()
-                == Some("onshape/history.not-supported")
-                && (loss.detail.contains("keepTools") || loss.detail.contains("keep-tools"))),
-            "{:?}",
-            report.losses()
-        );
+        if !choice.is_null() {
+            assert!(
+                report.losses().iter().any(|loss| loss.code.as_deref()
+                    == Some("onshape/history.not-supported")
+                    && (loss.detail.contains("keepTools") || loss.detail.contains("keep-tools"))),
+                "{:?}",
+                report.losses()
+            );
+        }
         assert!(model.source_step.is_some());
     }
 }
@@ -2011,4 +2204,131 @@ fn derived_boolean_dependencies_follow_stored_operand_order() {
         features[3]["dependencies"],
         json!([features[2]["id"], features[1]["id"]])
     );
+}
+
+#[path = "support/onshape_assembly.rs"]
+mod assembly_bundle;
+
+// Millimetres for translations and dimensionless rotation coefficients.
+const ASSEMBLY_POSE_TOLERANCE: f64 = 1e-9;
+fn placed_bodies(model: &Model, parent: [[f64; 4]; 3], out: &mut Vec<(String, [[f64; 4]; 3])>) {
+    if let Some(assembly) = &model.assembly {
+        for placement in &assembly.placements {
+            assert!(!placement.unproven);
+            let local = placement.transform;
+            let mut world = [[0.; 4]; 3];
+            for r in 0..3 {
+                for c in 0..4 {
+                    world[r][c] = (0..3).map(|k| parent[r][k] * local[k][c]).sum::<f64>()
+                        + if c == 3 { parent[r][3] } else { 0. };
+                }
+            }
+            let part = &assembly.parts[placement.part];
+            if part.assembly.is_some() {
+                placed_bodies(part, world, out);
+            } else {
+                assert_eq!(part.ir.geometry.bodies.len(), 1);
+                out.push((placement.name.clone().unwrap(), world));
+            }
+        }
+    }
+}
+
+fn assert_assembly_placements_and_mates(ring: bool) {
+    let identity = [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.]];
+    {
+        let bytes = assembly_bundle::bundle(&fixture("default-plane-regions"), ring);
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(model.ir.geometry.bodies.len(), 1, "{report:?}");
+        assert_eq!(model.ir.model.occurrences.len(), if ring { 8 } else { 4 });
+        let mut placed = Vec::new();
+        placed_bodies(&model, identity, &mut placed);
+        assert_eq!(placed.len(), if ring { 8 } else { 3 });
+        let expected_names: std::collections::BTreeSet<String> = if ring {
+            (0..8).map(|i| format!("ring{i}")).collect()
+        } else {
+            ["base", "middle", "upper"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        };
+        assert_eq!(
+            placed
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected_names
+        );
+        for (name, world) in placed {
+            // Stack plates are 5 mm thick: base + Tz(5), then + Tz(5).
+            // Ring is Rz(theta) * Tx(60 mm): t=(60 cos theta,60 sin theta,0).
+            let (angle, xyz) = if ring {
+                let i: usize = name.strip_prefix("ring").unwrap().parse().unwrap();
+                let angle = i as f64 * std::f64::consts::TAU / 8.;
+                (angle, [60. * angle.cos(), 60. * angle.sin(), 0.])
+            } else {
+                (
+                    0.,
+                    [
+                        0.,
+                        0.,
+                        [("base", 0.), ("middle", 5.), ("upper", 10.)]
+                            .into_iter()
+                            .find(|(part, _)| *part == name.as_str())
+                            .map(|(_, z)| z)
+                            .unwrap(),
+                    ],
+                )
+            };
+            let (s, c) = angle.sin_cos();
+            let expected = [
+                [c, -s, 0., xyz[0]],
+                [s, c, 0., xyz[1]],
+                [0., 0., 1., xyz[2]],
+            ];
+            for r in 0..3 {
+                for col in 0..4 {
+                    assert!(
+                        (world[r][col] - expected[r][col]).abs() < ASSEMBLY_POSE_TOLERANCE,
+                        "{name}: {world:?}"
+                    );
+                }
+            }
+        }
+        fn motions(model: &Model, out: &mut Vec<dutchman_core::Joint>) {
+            if let Some(a) = &model.assembly {
+                out.extend(a.joints.iter().cloned());
+                for p in &a.parts {
+                    motions(p, out);
+                }
+            }
+        }
+        let mut joints = Vec::new();
+        motions(&model, &mut joints);
+        assert_eq!(joints.len(), 1);
+        assert!(!joints[0].a.is_empty() && !joints[0].b.is_empty());
+        assert_ne!(joints[0].a, joints[0].b);
+        assert!(!joints[0].suppressed);
+        // The first connector is on the top face of middle, or 60 mm
+        // inward along local X to the ring's common axis.
+        let expected_origin = if ring { [-60., 0., 0.] } else { [0., 0., 5.] };
+        for (r, expected) in expected_origin.into_iter().enumerate() {
+            assert!((joints[0].frame_a[r][3] - expected).abs() < ASSEMBLY_POSE_TOLERANCE);
+        }
+        assert!(if ring {
+            matches!(joints[0].motion, dutchman_core::Motion::Revolute { .. })
+        } else {
+            matches!(joints[0].motion, dutchman_core::Motion::Rigid)
+        });
+    }
+}
+
+#[test]
+fn stacked_assembly_places_every_plate_through_a_subassembly_and_maps_its_mate() {
+    assert_assembly_placements_and_mates(false);
+}
+
+#[test]
+fn ring_assembly_places_eight_rotated_instances_and_maps_its_mate() {
+    assert_assembly_placements_and_mates(true);
 }

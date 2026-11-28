@@ -25,8 +25,9 @@ Sketch midpoint admission reserves one carrier and three relations per midpoint
 before construction, including when several midpoints share a sketch.
 
 
-Dutchman reads a local `.onshape-bundle` containing a root Part Studio at one pinned
-microversion, plus any captured Derived studios at their own pinned versions. Conversion is offline. No account, API keys, network connection, or
+Dutchman reads a local `.onshape-bundle` containing a root Part Studio or assembly at one pinned
+microversion, plus captured Part Studios and any Derived studios at their own pinned versions, through cadmpeg's
+Onshape codec, the same decode path as every other format. Conversion is offline. No account, API keys, network connection, or
 Onshape installation is used by this reader.
 
 ```sh
@@ -40,7 +41,10 @@ Sketch-only bundles omit STEP. Fresh bundles also include `sketches.json`, the r
 Part Studio sketch-information response. These are additive v1 members; older
 bundles keep their existing behavior. Features and bodydetails are raw REST responses.
 The reader accepts stored and deflated members, without
-extracting them to disk. Assemblies are not supported yet. A manifest with several Part Studio elements must
+extracting them to disk. Assembly bundles place captured parts at their stored world poses, including repeated
+instances and nested subassemblies. Fastened, revolute and slider mates map through
+the shared joint path; other mate families retain named losses. Uncaptured references
+remain unresolved. A manifest with several Part Studio elements must
 name its root with `root_element`; conversion starts with that studio.
 
 A Part Studio with several parts converts as one design holding every part as a
@@ -69,7 +73,45 @@ keeps `onshape/history.not-supported` and the final STEP geometry. Fetch the bun
 again to capture the missing placement. Legacy explicit feature planes and built-in
 plane behavior remain supported.
 
+## What is verified
+
+On 2026-11-27, Dutchman converted all 25 available Onshape-built
+bundles to SolidCraft. Six had full editable history checked against the bundle's
+final STEP shape. Eleven had partial history. Eight kept the final geometry without
+editable body history. A successful conversion does not mean that all features map.
+
+| Recipe family and feature | Files tested | Result |
+|---|---:|---|
+| E02a–e: extrude as a new body, join, cut, intersect, and through-all cut | 5 | Full editable history; STEP check passed for all five. |
+| X15b: fillet after removal of an earlier chamfer | 1 | Full editable history; STEP check passed. |
+| P08a/b: circular hole pattern | 2 | Partial history; pattern history is not verified. |
+| X11a/b: extrude up to a curved or flat face | 2 | Partial history; up-to-face construction is not verified. |
+| X12a/b: rectangular hole pattern and direction change | 2 | Partial history; pattern history is not verified. |
+| X15a: chamfer followed by fillet | 1 | Partial history; the complete chain is not verified. |
+| E03b–e: solid trim, face split, and surface split tool | 4 | Partial history; split and trim history is not verified. |
+| E01a–e: offset planes and extrude bounds | 5 | Geometry only; editable body history is not verified. |
+| S01a/b: sheet metal base; S02b: flange variant | 3 | Geometry only; sheet metal history is not verified. |
+
+Partial history retains some editable features and the final STEP geometry. These
+11 results report `partial`, not a passed check for the complete history. Mapping
+counts alone do not prove that a feature was written as editable history. These
+checks compare with the captured STEP shape; they do not prove the recipe answer
+key or every possible use of a feature.
+
+P04d, P04e and S02a failed in the Onshape builder. Their builder fixes still need a
+retest. E01f built with a volume that differs from its answer key; its builder fix
+also needs a retest. It was not in the 25 measured bundles. None of these four recipes
+is verified here.
+
+These recipes have not run yet: S02c, S03a/d/e, S04a/b/f/g, S07a/b/c, S13a/b/c,
+O04a and O08a. Their conversion is not verified. Features outside this measured
+set are also not verified by this check. The reader mappings below describe
+available code paths and their limits; they do not extend this measured set.
+
 ## Editable history
+
+The table describes reader mappings. Use the verification results above to see
+which complete conversions were checked on this Onshape-built set.
 
 | Source construction | Reader mapping | Limits and named losses |
 |---|---|---|
@@ -78,14 +120,17 @@ plane behavior remain supported.
 | Simple spline | Polynomial planar CADIR NURBS | Non-periodic, non-rational curves with complete knots and control points, stored whole or as a segment over the whole knot range; the writer retains its own knot and degree limits. A trimmed spline segment is not supported yet. |
 | Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci, coincidence with the Origin point and midpoint | A point coincident with the Origin is tied to the SolidCraft sketch origin. A midpoint between two points becomes a midpoint on a construction line joining them. Other relations, and external references other than the Origin, are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. Every dropped relation names its source constraint kind and reason. |
 | Dimensions | Length, distance between loci, radius, diameter, angle and CADIR parameters | Complete dimensioned expressions, numeric quantities with explicit supported units and bounded arithmetic using earlier Part Studio variables are accepted. Diameter dimensions use `length`. Driven dimensions and expressions needing FeatureScript evaluation are reported. |
-| Solid extrude | Blind, through all, up to a planar face (at a slant to the sketch from SolidCraft 0.44); NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal, symmetric blind distance split equally about the sketch plane (Onshape's depth is the total). Up to next needs exact stored-target coverage and first intersection. Thin walls need stored controls and a proved body scope, as below. Symmetric with another bound, multiple-body Boolean scopes, second direction, draft, offset starts, surface bodies, and other bounds are not supported yet. |
+| Solid extrude | Blind, through all, up to a planar face (at a slant to the sketch from SolidCraft 0.44), up to next (ADD or REMOVE, ending on the first planar face of a live solid body that covers the whole convex line profile); NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal, symmetric blind distance split equally about the sketch plane (Onshape's depth is the total). Up to next needs exact stored-target coverage and first intersection. Thin walls need stored controls and a proved body scope, as below. Symmetric with another bound, multiple-body Boolean scopes, second direction, draft, offset starts, surface bodies, and other bounds are not supported yet. |
 | Solid revolve | Full or one-direction angle about a resolved straight input edge, or about a construction line of the profile's sketch, which stays the revolve's axis in SolidCraft | Other bounds and body types are not supported yet. One-direction geometry still passes the writer's side proof. |
 | Fillet | Circular, constant radius, explicit input edges and resolvable tangent chains (Onshape's default) | Variable, partial, conic, curvature and overflow forms are not supported yet. Tangent propagation needs complete shared vertex IDs and endpoint tangents; the chain is resolved from the feature's own rollback `bodydetails`. The written fillet blends exactly the listed edges (SolidCraft's tangent chain off), so it needs a SolidCraft 0.40 or newer target. The writer must prove every edge on replay. |
 | Chamfer | Equal offsets, two offsets, distance and angle in CADIR, with explicit input edges and resolvable tangent chains | The writer maps equal setbacks (including two equal offsets and a 45° distance-and-angle chamfer on perpendicular input faces). Asymmetric chamfers report missing input reference-face ordering; neither face nor direction is guessed. Tangent propagation has the same completeness requirement as fillets, and the chamfer likewise blends exactly the listed edges on SolidCraft 0.40 or newer. Replay proof still applies. |
 | Hole | Explicit sketch point `locations`; simple, counterbore and countersink entries; through, or blind with a unique explicit drill-point angle and an explicit depth reference for an angled bottom, or an explicit flat 180° bottom; tapped holes from the hole table's thread standard, drilled at the tap-drill diameter | A standard must state its hand and modeled/cosmetic facts. A supported tapped hole keeps its ISO metric thread label, with its thread length in a blind hole (SolidCraft 0.40 and newer); otherwise the thread length is reported, and other thread standards keep the bore only. Reversed drilling, other hole tables and standard types, mate connectors and other ends are not supported yet. |
+| Solid sweep | A typed sweep of a sketch profile along a connected sketch-edge path | Profile control NONE, no twist, scale or thin wall; a disconnected or branched path, a construction curve in the path and any other active control keep the feature native with `onshape/sweep.not-supported`. |
+| Offset plane | A datum offset plane from a plane or planar face, and the sketches placed on it | `oppositeDirection`, `flipNormal`, `flipAlignment`, other plane types and an unproven face-offset frame keep the plane native with `onshape/plane.not-supported`. |
+| Shell | A face-removal shell with its removed faces and an inward wall | Hollow shells, a part selection and an outward wall keep the feature native with `onshape/shell.not-supported`. |
 | Assigned variables | SolidCraft parameters retaining units, with the same names and expressions (`#len / 2` becomes `len / 2`) | Earlier variables, literal units, parentheses and `+`, `-`, `*`, `/` with compatible units; measured variables, reassignment, forward references and FeatureScript functions are not supported yet. A refused replacement blocks each later consumer of that name; earlier parameters remain historical records. Sketch dimensions, blind and symmetric extrude depths and one-direction revolve angles that use variables stay driven by them, so editing the parameter in SolidCraft rebuilds the part. Other values that use variables (fillet and chamfer sizes, hole sizes) are written as their evaluated values with an `onshape/history.variable-evaluated` loss naming each one. Suppressed features, including parent-suppressed features, do not produce these losses. |
 | Derived / Part Studio insert | A linked SolidCraft Insert Design of the captured studio, followed by resolved body booleans | Whole default-configuration studios at a pinned document/version/element reference, with unique body names and unchanged placement. SolidCraft 0.44 or newer keeps the link; earlier targets keep frozen derived bodies with `design/reference.frozen`. Part subsets, transformed inserts, configuration changes and unresolved references stop history with a named reason. |
-| Body Boolean after a Derived insert | Join, cut or intersect with one target, disjoint tools and an explicit keep-tools choice | Every deterministic body identity must exist at the Boolean's own rollback index and resolve uniquely to an earlier captured feature result. |
+| Body Boolean after a Derived insert | Subtraction of disjoint tools from one target with an explicit keep-tools choice; union and intersection stay native (they have no target body) | Every deterministic body identity must exist at the Boolean's own rollback index and resolve uniquely to an earlier captured feature result. |
 | Custom FeatureScript | Named `onshape/history.not-supported` loss explaining the missing per-feature body geometry | Bundle v1 cannot prove a frozen step; history stops here, with the final STEP shape visible and the editable prefix retained where possible. |
 | Other features | Named `onshape/history.not-supported` loss | The shared partial-history path keeps the final STEP shape visible and retains the editable prefix where possible. |
 
@@ -277,6 +322,8 @@ and compare boxes, area and volume against `export.step`. Existing tolerances an
 SolidCraft version gates apply unchanged. Fillets and chamfers need a usable
 SolidCraft CLI (or host evaluator) for their input-edge proof. An absent evaluator,
 failed proof or differing replay is reported and preserves the final geometry.
+When the root Part Studio's `export.step` is missing or cannot be read, the stored
+history is kept without this check, and the report says so with the reason.
 
 Synthetic offline coverage includes the generic deterministic plane and region
 query shapes returned by the REST API. Feature-library parameter drift and rollback

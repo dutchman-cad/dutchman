@@ -174,7 +174,7 @@ pub(crate) fn plan(document: &Value, ir: &cadmpeg_ir::CadIr) -> Vec<Change> {
             .filter_map(|edge| sample(ir, edge.as_str()?, body))
             .collect();
         let bodies: Vec<&str> = if path { vec![body] } else { Vec::new() };
-        let state = json!({"id": state_id, "input_of": id, "edges": edges, "edge_geometry": geometry, "bodies": bodies, "faces": [], "face_owners": [], "vertices": []});
+        let state = json!({"id": state_id, "input_of": id, "edges": edges, "edge_geometry": geometry, "bodies": bodies, "faces": [], "face_owners": [], "face_geometry": [], "body_writers": [], "vertices": []});
         let selection = json!({"kind": if path { "historical_edges" } else { "historical" }, "value": {
             "state": state_id, "edges": edges, "native": native}});
         changes.push(Change {
@@ -513,7 +513,7 @@ mod tests {
     }
 
     fn selection(ir: &cadmpeg_ir::CadIr) -> Value {
-        let mut wire = serde_json::to_value(ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(ir).unwrap();
         let body = wire["geometry"]["bodies"][0]["id"].clone();
         let edge = wire["geometry"]["edges"][0]["id"].clone();
         wire["geometry"].get_mut("bodies").unwrap()[0]["visible"] = json!(false);
@@ -662,7 +662,7 @@ mod tests {
     #[test]
     fn stored_circular_arcs_keep_the_parameter_midpoint_and_tangent() {
         let ir = cube();
-        let mut wire = serde_json::to_value(&ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&ir).unwrap();
         let geometry = json!({"kind": "circle", "center": {"x": 0.0, "y": 0.0, "z": 0.0},
             "axis": {"x": 0.0, "y": 0.0, "z": 1.0},
             "ref_direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "radius": 2.0});
@@ -684,7 +684,7 @@ mod tests {
             }
         }
         model.extend(arc.as_object().unwrap().clone());
-        let ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let ir = crate::ir_wire::from_str(&wire.to_string()).unwrap();
         let sampled = sample_edge(&ir, "test:arc:edge#1").unwrap();
         let root = 2.0_f64.sqrt();
         assert!((sampled["interior"]["x"].as_f64().unwrap() - root).abs() < 1e-12);
@@ -699,7 +699,7 @@ mod tests {
             "transform": [[1.0, 0.0, 0.0, 3.0], [0.0, 1.0, 0.0, -4.0], [0.0, 0.0, 1.0, 2.0]]});
         wire["geometry"]["points"][0]["position"] = json!({"x": 5.0, "y": -4.0, "z": 2.0});
         wire["geometry"]["points"][1]["position"] = json!({"x": 3.0, "y": -2.0, "z": 2.0});
-        let placed = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let placed = crate::ir_wire::from_str(&wire.to_string()).unwrap();
         let sampled = sample_edge(&placed, "test:arc:edge#1").unwrap();
         assert!((sampled["interior"]["x"].as_f64().unwrap() - root - 3.0).abs() < 1e-12);
         assert!((sampled["interior"]["y"].as_f64().unwrap() - root + 4.0).abs() < 1e-12);
@@ -707,7 +707,7 @@ mod tests {
         wire["geometry"]["edges"][0]["carrier"]["param_range"] =
             json!([0.0, 2.0 * std::f64::consts::TAU]);
         wire["geometry"]["edges"][0]["ends"]["end"] = json!("test:arc:vertex#0");
-        let ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let ir = crate::ir_wire::from_str(&wire.to_string()).unwrap();
         assert!(sample_edge(&ir, "test:arc:edge#1").is_none());
         wire["geometry"]["edges"][0]["carrier"]["param_range"] =
             json!([0.0, std::f64::consts::TAU]);
@@ -715,7 +715,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("ends");
-        let ring = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let ring = crate::ir_wire::from_str(&wire.to_string()).unwrap();
         assert!(ring.geometry.edges[0].vertices().next().is_none());
         assert!(sample_edge(&ring, "test:arc:edge#1").is_none());
     }
@@ -723,7 +723,7 @@ mod tests {
     #[test]
     fn missing_or_unsupported_carriers_are_not_sampled() {
         let ir = cube();
-        let mut wire = serde_json::to_value(&ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&ir).unwrap();
         let edge = wire["geometry"]["edges"][0].clone();
         wire["geometry"]["curves"]
             .as_array_mut()
@@ -731,10 +731,10 @@ mod tests {
             .iter_mut()
             .find(|row| row["id"] == edge["carrier"]["curve"])
             .unwrap()["geometry"] = json!({"kind": "solved", "value": {"kind": "unknown"}});
-        let unsupported = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let unsupported = crate::ir_wire::from_str(&wire.to_string()).unwrap();
         assert!(sample_edge(&unsupported, edge["id"].as_str().unwrap()).is_none());
         wire["geometry"]["edges"][0]["carrier"] = json!({});
-        let missing = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let missing = crate::ir_wire::from_str(&wire.to_string()).unwrap();
         assert!(sample_edge(&missing, edge["id"].as_str().unwrap()).is_none());
     }
 
@@ -743,13 +743,13 @@ mod tests {
         let ir = cube();
         let id = ir.geometry.edges.first().unwrap().id.as_str();
         let before = sample_edge(&ir, id).unwrap();
-        let mut wire = serde_json::to_value(&ir).unwrap();
+        let mut wire = crate::ir_wire::to_value(&ir).unwrap();
         wire["geometry"]["bodies"][0]["transform"] = json!([
             [0.0, -1.0, 0.0, 3.0],
             [1.0, 0.0, 0.0, -4.0],
             [0.0, 0.0, 1.0, 2.0]
         ]);
-        let placed = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let placed = crate::ir_wire::from_str(&wire.to_string()).unwrap();
         let after = sample_edge(&placed, id).unwrap();
         for key in ["interior", "start", "end"] {
             assert_eq!(
@@ -778,7 +778,7 @@ mod tests {
             [0.0, 1.0, 0.0, -4.0],
             [0.0, 0.0, 1.0, 2.0]
         ]);
-        let mirrored = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let mirrored = crate::ir_wire::from_str(&wire.to_string()).unwrap();
         let after = sample_edge(&mirrored, id).unwrap();
         assert_eq!(
             after["interior"]["x"].as_f64().unwrap(),
@@ -789,7 +789,7 @@ mod tests {
             -before["tangent"]["x"].as_f64().unwrap()
         );
         wire["geometry"]["bodies"][0]["transform"][0][0] = json!(2.0);
-        let scaled = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let scaled = crate::ir_wire::from_str(&wire.to_string()).unwrap();
         assert!(sample_edge(&scaled, id).is_none());
     }
 

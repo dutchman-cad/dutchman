@@ -9,8 +9,6 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-base64 = { version = "0.22", optional = true }
-flate2 = { version = "1", optional = true }
 dutchman-launcher.workspace = true
 icu_normalizer = { version = "2", default-features = false, features = ["compiled_data"] }
 cadmpeg-core.workspace = true
@@ -31,7 +29,7 @@ default = ["formats", "source-reader"]
 # Capability-based reader API for sandboxed front ends.
 source-reader = []
 formats = ["fusion", "inventor", "solidworks", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz", "onshape"]
-onshape = ["step", "dep:base64", "dep:flate2"]
+onshape = ["step", "cadmpeg-registry/onshape"]
 fusion = ["cadmpeg-registry/f3d"]
 inventor = ["cadmpeg-registry/inventor"]
 solidworks = ["cadmpeg-registry/sldprt"]
@@ -51,7 +49,7 @@ freecad = ["cadmpeg-registry/fcstd"]
 sysinfo.workspace = true
 
 [dev-dependencies]
-cadmpeg-ir = { workspace = true, features = ["examples"] }
+cadmpeg-ir = { workspace = true }
 zip.workspace = true
 
 [lints]

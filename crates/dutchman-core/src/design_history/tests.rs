@@ -113,7 +113,7 @@ pub(crate) fn design_only(
     rollback: Option<u32>,
 ) -> CadIr {
     let ir = cadmpeg_ir::examples::unit_cube().unwrap();
-    let mut wire = serde_json::to_value(&ir).unwrap();
+    let mut wire = crate::ir_wire::to_value(&ir).unwrap();
     let members: Vec<Value> = features
         .iter()
         .map(|f| json!({"kind": "feature", "value": f["id"]}))
@@ -135,7 +135,7 @@ pub(crate) fn design_only(
             .flat_map(|(_, entities)| entities)
             .collect(),
     );
-    CadIr::from_json(&wire.to_string()).unwrap()
+    crate::ir_wire::from_str(&wire.to_string()).unwrap()
 }
 
 /// A sketch, then an extrude of it, as the Solid Edge codec states them: the sketch is owned by
@@ -151,7 +151,7 @@ pub(crate) fn block(span: Option<Value>) -> CadIr {
 /// The feature rows in timeline order. The model writes its arenas in id order, so the
 /// timeline is read back from each row's ordinal.
 fn rows(ir: &CadIr) -> Vec<Value> {
-    let mut rows = serde_json::to_value(&ir.model).unwrap()["features"]
+    let mut rows = crate::ir_wire::to_value(ir).unwrap()["model"].clone()["features"]
         .as_array()
         .unwrap()
         .clone();
@@ -208,7 +208,7 @@ fn a_sketch_and_a_blind_extrude_become_two_rows_in_order() {
     for row in &rows {
         assert_eq!(row["source_properties"]["projected_from"], "design");
     }
-    let wire = serde_json::to_value(&ir.model).unwrap();
+    let wire = crate::ir_wire::to_value(&ir).unwrap()["model"].clone();
     assert_eq!(wire["sketches"].as_array().unwrap().len(), 1);
     assert_eq!(wire["sketch_entities"].as_array().unwrap().len(), 4);
     assert_eq!(
@@ -345,9 +345,9 @@ fn the_timeline_orders_the_rows_not_the_arena() {
         None,
     );
     // The arena holds First before Second, the timeline the reverse.
-    let mut wire = serde_json::to_value(&ir).unwrap();
+    let mut wire = crate::ir_wire::to_value(&ir).unwrap();
     wire["design"]["features"].as_array_mut().unwrap().reverse();
-    let mut ir = CadIr::from_json(&wire.to_string()).unwrap();
+    let mut ir = crate::ir_wire::from_str(&wire.to_string()).unwrap();
     project(&mut ir, &mut Report::default()).unwrap();
     let names: Vec<String> = rows(&ir)
         .iter()
@@ -388,7 +388,7 @@ fn a_rollback_is_not_a_suppression() {
 fn a_feature_out_of_scope_stops_the_history_with_a_reason() {
     let mut ir = design_only(
         vec![
-            feature(1, "Vendor step", native("vendor")),
+            feature(1, "Vendor step", native("test:vendor")),
             feature(2, "Block", extrude(1, Some(blind(5.0)), new_body())),
         ],
         vec![square_sketch(1, 2)],
@@ -417,12 +417,12 @@ fn a_feature_out_of_scope_stops_the_history_with_a_reason() {
 #[test]
 fn what_the_design_leaves_silent_is_written_as_unresolved_not_as_a_value() {
     let ir = block(Some(blind(5.0)));
-    let mut wire = serde_json::to_value(&ir).unwrap();
+    let mut wire = crate::ir_wire::to_value(&ir).unwrap();
     let value = &mut wire["design"]["features"][0]["definition"]["operation"]["value"];
     value.as_object_mut().unwrap().remove("direction");
     value.as_object_mut().unwrap().remove("origin");
     value["output"] = json!({});
-    let mut ir = CadIr::from_json(&wire.to_string()).unwrap();
+    let mut ir = crate::ir_wire::from_str(&wire.to_string()).unwrap();
     project(&mut ir, &mut Report::default()).unwrap();
     let rows = rows(&ir);
     assert_eq!(operation(&rows[1])["kind"], "extrude");
@@ -436,10 +436,10 @@ fn what_the_design_leaves_silent_is_written_as_unresolved_not_as_a_value() {
 #[test]
 fn an_extent_the_design_leaves_silent_is_refused_with_its_reason() {
     let ir = block(Some(blind(5.0)));
-    let mut wire = serde_json::to_value(&ir).unwrap();
+    let mut wire = crate::ir_wire::to_value(&ir).unwrap();
     let value = &mut wire["design"]["features"][0]["definition"]["operation"]["value"];
     value.as_object_mut().unwrap().remove("span");
-    let mut ir = CadIr::from_json(&wire.to_string()).unwrap();
+    let mut ir = crate::ir_wire::from_str(&wire.to_string()).unwrap();
     let mut report = Report::default();
     project(&mut ir, &mut report).unwrap();
     assert_eq!(operation(&rows(&ir)[1])["kind"], "native");
@@ -469,14 +469,14 @@ fn an_operand_not_projected_yet_is_refused_not_guessed() {
         .any(|loss| loss.detail.contains("parameter")));
 
     let ir = block(Some(blind(5.0)));
-    let mut wire = serde_json::to_value(&ir).unwrap();
+    let mut wire = crate::ir_wire::to_value(&ir).unwrap();
     wire["design"]["sketches"][0]["plane"]
         .as_object_mut()
         .unwrap()
         .remove("resolved");
-    let mut ir = CadIr::from_json(&wire.to_string()).unwrap();
+    let mut ir = crate::ir_wire::from_str(&wire.to_string()).unwrap();
     project(&mut ir, &mut Report::default()).unwrap();
-    let wire = serde_json::to_value(&ir.model).unwrap();
+    let wire = crate::ir_wire::to_value(&ir).unwrap()["model"].clone();
     assert_eq!(
         wire["sketches"][0]["placement"],
         json!({"kind": "unresolved"})
@@ -545,10 +545,13 @@ fn it_does_nothing_when_model_history_exists_or_design_has_none() {
     let mut ir = block(Some(blind(5.0)));
     let mut report = Report::default();
     assert!(project(&mut ir, &mut report).is_some());
-    let before = serde_json::to_value(&ir.model).unwrap();
+    let before = crate::ir_wire::to_value(&ir).unwrap()["model"].clone();
     let mut again = Report::default();
     assert!(project(&mut ir, &mut again).is_none());
-    assert_eq!(serde_json::to_value(&ir.model).unwrap(), before);
+    assert_eq!(
+        crate::ir_wire::to_value(&ir).unwrap()["model"].clone(),
+        before
+    );
     assert!(again.losses().is_empty());
 
     let mut empty = cadmpeg_ir::examples::unit_cube().unwrap();
@@ -558,13 +561,13 @@ fn it_does_nothing_when_model_history_exists_or_design_has_none() {
 #[test]
 fn several_scopes_are_declined_by_name() {
     let ir = block(Some(blind(5.0)));
-    let mut wire = serde_json::to_value(&ir).unwrap();
+    let mut wire = crate::ir_wire::to_value(&ir).unwrap();
     let scope = wire["design"]["scopes"][0].clone();
     let mut other = scope;
     other["definition"] = json!("test:design:product-definition#2");
     other["roots"] = json!([]);
     wire["design"]["scopes"].as_array_mut().unwrap().push(other);
-    let mut ir = CadIr::from_json(&wire.to_string()).unwrap();
+    let mut ir = crate::ir_wire::from_str(&wire.to_string()).unwrap();
     let mut report = Report::default();
     assert!(project(&mut ir, &mut report).is_none());
     assert!(ir.model.features.is_empty());

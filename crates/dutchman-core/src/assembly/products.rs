@@ -109,6 +109,34 @@ pub(crate) fn project(model: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
+/// The scope of a Fusion native identity's namespace, the part that names the record kind
+/// (`model:component`, `xref:reference`): the namespace of an identity of the root file is
+/// `f3d:<scope>`, of one read from an archive member `f3d:<member key>@<scope>`, and of one
+/// from a member as earlier builds of cadmpeg wrote it `f3d:xref/<member key>/<scope>`.
+fn fusion_scope(namespace: &str) -> Option<&str> {
+    let local = namespace.strip_prefix("f3d:")?;
+    if let Some((_, scope)) = local.split_once('@') {
+        return Some(scope);
+    }
+    match local.strip_prefix("xref/") {
+        Some(member) => member.rsplit_once('/').map(|(_, scope)| scope),
+        None => Some(local),
+    }
+}
+
+/// Whether the Fusion native identity `id` was read from an archive member rather than from
+/// the root file.
+pub(super) fn is_member_identity(id: &str) -> bool {
+    let Some(local) = id.strip_prefix("f3d:") else {
+        return false;
+    };
+    local.starts_with("xref/")
+        || local
+            .split(':')
+            .next()
+            .is_some_and(|scope| scope.contains('@'))
+}
+
 /// Fusion and SolidWorks file roots are now the components themselves. Keep
 /// the document containers Dutchman wrote around them before cadmpeg #1465.
 /// Component identities survive the fold; Fusion archive document identities
@@ -118,20 +146,6 @@ fn file_containers(model: &mut Value) -> Result<(), String> {
     let Some(definitions) = model.get("product_definitions").and_then(Value::as_array) else {
         return Ok(());
     };
-    let component_file = |definition: &Value| {
-        let id = definition.get("id").and_then(Value::as_str).unwrap_or("");
-        let namespace = id
-            .rsplit_once('#')
-            .map(|(namespace, _)| namespace)
-            .unwrap_or("");
-        (namespace == "f3d:model:component"
-            || namespace == "sldprt:assembly:model"
-            || (namespace.starts_with("f3d:xref/") && namespace.ends_with("/model:component")))
-            && definition.pointer("/storage/kind").and_then(Value::as_str) == Some("file")
-    };
-    if !definitions.iter().any(component_file) {
-        return Ok(());
-    }
     let rows: BTreeMap<&str, &Value> = model
         .get("occurrences")
         .and_then(Value::as_array)
@@ -143,6 +157,54 @@ fn file_containers(model: &mut Value) -> Result<(), String> {
         .iter()
         .filter_map(|row| Some((row.get("id")?.as_str()?, row)))
         .collect();
+    // Root-level xrefs, unresolved insert declarations, and stored-frame groups stayed in the
+    // file container before root-component folding.
+    let stays_in_file = |child: &Value| {
+        let row = child.as_str().and_then(|id| rows.get(id)).copied();
+        let reference = row
+            .and_then(|row| row.get("native_ref"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let namespace = reference
+            .rsplit_once('#')
+            .map(|(namespace, _)| namespace)
+            .unwrap_or("");
+        let xref = fusion_scope(namespace) == Some("xref:reference");
+        let unresolved = namespace.ends_with(":design-parameter-scope")
+            && row
+                .and_then(|row| row.get("prototype"))
+                .and_then(Value::as_str)
+                .and_then(|id| definitions_by_id.get(id))
+                .and_then(|definition| definition.pointer("/storage/kind"))
+                .and_then(Value::as_str)
+                == Some("external");
+        let stored = child
+            .as_str()
+            .is_some_and(|id| id.ends_with("/stored-frame-occurrence"));
+        xref || unresolved || stored
+    };
+    let component_file = |definition: &Value| {
+        let id = definition.get("id").and_then(Value::as_str).unwrap_or("");
+        let namespace = id
+            .rsplit_once('#')
+            .map(|(namespace, _)| namespace)
+            .unwrap_or("");
+        let file = definition.pointer("/storage/kind").and_then(Value::as_str) == Some("file");
+        // The root component of an archive member that places components of its own is the
+        // member's file definition now, and held them below a root component of its own before.
+        let member_root = fusion_scope(namespace) == Some("xref:product-definition")
+            && definition
+                .get("occurrences")
+                .and_then(Value::as_array)
+                .is_some_and(|children| children.iter().any(|child| !stays_in_file(child)));
+        (fusion_scope(namespace) == Some("model:component")
+            || namespace == "sldprt:assembly:model"
+            || member_root)
+            && file
+    };
+    if !definitions.iter().any(component_file) {
+        return Ok(());
+    }
     let mut parts = Vec::with_capacity(definitions.len());
     let mut containers = Vec::new();
     let mut roots = Vec::new();
@@ -164,31 +226,7 @@ fn file_containers(model: &mut Value) -> Result<(), String> {
             .into_iter()
             .flatten()
         {
-            let row = child.as_str().and_then(|id| rows.get(id)).copied();
-            let reference = row
-                .and_then(|row| row.get("native_ref"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let namespace = reference
-                .rsplit_once('#')
-                .map(|(namespace, _)| namespace)
-                .unwrap_or("");
-            // Root-level xrefs, unresolved insert declarations, and stored-frame
-            // groups stayed in the file container before root-component folding.
-            let xref = namespace == "f3d:xref:reference"
-                || (namespace.starts_with("f3d:xref/") && namespace.ends_with("/xref:reference"));
-            let unresolved = namespace.ends_with(":design-parameter-scope")
-                && row
-                    .and_then(|row| row.get("prototype"))
-                    .and_then(Value::as_str)
-                    .and_then(|id| definitions_by_id.get(id))
-                    .and_then(|definition| definition.pointer("/storage/kind"))
-                    .and_then(Value::as_str)
-                    == Some("external");
-            let stored = child
-                .as_str()
-                .is_some_and(|id| id.ends_with("/stored-frame-occurrence"));
-            if xref || unresolved || stored {
+            if stays_in_file(child) {
                 file_children.push(child.clone());
             } else {
                 part_children.push(child.clone());
@@ -771,7 +809,7 @@ mod tests {
             parameter.product_definition = Some(root.id.clone());
         }
         model.ir.model.product_definitions = vec![root];
-        let document = serde_json::to_value(&model.ir).unwrap();
+        let document = crate::ir_wire::to_value(&model.ir).unwrap();
         let bodies = model
             .ir
             .geometry
@@ -904,6 +942,33 @@ mod tests {
         assert_eq!(serde_json::to_value(&model.ir.geometry).unwrap(), geometry);
         assert_eq!(model.ir.model.product_definitions.len(), 3);
         assert_eq!(model.ir.model.occurrences.len(), 5);
+    }
+
+    /// A record of an archive member is named `f3d:<key>@<scope>` now and was named
+    /// `f3d:xref/<key>/<scope>`: both are members, and the root file's are not.
+    #[test]
+    fn archive_member_identities_are_told_from_the_root_files() {
+        for (namespace, scope) in [
+            ("f3d:model:component", "model:component"),
+            ("f3d:xref/test/model:component", "model:component"),
+            ("f3d:pin@model:component", "model:component"),
+            ("f3d:pin/xref/bolt@model:component", "model:component"),
+            ("f3d:pin@xref:reference", "xref:reference"),
+            ("f3d:xref:reference", "xref:reference"),
+        ] {
+            assert_eq!(fusion_scope(namespace), Some(scope), "{namespace}");
+        }
+        assert_eq!(fusion_scope("sldprt:assembly:model"), None);
+        for (id, member) in [
+            ("f3d:xref:reference#1", false),
+            ("f3d:Design/BulkStream.dat:record#1", false),
+            ("f3d:xref/member/Design:occurrence#1", true),
+            ("f3d:pin@Design/BulkStream.dat:record#1", true),
+            ("f3d:pin/xref/bolt@model:occurrence#2", true),
+            ("sldprt:assembly:model#1", false),
+        ] {
+            assert_eq!(is_member_identity(id), member, "{id}");
+        }
     }
 
     #[test]
