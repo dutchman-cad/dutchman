@@ -382,6 +382,30 @@ pub(super) fn swept_area(profile: Option<&Value>, ctx: &Context) -> Option<f64> 
     super::crossing::selected_area(row, &entities, &wanted)
 }
 
+/// A selection of whole profiles, each the entities of its outer loop and of its holes in `mapped`'s
+/// sketch: a loop inside another is a hole of it, and the region inside the hole is not taken.
+pub(super) fn whole_faces(
+    profiles: Vec<(Vec<String>, Vec<Vec<String>>)>,
+    mapped: &Mapped,
+) -> Result<Value, String> {
+    let mut whole = Vec::with_capacity(profiles.len());
+    for (outer, holes) in profiles {
+        let mut rings = mapped.boundaries(std::iter::once(outer).chain(holes).collect())?;
+        if rings.is_empty() {
+            return Err("it selects no profile".to_owned());
+        }
+        let outer = rings.remove(0);
+        let holes: Vec<_> = rings
+            .into_iter()
+            .map(|hole| canonical_loop(hole, mapped))
+            .collect();
+        whole.push(json!({"outer": canonical_loop(outer, mapped), "holes": holes}));
+    }
+    Ok(sorted_whole(
+        json!({"type": "whole_boundaries", "profiles": whole}),
+    ))
+}
+
 /// The selected source loops as whole boundaries when some lie inside others: a loop inside
 /// one selected loop is its hole, as Fusion's even-odd profile nesting has it, so concentric
 /// circles are a ring, not a disc. `None` when nothing nests, a loop is not followed whole, or

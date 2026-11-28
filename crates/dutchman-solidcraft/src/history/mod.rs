@@ -2116,6 +2116,86 @@ enum Proven {
     Hole(sketch::V3),
 }
 
+/// Why a face extrude on an imported base is refused when no check of the source's result
+/// applies to it.
+const BASE_FACE_UNPROVEN: &str = "a face extrude on an imported base is not supported yet without a matching source result check";
+
+/// Blocks the outcome `outcome` with `reason`, and makes it the first stop of the history if no
+/// earlier feature is.
+fn block_outcome(
+    features: &mut [FeatureOutcome],
+    first: &mut Option<(usize, String)>,
+    outcome: usize,
+    subject: &str,
+    reason: &str,
+) {
+    if let Some(entry) = features.get_mut(outcome) {
+        entry.status = FeatureStatus::Blocked;
+        entry.reason = Some(reason.to_owned());
+    }
+    if first.as_ref().is_none_or(|(at, _)| outcome < *at) {
+        *first = Some((outcome, format!("{subject}: {reason}")));
+    }
+}
+
+/// Writes `proof`'s sketch, on the side `mirrored` says, over the sketch feature the history holds
+/// for it. `false` when the history holds none.
+fn rewrite_sketch(history: &mut History, proof: &face_profile::Proof, mirrored: bool) -> bool {
+    let Ok((sketch, _)) = proof.sketch(mirrored) else {
+        return false;
+    };
+    let Some(fields) = history
+        .features
+        .iter_mut()
+        .find(|feature| feature.get("id").and_then(Value::as_u64) == Some(proof.sketch))
+        .and_then(Value::as_object_mut)
+    else {
+        return false;
+    };
+    for key in ["plane", "sketch"] {
+        if let Some(value) = sketch.get(key) {
+            fields.insert(key.to_owned(), value.clone());
+        }
+    }
+    true
+}
+
+/// Tries each of `caps`, the other faces of the rebuilt body the same as the extrude's face, as
+/// the face the extrude starts from, and keeps the first whose result `measure` finds matching
+/// the source's. Without one the history is left as it was.
+fn other_end_matching(
+    history: &mut History,
+    face: &face_profile::Proof,
+    caps: &[face_profile::Cap],
+    measure: &mut impl FnMut(&History, std::time::Duration) -> infer::Fit,
+) -> Option<infer::Fit> {
+    let at = history
+        .features
+        .iter()
+        .position(|feature| feature.get("id").and_then(Value::as_u64) == Some(face.sketch))?;
+    let original = history.features.get(at).cloned()?;
+    for cap in caps {
+        let Some(moved) = face.shifted(cap.shift) else {
+            continue;
+        };
+        if !rewrite_sketch(history, &moved, cap.mirrored) {
+            continue;
+        }
+        let trial = measure(history, infer::MEASURE_BUDGET);
+        let matching = matches!(
+            &trial,
+            infer::Fit::Matches(found) if found.deviation.is_some_and(|deviation| deviation.within())
+        );
+        if matching {
+            return Some(trial);
+        }
+    }
+    if let Some(slot) = history.features.get_mut(at) {
+        *slot = original;
+    }
+    None
+}
+
 /// Proves the input edges of every blend of a history that maps, on the bodies `replay`
 /// gives for the history before each blend (`replay(history, after)` with the ids of the
 /// features each blend follows), and names its body. A blend that cannot be proven blocks
@@ -2155,9 +2235,14 @@ pub(crate) fn prove_blends(
     };
     let blends = std::mem::take(&mut history.blends);
     let mut step = 0usize;
-    let mut first = None;
+    let mut first: Option<(usize, String)> = None;
     let mut inserted = 0usize;
+    // Face extrudes on an imported base before the last feature that builds: the source's result
+    // is known only for the design as it ends, so each is judged with the last one's check.
+    let mut deferred: Vec<(usize, String)> = Vec::new();
     for (index, (pending, marker)) in blends.iter().zip(&after).enumerate() {
+        // The other planes holding the face of a face extrude on an imported base.
+        let mut caps: Vec<face_profile::Cap> = Vec::new();
         let proven = match (marker, &replayed) {
             (None, _) => Err(if pending.path {
                 "no feature before it builds a body carrying its path".to_owned()
@@ -2211,16 +2296,28 @@ pub(crate) fn prove_blends(
                                 Ok(Proven::Bodies { added, flipped })
                             },
                         ),
-                        Some(face) => face_profile::prove(face, before).and_then(|mirrored| {
-                            if let Some(direction) = face.entry_direction(mirrored)? {
-                                Ok(Proven::Hole(direction))
-                            } else if mirrored {
-                                face.sketch(true)
-                                    .map(|(sketch, _)| Proven::Sketch(Some(sketch)))
-                            } else {
-                                Ok(Proven::Sketch(None))
+                        Some(face) => {
+                            let found = face_profile::prove(face, before);
+                            let on_base = history
+                                .features
+                                .get(pending.feature.saturating_add(inserted))
+                                .is_some_and(|feature| {
+                                    feature.get(extrude::BASE_FACE_RESULT).is_some()
+                                });
+                            if found.is_ok() && on_base {
+                                caps = face_profile::caps(face, before);
                             }
-                        }),
+                            found.and_then(|mirrored| {
+                                if let Some(direction) = face.entry_direction(mirrored)? {
+                                    Ok(Proven::Hole(direction))
+                                } else if mirrored {
+                                    face.sketch(true)
+                                        .map(|(sketch, _)| Proven::Sketch(Some(sketch)))
+                                } else {
+                                    Ok(Proven::Sketch(None))
+                                }
+                            })
+                        }
                     },
                     Some(Err(why)) => Err(format!(
                         "SolidCraft cannot replay the history before it: {why}"
@@ -2270,6 +2367,35 @@ pub(crate) fn prove_blends(
                 }
             }
             proven => proven,
+        };
+        // The face of a face extrude on an imported base may be recorded at either end of a prism
+        // of that profile. When the next feature starts from a face the extrude must have
+        // grown, the extrude is written from the end that puts its own end on that face.
+        let proven = match (proven, &pending.face) {
+            (Ok(Proven::Sketch(current)), Some(face)) if !caps.is_empty() => {
+                let length = history
+                    .features
+                    .get(pending.feature.saturating_add(inserted))
+                    .and_then(|feature| feature.get(extrude::BASE_FACE_LENGTH))
+                    .and_then(Value::as_f64);
+                let next = blends
+                    .get(index.saturating_add(1))
+                    .and_then(|p| p.face.as_ref());
+                let chosen = length.zip(next).and_then(|(length, next)| {
+                    face_profile::cap_ending_at(face, current.is_some(), &caps, length, next)
+                });
+                match chosen {
+                    Some(Some(cap)) => match face
+                        .shifted(cap.shift)
+                        .map(|moved| moved.sketch(cap.mirrored))
+                    {
+                        Some(Ok((sketch, _))) => Ok(Proven::Sketch(Some(sketch))),
+                        _ => Ok(Proven::Sketch(current)),
+                    },
+                    _ => Ok(Proven::Sketch(current)),
+                }
+            }
+            (proven, _) => proven,
         };
         let admitted = proven.is_ok();
         match proven {
@@ -2364,22 +2490,51 @@ pub(crate) fn prove_blends(
             }
         }
         let at = pending.feature.saturating_add(inserted);
+        if let Some(fields) = history.features.get_mut(at).and_then(Value::as_object_mut) {
+            fields.remove(extrude::BASE_FACE_LENGTH);
+        }
         let result_proof = history
             .features
             .get_mut(at)
             .and_then(Value::as_object_mut)
             .and_then(|fields| fields.remove(extrude::BASE_FACE_RESULT))
             .and_then(|value| value.as_bool());
-        if admitted && result_proof.is_some() {
+        if admitted && result_proof == Some(false) {
+            // Not the last feature that builds, so the source's result for this step is not
+            // known: it is judged with the check of the last face extrude of the history.
+            deferred.push((pending.outcome, pending.subject.clone()));
+        } else if admitted && result_proof.is_some() {
             // Matching the selected face on the imported base proves its boundary and
             // outward side, but not that the base and the feature share the source's
-            // result frame. Never guess a translation or choose the opposite end face.
-            let final_state = result_proof == Some(true) && history.stop.is_none();
-            let fit = if final_state {
+            // result frame. Never guess a translation: another face of the same shape is
+            // taken only when the rebuilt result then matches the source's.
+            let final_state = history.stop.is_none();
+            let mut fit = if final_state {
                 measure(history, infer::MEASURE_BUDGET)
             } else {
                 infer::Fit::Unknown
             };
+            if final_state && matches!(fit, infer::Fit::Differs(_)) && !caps.is_empty() {
+                if let Some(face) = &pending.face {
+                    if let Some(kept) = other_end_matching(history, face, &caps, &mut measure) {
+                        fit = kept;
+                        if index.saturating_add(1) < blends.len() {
+                            let remaining: Vec<u64> = after
+                                .iter()
+                                .skip(index.saturating_add(1))
+                                .flatten()
+                                .copied()
+                                .collect();
+                            let faces = blends
+                                .iter()
+                                .skip(index.saturating_add(1))
+                                .any(|p| p.face.is_some() || p.needs_faces());
+                            replayed = replay(history, &remaining, faces);
+                            step = 0;
+                        }
+                    }
+                }
+            }
             let refusal = match fit {
                 infer::Fit::Matches(measure)
                     if measure.deviation.is_some_and(|deviation| deviation.within()) => None,
@@ -2393,19 +2548,38 @@ pub(crate) fn prove_blends(
                     "a face extrude on an imported base is not supported yet without a matching source result check: {why}"
                 )),
                 infer::Fit::Unknown | infer::Fit::Matches(_) => Some(
-                    "a face extrude on an imported base is not supported yet without a matching source result check".to_owned()
+                    BASE_FACE_UNPROVEN.to_owned()
                 ),
             };
+            let earlier = std::mem::take(&mut deferred);
             if let Some(reason) = refusal {
-                if let Some(outcome) = mapping.features.get_mut(pending.outcome) {
-                    outcome.status = FeatureStatus::Blocked;
-                    outcome.reason = Some(reason.clone());
+                for (outcome, subject) in &earlier {
+                    block_outcome(
+                        &mut mapping.features,
+                        &mut first,
+                        *outcome,
+                        subject,
+                        &reason,
+                    );
                 }
-                first.get_or_insert_with(|| {
-                    (pending.outcome, format!("{}: {reason}", pending.subject))
-                });
+                block_outcome(
+                    &mut mapping.features,
+                    &mut first,
+                    pending.outcome,
+                    &pending.subject,
+                    &reason,
+                );
             }
         }
+    }
+    for (outcome, subject) in std::mem::take(&mut deferred) {
+        block_outcome(
+            &mut mapping.features,
+            &mut first,
+            outcome,
+            &subject,
+            BASE_FACE_UNPROVEN,
+        );
     }
     if let Some((source, reason)) = first {
         shorten(mapping, source, reason);
@@ -4006,5 +4180,184 @@ mod tests {
         assert_eq!(replays, 3);
         assert!(history.features[0].get("flip").is_none());
         assert_eq!(history.features[1]["flip"], true);
+    }
+    /// A drum of radius 10 along z whose ends, a face each, are at `low` and `high`.
+    fn drum_between(low: f64, high: f64) -> crate::verify::Replay {
+        use crate::verify::{Replay, ReplayedEdge, ReplayedFace};
+        let ring = |name: &str, z: f64| ReplayedEdge {
+            start: [10.0, 0.0, z],
+            mid: [-10.0, 0.0, z],
+            end: [10.0, 0.0, z],
+            length: std::f64::consts::TAU * 10.0,
+            name: name.to_owned(),
+            index: None,
+            circle: None,
+        };
+        let end = |name: &str, z: f64, side: f64| ReplayedFace {
+            name: name.to_owned(),
+            area: std::f64::consts::PI * 100.0,
+            normal: Some([0.0, 0.0, side]),
+            cylinder: None,
+            point: [0.0, 0.0, z],
+        };
+        Replay {
+            bodies: vec![(
+                "body".to_owned(),
+                vec![ring("low", low), ring("high", high)],
+            )],
+            faces: vec![vec![end("low", low, -1.0), end("high", high, 1.0)]],
+        }
+    }
+
+    /// A base drum from 0 to 40 mm, two face extrudes of the same circle: the first 55 mm from
+    /// a face recorded at 0 (where the source has it at the other end, 40), the second from the
+    /// face at 95 the first leaves.
+    fn base_face_chain() -> Mapping {
+        let pending = |feature: usize, outcome: usize, proof| blend::Pending {
+            feature,
+            outcome,
+            subject: format!("Extrude {outcome}"),
+            edges: Vec::new(),
+            angle_chamfer: false,
+            unequal: None,
+            face: Some(proof),
+            extra: None,
+            trimmed: false,
+            path: false,
+        };
+        let first = face_profile::testing_disc(0.0, 2);
+        let second = face_profile::testing_disc(95.0, 4);
+        let extrude = |id: u64, sketch: u64, last: bool, length: f64| {
+            let mut feature = json!({"id": id, "type": "extrude", "sketch": sketch});
+            feature[extrude::BASE_FACE_RESULT] = json!(last);
+            feature[extrude::BASE_FACE_LENGTH] = json!(length);
+            feature
+        };
+        let history = History {
+            features: vec![
+                json!({"id": 1, "type": "import"}),
+                first.sketch(false).unwrap().0,
+                extrude(3, 2, false, 55.0),
+                second.sketch(false).unwrap().0,
+                extrude(5, 4, true, 300.0),
+            ],
+            sources: [(1, 0), (2, 1), (3, 2), (4, 3), (5, 4)].into(),
+            blends: vec![pending(2, 2, first), pending(4, 4, second)],
+            ..History::default()
+        };
+        let outcome = |kind: &str| FeatureOutcome {
+            output: Default::default(),
+            name: None,
+            kind: kind.to_owned(),
+            status: FeatureStatus::Mapped,
+            reason: None,
+            ordinal: None,
+            variant: None,
+            profile_unverified: false,
+            reapplied: false,
+            final_body: false,
+            inferred: None,
+        };
+        Mapping {
+            result: Ok(history),
+            features: vec![
+                outcome("base_feature"),
+                outcome("sketch"),
+                outcome("extrude"),
+                outcome("sketch"),
+                outcome("extrude"),
+            ],
+            references: History::default(),
+            keep_sketches: false,
+        }
+    }
+
+    /// SolidCraft's replay of `base_face_chain`: the drum before the first extrude, and after it
+    /// the drum that extrude grew from the end its sketch is on.
+    fn replay_chain(history: &History, after: &[u64], _faces: bool) -> Replayed {
+        let steps: Vec<Result<crate::verify::Replay, String>> = after
+            .iter()
+            .map(|id| {
+                if *id == 2 {
+                    return Ok(drum_between(0.0, 40.0));
+                }
+                let sketch = history.features.iter().find(|f| f["id"] == 2).unwrap();
+                let z = sketch["plane"]["plane"]["origin"][2].as_f64().unwrap();
+                Ok(if (z - 40.0).abs() < 1e-6 {
+                    drum_between(0.0, 95.0)
+                } else {
+                    drum_between(-55.0, 40.0)
+                })
+            })
+            .collect();
+        Ok(steps)
+    }
+
+    fn matching(_: &History, _: std::time::Duration) -> infer::Fit {
+        infer::Fit::Matches(infer::Measure {
+            against: dutchman_core::InferredAgainst::OriginalShape,
+            deviation: Some(crate::verify::Deviation {
+                max: 0.0,
+                size: 100.0,
+                faces: None,
+            }),
+        })
+    }
+
+    #[test]
+    fn a_face_extrude_chain_takes_the_end_the_next_face_shows_and_is_judged_by_the_last_result() {
+        let mut mapping = base_face_chain();
+        prove_blends(&mut mapping, replay_chain, matching);
+        assert!(
+            mapping
+                .features
+                .iter()
+                .all(|feature| feature.status == FeatureStatus::Mapped),
+            "{:?}",
+            mapping.features
+        );
+        let history = mapping.result.unwrap();
+        let sketch = history.features.iter().find(|f| f["id"] == 2).unwrap();
+        // Written on the end at 40, running outward to 95, which is where the second face is.
+        assert!((sketch["plane"]["plane"]["origin"][2].as_f64().unwrap() - 40.0).abs() < 1e-6);
+        assert!(history.features.iter().all(|feature| {
+            feature.get(extrude::BASE_FACE_RESULT).is_none()
+                && feature.get(extrude::BASE_FACE_LENGTH).is_none()
+        }));
+    }
+
+    #[test]
+    fn a_face_extrude_chain_whose_last_result_differs_is_blocked_from_its_first_extrude() {
+        let mut mapping = base_face_chain();
+        prove_blends(&mut mapping, replay_chain, |_, _| {
+            infer::Fit::Differs("a body sits 55.000 mm from the original's position".to_owned())
+        });
+        for (row, status) in [(2, FeatureStatus::Blocked), (4, FeatureStatus::Blocked)] {
+            let outcome = &mapping.features[row];
+            assert_eq!(outcome.status, status);
+            assert!(
+                outcome
+                    .reason
+                    .as_deref()
+                    .unwrap()
+                    .contains("a body sits 55.000 mm"),
+                "{outcome:?}"
+            );
+        }
+        assert_eq!(mapping.features[0].status, FeatureStatus::Mapped);
+    }
+
+    #[test]
+    fn a_face_extrude_before_a_feature_that_is_not_one_has_no_result_to_be_judged_by() {
+        let mut mapping = base_face_chain();
+        // The last feature is not a face extrude on the base: nothing checks the first.
+        if let Ok(history) = &mut mapping.result {
+            history.blends.truncate(1);
+            history.features.truncate(3);
+        }
+        prove_blends(&mut mapping, replay_chain, matching);
+        let outcome = &mapping.features[2];
+        assert_eq!(outcome.status, FeatureStatus::Blocked);
+        assert_eq!(outcome.reason.as_deref(), Some(BASE_FACE_UNPROVEN));
     }
 }

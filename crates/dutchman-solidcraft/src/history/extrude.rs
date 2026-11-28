@@ -12,6 +12,10 @@ const ALONG_NORMAL: f64 = 1.0 - 1e-9;
 /// A face on an imported base needs a result proof as well as an input-face proof.
 pub(super) const BASE_FACE_RESULT: &str = "_base_face_result";
 
+/// How far a face extrude on an imported base joins along the face's outward normal, while the
+/// history is proven: a blind one-sided join in the profile normal's direction.
+pub(super) const BASE_FACE_LENGTH: &str = "_base_face_length";
+
 /// Maps an extrude feature whose operation is `definition`.
 pub(crate) fn map(
     feature: &Value,
@@ -282,6 +286,9 @@ pub(crate) fn map(
     {
         if let Some(fields) = out.as_object_mut() {
             fields.insert(BASE_FACE_RESULT.to_owned(), Value::Bool(true));
+            if let Some(length) = blind_join_length(definition, &extent, operation, forward) {
+                fields.insert(BASE_FACE_LENGTH.to_owned(), json!(length));
+            }
         }
     }
     if let Some((_, thin)) = thin {
@@ -293,6 +300,30 @@ pub(crate) fn map(
         fields.insert("body_names".to_owned(), json!(names));
     }
     Ok(out)
+}
+
+/// The length of a blind one-sided join that runs along the profile normal without a draft.
+fn blind_join_length(
+    definition: &Value,
+    extent: &Map<String, Value>,
+    operation: &str,
+    forward: bool,
+) -> Option<f64> {
+    if operation != "join"
+        || !forward
+        || extent.contains_key("taper")
+        || extent.contains_key("draft")
+    {
+        return None;
+    }
+    let side = definition.pointer("/extent/side")?;
+    if definition.pointer("/extent/kind")?.as_str()? != "one_sided"
+        || side.pointer("/termination/kind")?.as_str()? != "blind"
+        || number(side.get("draft")).is_some_and(|draft| draft != 0.0)
+    {
+        return None;
+    }
+    number(side.pointer("/termination/length")).filter(|length| *length > 0.0)
 }
 
 /// Where a one-sided blind sweep of `definition` ends, for the cap proof. `None` for every

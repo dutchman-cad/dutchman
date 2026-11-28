@@ -181,6 +181,7 @@ pub(super) fn map(
         feature.get("id").and_then(Value::as_str).unwrap_or("?"),
         section.map_or(String::new(), |section| format!(":{section}"))
     );
+    let profiles = selection(&proof.faces, proof.origin, proof.x, proof.y, &mapped)?;
     ctx.sketches.insert(key.clone(), mapped);
     ctx.extra.push(sketch);
     ctx.blends.push(super::blend::Pending {
@@ -195,7 +196,7 @@ pub(super) fn map(
         trimmed: false,
         path: false,
     });
-    Ok((key, json!({"type": "all"})))
+    Ok((key, profiles))
 }
 
 impl Proof {
@@ -1143,16 +1144,25 @@ fn plane(faces: &[Boundary], points: &[V3]) -> Result<(V3, V3), String> {
     Ok((origin, normal))
 }
 
-/// The area of a face: its loops chained from its edges, with the loops inside an odd number
-/// of others taken away, in the frame `origin`, `x`, `y`.
-fn area(face: &Boundary, origin: V3, x: V3, y: V3) -> Result<f64, String> {
+/// One closed loop of a face's boundary, flattened into the frame of its plane.
+struct Ring {
+    /// The area it encloses.
+    size: f64,
+    /// Points along it, enough to tell what lies inside it.
+    polygon: Vec<[f64; 2]>,
+    /// The face's edges it follows, by position in the face's edge list.
+    edges: Vec<usize>,
+}
+
+/// The loops of a face chained from its edges, in the frame `origin`, `x`, `y`.
+fn rings(face: &Boundary, origin: V3, x: V3, y: V3) -> Result<Vec<Ring>, String> {
     let normal = unit(cross(x, y)).ok_or("its face has no plane")?;
     let loops = loops(&face.edges)?;
     let flat = |p: V3| {
         let d = sub(p, origin);
         [dot(d, x), dot(d, y)]
     };
-    let mut rings: Vec<(f64, Vec<[f64; 2]>)> = Vec::new();
+    let mut rings: Vec<Ring> = Vec::new();
     for ring in &loops {
         let mut twice = 0.0;
         let mut polygon = Vec::new();
@@ -1190,24 +1200,104 @@ fn area(face: &Boundary, origin: V3, x: V3, y: V3) -> Result<f64, String> {
                 }
             }
         }
-        rings.push((twice.abs() / 2.0, polygon));
+        rings.push(Ring {
+            size: twice.abs() / 2.0,
+            polygon,
+            edges: ring.iter().map(|&(index, _)| index).collect(),
+        });
     }
-    let mut total = 0.0;
-    for (i, (size, polygon)) in rings.iter().enumerate() {
-        let Some(at) = polygon.first() else {
-            return Err(BAD.to_owned());
-        };
-        let depth = rings
-            .iter()
-            .enumerate()
-            .filter(|(j, (_, other))| *j != i && inside(other, *at))
-            .count();
-        total += if depth % 2 == 0 { *size } else { -*size };
-    }
+    Ok(rings)
+}
+
+/// How many of the other rings each ring lies inside.
+fn depths(rings: &[Ring]) -> Result<Vec<usize>, String> {
+    rings
+        .iter()
+        .enumerate()
+        .map(|(i, ring)| {
+            let Some(at) = ring.polygon.first() else {
+                return Err(BAD.to_owned());
+            };
+            Ok(rings
+                .iter()
+                .enumerate()
+                .filter(|(j, other)| *j != i && inside(&other.polygon, *at))
+                .count())
+        })
+        .collect()
+}
+
+/// The area of a face: its loops chained from its edges, with the loops inside an odd number
+/// of others taken away, in the frame `origin`, `x`, `y`.
+fn area(face: &Boundary, origin: V3, x: V3, y: V3) -> Result<f64, String> {
+    let rings = rings(face, origin, x, y)?;
+    let depth = depths(&rings)?;
+    let total: f64 = rings
+        .iter()
+        .zip(&depth)
+        .map(|(ring, depth)| {
+            if depth % 2 == 0 {
+                ring.size
+            } else {
+                -ring.size
+            }
+        })
+        .sum();
     if total.is_finite() && total > 0.0 {
         Ok(total)
     } else {
         Err("its face has no positive area".to_owned())
+    }
+}
+
+/// The profiles of the sketch of `faces` an extrude takes: every one of them when no face has a
+/// hole, else each face's outer loop with its holes, so a loop inside another is a hole in the
+/// extrude and not a disc it fills, as the faces the source extruded have them.
+fn selection(
+    faces: &[Boundary],
+    origin: V3,
+    x: V3,
+    y: V3,
+    mapped: &super::sketch::Mapped,
+) -> Result<Value, String> {
+    let mut profiles = Vec::new();
+    let mut holed = false;
+    let mut before = 0usize;
+    for face in faces {
+        let rings = rings(face, origin, x, y)?;
+        let depth = depths(&rings)?;
+        let entities = |ring: &Ring| -> Vec<String> {
+            ring.edges
+                .iter()
+                .map(|index| format!("face-edge-{}", before.saturating_add(*index)))
+                .collect()
+        };
+        for (i, ring) in rings.iter().enumerate() {
+            if depth.get(i).is_some_and(|depth| depth % 2 == 1) {
+                continue;
+            }
+            let outer_depth = depth.get(i).copied().unwrap_or(0);
+            let holes: Vec<Vec<String>> = rings
+                .iter()
+                .enumerate()
+                .filter(|(j, hole)| {
+                    depth.get(*j).copied() == Some(outer_depth.saturating_add(1))
+                        && hole
+                            .polygon
+                            .first()
+                            .is_some_and(|at| inside(&ring.polygon, *at))
+                })
+                .map(|(_, hole)| entities(hole))
+                .collect();
+            holed |= !holes.is_empty();
+            profiles.push((entities(ring), holes));
+        }
+        before = before.saturating_add(face.edges.len());
+    }
+    if holed {
+        super::profile::whole_faces(profiles, mapped)
+    } else {
+        Ok(json!({"type": "all"}))
     }
 }
 
@@ -1288,6 +1378,18 @@ fn inside(polygon: &[[f64; 2]], p: [f64; 2]) -> bool {
     inside
 }
 
+/// Whether the replayed edge name `edge`, the names of the faces it joins separated by `|`,
+/// names the face `face`. SolidCraft numbers the pieces an edge is split into with a `~` and the
+/// number after a name, as in `wall|top~2`; every piece of an edge joins the same faces.
+fn joins_face(edge: &str, face: &str) -> bool {
+    edge.split('|').any(|name| {
+        name == face
+            || name.rsplit_once('~').is_some_and(|(head, piece)| {
+                head == face && !piece.is_empty() && piece.bytes().all(|byte| byte.is_ascii_digit())
+            })
+    })
+}
+
 /// Finds each mapped face among the faces SolidCraft rebuilt before the extrude, and says
 /// whether the sketch has to be mirrored to run along their outward normal.
 pub(crate) fn prove(proof: &Proof, replay: &Replay) -> Result<bool, String> {
@@ -1332,7 +1434,7 @@ pub(crate) fn prove(proof: &Proof, replay: &Replay) -> Result<bool, String> {
                 // Its edges are the face's, no more and no fewer.
                 let named: Vec<&ReplayedEdge> = edges
                     .iter()
-                    .filter(|rebuilt| rebuilt.name.split('|').any(|name| name == candidate.name))
+                    .filter(|rebuilt| joins_face(&rebuilt.name, &candidate.name))
                     .collect();
                 let bounded = bounds(face, &named);
                 if bounded {
@@ -1357,6 +1459,182 @@ pub(crate) fn prove(proof: &Proof, replay: &Replay) -> Result<bool, String> {
     Ok(mirrored)
 }
 
+/// A circular face of radius 10 at height `z` for a sketch feature `sketch`, as a mapped face
+/// profile would hold it, for the tests of the history proof.
+#[cfg(test)]
+pub(super) fn testing_disc(z: f64, sketch: u64) -> Proof {
+    let at = |x: f64, y: f64| [x, y, z];
+    Proof {
+        sketch,
+        name: format!("Face Sketch{sketch}"),
+        origin: at(0.0, 0.0),
+        x: [1.0, 0.0, 0.0],
+        y: [0.0, 1.0, 0.0],
+        faces: vec![Boundary {
+            edges: vec![Edge::Circle {
+                start: at(10.0, 0.0),
+                mid: at(-10.0, 0.0),
+                center: at(0.0, 0.0),
+                radius: 10.0,
+                axis: [0.0, 0.0, 1.0],
+            }],
+            area: std::f64::consts::PI * 100.0,
+        }],
+        entry: None,
+    }
+}
+
+/// Another plane on the rebuilt bodies that carries a face the same as a mapped face moved
+/// along its normal: a face of the same boundary at the other end of a prism, say.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Cap {
+    /// How far along the face's normal the plane is from the mapped face's.
+    pub(crate) shift: f64,
+    /// Whether the sketch has to be mirrored to run along that face's outward normal.
+    pub(crate) mirrored: bool,
+}
+
+/// How close, in millimetres, the end of an extrude must come to the plane of a face the next
+/// feature starts from.
+const END_MM: f64 = 1e-3;
+
+fn moved(edge: &Edge, by: V3) -> Edge {
+    match edge {
+        Edge::Line { start, end } => Edge::Line {
+            start: add(*start, by),
+            end: add(*end, by),
+        },
+        Edge::Arc {
+            start,
+            mid,
+            end,
+            center,
+            radius,
+            axis,
+        } => Edge::Arc {
+            start: add(*start, by),
+            mid: add(*mid, by),
+            end: add(*end, by),
+            center: add(*center, by),
+            radius: *radius,
+            axis: *axis,
+        },
+        Edge::Circle {
+            start,
+            mid,
+            center,
+            radius,
+            axis,
+        } => Edge::Circle {
+            start: add(*start, by),
+            mid: add(*mid, by),
+            center: add(*center, by),
+            radius: *radius,
+            axis: *axis,
+        },
+    }
+}
+
+impl Proof {
+    /// The unit normal of the sketch as first written: `origin → x × y`.
+    fn normal(&self) -> Option<V3> {
+        unit(cross(self.x, self.y))
+    }
+
+    /// Where the face's plane is along its own normal, and that normal.
+    pub(crate) fn height(&self) -> Option<(V3, f64)> {
+        let normal = self.normal()?;
+        Some((normal, dot(self.origin, normal)))
+    }
+
+    /// The same face `by` millimetres along its normal.
+    pub(crate) fn shifted(&self, by: f64) -> Option<Proof> {
+        let offset = scale(self.normal()?, by);
+        let mut moved_proof = self.clone();
+        moved_proof.origin = add(self.origin, offset);
+        for face in &mut moved_proof.faces {
+            face.edges = face.edges.iter().map(|edge| moved(edge, offset)).collect();
+        }
+        Some(moved_proof)
+    }
+}
+
+/// The other planes of the replay that hold the face again: each one a face of the same
+/// boundary and area on a parallel plane, found exactly as [`prove`] finds the mapped face.
+/// The recorded face and these are the same shape, so which one an extrude starts from is for
+/// the result to say; every one here is still a real face of the rebuilt body.
+pub(crate) fn caps(proof: &Proof, replay: &Replay) -> Vec<Cap> {
+    const MOST: usize = 16;
+    let Some(normal) = proof.normal() else {
+        return Vec::new();
+    };
+    let mut offsets: Vec<f64> = Vec::new();
+    for candidate in replay.faces.iter().flatten() {
+        let Some(outward) = candidate.normal.and_then(unit) else {
+            continue;
+        };
+        if (dot(outward, normal).abs() - 1.0).abs() > ANGLE {
+            continue;
+        }
+        let by = dot(sub(candidate.point, proof.origin), normal);
+        if by.abs() <= crate::tolerances::FACE_PLANE_MM
+            || offsets
+                .iter()
+                .any(|seen| (seen - by).abs() <= crate::tolerances::FACE_PLANE_MM)
+        {
+            continue;
+        }
+        offsets.push(by);
+        if offsets.len() >= MOST {
+            break;
+        }
+    }
+    offsets
+        .into_iter()
+        .filter_map(|shift| {
+            let mirrored = prove(&proof.shifted(shift)?, replay).ok()?;
+            Some(Cap { shift, mirrored })
+        })
+        .collect()
+}
+
+/// Which of the faces an extrude may start from (the mapped one, `exact`, or one of `caps`)
+/// leaves its far end on the plane the next feature's face `next` lies on, when `length` is how
+/// far the extrude runs. `None` unless exactly one does: the next feature's own face is a
+/// position the source records, so it settles which end the extrude grew.
+pub(crate) fn cap_ending_at(
+    proof: &Proof,
+    exact: bool,
+    caps: &[Cap],
+    length: f64,
+    next: &Proof,
+) -> Option<Option<Cap>> {
+    let (normal, at) = proof.height()?;
+    let (next_normal, _) = next.height()?;
+    if (dot(normal, next_normal).abs() - 1.0).abs() > ANGLE {
+        return None;
+    }
+    // The next face's plane is the same plane whichever way its own normal points.
+    let target = dot(next.origin, normal);
+    let ends = |shift: f64, mirrored: bool| {
+        let run = if mirrored { -length } else { length };
+        ((at + shift + run) - target).abs() <= END_MM
+    };
+    let mut found: Vec<Option<Cap>> = Vec::new();
+    if ends(0.0, exact) {
+        found.push(None);
+    }
+    found.extend(
+        caps.iter()
+            .filter(|cap| ends(cap.shift, cap.mirrored))
+            .map(|cap| Some(*cap)),
+    );
+    match found.as_slice() {
+        [one] => Some(*one),
+        _ => None,
+    }
+}
+
 /// Why a face is not among the rebuilt ones: the face on its plane nearest in area, and how its
 /// edges differ.
 fn not_found(face: &Boundary, nearest: Option<(f64, &ReplayedFace, &[ReplayedEdge])>) -> String {
@@ -1371,7 +1649,7 @@ fn not_found(face: &Boundary, nearest: Option<(f64, &ReplayedFace, &[ReplayedEdg
     };
     let named: Vec<&ReplayedEdge> = edges
         .iter()
-        .filter(|rebuilt| rebuilt.name.split('|').any(|name| name == candidate.name))
+        .filter(|rebuilt| joins_face(&rebuilt.name, &candidate.name))
         .collect();
     let unmatched = face
         .edges
@@ -2053,5 +2331,151 @@ mod tests {
             p[0] > 1.0 && p[0] < 9.0 && p[1] > 1.0 && p[1] < 9.0,
             "{p:?}"
         );
+    }
+    /// A circular face of radius 10 at height `z`, as a mapped proof would hold it.
+    fn disc_proof(z: f64) -> Proof {
+        let mut rows = vec![row((10.0, 0.0), (-10.0, 0.0), (10.0, 0.0), (0.0, 1.0))];
+        for key in ["start", "interior", "end"] {
+            rows[0][key]["z"] = json!(z);
+        }
+        entry_from_rows(rows)
+            .unwrap()
+            .unwrap()
+            .existing()
+            .face
+            .unwrap()
+    }
+
+    /// A body whose two ends, at heights 0 and 40, are faces of the same circle.
+    fn drum() -> Replay {
+        let ring = |name: &str, z: f64| ReplayedEdge {
+            start: [10.0, 0.0, z],
+            mid: [-10.0, 0.0, z],
+            end: [10.0, 0.0, z],
+            length: TAU * 10.0,
+            name: name.to_owned(),
+            index: None,
+            circle: None,
+        };
+        let end = |name: &str, z: f64, side: f64| ReplayedFace {
+            name: name.to_owned(),
+            area: std::f64::consts::PI * 100.0,
+            normal: Some([0.0, 0.0, side]),
+            cylinder: None,
+            point: [0.0, 0.0, z],
+        };
+        Replay {
+            bodies: vec![(
+                "body".to_owned(),
+                vec![ring("low", 0.0), ring("high", 40.0)],
+            )],
+            faces: vec![vec![end("low", 0.0, -1.0), end("high", 40.0, 1.0)]],
+        }
+    }
+
+    #[test]
+    fn the_other_end_of_a_prism_is_a_face_the_mapped_face_could_stand_for() {
+        let proof = disc_proof(0.0);
+        let replay = drum();
+        let mirrored = prove(&proof, &replay).unwrap();
+        let caps = caps(&proof, &replay);
+        let [cap] = caps.as_slice() else {
+            panic!("{caps:?}");
+        };
+        assert!((cap.shift.abs() - 40.0).abs() < 1e-9, "{cap:?}");
+        // The other end faces the other way.
+        assert_eq!(cap.mirrored, !mirrored);
+        // Its sketch is a copy of the mapped one on that plane.
+        let moved = proof.shifted(cap.shift).unwrap();
+        assert!((moved.origin[2] - 40.0).abs() < 1e-9);
+        assert_eq!(prove(&moved, &replay).unwrap(), cap.mirrored);
+        // A face of another size is no other end.
+        let mut thin = replay.clone();
+        thin.faces[0][1].area = 10.0;
+        assert!(super::caps(&proof, &thin).is_empty());
+    }
+
+    #[test]
+    fn the_next_face_settles_which_end_an_extrude_grew() {
+        let proof = disc_proof(0.0);
+        let replay = drum();
+        let exact = prove(&proof, &replay).unwrap();
+        let caps = caps(&proof, &replay);
+        // Grown 55 mm outward from the high end, the extrude ends at 95: the face the next
+        // feature takes is there.
+        let picked = cap_ending_at(&proof, exact, &caps, 55.0, &disc_proof(95.0));
+        assert_eq!(picked, Some(caps.first().copied()));
+        // Grown from the low end it ends at -55.
+        let picked = cap_ending_at(&proof, exact, &caps, 55.0, &disc_proof(-55.0));
+        assert_eq!(picked, Some(None));
+        // Nowhere either end reaches: no choice.
+        assert_eq!(
+            cap_ending_at(&proof, exact, &caps, 55.0, &disc_proof(300.0)),
+            None
+        );
+        // Without another end, the mapped one is all there is to be chosen.
+        assert_eq!(
+            cap_ending_at(&proof, exact, &[], 55.0, &disc_proof(-55.0)),
+            Some(None)
+        );
+    }
+    /// A ring face: a circle of radius 10 with a circle of radius 4 inside it, at height 0.
+    fn ring_face() -> Proof {
+        let mut proof = testing_disc(0.0, 2);
+        let at = |x: f64| [x, 0.0, 0.0];
+        proof.faces[0].edges.push(Edge::Circle {
+            start: at(4.0),
+            mid: at(-4.0),
+            center: at(0.0),
+            radius: 4.0,
+            axis: [0.0, 0.0, 1.0],
+        });
+        proof.faces[0].area = std::f64::consts::PI * 84.0;
+        proof
+    }
+
+    #[test]
+    fn an_extrude_of_a_face_with_a_hole_takes_the_ring_and_not_the_disc_in_the_hole() {
+        let ring = ring_face();
+        let (_, mapped) = ring.sketch(false).unwrap();
+        let chosen = selection(&ring.faces, ring.origin, ring.x, ring.y, &mapped).unwrap();
+        assert_eq!(chosen["type"], "whole_boundaries", "{chosen}");
+        let [profile] = chosen["profiles"].as_array().unwrap().as_slice() else {
+            panic!("{chosen}");
+        };
+        assert_eq!(profile["outer"].as_array().unwrap().len(), 1, "{chosen}");
+        let [hole] = profile["holes"].as_array().unwrap().as_slice() else {
+            panic!("{chosen}");
+        };
+        assert_eq!(hole.as_array().unwrap().len(), 1, "{chosen}");
+        assert_ne!(profile["outer"], *hole, "{chosen}");
+        // A face without a hole stays every profile of its sketch.
+        let disc = testing_disc(0.0, 2);
+        let (_, mapped) = disc.sketch(false).unwrap();
+        assert_eq!(
+            selection(&disc.faces, disc.origin, disc.x, disc.y, &mapped).unwrap(),
+            json!({"type": "all"})
+        );
+    }
+    #[test]
+    fn the_pieces_of_a_split_edge_still_bound_the_face() {
+        let proof = disc_proof(0.0);
+        let mut replay = drum();
+        // The circle comes back as two half circles, as SolidCraft numbers the pieces of a split edge.
+        let half = |name: &str, from: f64, to: f64| ReplayedEdge {
+            start: [10.0 * from, 0.0, 0.0],
+            mid: [0.0, 10.0 * if from > 0.0 { 1.0 } else { -1.0 }, 0.0],
+            end: [10.0 * to, 0.0, 0.0],
+            length: std::f64::consts::PI * 10.0,
+            name: name.to_owned(),
+            index: None,
+            circle: None,
+        };
+        replay.bodies[0].1 = vec![half("wall|low~1", 1.0, -1.0), half("wall|low~2", -1.0, 1.0)];
+        replay.faces[0].truncate(1);
+        assert!(prove(&proof, &replay).is_ok());
+        assert!(joins_face("wall|low~12", "low"));
+        assert!(!joins_face("wall|lower~1", "low"));
+        assert!(!joins_face("wall|low~x", "low"));
     }
 }
