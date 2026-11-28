@@ -537,6 +537,10 @@ automatically** (on by default) and **Check now**, which also shows skipped rele
 `DUTCHMAN_UPDATE_CHECK=0` disables all checks, including **Check now**. Builds from source
 never check; only release-workflow builds enable this feature.
 
+### Electronics module updates
+
+Settings groups update controls under **Updates** and the Donate and Discord toggles under **Header buttons**. In **Updates**, **Electronics module** shows the version in use and whether it is included or in your modules folder. Choose **Check for update**, then review “Version X.Y.Z is available.” above **Update electronics module** to install a newer compatible release. After installation, Settings confirms “Updated to vX.Y.Z.” Checks and downloads run in the background; failures appear in Settings.
+
 ## Installing it
 
 On macOS it comes as **Dutchman Convert.app** in a disk image: open it and drag it onto Applications in the window that appears (see

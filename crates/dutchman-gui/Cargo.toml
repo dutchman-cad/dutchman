@@ -35,6 +35,8 @@ serde = { version = "1", features = ["derive"] }
 rfd = "0.17"
 serde_json.workspace = true
 sha2.workspace = true
+dutchman-launcher.workspace = true
+flate2 = "1"
 tempfile.workspace = true
 zip.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }

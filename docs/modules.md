@@ -9,13 +9,15 @@ and uses the newer copy; equal versions use the bundled copy (build metadata doe
 A copy whose info fails or whose version is not SemVer is skipped with a report note, allowing the
 other copy to run. PATH is used only when neither copy exists, even if both copies fail info.
 Non-module companion programs keep the order: beside the program, per-user folder, then PATH.
-Settings shows the selected path and whether it is bundled, in your modules folder, or on PATH.
-The per-user folder is also where a future in-app module updater will write newer versions.
+Settings shows one line with the selected version and source (included or your modules folder),
+alongside Check for update and the update controls.
 The recommended modules folder survives updates: `~/Library/Application Support/Dutchman/modules`
 on macOS, `%LOCALAPPDATA%\Dutchman\modules` on Windows, and
 `$XDG_DATA_HOME/dutchman/modules` on Linux (default `~/.local/share/dutchman/modules`
 when unset or empty). Missing folders are skipped silently. Install it from
 https://github.com/dutchman-cad/dutchman-electronics/releases.
+
+Desktop Settings can update the electronics module from its release manifest. Updates go into the per-user modules folder. A newer copy with a supported interface wins over the included copy; the bundled program is never modified. Downloads are checked against the manifest SHA-256 before installation.
 
 Dutchman talks to a module with three commands, each with `--json`:
 
