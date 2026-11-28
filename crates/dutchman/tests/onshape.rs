@@ -2719,7 +2719,8 @@ fn discovery_stops_at_fifty_requests_before_request_fifty_one() {
         &cache,
         &estimate,
     )
-    .unwrap_err();
+    .err()
+    .expect("the queued server error should fail the approved fetch");
     assert_eq!(mock.sent.len(), 52);
     assert_eq!(error.calls, 52);
 }
