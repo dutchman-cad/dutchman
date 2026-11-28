@@ -91,8 +91,8 @@ the mapping and bundle requirements.
 
 ## When a file doesn't convert
 
-After the results, a refused conversion (except IGES) or a history that didn't fully map
-prints one invitation to make [test files](https://dutchmancad.xyz/fixtures/) or type
+After the results, a refused conversion (except IGES and circuit boards) or a history that
+didn't fully map prints one invitation to make [test files](https://dutchmancad.xyz/fixtures/) or type
 `/volunteer` in [Discord](https://discord.gg/yTcseBEdeu); `--quiet` hides it, and with
 `--json` stdout holds only the report. The desktop app shows the same under its results.
 Got a file that converts wrong? Please send it, with a STEP export of the exact same design, to Dutchy in a Discord DM.
