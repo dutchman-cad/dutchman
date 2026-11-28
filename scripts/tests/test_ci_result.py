@@ -133,8 +133,11 @@ class CiResultTests(unittest.TestCase):
                     result = self.check_results(event, failed=job)
                     self.assertNotEqual(result.returncode, 0)
 
-    def test_image_build_is_reported_not_required(self):
-        # release-image.yml checks the published image before pushing it.
+    def test_image_build_is_not_waited_for(self):
+        # release-image.yml checks the published image; a slow build must not hold ci-result.
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        block = workflow.split("  ci-result:\n", 1)[1].split("\n    if:", 1)[0]
+        self.assertNotIn("docker", block)
         for event in ("push", "schedule", "workflow_dispatch"):
             for outcome in ("failure", "cancelled", "skipped"):
                 with self.subTest(event=event, outcome=outcome):

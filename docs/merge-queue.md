@@ -87,7 +87,7 @@ gh api repos/dutchman-cad/dutchman/rulesets -X POST --input ruleset.json
   within 180 minutes is removed.
 - Repository admins bypass the rule (role id 5), so an emergency fix can merge directly.
 - The one required check is `ci-result`, a job in `ci.yml` that always runs, needs every other
-  CI job, including the reusable placement checks in the queue and release builds when explicitly requested. It checks explicit
+  required CI job (not the reported-only Docker image build), including the reusable placement checks in the queue and release builds when explicitly requested. It checks explicit
   expected results for the event and paths, rejecting failures, cancellations and unexpected
   skips. Requiring the test jobs by
   name doesn't work: a docs-only change skips the test matrix, and a skipped matrix job reports

@@ -766,10 +766,12 @@ jobs:
       actions: read
     uses: ./.github/workflows/release-build.yml
 
-  # The only required branch check. Accept skips only for the event and path filters above;
+  # The only required branch check, and the release gate (scripts/require-green-ci.py). It does not
+  # need the docker job: that image build is reported on its own, release-image.yml checks the
+  # published image, and a cold build must not hold merges or releases. Accept skips only for the event and path filters above;
   # an unexpectedly skipped dependency must never turn a partial run green.
   ci-result:
-    needs: [changes, fmt, release-notes, clippy, wasm, test, test-arm, test-arm-again, docs, test-macos, docker, msrv, solidcraft-roundtrip, placements, release-build]
+    needs: [changes, fmt, release-notes, clippy, wasm, test, test-arm, test-arm-again, docs, test-macos, msrv, solidcraft-roundtrip, placements, release-build]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -816,9 +818,6 @@ jobs:
                   bad["changes"] = "full matrix filters must all be true"
           if event in ("pull_request", "merge_group") and full:
               bad["changes"] = "pre-merge checks must use selective coverage"
-          # The image build is reported, not required: release-image.yml checks the published image.
-          if needs["docker"]["result"] not in ("success", "skipped"):
-              print("docker (reported only): " + needs["docker"]["result"])
           for job, need in sorted(needs.items()):
               print(job + ": " + need["result"])
           sys.exit(f"unexpected job results: {bad}" if bad else 0)

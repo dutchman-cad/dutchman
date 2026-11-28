@@ -148,7 +148,7 @@ builds, since it publishes nothing.
 |---|---|
 | Candidate tag `vX.Y.Z-rc.N` | Full build and packaging of that commit; files kept 30 days. Fails first if `X.Y.Z` differs from `Cargo.toml`'s version. A newer candidate cancels a running one. No Rust caches. |
 | Tag `v0.0.0-rc.dryrun*` | The same, without the version check (for measuring) |
-| Release tag `vX.Y.Z` | Full CI and release builds; independently, `release.yml` promotes the candidate's files into a draft release |
+| Release tag `vX.Y.Z` | Full CI and release builds; the release waits only for the tag's `ci-result` job (`scripts/require-green-ci.py`), never for reported-only jobs such as the Docker image build; independently, `release.yml` promotes the candidate's files into a draft release |
 | Tag `v0.0.0-dryrun*` | The same, but no release is created and the elapsed time is logged |
 | Pull request (including packaging changes and labels) | Fast Linux checks in `ci.yml`; docs-only changes use focused docs tests |
 | Merge queue group | Full CI matrix, all placements and full release builds, required by `ci-result` |
