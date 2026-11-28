@@ -6,6 +6,7 @@ param(
     [string]$Output
 )
 $ErrorActionPreference = 'Stop'
+$root = Split-Path -Parent $PSScriptRoot
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "MSI needs a stable three-part version: $Version" }
 $parts = $Version.Split('.')
 if ([int]$parts[0] -gt 255 -or [int]$parts[1] -gt 255 -or [int]$parts[2] -gt 65535) {
@@ -17,8 +18,13 @@ New-Item -ItemType Directory -Force (Split-Path -Parent $Output) | Out-Null
 $guides = Join-Path (Split-Path -Parent $Output) 'installer-guides'
 $fragment = Join-Path (Split-Path -Parent $Output) 'installer-guides.wxs'
 if (Test-Path $guides) { Remove-Item -Recurse -Force $guides }
-& bash scripts/fetch-electronics.sh x86_64-pc-windows-msvc $BinDir
-if ($LASTEXITCODE -ne 0) { throw 'Could not stage the electronics module' }
+if (Test-Path Env:DUTCHMAN_ELECTRONICS_DIR) {
+    Copy-Item -LiteralPath "$env:DUTCHMAN_ELECTRONICS_DIR/dutchman-electronics.exe" -Destination $BinDir
+    Copy-Item -Recurse -LiteralPath "$env:DUTCHMAN_ELECTRONICS_DIR/THIRD-PARTY" -Destination $BinDir
+} else {
+    & bash "$root/scripts/fetch-electronics.sh" x86_64-pc-windows-msvc $BinDir
+    if ($LASTEXITCODE -ne 0) { throw 'Could not stage the electronics module' }
+}
 & python scripts/package-docs.py $guides --wix $fragment --extra-notices "$BinDir/THIRD-PARTY"
 if ($LASTEXITCODE -ne 0) { throw 'Could not stage the installed guides and module notices' }
 & wix build assets/windows/dutchman.wxs $fragment -arch x64 -d "Version=$Version" -d "BinDir=$BinDir" -d "Icon=$Icon" -o $Output

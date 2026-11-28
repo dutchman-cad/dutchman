@@ -64,7 +64,13 @@ mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" \
 for program in dutchman dutchman-mcp dutchman-gui dutchman-web; do
   install -m755 "$bins/$program" "$appdir/usr/bin/$program"
 done
-scripts/fetch-electronics.sh "$target" "$appdir/usr/bin"
+# A supplied module folder is already fetched; packaging must not download it again.
+if [[ ${DUTCHMAN_ELECTRONICS_DIR+x} ]]; then
+  cp "$DUTCHMAN_ELECTRONICS_DIR/dutchman-electronics" "$appdir/usr/bin/"
+  cp -R "$DUTCHMAN_ELECTRONICS_DIR/THIRD-PARTY" "$appdir/usr/bin/"
+else
+  "$root/scripts/fetch-electronics.sh" "$target" "$appdir/usr/bin"
+fi
 mv "$appdir/usr/bin/THIRD-PARTY" "$appdir/usr/share/licenses/dutchman/"
 install -m755 packaging/linux/AppRun "$appdir/AppRun"
 install -m644 packaging/arch/dutchman.desktop "$appdir/dutchman.desktop"

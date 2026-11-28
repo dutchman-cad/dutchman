@@ -387,7 +387,10 @@ including macOS universal. Before merging a version update, run
 checksums fetched from the module release's `.sha256` files. PLACEHOLDER values fail packaging;
 all must be filled before merge. The module archives must include their license files.
 
-The shared archive, AppImage, MSI and disk image packagers fetch and verify the module before
+Set `DUTCHMAN_ELECTRONICS_DIR` to an already-fetched folder containing the target’s
+`dutchman-electronics` (`.exe` on Windows) and `THIRD-PARTY/` to package it without a download.
+Tests use synthetic programs and notices through this override. When it is unset,
+the shared archive, AppImage, MSI and disk image packagers fetch and verify the module before
 including it beside Dutchman's programs. The app includes it in both MacOS and Helpers before
 ad hoc deep signing. Notices go in THIRD-PARTY/dutchman-electronics (in the app's Resources
 or the AppImage's license folder). The container images inherit the module and notices from
