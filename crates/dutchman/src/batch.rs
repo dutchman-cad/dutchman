@@ -4,14 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use dutchman_core::{Format, Writer};
 use serde_json::{json, Value};
 
 use crate::json as report;
+use crate::schedule::Take;
 use crate::worker::{self, Limits};
 use crate::{ConvertOptions, PartSearch};
 
@@ -46,6 +47,9 @@ pub struct Job {
     pub output: PathBuf,
     /// Whether an existing design at `output` is replaced.
     pub replace: bool,
+    /// The name the design was planned under, when a design already there that Dutchman did not
+    /// make from this file kept it, and `output` is the numbered name used instead.
+    pub requested: Option<PathBuf>,
     /// Where an assembly's part files are looked for: in the folder given that holds the
     /// file as its project, unless the options name one.
     pub search: PartSearch,
@@ -89,14 +93,27 @@ impl Settings {
     }
 }
 
-/// Sets planned `jobs` to replace designs and look for part files as `options` say: in the
-/// options' project folder when they name one, else in the folder given that holds each file,
-/// then in the options' other folders. Numbered saves keep existing output files.
+/// Sets planned `jobs` to look for part files as `options` say, and gives each a free output
+/// name (see [`assign_free_names`]). Part files are looked for in the options' project folder
+/// when they name one, else in the folder given that holds each file, then in the options'
+/// other folders. Numbered saves never replace existing output files.
 pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
+    prepare_options(jobs, options);
+    assign_free_names(jobs, &[]);
+}
+
+/// [`prepare`], leaving each job's output name as planned.
+pub(crate) fn prepare_options(jobs: &mut [Job], options: &ConvertOptions) {
     let extension = options.output_extension();
     for job in jobs {
-        let _ = job.output.set_extension(extension);
-        job.replace = !options.no_clobber && Format::part_revision(&job.input).is_none();
+        let _ = job
+            .output
+            .set_extension(if crate::tool_library::is_library(&job.input) {
+                dutchman_core::camtools::EXTENSION
+            } else {
+                extension
+            });
+        job.replace = options.replace && Format::part_revision(&job.input).is_none();
         if options.project.is_some() {
             job.search.project.clone_from(&options.project);
         }
@@ -106,9 +123,55 @@ pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
     }
 }
 
+/// Gives every job that does not replace (and is not in `skip`, by index) an output slot
+/// nothing is in: when its design or a report beside it exists, or another job writes there,
+/// the next free `name (2).sc`, `name (3).sc`. A job never takes a file Dutchman did not write
+/// in this same slot.
+fn assign_free_names(jobs: &mut [Job], skip: &[usize]) {
+    let key = dutchman_core::safe_output::portable_path_key;
+    let mut claimed: BTreeSet<String> = jobs.iter().map(|job| key(&job.output)).collect();
+    for (index, job) in jobs.iter_mut().enumerate() {
+        if job.replace || skip.contains(&index) {
+            continue;
+        }
+        let planned = job.output.clone();
+        let input = job.input.clone();
+        let taken = |path: &Path| {
+            (path != planned.as_path() && claimed.contains(&key(path)))
+                || crate::mark::slot(path, &input) == crate::mark::Slot::Taken
+        };
+        let free = dutchman_core::safe_output::next_free(&planned, &taken);
+        claimed.insert(key(&free));
+        // A design Dutchman made from this same file, untouched since, is replaced as the
+        // normal re-convert; anything else keeps its name and this one is numbered.
+        job.replace = crate::mark::slot(&free, &input) == crate::mark::Slot::Ours;
+        job.requested = (free != planned).then_some(planned);
+        job.output = free;
+    }
+}
+
+/// The names of the designs already in `out_dir` that a run of `inputs` with `options` would
+/// replace and that Dutchman did not make from the file that replaces them: the files the
+/// desktop app asks about before it replaces anything.
+pub fn unmade_outputs(inputs: &[PathBuf], out_dir: &Path, options: &ConvertOptions) -> Vec<String> {
+    let Plan { mut jobs, .. } = plan(inputs, out_dir);
+    prepare_options(&mut jobs, options);
+    jobs.iter()
+        .filter(|job| job.output.try_exists().unwrap_or(false))
+        .filter(|job| !crate::mark::made_from(&job.output, &job.input))
+        .map(|job| {
+            job.output
+                .strip_prefix(out_dir)
+                .unwrap_or(&job.output)
+                .display()
+                .to_string()
+        })
+        .collect()
+}
+
 /// Converts every file `inputs` names or holds into `out_dir` as `settings` say, writing
-/// nothing outside `out_dir` (and the journal) and replacing designs already there unless
-/// `options` turn that off, and returns the `dutchman.convert-all/1` report. `Err` when the
+/// nothing outside `out_dir` (and the journal) and never replacing a design already there
+/// unless `options` ask for it (a new design gets the next free name), and returns the `dutchman.convert-all/1` report. `Err` when the
 /// journal cannot be read or written.
 pub fn convert_all(
     inputs: &[PathBuf],
@@ -170,7 +233,7 @@ fn convert_all_prepared(
         skipped_revisions,
         description: project_plan,
     } = plan(inputs, out_dir);
-    prepare(&mut work, options);
+    prepare_options(&mut work, options);
     let mut journal = match &settings.journal {
         Some(path) => Some(Journal::open(path)?),
         None => None,
@@ -197,6 +260,10 @@ fn convert_all_prepared(
         })
         .collect();
     let resumed = results.iter().flatten().count();
+    let skip: Vec<usize> = (0..work.len())
+        .filter(|&i| results.get(i).is_some_and(Option::is_some))
+        .collect();
+    assign_free_names(&mut work, &skip);
     let todo: Vec<usize> = (0..work.len())
         .filter(|&i| results.get(i).is_some_and(Option::is_none))
         .collect();
@@ -250,7 +317,14 @@ fn convert_all_prepared(
             *slot = report;
         }
     }
-    let results: Vec<Value> = results.into_iter().flatten().collect();
+    let results: Vec<Value> = results
+        .into_iter()
+        .flatten()
+        .map(|mut report| {
+            report::ensure_reason(&mut report);
+            report
+        })
+        .collect();
 
     let failed = results
         .iter()
@@ -324,12 +398,14 @@ pub fn text(report: &Value, verbose: bool) -> String {
             out.push_str(&line);
             out.push('\n');
         }
-        let losses = result
-            .get("losses")
-            .and_then(Value::as_array)
-            .map_or(&[][..], Vec::as_slice);
+        if let Some(meaning) = report::unverified_history(result, true) {
+            out.push_str("           ");
+            out.push_str(meaning);
+            out.push('\n');
+        }
+        let losses = report::listed_losses(result, verbose);
         if verbose || losses.len() <= report::LISTED {
-            for loss in losses {
+            for loss in &losses {
                 let (line, shortened) = report::loss_line(loss, verbose);
                 cut |= shortened;
                 out.push_str("           ");
@@ -422,6 +498,14 @@ pub fn full_log(report: &Value) -> String {
 
 /// One file's line of the text reports: what it became, or why it failed.
 pub fn line(result: &Value) -> String {
+    let base = line_of(result);
+    match result.pointer("/output/note").and_then(Value::as_str) {
+        Some(note) => format!("{base}\n           {note}"),
+        None => base,
+    }
+}
+
+fn line_of(result: &Value) -> String {
     let input = result
         .pointer("/input/path")
         .and_then(Value::as_str)
@@ -441,6 +525,23 @@ pub fn line(result: &Value) -> String {
             .pointer("/output/path")
             .and_then(Value::as_str)
             .unwrap_or("?");
+        if result.pointer("/output/format").and_then(Value::as_str)
+            == Some(crate::tool_library::FORMAT)
+        {
+            let count = |key: &str| {
+                result
+                    .pointer(&format!("/tools/{key}"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            let (written, left) = (count("written"), count("not_written"));
+            let words = if left == 0 {
+                format!("{written} tools")
+            } else {
+                format!("{written} tools; {left} not written, see the losses")
+            };
+            return format!("converted  {input} -> {output} ({words})");
+        }
         let written = match (
             result.get("mode").and_then(Value::as_str),
             result
@@ -448,7 +549,7 @@ pub fn line(result: &Value) -> String {
                 .and_then(Value::as_str),
         ) {
             (Some("partial_history"), _) => {
-                "partial editable history; imported final shape visible"
+                "partial editable history; the rest is one imported body"
             }
             (Some("history"), Some("verified")) => "editable history, verified in SolidCraft",
             (Some("history"), _) => "editable history, unverified",
@@ -484,8 +585,9 @@ pub fn line(result: &Value) -> String {
     } else {
         let message = result
             .pointer("/error/message")
+            .or_else(|| result.pointer("/reason/message"))
             .and_then(Value::as_str)
-            .unwrap_or("failed");
+            .unwrap_or("the conversion failed and its report gave no reason");
         format!("failed     {input}: {message}")
     }
 }
@@ -575,6 +677,26 @@ fn plan_with_limit(
             ));
             continue;
         }
+        // A bulk export may write a rebuilt .f3z beside an assembly's .f3d: it carries the
+        // inserted designs, so it is the one converted.
+        if root.is_dir() {
+            let archives: BTreeSet<_> = found
+                .iter()
+                .filter(|(path, _)| extension_of(path) == "f3z")
+                .map(|(path, _)| path.with_extension("").to_string_lossy().to_lowercase())
+                .collect();
+            let exported = |path: &Path| {
+                path.ancestors()
+                    .skip(1)
+                    .take_while(|folder| folder.starts_with(root))
+                    .any(|folder| folder.join(dutchman_core::EXPORT_MANIFEST).is_file())
+            };
+            found.retain(|(path, _)| {
+                extension_of(path) != "f3d"
+                    || !archives.contains(&path.with_extension("").to_string_lossy().to_lowercase())
+                    || !exported(path)
+            });
+        }
         let natives: BTreeSet<_> = found
             .iter()
             .filter(|(path, _)| !is_step(path))
@@ -599,16 +721,29 @@ fn plan_with_limit(
                 ));
                 continue;
             }
+            // A drawing next to its model would take the model's name: it is named apart.
+            let is_drawing = Format::from_path(&path).is_some_and(Format::is_drawing);
+            let relative_named = if is_drawing {
+                let mut name = relative.with_extension("").into_os_string();
+                name.push(".drawing");
+                PathBuf::from(name)
+            } else {
+                relative.clone()
+            };
             let output = unique(
                 out_dir
                     .join(
-                        Format::part_revision(&relative)
-                            .map_or_else(|| relative.clone(), |(part, _)| part),
+                        Format::part_revision(&relative_named)
+                            .map_or_else(|| relative_named.clone(), |(part, _)| part),
                     )
-                    .with_extension(crate::OutputFormat::Solidcraft.extension()),
+                    .with_extension(if crate::tool_library::is_library(&path) {
+                        dutchman_core::camtools::EXTENSION
+                    } else {
+                        crate::OutputFormat::Solidcraft.extension()
+                    }),
                 &mut outputs,
             );
-            let replace = Format::part_revision(&path).is_none();
+            let replace = false;
             jobs.push(Job {
                 project_files: project_files.clone(),
                 fallback: fallbacks
@@ -617,17 +752,22 @@ fn plan_with_limit(
                 input: path,
                 output,
                 replace,
+                requested: None,
                 search: PartSearch {
                     threads: 0,
                     part_positions: dutchman_core::PartPositions::Smart,
                     project: root.is_dir().then(|| root.to_path_buf()),
                     also: Vec::new(),
+                    copper: Default::default(),
                 },
             });
         }
     }
-    let description = summary(&jobs);
-    project_roots(&mut jobs);
+    let mut description = summary(&jobs);
+    for note in project_roots(&mut jobs) {
+        description.push_str("; ");
+        description.push_str(&note);
+    }
     Plan {
         description,
         jobs,
@@ -638,14 +778,16 @@ fn plan_with_limit(
     }
 }
 
-// Retain roots and unused parts. Keep cycles visible so conversion can report them.
-fn project_roots(jobs: &mut Vec<Job>) {
+// Retain roots and unused parts, and say what was decided about cycles.
+fn project_roots(jobs: &mut Vec<Job>) -> Vec<String> {
     let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let mut edges = BTreeMap::new();
-    for job in jobs
-        .iter()
-        .filter(|job| Format::from_path(&job.input).is_some_and(Format::is_assembly))
-    {
+    for job in jobs.iter().filter(|job| {
+        Format::from_path(&job.input).is_some_and(|format| {
+            format.is_assembly()
+                || matches!(format, Format::FusionArchive | Format::FusionMultiDocument)
+        })
+    }) {
         if let Ok(references) = dutchman_core::assembly_references(&job.input, &job.search) {
             edges.insert(
                 canonical(&job.input),
@@ -656,26 +798,72 @@ fn project_roots(jobs: &mut Vec<Job>) {
             );
         }
     }
-    retain_roots(jobs, &edges);
+    let notes = retain_roots(jobs, &edges);
     jobs.sort_by_key(|job| !Format::from_path(&job.input).is_some_and(Format::is_assembly));
+    notes
 }
 
-fn retain_roots(jobs: &mut Vec<Job>, edges: &BTreeMap<PathBuf, Vec<PathBuf>>) {
+/// Drops from `jobs` the files an assembly places, given each assembly's `edges` to the files
+/// it actually places (matched to an insertion and readable: a design the assembly lists but
+/// does not place stays a result of its own). Files only a reference cycle places would all be
+/// dropped, so the first member of each cycle in path order stays a root; the returned notes
+/// say which.
+fn retain_roots(jobs: &mut Vec<Job>, edges: &BTreeMap<PathBuf, Vec<PathBuf>>) -> Vec<String> {
     let referenced: BTreeSet<_> = edges.values().flatten().cloned().collect();
-    let mut covered = BTreeSet::new();
-    let mut pending: Vec<_> = edges
+    let mut roots: BTreeSet<PathBuf> = edges
         .keys()
         .filter(|path| !referenced.contains(*path))
         .cloned()
         .collect();
-    while let Some(path) = pending.pop() {
-        if let Some(children) = edges.get(&path) {
-            for child in children {
-                if covered.insert(child.clone()) {
+    let mut covered = BTreeSet::new();
+    fn cover(
+        edges: &BTreeMap<PathBuf, Vec<PathBuf>>,
+        roots: &BTreeSet<PathBuf>,
+        covered: &mut BTreeSet<PathBuf>,
+        from: Vec<PathBuf>,
+    ) {
+        let mut pending = from;
+        while let Some(path) = pending.pop() {
+            for child in edges.get(&path).into_iter().flatten() {
+                if !roots.contains(child) && covered.insert(child.clone()) {
                     pending.push(child.clone());
                 }
             }
         }
+    }
+    cover(edges, &roots, &mut covered, roots.iter().cloned().collect());
+    let reaches_itself = |start: &PathBuf| {
+        let mut seen = BTreeSet::new();
+        let mut pending = vec![start];
+        while let Some(path) = pending.pop() {
+            for child in edges.get(path).into_iter().flatten() {
+                if child == start {
+                    return true;
+                }
+                if seen.insert(child) {
+                    pending.push(child);
+                }
+            }
+        }
+        false
+    };
+    let mut notes = Vec::new();
+    // What is left uncovered and referenced is placed only by a cycle (or by what one places).
+    while let Some(start) = edges
+        .keys()
+        .find(|path| !covered.contains(*path) && !roots.contains(*path) && reaches_itself(path))
+        .cloned()
+    {
+        roots.insert(start.clone());
+        cover(edges, &roots, &mut covered, vec![start.clone()]);
+        notes.push(format!(
+            "{} and the designs it places place each other in a cycle; it converts as a result of \
+             its own, with the others inside it",
+            start.file_name().map_or_else(
+                || start.display().to_string(),
+                |name| name.to_string_lossy().into_owned()
+            )
+        ));
     }
     jobs.retain(|job| {
         !covered.contains(
@@ -684,6 +872,7 @@ fn retain_roots(jobs: &mut Vec<Job>, edges: &BTreeMap<PathBuf, Vec<PathBuf>>) {
                 .unwrap_or_else(|_| job.input.clone()),
         )
     });
+    notes
 }
 
 fn is_lock_file(path: &Path) -> bool {
@@ -760,8 +949,18 @@ pub fn summary(jobs: &[Job]) -> String {
     let mut assemblies = 0;
     let mut parts = 0;
     let mut steps = 0;
+    let mut libraries = 0;
+    let mut drawings = 0;
     let fallbacks = jobs.iter().filter(|job| job.fallback.is_some()).count();
     for job in jobs {
+        if crate::tool_library::is_library(&job.input) {
+            libraries += 1;
+            continue;
+        }
+        if Format::from_path(&job.input).is_some_and(Format::is_drawing) {
+            drawings += 1;
+            continue;
+        }
         match extension_of(&job.input).as_str() {
             "sldasm" | "iam" | "f3z" => assemblies += 1,
             "step" | "stp" => steps += 1,
@@ -776,8 +975,25 @@ pub fn summary(jobs: &[Job]) -> String {
     };
     let part_word = if parts == 1 { "part" } else { "parts" };
     let file_word = if steps == 1 { "file" } else { "files" };
+    let library_word = if libraries == 1 {
+        "tool library"
+    } else {
+        "tool libraries"
+    };
+    if libraries > 0 && assemblies + parts + steps == 0 {
+        return format!("{libraries} {library_word}");
+    }
     let mut text =
         format!("{assemblies} {assembly_word}, {parts} {part_word}, {steps} STEP {file_word}");
+    if libraries > 0 {
+        text.push_str(&format!(", {libraries} {library_word}"));
+    }
+    if drawings > 0 {
+        text.push_str(&format!(
+            ", {drawings} {}",
+            if drawings == 1 { "drawing" } else { "drawings" }
+        ));
+    }
     if assemblies > 0 {
         text.push_str("; converting assemblies with their parts");
     }
@@ -870,7 +1086,10 @@ fn search(
         }
         if meta.is_dir() {
             search(root, &path, depth + 1, out, skipped, include, left);
-        } else if meta.is_file() && Format::from_path(&path).is_none() {
+        } else if meta.is_file()
+            && Format::from_path(&path).is_none()
+            && !crate::tool_library::is_library(&path)
+        {
             *skipped.entry(extension_of(&path)).or_insert(0) += 1;
         } else if meta.is_file() {
             let relative = path
@@ -882,13 +1101,47 @@ fn search(
     }
 }
 
+/// Names Windows keeps for devices: a file called one of these, with any extension, cannot be made.
+const RESERVED: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// `path` with a file name every system can make: no trailing dots or spaces in the stem
+/// (Windows drops them, so `a.sc` and `a .sc` would be one file) and no device name (`con.sc`
+/// becomes `con_.sc`).
+fn portable_name(path: &Path) -> PathBuf {
+    let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
+        return path.to_path_buf();
+    };
+    let mut clean = stem.trim_end_matches(['.', ' ']).to_owned();
+    if clean.is_empty() {
+        clean = "_".to_owned();
+    }
+    let head = clean.split('.').next().unwrap_or_default().to_lowercase();
+    if RESERVED.contains(&head.as_str()) {
+        clean.insert(head.len().min(clean.len()), '_');
+    }
+    if clean == stem {
+        return path.to_path_buf();
+    }
+    let mut name = std::ffi::OsString::from(clean);
+    if let Some(extension) = path.extension() {
+        name.push(".");
+        name.push(extension);
+    }
+    path.with_file_name(name)
+}
+
 /// `path`, numbered (`part-2.sc`) when an earlier file already writes there.
 fn unique(path: PathBuf, taken: &mut BTreeSet<String>) -> PathBuf {
+    let path = portable_name(&path);
     let mut candidate = path.clone();
     let mut n = 2;
     // Reserve portable names even on a case-sensitive source filesystem: outputs
-    // may be written to a case-insensitive volume on the same machine.
-    while taken.contains(&candidate.to_string_lossy().to_lowercase()) {
+    // may be written to a case-insensitive volume on the same machine; names that differ only
+    // in Unicode normalisation are one name on macOS.
+    while taken.contains(&dutchman_core::safe_output::portable_path_key(&candidate)) {
         let stem = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -901,7 +1154,7 @@ fn unique(path: PathBuf, taken: &mut BTreeSet<String>) -> PathBuf {
         candidate = path.with_file_name(name);
         n += 1;
     }
-    taken.insert(candidate.to_string_lossy().to_lowercase());
+    taken.insert(dutchman_core::safe_output::portable_path_key(&candidate));
     candidate
 }
 
@@ -969,7 +1222,8 @@ pub fn run_isolated(
 }
 
 /// Runs `convert` on every job with `workers` threads, as [`run_each`] does, adding each
-/// file's time to its report as `elapsed_ms`.
+/// file's time to its report as `elapsed_ms`. With more than one worker the files start
+/// middle-out: largest first, each only when its predicted memory fits what is free.
 pub(crate) fn run_with(
     work: &[Job],
     workers: usize,
@@ -977,11 +1231,102 @@ pub(crate) fn run_with(
     convert: impl Fn(&Job, usize) -> Value + Sync,
     on_event: impl Fn(Event) + Sync,
 ) {
-    let next = AtomicUsize::new(0);
+    run_scheduled(
+        work,
+        workers,
+        stop,
+        convert,
+        on_event,
+        &Policy {
+            cost: &|job| crate::schedule::predict(&job.input),
+            free: &dutchman_core::available_memory,
+            ramp: Duration::from_secs(10),
+            poll: Duration::from_millis(500),
+        },
+    );
+}
+
+/// What decides when each file starts: what a file is predicted to cost, how much memory is
+/// free now, how long a started file keeps growing (per GiB it is predicted to reach), and how
+/// often to look again.
+pub(crate) struct Policy<'a> {
+    pub cost: &'a (dyn Fn(&Job) -> crate::schedule::Cost + Sync),
+    pub free: &'a (dyn Fn() -> Option<u64> + Sync),
+    pub ramp: Duration,
+    pub poll: Duration,
+}
+
+/// [`run_with`] with the policy given.
+pub(crate) fn run_scheduled(
+    work: &[Job],
+    workers: usize,
+    stop: &AtomicBool,
+    convert: impl Fn(&Job, usize) -> Value + Sync,
+    on_event: impl Fn(Event) + Sync,
+    policy: &Policy<'_>,
+) {
     let workers = workers.min(work.len()).max(1);
+    let costs: Vec<crate::schedule::Cost> = if workers > 1 {
+        work.iter().map(policy.cost).collect()
+    } else {
+        vec![crate::schedule::Cost::default(); work.len()]
+    };
+    let queue = Mutex::new(if workers > 1 {
+        crate::schedule::Queue::middle_out(&costs, policy.ramp)
+    } else {
+        crate::schedule::Queue::in_order(work.len())
+    });
+    let changed = Condvar::new();
+    // The next file to start, waiting for room when none fits yet.
+    let next = || -> Option<usize> {
+        let mut queue = queue.lock().ok()?;
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                return None;
+            }
+            match queue.take(&costs, (policy.free)(), Instant::now()) {
+                Take::Job(index) => return Some(index),
+                Take::Done => return None,
+                Take::Wait => {
+                    queue = changed.wait_timeout(queue, policy.poll).ok()?.0;
+                }
+            }
+        }
+    };
+    // Frees a file's place when its worker is done, also while a panic unwinds, so the
+    // others never wait on a file that is gone.
+    struct Release<'a>(&'a dyn Fn());
+    impl Drop for Release<'_> {
+        fn drop(&mut self) {
+            (self.0)();
+        }
+    }
     let run = |job: &Job, index: usize| {
         let started = Instant::now();
-        let mut report = convert(job, index);
+        // A panic in one file's conversion is that file's failure, with its message, and the
+        // batch carries on.
+        let mut report =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| convert(job, index)))
+                .unwrap_or_else(|payload| {
+                    let said = payload
+                        .downcast_ref::<&str>()
+                        .map(|s| (*s).to_owned())
+                        .or_else(|| payload.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "no message".to_owned());
+                    let mut failed = report::failure(
+                        report::CONVERT,
+                        report::input(&job.input),
+                        &format!(
+                    "the converter stopped unexpectedly (a bug in Dutchman: it panicked: {said})"
+                ),
+                    );
+                    if let Some(error) = failed.get_mut("error").and_then(Value::as_object_mut) {
+                        error.insert("kind".into(), json!("panic"));
+                        error.insert("code".into(), json!("panic"));
+                    }
+                    failed
+                });
+        report::ensure_reason(&mut report);
         if let Some(fields) = report.as_object_mut() {
             let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             fields.insert("elapsed_ms".to_owned(), json!(elapsed));
@@ -992,21 +1337,28 @@ pub(crate) fn run_with(
     let stopped = Mutex::new(Vec::new());
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                if stop.load(Ordering::Relaxed) {
-                    break;
-                }
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(job) = work.get(index) else { break };
-                on_event(Event::Started(index));
-                let report = run(job, index);
-                if workers > 1 && crate::stop::stopped_for_memory(&report) {
-                    if let Ok(mut stopped) = stopped.lock() {
-                        stopped.push((index, report));
+            scope.spawn(|| {
+                while let Some(index) = next() {
+                    let finish = || {
+                        if let Ok(mut queue) = queue.lock() {
+                            queue.finish(index);
+                        }
+                        changed.notify_all();
+                    };
+                    let _release = Release(&finish);
+                    let Some(job) = work.get(index) else {
                         continue;
+                    };
+                    on_event(Event::Started(index));
+                    let report = run(job, index);
+                    if workers > 1 && crate::stop::stopped_for_memory(&report) {
+                        if let Ok(mut stopped) = stopped.lock() {
+                            stopped.push((index, report));
+                            continue;
+                        }
                     }
+                    on_event(Event::Finished(index, report));
                 }
-                on_event(Event::Finished(index, report));
             });
         }
     });
@@ -1061,6 +1413,10 @@ impl Journal {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(io(err)),
         }
+        // The journal may sit in the output folder, which this run has not made yet.
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(io)?;
+        }
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -1073,11 +1429,15 @@ impl Journal {
     /// design, if it converted, is still where the journal says.
     fn recorded(&self, job: &Job) -> Option<Value> {
         let report = self.known.get(&identity(job)?)?;
-        let output = job.output.display().to_string();
         let converted = report.get("ok") == Some(&json!(true));
-        let still_there = report.pointer("/output/path").and_then(Value::as_str)
-            == Some(output.as_str())
-            && job.output.is_file();
+        // The design may have been given a numbered name when its own was taken.
+        let still_there = report
+            .pointer("/output/path")
+            .and_then(Value::as_str)
+            .map(Path::new)
+            .is_some_and(|path| {
+                dutchman_core::safe_output::is_variant_of(path, &job.output) && path.is_file()
+            });
         (!converted || still_there).then(|| report.clone())
     }
 
@@ -1119,12 +1479,30 @@ pub fn convert_job(job: &Job, writer: &(dyn Writer + Sync)) -> Value {
     }
 }
 
+/// Says in the report of `job` that its design was saved under a numbered name because the one
+/// planned held a file Dutchman did not make from this input.
+fn note_numbered(job: &Job, report: &mut Value) {
+    let Some(requested) = &job.requested else {
+        return;
+    };
+    if let Some(output) = report.get_mut("output").and_then(Value::as_object_mut) {
+        output.insert(
+            "requested_path".into(),
+            json!(requested.display().to_string()),
+        );
+        output.insert(
+            "note".into(),
+            json!(crate::mark::numbered_note(requested, &job.output)),
+        );
+    }
+}
+
 fn convert_options_job_with_progress(
     job: &Job,
     options: &ConvertOptions,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
-    let result = match make_folder(job) {
+    let mut result = match make_folder(job) {
         Some(failure) => failure,
         None => crate::convert_options_with_progress(
             &job.input,
@@ -1135,6 +1513,7 @@ fn convert_options_job_with_progress(
             on_progress,
         ),
     };
+    note_numbered(job, &mut result);
     with_fallback(job, result, |fallback| {
         convert_options_job_with_progress(fallback, options, on_progress)
     })
@@ -1226,6 +1605,7 @@ fn convert_isolated_job_with_stop(
         worker::convert_isolated_with_stop(program, job, options, limits, stop, on_progress)
     });
     report::conversion_choices(&mut report, &job.input, options);
+    note_numbered(job, &mut report);
     if let Some(fields) = report.as_object_mut() {
         fields.insert(
             "elapsed_ms".into(),
@@ -1259,15 +1639,182 @@ fn make_folder(job: &Job) -> Option<Value> {
 mod tests {
     use super::*;
 
+    fn named_job(name: &str) -> Job {
+        Job {
+            project_files: None,
+            fallback: None,
+            input: PathBuf::from(name),
+            output: PathBuf::from(format!("{name}.sc")),
+            replace: true,
+            requested: None,
+            search: PartSearch::default(),
+        }
+    }
+
+    /// Runs a fake batch; the predicted peak is the digit in each name, in GiB. Returns the
+    /// start order, the finish events in the order they were told, and the most predicted
+    /// memory running at once.
+    fn fake_batch(
+        names: &[&str],
+        workers: usize,
+        free: Option<u64>,
+    ) -> (Vec<usize>, Vec<usize>, u64) {
+        const GIB: u64 = 1 << 30;
+        let jobs: Vec<Job> = names.iter().map(|n| named_job(n)).collect();
+        let peak_of = |job: &Job| -> u64 {
+            let name = job.input.to_string_lossy();
+            u64::from(name.bytes().find(|b| b.is_ascii_digit()).unwrap() - b'0') * GIB
+        };
+        let started = Mutex::new(Vec::new());
+        let finished = Mutex::new(Vec::new());
+        let running = Mutex::new((0u64, 0u64));
+        run_scheduled(
+            &jobs,
+            workers,
+            &AtomicBool::new(false),
+            |job, _| {
+                let peak = peak_of(job);
+                {
+                    let mut running = running.lock().unwrap();
+                    running.0 += peak;
+                    running.1 = running.1.max(running.0);
+                }
+                std::thread::sleep(Duration::from_millis(30));
+                running.lock().unwrap().0 -= peak;
+                json!({"ok": true, "input": job.input})
+            },
+            |event| match event {
+                Event::Started(i) => started.lock().unwrap().push(i),
+                Event::Finished(i, _) => finished.lock().unwrap().push(i),
+                Event::Progress(..) => {}
+            },
+            &Policy {
+                // Larger digit, larger file; names starting "asm" start first.
+                cost: &|job| {
+                    let name = job.input.to_string_lossy();
+                    let peak = peak_of(job);
+                    crate::schedule::Cost {
+                        work: peak,
+                        peak,
+                        first: name.starts_with("asm"),
+                    }
+                },
+                free: &|| free,
+                ramp: Duration::from_secs(60),
+                poll: Duration::from_millis(5),
+            },
+        );
+        let high = running.lock().unwrap().1;
+        (
+            started.into_inner().unwrap(),
+            finished.into_inner().unwrap(),
+            high,
+        )
+    }
+
+    #[test]
+    fn a_panicking_file_does_not_hang_the_others_waiting_for_room() {
+        const GIB: u64 = 1 << 30;
+        // The panic comes first; the big file waits because nothing fits beside it.
+        let jobs = [named_job("a9"), named_job("b1")];
+        let finished = Mutex::new(Vec::new());
+        {
+            run_scheduled(
+                &jobs,
+                2,
+                &AtomicBool::new(false),
+                |job, _| {
+                    if job.input.to_string_lossy() == "a9" {
+                        std::thread::sleep(Duration::from_millis(50));
+                        panic!("forced conversion panic");
+                    }
+                    json!({"ok": true})
+                },
+                |event| {
+                    if let Event::Finished(index, report) = event {
+                        finished.lock().unwrap().push((index, report));
+                    }
+                },
+                &Policy {
+                    cost: &|job| {
+                        let (work, peak) = if job.input.to_string_lossy() == "a9" {
+                            (100, 9)
+                        } else {
+                            (1, 100)
+                        };
+                        crate::schedule::Cost {
+                            work,
+                            peak: peak * GIB,
+                            first: false,
+                        }
+                    },
+                    free: &|| Some(8 * GIB),
+                    ramp: Duration::from_secs(60),
+                    poll: Duration::from_millis(5),
+                },
+            );
+        }
+        let mut finished = finished.into_inner().unwrap();
+        finished.sort_by_key(|(index, _)| *index);
+        assert_eq!(finished.len(), 2);
+        let message = finished[0].1["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("panicked: forced conversion panic"),
+            "{message}"
+        );
+        assert_eq!(finished[0].1["error"]["code"], "panic");
+        assert_eq!(finished[1].1["ok"], true);
+    }
+
+    #[test]
+    fn one_job_converts_in_input_order() {
+        let (started, finished, _) = fake_batch(&["a1", "b9", "asm2", "c5"], 1, Some(1 << 40));
+        assert_eq!(started, [0, 1, 2, 3]);
+        assert_eq!(finished, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn many_jobs_start_largest_first_and_every_file_finishes_once() {
+        // Two workers, ample memory: assemblies first, then 9, 5, 2, 1 GiB. The queue hands
+        // out the assembly and then the 9 GiB file, but the two workers say they started in
+        // either order; the exact order is the queue's test in `schedule`.
+        let (started, mut finished, _) =
+            fake_batch(&["a1", "b9", "asm2", "c5", "d2"], 2, Some(1 << 40));
+        let mut first = started[..2].to_vec();
+        first.sort_unstable();
+        assert_eq!(first, [1, 2]);
+        assert_eq!(started.len(), 5);
+        finished.sort_unstable();
+        assert_eq!(finished, [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_batch_never_runs_more_than_the_free_memory_less_the_margin_allows() {
+        const GIB: u64 = 1 << 30;
+        // 16 GiB free keeps 4 back: 12 GiB at once, so never all of 5+5+5+5.
+        let (started, _, high) = fake_batch(&["a5", "b5", "c5", "d5"], 4, Some(16 * GIB));
+        assert_eq!(started.len(), 4);
+        assert!(high <= 12 * GIB, "ran {} GiB at once", high / GIB);
+    }
+
+    #[test]
+    fn a_file_bigger_than_free_memory_runs_alone_and_the_batch_completes() {
+        const GIB: u64 = 1 << 30;
+        let (started, finished, high) = fake_batch(&["a9", "b1", "c1"], 3, Some(4 * GIB));
+        assert_eq!(started[0], 0);
+        assert_eq!(started.len(), 3);
+        assert_eq!(finished.len(), 3);
+        assert_eq!(finished[0], 0);
+        assert_eq!(high, 9 * GIB);
+    }
+
     /// Stop must reach the already-running child as well as preventing the next job.
     #[cfg(unix)]
     #[test]
     fn stopping_an_isolated_batch_ends_the_current_file_promptly() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("slow-worker");
-        std::fs::write(&program, "#!/bin/sh\nexec sleep 120\n").unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::worker::spawn_retry_tests::write_script(&program, "#!/bin/sh\nexec sleep 120\n");
         let input = dir.path().join("synthetic.f3d");
         std::fs::write(&input, []).unwrap();
         let fallback = input.with_extension("step");
@@ -1279,6 +1826,7 @@ mod tests {
                 input: input.clone(),
                 output: dir.path().join(format!("synthetic-{index}.sc")),
                 replace: true,
+                requested: None,
                 search: PartSearch::default(),
             })
             .collect();
@@ -1333,6 +1881,130 @@ mod tests {
             finished[0].1
         );
         assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+    }
+
+    /// Runs one isolated conversion with a fake worker script and returns its report.
+    #[cfg(unix)]
+    fn isolated_with_script(script: &str) -> Value {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("fake-worker");
+        crate::worker::spawn_retry_tests::write_script(&program, &format!("#!/bin/sh\n{script}\n"));
+        let input = dir.path().join("synthetic.f3z");
+        std::fs::write(&input, []).unwrap();
+        let job = Job {
+            project_files: None,
+            fallback: None,
+            input,
+            output: dir.path().join("synthetic.sc"),
+            replace: true,
+            requested: None,
+            search: PartSearch::default(),
+        };
+        let limits = Limits {
+            timeout: Duration::from_secs(60),
+            max_memory: None,
+            design: None,
+        };
+        let options = ConvertOptions {
+            no_verify: true,
+            ..Default::default()
+        };
+        let mut report = convert_isolated_job(&program, &job, &options, &limits, None);
+        report::ensure_reason(&mut report);
+        report
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_converter_killed_by_a_signal_is_named() {
+        let report = isolated_with_script("kill -9 $$");
+        let message = report["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("signal 9 SIGKILL: likely out of memory"),
+            "{message}"
+        );
+        assert_eq!(report["error"]["code"], "signal_9");
+        assert_eq!(report["error"]["kind"], "worker_exit");
+        assert!(report["error"]["stage"].is_string());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_converter_that_panics_says_the_panic() {
+        let report = isolated_with_script(
+            "echo \"thread 'main' panicked at src/x.rs:1:1:\" >&2\necho 'boom in the reader' >&2\nexit 101",
+        );
+        let message = report["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("panicked: boom in the reader"),
+            "{message}"
+        );
+        assert_eq!(report["error"]["code"], "panic");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_converter_that_exits_without_output_says_its_exit_code() {
+        let report = isolated_with_script("exit 3");
+        let message = report["error"]["message"].as_str().unwrap();
+        assert!(message.contains("exit code 3, no report"), "{message}");
+        assert_eq!(report["error"]["code"], "exit_3");
+        let report = isolated_with_script("exit 0");
+        assert!(report["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("exited without writing a report"));
+        assert_eq!(report["error"]["code"], "no_report");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_archive_member_that_failed_is_named_when_the_decoder_gave_no_message() {
+        let report = isolated_with_script(
+            "echo '{\"dutchman_member\":\"Part 7\",\"event\":\"fail\"}' >&2\nexit 1",
+        );
+        let message = report["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("a design inside the archive could not be read: Part 7"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_failed_report_without_a_reason_gets_one() {
+        let mut empty = json!({"ok": false, "error": {"message": "cannot read this design: ",
+            "stage": "decode", "kind": "decode"}});
+        report::ensure_reason(&mut empty);
+        let message = empty["error"]["message"].as_str().unwrap();
+        assert!(message.contains("gave no reason") && message.contains("a design inside it"));
+        assert_eq!(empty["error"]["code"], "decode");
+        let mut blank = json!({"ok": false, "error": {"message": "  "}});
+        report::ensure_reason(&mut blank);
+        assert_eq!(blank["error"]["stage"], "input");
+        assert!(!blank["error"]["message"]
+            .as_str()
+            .unwrap()
+            .trim()
+            .is_empty());
+        let mut none = json!({"ok": false, "input": {"path": "a.f3z"}});
+        report::ensure_reason(&mut none);
+        assert!(none["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no reason"));
+        assert_eq!(none["error"]["kind"], "unknown");
+        let mut unplaced = json!({"ok": false, "completeness": {"placed": 47, "placements": 49,
+            "unplaced": {"x": 2}}});
+        report::ensure_reason(&mut unplaced);
+        assert!(unplaced.get("error").is_none());
+        assert_eq!(unplaced["reason"]["code"], "unplaced_parts");
+        assert!(unplaced["reason"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("47 of 49 parts placed: 2 parts couldn't be placed"));
+        let mut fine = json!({"ok": true});
+        report::ensure_reason(&mut fine);
+        assert_eq!(fine, json!({"ok": true}));
     }
 
     fn project_zip(path: &Path, entries: &[(&str, &[u8])]) {
@@ -1392,7 +2064,7 @@ mod tests {
     }
 
     #[test]
-    fn assemblies_group_referenced_parts_and_keep_unused_parts_and_cycles() {
+    fn assemblies_group_referenced_parts_and_keep_unused_parts_and_one_member_of_a_cycle() {
         let dir = tempfile::tempdir().unwrap();
         for name in [
             "root.iam",
@@ -1428,11 +2100,91 @@ mod tests {
             .collect();
         assert_eq!(
             names,
+            BTreeSet::from(["root.iam".into(), "unused.ipt".into(), "cyclea.iam".into()])
+        );
+    }
+
+    fn jobs_for(names: &[&str]) -> (tempfile::TempDir, Vec<Job>) {
+        let dir = tempfile::tempdir().unwrap();
+        for name in names {
+            std::fs::write(dir.path().join(name), b"synthetic placeholder").unwrap();
+        }
+        let planned = plan(&[dir.path().to_path_buf()], &dir.path().join("out"));
+        (dir, planned.jobs)
+    }
+
+    fn input_names(jobs: &[Job]) -> BTreeSet<String> {
+        jobs.iter()
+            .map(|job| {
+                job.input
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_reference_cycle_keeps_its_first_member_as_a_root_and_says_so() {
+        let (dir, mut jobs) = jobs_for(&["a.iam", "b.iam", "c.iam", "leaf.ipt"]);
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        // a -> b -> c -> a, and the cycle also places a leaf.
+        let edges = BTreeMap::from([
+            (path("a.iam"), vec![path("b.iam")]),
+            (path("b.iam"), vec![path("c.iam"), path("leaf.ipt")]),
+            (path("c.iam"), vec![path("a.iam")]),
+        ]);
+        let notes = retain_roots(&mut jobs, &edges);
+        assert_eq!(input_names(&jobs), BTreeSet::from(["a.iam".to_owned()]));
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].starts_with("a.iam "), "{notes:?}");
+        // The same cycle in another order of discovery keeps the same member.
+        let (dir, mut jobs) = jobs_for(&["a.iam", "b.iam", "c.iam", "leaf.ipt"]);
+        jobs.reverse();
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        let edges = BTreeMap::from([
+            (path("c.iam"), vec![path("a.iam")]),
+            (path("b.iam"), vec![path("leaf.ipt"), path("c.iam")]),
+            (path("a.iam"), vec![path("b.iam")]),
+        ]);
+        retain_roots(&mut jobs, &edges);
+        assert_eq!(input_names(&jobs), BTreeSet::from(["a.iam".to_owned()]));
+    }
+
+    #[test]
+    fn a_cycle_below_a_root_adds_no_second_root() {
+        let (dir, mut jobs) = jobs_for(&["root.iam", "a.iam", "b.iam"]);
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        let edges = BTreeMap::from([
+            (path("root.iam"), vec![path("a.iam")]),
+            (path("a.iam"), vec![path("b.iam")]),
+            (path("b.iam"), vec![path("a.iam")]),
+        ]);
+        let notes = retain_roots(&mut jobs, &edges);
+        assert_eq!(input_names(&jobs), BTreeSet::from(["root.iam".to_owned()]));
+        assert!(notes.is_empty(), "{notes:?}");
+    }
+
+    #[test]
+    fn a_file_no_placement_covers_stays_a_result_of_its_own() {
+        // The edges hold only the files an assembly actually places (matched to an insertion
+        // and read): the design it lists that matched nothing, and the one that could not be
+        // read, have no edge and so stay.
+        let (dir, mut jobs) =
+            jobs_for(&["asm.iam", "placed.ipt", "unmatched.ipt", "unreadable.ipt"]);
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        let notes = retain_roots(
+            &mut jobs,
+            &BTreeMap::from([(path("asm.iam"), vec![path("placed.ipt")])]),
+        );
+        assert!(notes.is_empty());
+        assert_eq!(
+            input_names(&jobs),
             BTreeSet::from([
-                "root.iam".into(),
-                "unused.ipt".into(),
-                "cyclea.iam".into(),
-                "cycleb.iam".into()
+                "asm.iam".to_owned(),
+                "unmatched.ipt".to_owned(),
+                "unreadable.ipt".to_owned()
             ])
         );
     }
@@ -1496,6 +2248,101 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A synthetic export: an assembly that inserts a screw and a plate, a rebuilt archive for
+    /// a second assembly, and a lone design nothing references.
+    fn export_entries() -> Vec<(&'static str, Vec<u8>)> {
+        let entry = |id: &str, name: &str, references: serde_json::Value| {
+            serde_json::json!({"id": id, "name": name, "version": 1, "references": references,
+                "files": [{"path": format!("{name} v1.f3d")}]})
+        };
+        let manifest = serde_json::json!({"schema": 2, "entries": [
+            entry("urn:x:asm", "Asm", serde_json::json!([{"id": "urn:x:screw"}, {"id": "urn:x:plate"}])),
+            entry("urn:x:screw", "Screw", serde_json::json!([])),
+            entry("urn:x:plate", "Plate", serde_json::json!([])),
+            entry("urn:x:big", "Big", serde_json::json!([{"id": "urn:x:screw"}])),
+            entry("urn:x:lone", "Lone", serde_json::json!([])),
+        ]});
+        let mut files = vec![("manifest.json", serde_json::to_vec(&manifest).unwrap())];
+        for name in [
+            "Asm v1.f3d",
+            "Screw v1.f3d",
+            "Plate v1.f3d",
+            "Big v1.f3d",
+            "Lone v1.f3d",
+            "Big v1.f3z",
+        ] {
+            files.push((name, b"placeholder".to_vec()));
+        }
+        files
+    }
+
+    fn converted_names(planned: &Plan) -> Vec<String> {
+        let mut names: Vec<_> = planned
+            .jobs
+            .iter()
+            .map(|job| {
+                job.input
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn an_export_folder_converts_each_top_level_assembly_with_its_inserted_designs() {
+        let dir = tempfile::tempdir().unwrap();
+        let export = dir.path().join("export");
+        std::fs::create_dir(&export).unwrap();
+        for (name, bytes) in export_entries() {
+            std::fs::write(export.join(name), bytes).unwrap();
+        }
+        let planned = plan(std::slice::from_ref(&export), &dir.path().join("out"));
+        assert!(planned.problems.is_empty(), "{:?}", planned.problems);
+        // The placeholder .f3d files cannot be read, so nothing is placed inside them and each
+        // stays a result of its own; the rebuilt archive stands for its design's .f3d and
+        // carries the screw its manifest entry lists.
+        assert_eq!(
+            converted_names(&planned),
+            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d", "Plate v1.f3d"]
+        );
+    }
+
+    #[test]
+    fn an_export_zip_converts_the_same_designs_as_its_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("export.zip");
+        let entries = export_entries();
+        let borrowed: Vec<(&str, &[u8])> = entries
+            .iter()
+            .map(|(name, bytes)| (*name, bytes.as_slice()))
+            .collect();
+        project_zip(&archive, &borrowed);
+        let planned = plan(&[archive], &dir.path().join("out"));
+        assert!(planned.problems.is_empty(), "{:?}", planned.problems);
+        assert_eq!(
+            converted_names(&planned),
+            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d", "Plate v1.f3d"]
+        );
+    }
+
+    #[test]
+    fn a_folder_without_a_manifest_converts_every_design_and_both_archive_kinds() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("plain");
+        std::fs::create_dir(&folder).unwrap();
+        for (name, bytes) in export_entries() {
+            if name != "manifest.json" {
+                std::fs::write(folder.join(name), bytes).unwrap();
+            }
+        }
+        let planned = plan(std::slice::from_ref(&folder), &dir.path().join("out"));
+        assert_eq!(planned.jobs.len(), 6);
     }
 
     #[test]
@@ -1633,6 +2480,59 @@ mod tests {
     }
 
     #[test]
+    fn output_names_are_ones_every_system_can_make() {
+        let mut taken = BTreeSet::new();
+        let name = |path: &str, taken: &mut BTreeSet<String>| {
+            unique(PathBuf::from(path), taken)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(name("out/CON.sc", &mut taken), "CON_.sc");
+        assert_eq!(name("out/aux.v2.sc", &mut taken), "aux_.v2.sc");
+        assert_eq!(name("out/part.sc", &mut taken), "part.sc");
+        // Windows drops a trailing dot or space, so these are one file.
+        assert_eq!(name("out/part .sc", &mut taken), "part-2.sc");
+        assert_eq!(name("out/Part..sc", &mut taken), "Part-3.sc");
+    }
+
+    #[test]
+    fn a_taken_slot_gives_the_next_free_name_and_jobs_never_share_one() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.sc"), b"mine").unwrap();
+        std::fs::write(dir.path().join("b.report.json"), b"mine").unwrap();
+        let job = |name: &str| Job {
+            project_files: None,
+            fallback: None,
+            input: PathBuf::from(name),
+            output: dir.path().join(name).with_extension("sc"),
+            replace: false,
+            requested: None,
+            search: PartSearch::default(),
+        };
+        let mut jobs = vec![job("a.f3d"), job("b.f3d"), job("c.f3d"), job("a (2).f3d")];
+        assign_free_names(&mut jobs, &[]);
+        let names: Vec<_> = jobs
+            .iter()
+            .map(|job| {
+                job.output
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(names, ["a (3).sc", "b (2).sc", "c.sc", "a (2).sc"]);
+        // A job that replaces, or one a resumed run already has, keeps its name.
+        let mut jobs = vec![job("a.f3d"), job("b.f3d")];
+        jobs[0].replace = true;
+        assign_free_names(&mut jobs, &[1]);
+        assert_eq!(jobs[0].output, dir.path().join("a.sc"));
+        assert_eq!(jobs[1].output, dir.path().join("b.sc"));
+    }
+
+    #[test]
     fn a_file_recorded_by_another_version_or_journal_format_is_converted_again() {
         // An older report lacks what this version records (the names an anonymous report
         // takes out, among others), so it is never reused, even under the same version number.
@@ -1701,15 +2601,23 @@ mod tests {
             .iter()
             .find(|job| job.input.ends_with("bracket.prt.7"))
             .unwrap();
-        assert_eq!(bracket.output, existing);
+        // The design already there is kept: the numbered save is written beside it.
+        assert_eq!(bracket.output, out.join("bracket (2).sc"));
         assert!(!bracket.replace);
-        let report = convert_job(bracket, &ConvertOptions::default().writer());
+        assert_eq!(std::fs::read(existing).unwrap(), b"keep this design");
+        // A job that is not allowed to replace still refuses a name that is taken.
+        let mut taken = bracket.clone();
+        taken.output = out.join("bracket.sc");
+        let report = convert_job(&taken, &ConvertOptions::default().writer());
         assert_eq!(report["ok"], false);
         assert!(report["error"]["message"]
             .as_str()
             .unwrap()
             .contains("already exists"));
-        assert_eq!(std::fs::read(existing).unwrap(), b"keep this design");
+        assert_eq!(
+            std::fs::read(out.join("bracket.sc")).unwrap(),
+            b"keep this design"
+        );
     }
 
     #[test]

@@ -8,7 +8,7 @@ use eframe::egui;
 use serde_json::Value;
 
 mod notes;
-mod package;
+pub(crate) mod package;
 use package::{Action, Install, Job, Phase};
 
 const FEED: &str = "https://github.com/dutchman-cad/dutchman/releases.atom";
@@ -329,10 +329,76 @@ fn matches_asset(name: &str, os: &str, arch: &str, appimage: bool) -> bool {
     }
 }
 
+/// How long a network step may wait before the update gives up.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Timeouts {
+    /// The host-name lookup, and then each connection attempt, may each take this long.
+    pub connect: Duration,
+    /// No bytes arriving for this long. A slow download that keeps moving is never cut.
+    pub stall: Duration,
+    /// A deadline for the whole request, set only for small requests (the release feed and
+    /// checksums) so a server dripping one byte at a time cannot hold them forever.
+    pub total: Option<Duration>,
+}
+
+impl Timeouts {
+    pub(crate) const DEFAULT: Timeouts = Timeouts {
+        connect: Duration::from_secs(15),
+        stall: Duration::from_secs(30),
+        total: None,
+    };
+    /// For the release feed, the API and checksum files: small, so also bounded in total.
+    pub(crate) const SMALL: Timeouts = Timeouts {
+        total: Some(Duration::from_secs(20)),
+        ..Timeouts::DEFAULT
+    };
+}
+
+/// Resolves host names on a helper thread so a firewall that swallows DNS cannot hang a step.
+#[derive(Debug)]
+struct TimedResolver(Duration);
+
+impl ureq::Resolver for TimedResolver {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        use std::net::ToSocketAddrs;
+        // The lookup itself cannot be cancelled: the helper thread lives until getaddrinfo
+        // returns (the system bounds that) and at the latest until the program exits. Only
+        // the wait for it is cut here.
+        let (tx, rx) = channel();
+        let netloc = netloc.to_owned();
+        std::thread::spawn(move || {
+            let _ = tx.send(netloc.to_socket_addrs().map(|found| found.collect()));
+        });
+        rx.recv_timeout(self.0).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "host name lookup timed out")
+        })?
+    }
+}
+
+/// An HTTP agent whose name lookup, connection attempts, reads and writes are each bounded.
+pub(crate) fn agent(timeouts: Timeouts, redirects: u32) -> ureq::Agent {
+    let mut builder = ureq::AgentBuilder::new()
+        .redirects(redirects)
+        .resolver(TimedResolver(timeouts.connect))
+        .timeout_connect(timeouts.connect)
+        .timeout_read(timeouts.stall)
+        .timeout_write(timeouts.stall);
+    if let Some(total) = timeouts.total {
+        builder = builder.timeout(total);
+    }
+    builder.build()
+}
+
 pub(crate) fn fetch(url: &str, etag: Option<&str>) -> Result<Response, String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(20))
-        .build();
+    fetch_with(url, etag, Timeouts::SMALL)
+}
+
+pub(crate) fn fetch_with(
+    url: &str,
+    etag: Option<&str>,
+    timeouts: Timeouts,
+) -> Result<Response, String> {
+    let agent = agent(timeouts, 5);
     let mut request = agent.get(url).set(
         "User-Agent",
         concat!("Dutchman-update-check/", env!("CARGO_PKG_VERSION")),
@@ -415,6 +481,7 @@ type Fetcher = std::sync::Arc<dyn Fn(&str, Option<&str>) -> Result<Response, Str
 
 pub struct Updater {
     pub report_ids: Vec<String>,
+    electronics: crate::module_update::Updater,
     install: Install,
     job: Job,
     closing: bool,
@@ -441,6 +508,10 @@ pub struct Updater {
     notes_epoch: u32,
     status: String,
     allowed: bool,
+    /// Whether the header shows the Donate and Discord buttons; chosen in Settings and saved
+    /// with the update choices.
+    pub show_donate: bool,
+    pub show_discord: bool,
 }
 
 impl Updater {
@@ -450,6 +521,7 @@ impl Updater {
         let failure = package::windows_startup(&install);
         let mut updater = Self {
             report_ids: Vec::new(),
+            electronics: Default::default(),
             install,
             job: Job::new(),
             closing: false,
@@ -458,6 +530,8 @@ impl Updater {
             msi_finish_confirmed: false,
             windows_failure: false,
             automatic: get("automatic").and_then(Value::as_bool).unwrap_or(true),
+            show_donate: get("show_donate").and_then(Value::as_bool).unwrap_or(true),
+            show_discord: get("show_discord").and_then(Value::as_bool).unwrap_or(true),
             skipped: get("skipped").and_then(Value::as_str).unwrap_or("").into(),
             remind_at: get("remind_at").and_then(Value::as_u64).unwrap_or(0),
             release: None,
@@ -521,7 +595,8 @@ impl Updater {
         self.release.is_some()
     }
     pub fn saved(&self) -> Value {
-        serde_json::json!({"automatic": self.automatic, "skipped": self.skipped, "remind_at": self.remind_at})
+        serde_json::json!({"automatic": self.automatic, "skipped": self.skipped, "remind_at": self.remind_at,
+            "show_donate": self.show_donate, "show_discord": self.show_discord})
     }
     fn offered(&self, time: u64) -> bool {
         self.release
@@ -572,7 +647,8 @@ impl Updater {
         }
     }
     pub fn tick(&mut self, ctx: &egui::Context) {
-        if self.job.busy() && ctx.input(|i| i.viewport().close_requested()) {
+        // A download in progress has installed nothing, so it never keeps the window open.
+        if self.job.blocks_close() && ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.open = true;
             self.closing = true;
@@ -648,6 +724,10 @@ impl Updater {
             ctx.request_repaint_after(Duration::from_secs(self.next.saturating_sub(now()).max(1)));
         }
     }
+    /// Whether the header shows its Update pill.
+    pub fn pill_shown(&self) -> bool {
+        self.offered(now())
+    }
     pub fn header(&mut self, ui: &mut egui::Ui, narrow: bool) {
         if self.offered(now()) {
             let label = if narrow {
@@ -661,18 +741,21 @@ impl Updater {
                         .unwrap_or("")
                 )
             };
-            if ui
-                .add(egui::Button::new(label).corner_radius(egui::CornerRadius::same(16)))
-                .clicked()
-            {
+            if crate::theme::header_button(ui, label).clicked() {
                 self.press(ui.ctx());
             }
         }
-        if ui.small_button("Settings").clicked() {
+        if crate::theme::header_button(ui, "Settings").clicked() {
             self.settings = true;
         }
     }
     /// `top` is the bottom edge of the header, so the update window opens below its controls.
+    #[cfg(feature = "test-support")]
+    pub fn preview_module(&mut self, state: u8) {
+        self.electronics.preview(state);
+        self.settings = true;
+    }
+
     pub fn windows(&mut self, ctx: &egui::Context, can_restart: bool, top: f32) {
         if !self.open {
             self.notes_epoch = self.notes_epoch.wrapping_add(1);
@@ -682,6 +765,11 @@ impl Updater {
             .open(&mut settings)
             .collapsible(false)
             .show(ctx, |ui| {
+                let heading = ui.heading("Updates");
+                heading.ctx.accesskit_node_builder(heading.id, |node| {
+                    node.set_role(egui::accesskit::Role::Heading);
+                    node.set_label("Updates");
+                });
                 ui.add_enabled(
                     self.allowed,
                     egui::Checkbox::new(&mut self.automatic, "Check for updates automatically"),
@@ -703,6 +791,14 @@ impl Updater {
                 if !self.status.is_empty() {
                     ui.label(&self.status);
                 }
+                self.electronics.ui(ui);
+                let heading = ui.heading("Header buttons");
+                heading.ctx.accesskit_node_builder(heading.id, |node| {
+                    node.set_role(egui::accesskit::Role::Heading);
+                    node.set_label("Header buttons");
+                });
+                ui.checkbox(&mut self.show_donate, "Show the Donate button");
+                ui.checkbox(&mut self.show_discord, "Show the Discord button");
             });
         self.settings = settings;
         let mut open = self.open;
@@ -987,9 +1083,16 @@ impl Updater {
             }
             Phase::Failed(error) => {
                 ui.label(error);
-                if ui.button("Try again").clicked() {
-                    self.job = Job::new();
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("Try again").clicked() {
+                        self.job = Job::new();
+                    }
+                    ui.hyperlink_to(
+                        "Download manually",
+                        format!("{RELEASES}/tag/{}", release.tag),
+                    );
+                });
+                return;
             }
         }
         ui.hyperlink_to("Download", format!("{RELEASES}/tag/{}", release.tag));
@@ -1038,6 +1141,19 @@ impl Updater {
         self.allowed = false;
         self.open = true;
         self.click = Click::Failed(failure_text(error));
+    }
+    /// Shows the update window after a download that could not reach GitHub, for GPU screenshots.
+    pub fn preview_download_unreachable(&mut self) {
+        self.install = Install::Zip("C:/Program Files/Dutchman".into());
+        self.open = true;
+        self.job.preview(
+            self.release
+                .as_ref()
+                .map(|r| r.tag.clone())
+                .unwrap_or_default(),
+            Phase::Failed(package::unreachable_message().into()),
+            "",
+        );
     }
     /// Supplies a release without networking for UI previews and GPU screenshots.
     pub fn preview(&mut self, release: Release) {

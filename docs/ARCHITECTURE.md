@@ -53,7 +53,7 @@ reserved placeholder for a future library facade.
 ### Why CADIR is the model
 
 CADIR is already a format-neutral, exact B-rep model with feature history, sketches,
-parameters, appearances and assemblies, in millimetres and radians. A second Dutchman-owned
+parameters, appearances and assemblies, in millimeters and radians. A second Dutchman-owned
 model would duplicate it and double the mapping work. `dutchman_core::Model` carries the
 `CadIr` itself, cadmpeg's source-fidelity record (which its encoders take alongside the
 model) and the design's name; if a target ever needs a different shape, the adapter
@@ -71,7 +71,7 @@ geometry or with validation errors is refused. A panic inside cadmpeg is caught 
 returned as a decode error.
 
 Shared `.prt` and numbered `.prt.N` suffixes use cadmpeg's bounded content detector before
-choosing Creo or NX. Inconclusive contents remain recognised without choosing a reader.
+choosing Creo or NX. Inconclusive contents remain recognized without choosing a reader.
 Dutchman's `Format::reads_geometry` records whether the reader supplies geometry. Formats
 without geometry support or a codec in this build are refused before decode. All cadmpeg
 crates come from the same git revision; `scripts/use-cadmpeg-main.sh` updates those pins together.
@@ -210,7 +210,7 @@ format provides the 0.18.2 compatibility floor. This stays `solidcraft/23` for 0
 targets too: its format 45 additions (nested Browser groups, point cloud properties and
 filters, and print faces) are not used by Dutchman. Feature mapping also respects the writer's
 target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
-`NEWEST_SOLIDCRAFT` (currently 0.46), unless an explicit target is supplied.
+`NEWEST_SOLIDCRAFT` (currently 0.50), unless an explicit target is supplied.
 `WINDOW_OLDEST` (currently 0.40.0) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
@@ -276,8 +276,10 @@ local frame in place of its final positioned body. This applies with verificatio
 too; ordinary histories retain their existing verification behavior.
 
 At the first blocking feature, the editable timeline stops. Earlier features and
-independently resolved sketches are kept in a hidden component, followed by the original
-final geometry as a visible Import. The original is a separate result, not an
+independently resolved sketches stay live in the part's own component, followed by a Remove
+of the bodies they make and the original final geometry as one visible Import named
+"Rest of the design (from <first feature not converted>)". Without SolidCraft's names for
+those bodies (no CLI), they stay in a hidden component beside the Import instead. The original is a separate result, not an
 intermediate body on which later features could safely continue: CADIR supplies final
 geometry only. The report names the blocker and counts retained source features. If no
 body-building prefix exists, the import keeps resolved sketches for reference as before.
@@ -331,7 +333,7 @@ face_surface`) uses the same point, since a pick of that face ends at the same p
 face, and final-body faces cannot prove the timeline state. A parallel `from_plane` start
 becomes a start offset along the sketch normal. Two-sided extrudes may use a non-blind positive-normal end when
 the negative-normal end is blind.
-Extrudes map as new body, join, cut or intersect (a new body keeps its source name and colour);
+Extrudes map as new body, join, cut or intersect (a new body keeps its source name and color);
 revolves about a line in the sketch plane (a line of the profile's sketch stays that line)
 that are symmetric, equal-angle two-sided or a full turn, including unequal sides that add up
 to one, as solids or, short of a full turn, as surfaces; one-sided partial solid revolves
@@ -340,20 +342,21 @@ arc carriers prove the profile lies on one side of it. SolidCraft 0.18.2 and 0.2
 sweep toward the sketch normal for a positive angle, independently of the axis direction;
 the writer signs the angle to preserve the source's right-hand sweep. Unproven sides and
 unequal partial two-sided revolves remain blockers;
-lofts through two to fifty profile or terminal point sections,
+lofts through two to fifty profile or terminal point sections (a section may be one face of
+the model as it was earlier, rebuilt as a sketch of its boundary and proven on the replay),
 open, smooth (or ruled through two sections without rails), solid or surface (a surface loft
 becomes a new surface body, without point ends), guided by up to two rails of sketch curves or
 one-curve whole sketches (sections can select separate regions of one sketch; resolved point and
-vertex ends become sketch points; closed, centreline and degree-limited lofts, and rails of
+vertex ends become sketch points; closed, centerline and degree-limited lofts, and rails of
 edges or model-space curves, are not mapped); sweeps of one sketch profile along
 sketch curves (whole path, solid or surface, square to it, held as drawn or with a fixed
 binormal, optionally twisted up to four turns and scaled at the end by 0.01–100, or guided by
 one rail without other orientation, twist, or scale options; a whole-sketch path or rail maps
 when it has a single non-construction curve; taper, explicit corner transitions, changing
-sections, tangent-path extension, and post-sweep simplification are not mapped); spheres, tori about the Z axis, and whole cylinders and cones placed by their feature frame (cones on SolidCraft 0.24.1 and newer; boxes whose frame lies along the model axes, placed by their minimum corner as cadmpeg gives it (SolidCraft's box is axis-aligned, so a box turned off the axes stays a blocker)); coils along any axis, travelling up or down it, of round or square section,
+sections, tangent-path extension, and post-sweep simplification are not mapped); spheres, tori about the Z axis, and whole cylinders and cones placed by their feature frame (cones on SolidCraft 0.24.1 and newer; boxes whose frame lies along the model axes, placed by their minimum corner as cadmpeg gives it (SolidCraft's box is axis-aligned, so a box turned off the axes stays a blocker)); coils along any axis, traveling up or down it, of round or square section,
 turning either way (tapered coils, flat spirals and triangular sections are not mapped);
 simple, counterbore and countersink
-holes drilled at the circle centres, arc centres or points of a sketch (including explicit
+holes drilled at the circle centers, arc centers or points of a sketch (including explicit
 entity selections), or at a directed spatial placement, through all or to a depth, flat or
 with a drill point (entry recesses retain the point on targets supporting their tip angle);
 axes placed on proven earlier extrusion caps and holes ending at those caps, including
@@ -365,7 +368,7 @@ series), and the thread's hand, class, and length are reported as Degraded, not 
 exit treatments, taper, and modeled threads are not mapped;
 patterns of earlier features or named bodies, linear in one or
 two directions (a symmetric direction, with instances on both sides of the original, becomes a
-centred SolidCraft direction), circular over a partial span or all the way round, or at fixed spacing along
+centerd SolidCraft direction), circular over a partial span or all the way round, or at fixed spacing along
 planar sketch curves; regular explicit offsets and angles, and pairs of linear composite
 stages; ordered chains of feature-pattern stages containing mirrors (target SolidCraft
 0.25 patch 1 or newer), each repeating the previous instance set (at most 32 stages), with at most
@@ -401,12 +404,12 @@ lie on exactly one rebuilt edge across every body, and that edge must have the s
 either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
 splits into pieces and other non-circular curves are refused. Closed input circles map for
 targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
-stored circle with exact centre, axis, radius and full-turn parameter range; historical
+stored circle with exact center, axis, radius and full-turn parameter range; historical
 samples cannot establish circularity. Stored topology must identify one earlier named owning
 body, and only that body supplies replay candidates. Missing carrier or ownership evidence,
 ellipses, and transformed source carriers are refused. Each rebuilt piece must lie on its
 plane and radius, with mesh length between the sample chords and the circular arc. An extra
-`inspect.measure` pass confirms the circular carrier's centre, axis, radius, and analytic
+`inspect.measure` pass confirms the circular carrier's center, axis, radius, and analytic
 length; it cannot certify a circle from its two seam samples alone. Sorted
 angular intervals must cover exactly one turn without gaps or overlaps on exactly one body.
 An overlapping candidate without carrier metadata on the selected body also blocks the proof.
@@ -442,7 +445,7 @@ Native profile picks within a known sketch also map when even-odd nesting identi
 region, with its holes; multiple islands and touching loops remain ambiguous.
 When every active consumer of a sketch selects explicit whole-loop regions, unused lines
 crossing selected whole circles become construction geometry. This keeps layout
-rectangles through hole centres from splitting those holes. Any other selection form keeps
+rectangles through hole centers from splitting those holes. Any other selection form keeps
 the lines solid; a boundary needed by another region consumer stays solid too.
 
 A written history is checked in SolidCraft itself, since Dutchman has no kernel. The writer
@@ -451,8 +454,8 @@ and the original live, and compares body count, volumes and areas. SolidCraft me
 a mesh whose chords keep within 5e-5 of a body's size of its faces, so two meshes of one shape
 may differ in volume by both their areas times that chord, and never less than 1e-4 of the
 volume is allowed; areas must agree within 1e-3. A mismatch retains the editable
-timeline hidden beside the visible original final shape (`partial_history`, verification
-`partial`). A replay error that identifies a feature shortens the prefix before that
+timeline, then a Remove of its bodies and the original final shape as one Import
+(`partial_history`, verification `partial`). A replay error that identifies a feature shortens the prefix before that
 feature; a final volume or area difference alone cannot identify a bad step, so the
 mapped timeline stays available for correction. Retained features are replayed
 separately from the original, without claiming that the unfinished result matches the
@@ -553,13 +556,13 @@ and synthetic files from cadmpeg's public test suite (provenance in
   maps and checks out as a single part's would: its features are authored in its component,
   their ids moved into the design's, and parameters whose names another part already uses are
   renamed with the component's name (`Second_d1`) wherever they are used; so are bodies whose
-  names another part already uses (`Body (Second)`), so each keeps its own colours. Fusion
+  names another part already uses (`Body (Second)`), so each keeps its own colors. Fusion
   joints become SolidCraft rigid, revolute or slider joints, the parts they join placed where
   the joints put them (see fusion.md); Inventor joints wait on
   cadmpeg reading them.
-- **Appearances**: body and face colours carry across: through STEP for imports; as looks for
-  replayed bodies, with a planar or cylindrical face's own colour placed by a point on the face
-  (other curved faces keep their body's colour). Inside an assembly the point is in the part's own frame,
+- **Appearances**: body and face colors carry across: through STEP for imports; as looks for
+  replayed bodies, with a planar or cylindrical face's own color placed by a point on the face
+  (other curved faces keep their body's color). Inside an assembly the point is in the part's own frame,
   which SolidCraft applies to every occurrence of the part. Materials come next, once cadmpeg
   gives physical materials (CADIR 0.6 carries appearances only).
 - More formats as cadmpeg's codecs mature. The state of each format and the upstream gaps that
@@ -653,7 +656,7 @@ one Info reason when writing. There is no memory refusal at the map stage.
 Direct low-level writer calls apply presets and switches without a source-specific budget.
 Core assemblies retain transforms from before joint solving so a writer omitting
 joints can restore stored placements without learning the source format. SolidCraft
-controls reference sketches and joints independently; FreeCAD honours history only.
+controls reference sketches and joints independently; FreeCAD honors history only.
 
 The history mapper reads CADIR wire versions 6 through 11. Version 11 includes the
 fragment and reproduction contract; complete documents continue through the same

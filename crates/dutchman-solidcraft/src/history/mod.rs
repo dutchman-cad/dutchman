@@ -65,6 +65,12 @@ pub(crate) struct History {
     pub(crate) default_bodies: BTreeMap<String, String>,
     /// Why the editable timeline stops before the source ends.
     pub(crate) stop: Option<String>,
+    /// The names SolidCraft gives the bodies the retained features make, once a replay of
+    /// them has shown it; `None` when no replay did. A partial history takes them away again
+    /// before the imported final shape, which needs every name.
+    pub(crate) replayed_bodies: Option<Vec<String>>,
+    /// The name of the first source feature the editable timeline does not hold.
+    pub(crate) rest_from: Option<String>,
     /// The source row that emitted each feature, including auxiliary features.
     pub(crate) sources: BTreeMap<u64, usize>,
     /// The centres of the bodies the source stores in the state right after a feature, by the
@@ -335,7 +341,23 @@ pub(crate) fn imported(
     report: &mut Report,
     name_all: bool,
 ) -> Result<History, dutchman_core::Error> {
-    if model.source_step.is_some() || (!name_all && model.ir.model.appearance_bindings.is_empty()) {
+    // A STEP input goes to SolidCraft as its own text, whose names and looks the model's
+    // appearance bindings do not describe.
+    if model.source_step.is_some() {
+        return Ok(History::default());
+    }
+    imported_restated(model, step, report, name_all)
+}
+
+/// Like [`imported`], for a part whose `step` was restated from its geometry (an assembly
+/// part, whatever text it was read from): the model's own bindings and colours describe it.
+pub(crate) fn imported_restated(
+    model: &Model,
+    step: &str,
+    report: &mut Report,
+    name_all: bool,
+) -> Result<History, dutchman_core::Error> {
+    if !name_all && model.ir.model.appearance_bindings.is_empty() {
         return Ok(History::default());
     }
     let wire = serde_json::to_value(&model.ir)
@@ -667,6 +689,9 @@ impl History {
         for name in &mut self.hidden_bodies {
             *name = rename(name);
         }
+        for name in self.replayed_bodies.iter_mut().flatten() {
+            *name = rename(name);
+        }
         for face in &mut self.face_looks {
             if let Some(fields) = face.as_object_mut() {
                 if let Some(old) = fields.get("body").and_then(Value::as_str) {
@@ -750,6 +775,14 @@ struct Context<'a> {
     topological_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
+    /// Ids in `named_bodies` that name, as a second id, a body another id already names: a
+    /// captured history body registered beside the final body it becomes. An alias shares
+    /// its body's name without making that name ambiguous.
+    body_aliases: std::collections::BTreeSet<String>,
+    /// Whether an earlier feature made a body the history could not name. Then the one
+    /// named body is not necessarily the only body, so a single-body input state cannot be
+    /// taken for it.
+    unnamed_bodies: bool,
     /// Bodies an earlier feature makes that the final model leaves out, under their names:
     /// ((CADIR producing feature id, feature-local body id), name).
     generated_bodies: Vec<((String, String), String)>,
@@ -824,6 +857,8 @@ impl<'a> Context<'a> {
             pattern_replay_required: false,
             topological_replay_required: false,
             named_bodies: Vec::new(),
+            body_aliases: std::collections::BTreeSet::new(),
+            unnamed_bodies: false,
             generated_bodies: Vec::new(),
             confirming_consumed_bodies: false,
             default_bodies: BTreeMap::new(),
@@ -893,6 +928,15 @@ impl<'a> Context<'a> {
             rows
         });
         rows.get(id).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether a body name other than `id`'s own names another body: ids that only alias
+    /// one body under its name do not.
+    fn body_name_shared(&self, id: &str, name: &str) -> bool {
+        !self.body_aliases.contains(id)
+            && self.named_bodies.iter().any(|(other, known)| {
+                other != id && known == name && !self.body_aliases.contains(other)
+            })
     }
 
     /// Whether a body the history makes already has this name.
@@ -1325,6 +1369,34 @@ fn discard_reference_sketches(mapping: &mut Mapping) {
         .count();
 }
 
+/// The reason cadmpeg gave when the design's timeline was in the file but its feature history
+/// did not decode, in plain words; `None` when the decoder reported no such failure, so the
+/// design really has no timeline.
+fn undecoded_history(source_losses: &[dutchman_core::Loss]) -> Option<String> {
+    let loss = source_losses.iter().find(|loss| {
+        loss.code.as_deref().is_some_and(|code| {
+            [
+                "/design.intent-undecoded",
+                "/feature.timeline-undecoded",
+                "/design.primary-record-undecoded",
+            ]
+            .iter()
+            .any(|suffix| code.ends_with(suffix))
+        })
+    })?;
+    // The decoder's text ends with what failed, after the last ": ".
+    let cause = loss
+        .detail
+        .rsplit_once(": ")
+        .map_or(loss.detail.as_str(), |(_, cause)| cause)
+        .trim()
+        .trim_end_matches('.');
+    let cause = cause.strip_prefix("F3D ").unwrap_or(cause);
+    Some(format!(
+        "the design's feature timeline is in the file, but cadmpeg could not decode it ({cause})"
+    ))
+}
+
 /// Whether a mapped feature cuts from or intersects the bodies before it.
 fn cuts_a_body(feature: &Value) -> bool {
     matches!(
@@ -1368,7 +1440,7 @@ fn map_into(
     }
     if model.ir.model.features.is_empty() && !model.ir.design.features.is_empty() {
         return Err(
-            "CADIR v11 design-only history is not mapped yet: its ordered selections and evaluation states have no model-history projection".to_owned(),
+            "CADIR v11 design-only history is not mapped: the design layer's history was not projected into model history (the design-history entries of the report say why)".to_owned(),
         );
     }
     let mut document =
@@ -1504,6 +1576,7 @@ fn map_into(
         map_unbound_sketches(feature, &bound, &mut ctx, report, &mut history, references);
         let builds = ctx.builds;
         let named_bodies = ctx.named_bodies.len();
+        let unnamed_bodies = ctx.unnamed_bodies;
         let before = history.features.len();
         let blends = ctx.blends.len();
         let inferred = infer::map(
@@ -1535,10 +1608,15 @@ fn map_into(
             }
             ctx.builds = builds;
             ctx.named_bodies.truncate(named_bodies);
+            ctx.unnamed_bodies = unnamed_bodies;
             ctx.extra.clear();
             ctx.blends.truncate(blends);
             history.features.truncate(before);
-            let imported = base::fallback(feature, &mut ctx).map_err(|_| reason.clone())?;
+            let imported = base::fallback(feature, &mut ctx).map_err(|why| {
+                format!(
+                    "{reason}; the source states no sketch for its profile (it is absent from this design), and {why}"
+                )
+            })?;
             ctx.profile_unverified = false;
             ctx.profile_mismatch = false;
             ctx.inferred = None;
@@ -1733,7 +1811,8 @@ fn map_into(
     if !ctx.builds && !complete_sketches {
         return Err(blocked.unwrap_or_else(|| {
             if no_timeline {
-                "the design carries no feature history".to_owned()
+                undecoded_history(source_losses)
+                    .unwrap_or_else(|| "the design carries no feature history".to_owned())
             } else {
                 "no feature in the history builds geometry".to_owned()
             }
@@ -2540,7 +2619,7 @@ fn map_feature(
         Some("sphere") => primitive::sphere(feature, definition, ctx).map(Mapped::Feature),
         Some("torus") => primitive::torus(feature, definition, ctx).map(Mapped::Feature),
         Some("coil") => primitive::coil(feature, definition, ctx).map(Mapped::Feature),
-        Some("helical_sweep") => helix::map(feature, definition, ctx, report).map(Mapped::Feature),
+        Some("helical_sweep") => helix::map(feature, definition, ctx, report, preceding).map(Mapped::Feature),
         Some("primitive") => primitive::placed(feature, definition, ctx).map(Mapped::Feature),
         Some("block") => primitive::block(feature, definition, ctx).map(Mapped::Feature),
         Some("shell") => shell::map(feature, definition, ctx).map(Mapped::Feature),
@@ -2671,15 +2750,20 @@ fn kind(feature: &Value) -> String {
 /// The message for an input selection of a form that is not mapped, naming that form:
 /// `noun` is `face`, `edge` or `body`, `kind` the CADIR selection kind that was found.
 pub(crate) fn unsupported_selection(noun: &str, kind: Option<&str>) -> String {
+    let nouns = if noun == "body" {
+        "bodies".to_owned()
+    } else {
+        format!("{noun}s")
+    };
     match kind {
         Some("historical") => {
             format!("a {noun} from an earlier history state is not supported yet")
         }
         Some("historical_set") => {
-            format!("{noun}s from an earlier history state are not supported yet")
+            format!("{nouns} from an earlier history state are not supported yet")
         }
         Some("historical_partial") => format!(
-            "a {noun} selection from an earlier history state with some {noun}s unresolved is \
+            "a {noun} selection from an earlier history state with some {nouns} unresolved is \
              not supported yet"
         ),
         Some("native" | "native_set") => format!(
@@ -2990,6 +3074,12 @@ mod tests {
         assert!(
             unsupported_selection("body", Some("local")).contains("local to an earlier feature")
         );
+        assert_eq!(
+            unsupported_selection("body", Some("historical_set")),
+            "bodies from an earlier history state are not supported yet"
+        );
+        assert!(unsupported_selection("edge", Some("historical_partial"))
+            .contains("with some edges unresolved"));
         assert!(unsupported_selection("edge", Some("weird")).contains("of kind weird"));
         assert!(unsupported_selection("edge", None).contains("with no kind"));
     }
@@ -3206,6 +3296,59 @@ mod tests {
         .result
         .unwrap_err();
         assert_eq!(err, "the design carries no feature history");
+    }
+
+    fn no_history_reason(losses: &[(&str, &str)]) -> String {
+        let mut notes = Report::default();
+        for (code, detail) in losses {
+            notes.push_coded(Severity::Degraded, *code, code, *detail);
+        }
+        map_until(
+            &cube(),
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+            false,
+            notes.losses(),
+            None,
+        )
+        .result
+        .unwrap_err()
+    }
+
+    #[test]
+    fn a_timeline_cadmpeg_could_not_decode_is_named_instead_of_no_history() {
+        let reason = no_history_reason(&[
+            ("f3d/geometry.nurbs-surface-carrier", "8 spline surfaces were decoded."),
+            (
+                "f3d/design.intent-undecoded",
+                "Design intent was dropped because its decoding failed, so the dimension-companion and configuration reports were not produced: F3D sheet-metal settings frame or typed link is invalid",
+            ),
+        ]);
+        assert_eq!(
+            reason,
+            "the design's feature timeline is in the file, but cadmpeg could not decode it (sheet-metal settings frame or typed link is invalid)"
+        );
+        let reason = no_history_reason(&[(
+            "f3d/feature.timeline-undecoded",
+            "the timeline record is damaged",
+        )]);
+        assert!(
+            reason.contains("cadmpeg could not decode it (the timeline record is damaged)"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn a_design_with_no_timeline_and_no_decoder_failure_keeps_the_plain_reason() {
+        let reason = no_history_reason(&[(
+            "f3d/geometry.nurbs-surface-carrier",
+            "8 spline surfaces were decoded.",
+        )]);
+        assert_eq!(reason, "the design carries no feature history");
+        assert_eq!(
+            no_history_reason(&[]),
+            "the design carries no feature history"
+        );
     }
 
     #[test]

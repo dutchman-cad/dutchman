@@ -270,9 +270,17 @@ pub(super) fn fallback(feature: &Value, ctx: &mut Context) -> Result<Value, Stri
                 .is_some_and(|by| Some(by.as_str()) == feature.get("id").and_then(Value::as_str))
         })
     }) || feature.get("ordinal").and_then(Value::as_u64).is_none()
-        || !later_changes(feature, &ids, ctx).is_empty()
     {
         return Err("its unchanged result body is not available".to_owned());
+    }
+    // The source stores the body only as the design ends, so a later feature that changes it
+    // leaves no state of its own to import, and no face of it to read a profile from.
+    let later = later_changes(feature, &ids, ctx);
+    if let Some(change) = later.iter().find(|row| !reapplies(row)).or(later.first()) {
+        return Err(format!(
+            "the body it makes is changed by the later feature \"{}\", and the source stores that body only as the design ends, so neither a stored result nor a profile read from its faces can be proven",
+            name(change).unwrap_or("?")
+        ));
     }
     import(feature, &ids, ctx)
 }
@@ -331,8 +339,10 @@ fn import_history_body(
         .map_err(|err| format!("base feature \"{name}\": {err}"))?;
     let names = super::faces::import_names(ctx, &[body], Some(&text));
     if let [name] = names.as_slice() {
-        ctx.named_bodies
-            .push((nest.topology.body.id.as_str().to_owned(), name.clone()));
+        // The nest's id is a second id for the body `import_names` just named.
+        let alias = nest.topology.body.id.as_str().to_owned();
+        ctx.body_aliases.insert(alias.clone());
+        ctx.named_bodies.push((alias, name.clone()));
     }
     let mut mapped = json!({
         "id": id,
@@ -363,6 +373,7 @@ fn nested_model(model: &Model, nest: &cadmpeg_ir::history_body::HistoryBody, nam
         source_file: None,
         assembly: None,
         source_step: None,
+        merge_bodies: false,
     }
 }
 

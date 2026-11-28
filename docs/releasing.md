@@ -7,12 +7,34 @@ Candidate and stable tags also run the full CI matrix and release builds; the st
 rebuild does not replace the promoted candidate files. PRs run fast Linux checks, and the
 merge queue runs the full matrix once per group. Pushes to `main` keep their existing checks.
 
+## Choosing the version
+
+Pick the version bump by this rule before cutting the first release candidate.
+
+A patch release, `0.x.Y`, carries:
+
+- better results on formats Dutchman already accepts: more features rebuilt, fewer refusals,
+  better placements;
+- a newer cadmpeg pin with no user-visible change of shape;
+- bug fixes, wording, documentation and performance.
+
+A minor release, `0.X.0`, carries any of:
+
+- a new way in: a new format, a new source such as Export from Fusion, or a new module;
+- a new command, option, setting or app flow;
+- any breaking change: CLI flags or exit codes, the output file layout, the plugin manifest, or
+  dropping a supported SolidCraft version;
+- moving the newest supported SolidCraft to a new minor.
+
+Release notes get a "Breaking changes" section whenever there is a breaking change. Version
+1.0.0 is when Dutchman promises stability; until then the rule above applies.
+
 1. Refresh the SolidCraft window alongside the cadmpeg pin. `WINDOW_OLDEST` records the
    exact oldest release from the rolling 14-day window, never below the internal
    `OLDEST_SOLIDCRAFT` floor (0.18.2). `NEWEST_SOLIDCRAFT` names only the newest known
-   minor, currently `[0, 46]`; a patch release requires no Dutchman constant or docs update.
+   minor, currently `[0, 47]`; a patch release requires no Dutchman constant or docs update.
    Choose the oldest release and newest minor from SolidCraft's release dates, then run
-   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.40.0 0.46` with a read-only GitHub token.
+   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.40.0 0.50` with a read-only GitHub token.
    The script reads the authenticated GitHub releases list, selects the highest published
    stable patch of that minor, and checks its checksum metadata. It prints the constants,
    the oldest checksum, and the newest minor's dynamic CI matrix entry. Copy the constants
@@ -34,7 +56,8 @@ merge queue runs the full matrix once per group. Pushes to `main` keep their exi
    format stay as they are, so check the release notes for a format change before merging.
    Patch releases do nothing. The repository setting "Allow GitHub Actions to create and
    approve pull requests" must be on for the workflow to open the pull request.
-2. Bump the version in its own small pull request, before the first candidate. Set the
+2. Pick the version bump by the rule in "Choosing the version" before cutting the first RC.
+   Bump the version in its own small pull request, before the first candidate. Set the
    workspace `version` in `Cargo.toml` to `X.Y.Z` (and the `version` of the `dutchman-core` and
    `dutchman-solidcraft` workspace dependencies), and run `cargo build` so `Cargo.lock` follows.
    Candidates carry the final version, so the programs, archives and installer say `X.Y.Z` and
@@ -45,7 +68,7 @@ merge queue runs the full matrix once per group. Pushes to `main` keep their exi
 3. Write `release-notes/X.Y.Z.md` in a documentation-only pull request, before the tag: one
    intro paragraph, then `## What's new` with at most 7 bullets, each with a bold lead phrase. Use
    plain words and Oxford commas; describe the highlights rather than copying the CHANGELOG.
-   Add `## Known issue` if needed. Images are kept for milestones, such as a design that now
+   Add `## Breaking changes` when the release has one, and `## Known issue` if needed. Images are kept for milestones, such as a design that now
    converts fully: commit one under `docs/images/releases/X.Y.Z/` (from a public, licensed
    file) and place it after the intro as
    `![description](https://raw.githubusercontent.com/dutchman-cad/dutchman/vX.Y.Z/docs/images/releases/X.Y.Z/<file>)`,
@@ -77,6 +100,10 @@ merge queue runs the full matrix once per group. Pushes to `main` keep their exi
    a draft never reaches the registry. To republish a release's image, run it on demand with
    that tag (`gh workflow run release-image.yml -f tag=vX.Y.Z`). Candidate, merge-queue and manual full
    runs build both image architectures without logging in or pushing.
+   Publishing also moves the `latest-release` branch to the release's commit (`release-branch.yml`), so
+   a Nix flake or git dependency that follows `latest-release` gets the newest release. Candidates and
+   drafts never move it, and it only moves forward. To point it at a published tag by hand:
+   `gh workflow run release-branch.yml -f tag=vX.Y.Z`.
    The same run then builds the Arch Linux package: the `arch-package` job turns the draft's
    x86_64 archive into `dutchman-bin-X.Y.Z-x86_64.pkg.tar.zst` with `makepkg` in an
    `archlinux:latest` container (as a non-root user) and attaches it and its `.sha256` to the
@@ -262,7 +289,7 @@ default features. The nightly keeps its own Rust cache per target (`macos-releas
 release candidate builds use no cache and build from scratch.
 
 Regular releases build with the `release` profile: thin LTO and 16 codegen units. A major or
-stable release, starting with 0.3.0, builds with a slower, fully optimised profile instead
+stable release, starting with 0.3.0, builds with a slower, fully optimized profile instead
 (one codegen unit and fat LTO).
 
 All cadmpeg crates, including cadmpeg-registry, come directly from the pinned git revision.
@@ -278,12 +305,20 @@ the rolling `candidates` pre-release with the archives, their SHA-256 files and
 `candidates.json`. `dutchman investigate` compares a user's design against them and the
 nightly. Remove an entry once its fix is released; an empty list publishes an empty release.
 
+## SolidCraft Workshop listing
+
+`solidcraft-workshop.json` at the repository root is what the SolidCraft Workshop reads to list the
+plugin. Its `version` must equal the workspace version and `min_app_version` the plugin manifest's
+`min_host_version`; a unit test checks both, and that the package is `dutchman-plugin-<version>.zip`,
+the release's plugin file. The Workshop reads the file from the default branch and the package from
+the release tagged `v<version>`, so a version bump changes the listing file in the same pull request.
+
 ## Container image
 
 The Linux archive builds run in Debian bookworm so their glibc requirements fit the
 `debian:bookworm-slim` runtime. `docker/release.Dockerfile` installs the CLI and MCP
 server, plus `dutchman-web` whenever it is included in the archives, and retains the
-licence files. Image licence metadata comes from `Cargo.toml`. Only the image publishing
+license files. Image license metadata comes from `Cargo.toml`. Only the image publishing
 jobs receive `packages: write`. The nightly image job waits for the nightly pre-release
 publication to succeed, then publishes `ghcr.io/dutchman-cad/dutchman:nightly` from the
 same run's Linux artifacts.
@@ -304,8 +339,8 @@ pulls work. See [Docker](docker.md) for conversion, MCP and Compose examples.
 The **Public corpus sweep** workflow (`.github/workflows/corpus-sweep.yml`) converts the CAD
 files of public repositories on GitHub's free runners, so a sweep over a real-world corpus does
 not need anyone's machine. `corpus/public.toml` lists the sources: only public repositories under
-an open licence, each with its SPDX licence. The workflow reads the licence from the GitHub API
-and skips a source whose licence no longer matches. A repository with no open licence is not
+an open license, each with its SPDX license. The workflow reads the license from the GitHub API
+and skips a source whose license no longer matches. A repository with no open license is not
 listed (the file says which were left out). It fetches only the CAD files, never the whole
 repository, and publishes nothing: the results are workflow artifacts and the run summary.
 
@@ -343,3 +378,27 @@ Use hashes of the exact diagnostic report ids, including their existing prefix.
 The app reads this through its normal release check and compares locally.
 Release builds send reports to the service address in `crates/dutchman/src/report_send.rs`.
 `DUTCHMAN_REPORT_ENDPOINT` at build time replaces it, for example for a staging service.
+
+## Bundled electronics module
+
+`packaging/electronics.lock` pins the module version, asset URL and SHA-256 for each target,
+including macOS universal. Before merging a version update, run
+`scripts/update-electronics-lock.sh 0.1.0` on a machine with network access and review the
+checksums fetched from the module release's `.sha256` files. PLACEHOLDER values fail packaging;
+all must be filled before merge. The module archives must include their license files.
+
+Set `DUTCHMAN_ELECTRONICS_DIR` to an already-fetched folder containing the target’s
+`dutchman-electronics` (`.exe` on Windows) and `THIRD-PARTY/` to package it without a download.
+Tests use synthetic programs and notices through this override. When it is unset,
+the shared archive, AppImage, MSI and disk image packagers fetch and verify the module before
+including it beside Dutchman's programs. The app includes it in both MacOS and Helpers before
+ad hoc deep signing. Notices go in THIRD-PARTY/dutchman-electronics (in the app's Resources
+or the AppImage's license folder). The container images inherit the module and notices from
+the Linux archives. Final release promotion reuses the candidate archives unchanged.
+`packaging/arch/update.sh` reads the same lock when updating PKGBUILD and .SRCINFO; run it
+after filling the lock and before publishing the Arch package.
+
+The candidate smoke check converts the synthetic `electronics-smoke.kicad_pcb` fixture with
+the packaged Dutchman command and asserts a nonempty SolidCraft output. Intel macOS is
+cross-compiled; the universal app's command is checked on the Apple silicon runner.
+Release workflow changes need a green dry run from the branch before merge.

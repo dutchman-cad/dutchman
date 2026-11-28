@@ -23,11 +23,18 @@ struct Known {
 }
 
 /// Known refusals, first match wins. Add a row to recognise another one.
-const KNOWN: &[Known] = &[Known {
-    pattern: "the blend is larger than the neighbouring faces",
-    category: "fillet-overflows-neighbouring-face",
-    upstream: "https://github.com/tangency-labs/solidcraft/issues/4782",
-}];
+const KNOWN: &[Known] = &[
+    Known {
+        pattern: "the blend is larger than the neighbouring faces",
+        category: "fillet-overflows-neighboring-face",
+        upstream: "https://github.com/tangency-labs/solidcraft/issues/4782",
+    },
+    Known {
+        pattern: "the blend is larger than the neighboring faces",
+        category: "fillet-overflows-neighboring-face",
+        upstream: "https://github.com/tangency-labs/solidcraft/issues/4782",
+    },
+];
 
 /// A refusal found inside a longer reason: the text before it, the refusal, the text after.
 fn split(reason: &str) -> Option<(&str, Refusal, &str)> {
@@ -104,11 +111,21 @@ mod tests {
             r.text,
             "SolidCraft refused feature \"Fillet1\": the blend is larger than the neighbouring faces"
         );
-        assert_eq!(r.category, "fillet-overflows-neighbouring-face");
+        assert_eq!(r.category, "fillet-overflows-neighboring-face");
         assert_eq!(
             r.upstream,
             Some("https://github.com/tangency-labs/solidcraft/issues/4782")
         );
+    }
+
+    #[test]
+    fn the_american_refusal_text_gets_the_same_category() {
+        let r = classify(
+            "feature \"Fillet1\" failed: not supported yet: the blend is larger than the \
+             neighboring faces (site 387)",
+        )
+        .unwrap();
+        assert_eq!(r.category, "fillet-overflows-neighboring-face");
     }
 
     #[test]

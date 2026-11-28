@@ -940,12 +940,31 @@ fn two_part_studio(x: f64) -> Model {
     ]);
     let placed = |key: u32, definition: &str, x: f64| {
         json!({"id": format!("synthetic:test:occurrence#{key}"),
-            "prototype": {"kind": "local", "definition": format!("synthetic:test:component#{definition}")},
-            "parent": {"kind": "root"}, "ordinal": key,
-            "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
-            "scale": [1.0, 1.0, 1.0]})
+        "prototype": format!("synthetic:test:component#{definition}"), "overrides": [],
+        "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+        })
     };
     wire["model"]["occurrences"] = json!([placed(0, "first", 0.0), placed(1, "second", x)]);
+    for definition in wire["model"]["product_definitions"].as_array_mut().unwrap() {
+        definition["storage"] = json!({"kind":"embedded"});
+        for field in [
+            "tessellations",
+            "occurrences",
+            "instance_bodies",
+            "representations",
+        ] {
+            definition[field] = json!([]);
+        }
+    }
+    wire["model"]["product_definitions"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id":"synthetic:test:component#file", "storage":{"kind":"file", "document":{}},
+            "bodies":[], "sketches":[], "bom_properties":{}, "tessellations":[],
+            "occurrences":["synthetic:test:occurrence#0", "synthetic:test:occurrence#1"],
+            "instance_bodies":[], "representations":[]
+        }));
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -965,6 +984,73 @@ fn part_studio_parts_are_one_design_but_moved_parts_stay_placed() {
     part_studio_bodies(&mut moved);
     assert_eq!(moved.ir.model.occurrences.len(), 2);
     assert!(crate::local_assembly(&moved).unwrap().is_some());
+}
+
+#[test]
+fn part_studio_flattening_keeps_insertion_state_and_nested_ownership() {
+    for state in [
+        "override",
+        "suppressed",
+        "unstated-placement",
+        "hidden",
+        "representation",
+        "nested",
+        "shared",
+        "external",
+    ] {
+        let mut model = two_part_studio(0.0);
+        let child = model.ir.model.occurrences[0].id.clone();
+        match state {
+            "override" => {
+                model.ir.model.occurrences[0].overrides = serde_json::from_value(json!([
+                    {"path":[{"occurrence":{"kind":"occurrence","value":child}}], "visible":false}
+                ]))
+                .unwrap();
+            }
+            "suppressed" => model.ir.model.occurrences[0].suppressed = Some(true),
+            "unstated-placement" => model.ir.model.occurrences[0].transform = None,
+            "hidden" => model.ir.model.occurrences[0].visible = Some(false),
+            "representation" => {
+                model.ir.model.occurrences[0].representation =
+                    serde_json::from_value(json!("stored-view")).unwrap();
+            }
+            "nested" => {
+                model.ir.model.product_definitions[2].occurrences.remove(0);
+                model.ir.model.product_definitions[1]
+                    .occurrences
+                    .push(child);
+            }
+            "shared" => {
+                model.ir.model.occurrences[1].prototype =
+                    model.ir.model.occurrences[0].prototype.clone();
+            }
+            "external" => {
+                model.ir.model.product_definitions[0].storage =
+                    cadmpeg_ir::products::Storage::External(Default::default());
+            }
+            _ => panic!("unknown synthetic insertion state"),
+        }
+        let before = model.ir.clone();
+        part_studio_bodies(&mut model);
+        assert_eq!(model.ir, before, "{state}");
+    }
+}
+
+#[test]
+fn thin_scope_requires_direct_body_ownership_without_child_insertions() {
+    let mut model = two_part_studio(0.0);
+    model.ir.model.product_definitions.truncate(1);
+    model.ir.model.occurrences.clear();
+    let definition = model.ir.model.product_definitions[0].id.clone();
+    assert_eq!(thin::owner(&model.ir).unwrap(), definition);
+
+    model.ir.model.product_definitions[0]
+        .occurrences
+        .push(cadmpeg_ir::ids::OccurrenceId::mint("synthetic:test:occurrence#child").unwrap());
+    assert!(thin::owner(&model.ir).is_err());
+    model.ir.model.product_definitions[0].occurrences.clear();
+    model.ir.model.product_definitions[0].bodies.clear();
+    assert!(thin::owner(&model.ir).is_err());
 }
 
 #[test]
@@ -1918,6 +2004,54 @@ fn stored_thin_scope_and_controls_map_a_typed_design() {
         }
     }
 }
+#[test]
+fn thin_ellipse_profiles_keep_solved_curves_and_design_ownership() {
+    let bytes = super::review::edit(
+        &stored_thin_bundle(false, false, "NEW", None),
+        |path, response| {
+            if !path.ends_with("features.json") {
+                return;
+            }
+            response["features"][0]["entities"]
+                .as_array_mut()
+                .unwrap()
+                .truncate(1);
+            let entity = &mut response["features"][0]["entities"][0];
+            entity["btType"] = json!("BTMSketchCurve-4");
+            entity["geometry"] = json!({"btType":"BTCurveGeometryEllipse-1189",
+                "xCenter":0.001,"yCenter":0.002,"xDir":1.0,"radius":0.005,"minorRadius":0.003,"clockwise":false});
+        },
+    );
+    let result = super::review::decode(&bytes);
+    let wire = super::review::wire(&result);
+    assert_eq!(
+        wire["model"]["features"][2]["definition"]["value"]["kind"],
+        "extrude",
+        "{:?}",
+        result.report().losses()
+    );
+    let design = &wire["design"];
+    assert_eq!(design["sketches"].as_array().unwrap().len(), 1);
+    assert_eq!(design["sketch_entities"].as_array().unwrap().len(), 1);
+    assert_eq!(design["sketches"][0]["owner"], design["features"][0]["id"]);
+    assert_eq!(
+        design["sketch_entities"][0]["sketch"],
+        design["sketches"][0]["id"]
+    );
+    assert_eq!(
+        design["sketch_entities"][0]["definition"]["value"]["solved"],
+        json!({
+            "kind":"ellipse","value":{"center":{"u":1.0,"v":2.0},"major":[1.0,0.0],"radii":[5.0,3.0]}
+        })
+    );
+    assert_eq!(
+        design["features"][2]["definition"]["operation"]["value"]["profile"]["picks"]["value"][0]
+            ["target"]["value"],
+        design["sketch_entities"][0]["id"]
+    );
+    super::review::validate(result);
+}
+
 #[test]
 fn thin_current_state_membership_sides_and_missing_product_scope_are_proved() {
     for datum in [

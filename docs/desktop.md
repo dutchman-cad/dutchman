@@ -1,5 +1,17 @@
 # The desktop app
 
+The window opens wider than tall (1180 by 800 points, or 90% of a smaller monitor) and
+never smaller than 520 by 420.
+
+## Fusion tool libraries
+
+A Fusion tool library (`.tools`, or the `.json` export of one) converts to CamCraft's
+`.camtools`. The Designs list counts it as a tool library, its result says `Converted` or
+`Converted, some tools left out` with how many tools were written, and the only button on the
+card is **Show in folder**. The report panel asks about missing tools or wrong sizes, and its third step asks for the
+same library exported the other way (`.tools` for a `.json`, `.json` for a `.tools`). The
+Designs list shows each entry's name, with the full path in its tooltip.
+
 ## Ask your AI about this file
 
 Each completed conversion saves its full `dutchman.convert/1` JSON report beside the
@@ -62,7 +74,7 @@ shows its own.
 ## Paste files and links
 
 With no text field focused, press ⌘V on macOS or Ctrl+V on Windows/Linux anywhere
-in the main window. The line under the Designs buttons, **Drop, or paste files or links**,
+in the main window. The line under the buttons that add designs, **Drop, or paste files or links**,
 is the reminder. Dutchman handles these clipboard contents in order:
 
 - Files or folders copied in Finder, Explorer, or your file manager: queued just like dropped files.
@@ -101,9 +113,19 @@ receive a numbered alternative.
 Folder runs keep the input tree under the selected output folder. For example,
 `in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`, with linked design companions
 and its `.report.json` beside it. Same-named designs in different subfolders stay
-separate. Repeating a run into the same selected folder reuses the output paths;
-existing designs and reports are replaced, identical linked companions are reused,
-and edited companions are kept with a conflict report.
+separate. Every design Dutchman writes carries a small "made by Dutchman" record: its version, the
+source file's name, a checksum of the source and the options. Repeating a run into the
+same selected folder replaces a design Dutchman made from the same file when nothing has changed
+since (a normal re-convert, no copies pile up); any other file already there is kept, and the new
+design gets the next free name (`part (2).sc`) with its `.report.json` beside it. The result says
+so: "part.sc already existed and wasn't made from this file, so saved as part (2).sc".
+
+**Replace existing files** (Advanced, off by default) lets a run replace any file at the planned
+names. Before it does, one question lists the files Dutchman did not make from these files:
+"Replace 1 file you made yourself?". **Replace** goes ahead; **Cancel** keeps them and saves
+under numbered names. A replaced file goes to the trash (or stays beside the new one as
+`name.replaced-<time>.sc`). Identical linked companions are reused, and edited companions are kept
+with a conflict report.
 
 ZIP projects unpack into a private temporary folder, limited to 10,000 entries and 4 GiB
 of extracted data. Paths outside the project are refused and symbolic links are skipped.
@@ -112,8 +134,8 @@ Inventor and SolidWorks assembly references select the top-level roots, which co
 with their parts resolved inside the project; unused parts convert afterwards. A same-name STEP export beside
 a native file is kept as a fallback if the native conversion fails.
 
-The Inventor project folder setting appears only for inputs containing Inventor files.
-Available memory is labelled as memory and hidden when unknown. Automatic SolidCraft
+The **Inventor project** row under **Advanced** (the folder, **Automatic** and **Choose…**) appears only for inputs containing Inventor files.
+Available memory is labeled as memory and hidden when unknown. Automatic SolidCraft
 selection compares the versions found on PATH, beside Dutchman and in installed applications, choosing
 the newest; `SOLIDCRAFT_CLI` remains an explicit override.
 
@@ -144,6 +166,16 @@ Dutchman Convert (`dutchman-gui`) converts without a terminal. [How to use it](.
 
 ## Converting
 
+The window has three numbered steps, one under another, then a row with **Convert**.
+**1. Add your designs** groups the ways to add: **From this computer** (**Add files…**,
+**Add folder…**, **Check a folder**), **From a link** (the link field and **Add link**) and
+**From Onshape** (**Connect Onshape**). **Clear** sits under the list of added designs.
+**2. Choose where to save them** has **Save to**, the output folder (cut in the middle when
+it is long), and **Choose…**. **3. Pick how to convert them** holds the conversion options,
+each label before its control: **Preset**, **Advanced** (**Part positions**, **Up axis** and
+the **Keep** checkboxes), **Output format**, **Existing files** and **Checks**. Mechanical
+designs and other designs use the same layout.
+
 Open `dutchman-gui`, add design files, folders or project ZIPs, and press
 **Convert**. Convert stays visible while you scroll through settings or results. The
 **Preset** selector starts at **Standard**:
@@ -171,7 +203,7 @@ and times below 60 seconds show **under a minute**, just as in the CLI. **M GB o
 once when the machine's free memory can be read. On a Mac this counts memory the system can give back
 (not in use by apps, system or compression), not only the few pages it keeps empty. These are estimates, not limits or promises; an unavailable estimate
 leaves no label. An estimate of five minutes or more, or of more than half the free memory
-(8 GB when that is unknown), is shown in the warning colour. Planning and estimation run in the
+(8 GB when that is unknown), is shown in the warning color. Planning and estimation run in the
 background.
 
 Pressing Convert starts the conversion at once; there is no memory dialog. The estimate in the
@@ -206,11 +238,26 @@ original where the history stops (0 bodies where it has 1). The final shape is c
 rebuilt features before editing them." In an assembly it gives how many parts. The JSON report has
 the loss `history/body-mismatch`.
 
+Each note on a result card leads with one plain sentence: what is missing or different and, when
+there is something to do, what to do. Notes that change nothing you see (records STEP has no place
+for or keeps as they are, an edge tolerance, a timeline folder, a placement statistic of nothing) are left out and not counted, and so is a note that is only
+a count of nothing. **Details**, under the notes, holds the code and message Dutchman wrote for
+each note listed above it, for a bug report. **Save the full log…** saves every note, including
+those the card leaves out. A note Dutchman has no plain sentence for yet keeps its own words. When an
+editable history was written without being checked, the card says what "unverified" means: SolidCraft
+did not replay it and compare the result with the original shape, which is not a warning that it
+is wrong; turn on **Check feature history in SolidCraft** and use **Add matching STEP** to check it.
+
 Expanded **Losses** lists wrap long feature ids inside their result card. Ordinary text
 wraps at spaces.
 
-A converted design opens in SolidCraft from its card: the app that `SOLIDCRAFT_APP` names, else
-`solidcraft` on `PATH` or beside Dutchman, else the system's app for `.sc` files. When an Inventor assembly's part
+A converted design opens in SolidCraft from its card, in the SolidCraft the version pill shows
+when you chose a `solidcraft-cli`: on macOS the `.app` that `solidcraft-cli` sits in (`open -a`),
+on Linux the `solidcraft` app, AppImage or Flatpak of the same install, on Windows the
+`SolidCraft.exe` beside it. If that install has only the command-line tool, the card says so and
+opens nothing. With no `solidcraft-cli` chosen it is the app that `SOLIDCRAFT_APP` names, else
+`solidcraft` on `PATH` or beside Dutchman, else the system's app for `.sc` files, and the status
+line says when the system's app was used. When an Inventor assembly's part
 files are not found, its card names them: **Search a folder…** or **Find a file…** converts it
 again, searching there too. The app follows the system's light or dark setting, or can be set to
 Day or Night, and its **Output format** choice also offers a FreeCAD macro.
@@ -220,12 +267,17 @@ Day or Night, and its **Output format** choice also offers a FreeCAD macro.
 The header’s SolidCraft status pill opens a small panel with **Target SolidCraft** and a
 notice explaining when the installed SolidCraft is newer than Dutchman knows, too old
 (before minor 0.18), or older and the selected target loses editable history. Only the last case suggests newer SolidCraft for more history;
-0.44 patch 1 through 0.46 currently need no such notice. The notice never blocks conversion.
+0.44 patch 1 through 0.50 currently need no such notice. The notice never blocks conversion.
 The pill shows the detected release, or **SolidCraft not found** with a download link in its
 panel. **Advanced > SolidCraft version…** opens the same panel. Narrow windows show only
 the version or **not found**, shorten **Update**, and put theme choices in a menu.
 When space is limited, header controls sit on a second row below the title and version,
 so Settings, the SolidCraft status, themes, problem reports, and updates stay reachable.
+Settings, the SolidCraft status, **Update**, **Donate** and **Discord** share one button
+shape and height, and the theme choices and **Report a problem** sit on the same line.
+The header has **Donate** (opens the donate page at dutchmancad.xyz) and **Discord** (opens
+the Discord invite) beside Settings; each only opens your browser. **Settings** has **Show the
+Donate button** and **Show the Discord button**, both on by default, and the choice is saved.
 For an installed release newer than known, the panel has an **Update Dutchman** button, which
 opens the update window, when the update check already knows a newer Dutchman. Too-old releases have a
 [Download SolidCraft](https://github.com/tangency-labs/solidcraft/releases) link.
@@ -236,7 +288,7 @@ SolidCraft, or answers as a release older than 0.18.2, is refused with a message
 `solidcraft-cli` beside it. Without one, the panel says so: on Windows, the single-file SolidCraft
 download leaves it out, and the portable ZIP and the MSI installer include it.
 
-Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.46), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
+Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.50), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
 
 History checking stays on by default. Before a SolidCraft rebuild, Dutchman compares the
 memory needed for a second build with free memory, using what the design holds after
@@ -255,14 +307,14 @@ Small imports avoid extra preparation workers.
 The window opens where and at the size it was last closed. A saved size smaller than the
 app's minimum, 520 by 420 points, is ignored, and the window opens at its default size instead.
 
-With no saved size, the window opens centred at 1180 by 800 points, or 90% of the screen where
+With no saved size, the window opens centerd at 1180 by 800 points, or 90% of the screen where
 that is smaller, which fits the whole main screen with the **Advanced** choices open and nothing
-scrolled. From 1100 points wide, **Designs** and **Output folder** stand in a left column, with
+scrolled. From 1100 points wide, steps 1 to 3 stand in a left column, with
 **Is there a problem? Is something missing?** in the room under them, and **Results** in a right
 column. Results that do not fit scroll inside their own column, the left column scrolls on to
-the report panel when the window is short, and a long list of designs scrolls inside **Designs**;
+the report panel when the window is short, and a long list of designs scrolls inside step 1;
 the rest of the screen stays in place. Below 1100 points the main screen is one column,
-**Designs**, **Output folder**, **Results**, then the report panel, and scrolls as one page
+the three steps, **Results**, then the report panel, and scrolls as one page
 (down to the 520 point minimum).
 
 ## Reporting a problem
@@ -273,8 +325,8 @@ The window's title and top row show its version beside **Dutchman Convert**, for
 with `dutchman --version`).
 
 **Is there a problem? Is something missing?** is always in the window: at the bottom left,
-under **Output folder**, in a wide window. With one result and compact output controls, it
-sits directly below **Output folder**; it stays visible with several results or expanded choices.
+under the steps, in a wide window. With one result and compact output controls, it
+sits directly below the steps; it stays visible with several results or expanded choices.
 In a narrow window, a compact bar above **Convert** keeps the question and **Report a problem…**
 visible. With a result selected, the button says **Report this design…**. Click it to scroll to
 the full panel and its three numbered cards at the end of the page; you can also scroll there
@@ -282,13 +334,15 @@ yourself. The route is there before a run, while files convert, and after, whate
 say: Dutchman never
 decides for you that a result has no problem. **Report a problem**, at the top right beside
 the **System / Day / Night** theme switch, brings the same panel into view.
+For a drawing whose sheets are not read yet, the panel's first line names the app from the file's
+format, for example "Dutchman doesn't read Inventor drawings yet. Sending it helps us build that:".
 
 The panel is about one file: the first that needs attention, or the one chosen. With several
 results, **About** chooses another; **Report this file…** on any finished card chooses that
 card's file and brings the panel into view. Its numbered cards are the way to reach us, Discord
 first:
 
-1. **Join our Discord server**: **Open invite** opens the invite. Already in? Skip this step.
+1. **Join our Discord**: **Open invite** opens the invite. Already in? Skip this step.
 2. **DM Dutchy**: **Copy and open DM** copies a message and opens Dutchy's DM. A file within
    Discord's upload limit is dragged in, and its folder opens for that; for a larger one, Dutchy
    replies with a private upload link. See
@@ -311,9 +365,10 @@ file's message is that details line, with its error code, then "Anything else we
 Before any file has finished, or while one is still converting, the message names only the
 version and how long it has been running.
 
-**Anonymous report** and **GitHub issue** are secondary buttons directly below the three steps.
-**Anonymous report** opens the review for a direct upload to the cloud inbox; nothing is sent
-until you review it and click Send. **GitHub issue** is the public backup. It opens the
+A row starting with the small label **Not on Discord?** and holding **File a GitHub issue ↗** and, last, **Review and send report** sits directly below the three steps.
+While the file is still converting the cloud button is greyed out and says "Available when this
+file finishes". **Review and send report** opens the review for a direct upload to the cloud inbox; nothing is sent
+until you review it and click Send. **File a GitHub issue ↗** is the public backup. It opens the
 [A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
 form in your browser with Dutchman's version, your system and the error's stage, upstream and
 code filled in, and copies the file's anonymous report, which names no file and no folder.
@@ -323,7 +378,7 @@ under 2,000 characters so GitHub opens it while you are signed in. For converted
 form says that the result is wrong and asks what differs from the original. With no finished
 file, it opens the empty form.
 
-**More** also offers **Anonymous report** and **GitHub issue**, plus **Ask your AI
+**More** offers **Ask your AI
 about this file**, and, for a failed file, **Diagnose this file**. The review opens in the panel,
 under its steps, not in another window. **Send the whole file privately** in it goes back to the
 steps; with a saved bundle, **Send this bundle privately** makes the DM step show the bundle's
@@ -343,7 +398,7 @@ Log names include UTC date and time, Dutchman version and result, for example
 completed runs use `converted`, `failed` or `stopped`. **Open diagnostics folder** opens the
 folder containing the newest 50 logs, including older time-only names.
 
-**Anonymous report** names this run's log automatically and lets you show or copy it.
+**Review and send report** names this run's log automatically and lets you show or copy it.
 The log contains no names or contents from the design. Send uploads only the summary or
 bundle described in that review; the log stays local. The copied Discord DM names the same
 log so you can attach it without guessing which file belongs to the run. An older log's
@@ -352,7 +407,9 @@ version is shown as an advisory notice, such as "This log is from Dutchman 0.2.5
 
 Onshape result cards also offer **Show bundle** and **Send to Dutchman**. The fetched
 `.onshape-bundle` stays beside the `.sc` with the same base name after the app closes,
-including when you opened the document by pasting or dropping its link. **Show bundle**
+including when you opened the document by pasting or dropping its link. It is named after
+the design, `<document name> - <tab name>.onshape-bundle`, and the result row shows that
+name while the fetch runs. **Show bundle**
 reveals the source archive in Finder or Explorer. **Send to Dutchman** opens the existing
 report review with that archive attached; **Send** uploads it privately. The private-send
 card uses the original archive when the report upload is too large.
@@ -375,6 +432,20 @@ Once a day at most, where update checks run, the app reads a newer copy from
 <https://dutchmancad.xyz/report-policy.json> in the background. The request says nothing
 about your files. `DUTCHMAN_UPDATE_CHECK=0`, turning off automatic update checks, and source
 builds all stop it, and the built-in copy is used.
+
+## Provided as is, and your files
+
+The bottom of the main window says: "Dutchman is in active development and provided as is. Keep a
+copy of your designs somewhere else, just in case." **More** opens this section.
+
+- Dutchman is provided as is, without warranty, under the Apache-2.0 license (see `LICENSE`).
+  Dutchman is in active development, and there is a small chance that something goes wrong.
+- Dutchman only reads your original files. It never changes them.
+- Converted files are written to the output folder you choose, as new `.sc` designs and reports.
+  Dutchman never replaces your original files with them. **Replace designs already in the output
+  folder** (on by default) lets a new conversion replace an earlier converted copy of the same
+  design there, so choose an output folder that holds no files of your own, or untick it.
+- Keep a backup of your designs somewhere else, just in case.
 
 ## Updates
 
@@ -409,6 +480,16 @@ Windows copies have two update paths, using the versioned package and its `.sha2
 the same stable release. Nothing changes until the SHA-256 matches; a failed download or
 checksum check deletes the download and leaves the installed copy untouched. **Download**
 remains available for a manual install.
+The release check and the Windows and AppImage downloads give up on their own: up to 15 seconds
+for the host-name lookup and then up to 15 seconds for each connection attempt, and 30 seconds
+without a single byte arriving. The release check, the API fallback and the checksum file also
+have 20 seconds in total; the package download has no total limit, so a slow download that keeps
+moving is never cut. The Homebrew and Scoop hand-offs run those tools, which are only bounded
+by the 15-minute limit on their commands.
+Behind a firewall that blocks `github.com` or its download hosts, the update then stops with a
+plain message, leaves the installed copy untouched, and offers **Try
+again** and **Download manually**. Nothing retries by itself, and
+Dutchman can be closed while a download is still running.
 
 - **MSI: Install (closes Dutchman).** Detection requires the running executable at
   `%LOCALAPPDATA%\Programs\Dutchman\dutchman-gui.exe` and a matching `InstallDir` string in
@@ -430,12 +511,20 @@ remains available for a manual install.
 - **Portable ZIP: Update now.** When neither MSI nor Scoop identifies the copy, all three
   release programs beside the Windows executable identify a portable folder. Dutchman
   downloads and verifies the ZIP, stages all three programs and bundled guidance on the
-  install volume, renames the originals to `.old`, and puts the new files beside them.
+  install volume, renames each file the package lists (the three programs and the files under
+  `docs`, `skills` and `AGENTS.md`) to `<name>.dutchman-old`, and puts the new files beside
+  them. Your own files, including other files inside `docs` or `skills`, are never moved.
   If replacement fails, it attempts to restore the originals and explains any recovery
   needed. The running app keeps working; **Restart now** becomes available once conversions
   finish. A detached helper waits for this copy to exit before opening the updated app.
-  The next start deletes the `.old` backups. A folder without write access offers the manual
+  The backups are recorded in `.dutchman-update-state`; the next start deletes exactly those
+  and nothing else, so your own `.old` files stay. A folder without write access offers the manual
   download fallback. Other Windows copies keep **Download**.
+
+On Linux, **Update now** replaces an AppImage only when this Dutchman is running from it
+(`APPIMAGE` names the Dutchman file and the running program lives inside its `APPDIR`
+mount). An `APPIMAGE` inherited from another app's terminal is ignored and Dutchman offers
+the download.
 
 Scoop and Homebrew retain their package-manager paths. macOS and Linux downloads are unchanged.
 
@@ -447,6 +536,10 @@ These choices persist in the desktop settings. **Settings** offers **Check for u
 automatically** (on by default) and **Check now**, which also shows skipped releases.
 `DUTCHMAN_UPDATE_CHECK=0` disables all checks, including **Check now**. Builds from source
 never check; only release-workflow builds enable this feature.
+
+### Electronics module updates
+
+Settings groups update controls under **Updates** and the Donate and Discord toggles under **Header buttons**. In **Updates**, **Electronics module** shows the version in use and whether it is included or in your modules folder. Choose **Check for update**, then review “Version X.Y.Z is available.” above **Update electronics module** to install a newer compatible release. After installation, Settings confirms “Updated to vX.Y.Z.” Checks and downloads run in the background; failures appear in Settings.
 
 ## Installing it
 
@@ -466,7 +559,7 @@ app's quarantine attribute and its user-approved flag without changing them. The
 retries a blocked check when its window regains focus or you start a conversion.
 
 On Linux it needs a desktop session (X11 or Wayland with OpenGL); the file dialogs use the
-desktop portal, and dropping files works without it.
+desktop portal, reached through the system's libdbus, and dropping files works without it.
 
 ## What the update check sends
 
@@ -550,7 +643,7 @@ source and matching STEP or converted geometry side by side. These are whole-des
 views. On a file check, click **Target part N** to save the report target. Comparison
 body numbers still need local resolution to the correct assembly part.
 
-**Anonymous report**, under **More** in **Is there a problem? Is something missing?**,
+**Review and send report**, in **Is there a problem? Is something missing?**,
 reviews the part roles and exact sizes; bundles contain geometry. The public-test permission is
 separate and unticked. Extraction is not supported yet: choose anonymous summary, or send the
 whole file privately with the panel's Discord steps. Send/retry always requires a click. If the endpoint does
@@ -574,3 +667,6 @@ from the selected placements. The report's Info note counts the placement rules 
 Smart's fallbacks. Smart and **As last shown in the original program** first use decoder-bound saved-scene
 displayed poses when available, without the current-pose guards. Ambiguous and unbound
 scene rows do not select placements; older decoders can omit the arena.
+
+Settings shows **Electronics module** with the program path, or “not found” and the
+search order: beside Dutchman, the per-user modules folder, then PATH. This text is read-only.

@@ -7,10 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dutchman_core::{Check, FeatureStatus, Format, Model, Report, Writer};
-use dutchman_solidcraft::{
-    solidcraft_version, SolidCraftEvaluator, SolidCraftVersion, SolidCraftWriter, Verification,
-    VersionGate,
-};
+#[cfg(feature = "onshape")]
+use dutchman_solidcraft::{solidcraft_version, VersionGate};
+use dutchman_solidcraft::{SolidCraftEvaluator, SolidCraftVersion, SolidCraftWriter, Verification};
 use serde_json::{json, Value};
 
 fn model(name: &str) -> (Model, Report) {
@@ -1151,6 +1150,8 @@ fn part_studio_variables_drive_the_sketch_dimension_and_extrude_depth() {
     assert_eq!(driven, ["span"]);
 }
 
+// The reference reader is behind the crate's `onshape` feature.
+#[cfg(feature = "onshape")]
 #[test]
 fn derived_design_writes_insert_design_links_and_keeps_boolean_editable() {
     for (target, linked) in [
@@ -1200,6 +1201,8 @@ fn derived_design_writes_insert_design_links_and_keeps_boolean_editable() {
     }
 }
 
+// The reference reader is behind the crate's `onshape` feature.
+#[cfg(feature = "onshape")]
 #[test]
 fn derived_boolean_requires_captured_results() {
     let (mut source, mut report) = model("derived");
@@ -1224,6 +1227,8 @@ fn derived_boolean_requires_captured_results() {
     );
 }
 
+// The reference reader is behind the crate's `onshape` feature.
+#[cfg(feature = "onshape")]
 #[test]
 fn derived_companion_conversion_losses_are_reported_under_the_insert() {
     let (mut source, mut report) = model("derived");
@@ -1259,6 +1264,8 @@ fn derived_companion_conversion_losses_are_reported_under_the_insert() {
     );
 }
 
+// The reference reader is behind the crate's `onshape` feature.
+#[cfg(feature = "onshape")]
 #[test]
 fn derived_file_conversion_publishes_companion_and_cli_replays_the_cut() {
     let dir = tempfile::tempdir().unwrap();
@@ -1486,11 +1493,11 @@ fn stored_thin_controls_replay_the_directed_source_circle() {
                     json!({"parameterId":"thickness2","expression":"0 mm"}),
                 ]);
             });
-            // The design scope retains the sketch's native timeline row beside the
-            // typed thin extrusion; the model history supplies its decoded sketch.
+            // The design scope mirrors the model history: the sketch row is the typed
+            // sketch operation the reader writes, beside the typed thin extrusion.
             assert_eq!(model.ir.design.features.len(), 2, "{:?}", report.losses());
             let design = serde_json::to_value(&model.ir.design.features).unwrap();
-            assert_eq!(design[0]["definition"]["operation"]["kind"], "native");
+            assert_eq!(design[0]["definition"]["operation"]["kind"], "sketch");
             assert_eq!(design[1]["definition"]["operation"]["kind"], "extrude");
             assert_eq!(
                 model

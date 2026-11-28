@@ -19,12 +19,14 @@ pub mod counts;
 pub mod diagnose;
 pub mod diagnostics;
 pub mod doctor;
+pub mod drawings;
 pub mod dxf;
 pub mod formats;
 pub mod investigate;
 pub mod issue;
 pub mod json;
 pub mod link;
+pub mod mark;
 pub mod mcp;
 pub mod onshape;
 pub mod preflight;
@@ -34,9 +36,11 @@ pub mod report_policy;
 pub mod report_send;
 pub mod repro;
 pub mod saved_report;
+pub(crate) mod schedule;
 pub mod share_links;
 pub mod stop;
 pub mod sync;
+pub mod tool_library;
 pub mod watch;
 pub mod worker;
 
@@ -222,18 +226,24 @@ pub struct ConvertOptions {
     /// Seconds FreeCAD may run before it is killed.
     #[arg(long, value_name = "SECONDS", default_value_t = 300)]
     pub freecad_timeout: u64,
-    /// Refuse to replace existing output files (explicit outputs otherwise replace).
-    #[arg(long)]
+    /// Replace an existing output file. Without it a conversion never replaces a file: when the
+    /// name is taken, the design gets the next free one, `name (2).sc`.
+    #[arg(long, conflicts_with = "no_clobber")]
+    pub replace: bool,
+    /// Does nothing: not replacing existing files is the default (the old name for it).
+    #[arg(long, hide = true)]
     pub no_clobber: bool,
     /// Seconds each SolidCraft check may run before the history is written unverified.
     #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_TIMEOUT.as_secs())]
     pub verify_timeout: u64,
-    /// Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis.
-    /// By default source axes are preserved; pass --stand-up to rotate or --no-stand-up to keep identity.
+    /// Rotate the design so its +Y axis becomes SolidCraft's +Z axis, whatever its source says.
+    /// By default a design is stood up only when its source states that it is Y-up (a Fusion
+    /// export's manifest does); one that is Z-up or says nothing keeps its axes.
     #[arg(long, conflicts_with = "no_stand_up")]
     pub stand_up: bool,
-    /// Keep source axes without standing Y-up models up along +Z (default).
-    #[arg(long, conflicts_with = "stand_up")]
+    /// Keep the file's axes, never rotating, even for a design its source says is Y-up.
+    /// `--no-stand-up` is the same option.
+    #[arg(long = "keep-axes", alias = "no-stand-up", conflicts_with = "stand_up")]
     pub no_stand_up: bool,
     /// The project folder an assembly's part files are searched in when they are not at their
     /// stored paths (default: the nearest folder above the assembly holding an Inventor .ipj,
@@ -244,6 +254,10 @@ pub struct ConvertOptions {
     /// not hold; may be given more than once.
     #[arg(long = "search", value_name = "DIR")]
     pub search: Vec<PathBuf>,
+    /// Which copper layers a circuit board is read with: outer (top and bottom only) or all
+    /// (inner copper layers too, when the electronics module supports `--copper all`).
+    #[arg(long, value_name = "LAYERS", default_value_t = dutchman_core::CopperLayers::Outer)]
+    pub copper: dutchman_core::CopperLayers,
     /// Convert only this part of the design (set by `convert --part`).
     #[arg(skip)]
     pub part: Option<dutchman_core::PartSelection>,
@@ -272,12 +286,14 @@ impl Default for ConvertOptions {
             no_link_record: false,
             verify: false,
             freecad_timeout: 300,
+            replace: false,
             no_clobber: false,
             verify_timeout: DEFAULT_TIMEOUT.as_secs(),
             stand_up: false,
             no_stand_up: false,
             project: None,
             search: Vec::new(),
+            copper: dutchman_core::CopperLayers::Outer,
             part: None,
         }
     }
@@ -339,7 +355,8 @@ impl ConvertOptions {
         choices
     }
 
-    /// User's explicit choice for standing up Y-up models, if any.
+    /// User's explicit choice for standing up Y-up models; `None` leaves it to the source's
+    /// stated up axis.
     pub fn stand_up_choice(&self) -> Option<bool> {
         if self.stand_up {
             Some(true)
@@ -366,6 +383,7 @@ impl ConvertOptions {
             part_positions: self.effective_part_positions(),
             project: self.project.clone(),
             also: self.search.clone(),
+            copper: self.copper,
         }
     }
 
@@ -416,6 +434,33 @@ pub struct PreparedWriter {
     memory_stop: bool,
     check_history_memory: bool,
     history_check_bytes: Option<u64>,
+    /// The source and options the "made by Dutchman" record of a `.sc` names.
+    made: Option<(PathBuf, Value, String)>,
+}
+
+impl PreparedWriter {
+    /// Writes the design, then adds the mark to it when it is a SolidCraft design: a stamp that
+    /// cannot be added leaves the design as written (it is then simply not marked).
+    fn write_marked(
+        &self,
+        model: &Model,
+        out: &mut dyn std::io::Write,
+        report: &mut Report,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> Result<(), Error> {
+        let Some((input, options, target)) = &self.made else {
+            return self.write_unmarked(model, out, report, progress);
+        };
+        let mut bytes = Vec::new();
+        self.write_unmarked(model, &mut bytes, report, progress)?;
+        let stamped = mark::Made::of(input, options.clone(), target.clone())
+            .and_then(|made| mark::stamp(&bytes, &made).ok());
+        out.write_all(stamped.as_deref().unwrap_or(&bytes))
+            .map_err(|source| Error::Io {
+                path: PathBuf::new(),
+                source,
+            })
+    }
 }
 
 impl Writer for PreparedWriter {
@@ -444,6 +489,18 @@ impl Writer for PreparedWriter {
     }
 
     fn write_with_progress(
+        &self,
+        model: &Model,
+        out: &mut dyn std::io::Write,
+        report: &mut Report,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> Result<(), Error> {
+        self.write_marked(model, out, report, progress)
+    }
+}
+
+impl PreparedWriter {
+    fn write_unmarked(
         &self,
         model: &Model,
         out: &mut dyn std::io::Write,
@@ -571,6 +628,15 @@ impl ConvertOptions {
                 ));
             }
         }
+        let mark_target = solidcraft
+            .as_ref()
+            .and_then(|info| info.get("target"))
+            .map(|target| {
+                target
+                    .as_str()
+                    .map_or_else(|| target.to_string(), str::to_owned)
+            })
+            .unwrap_or_default();
         PreparedWriter {
             usual_stages,
             writer: options.output_writer(),
@@ -586,7 +652,23 @@ impl ConvertOptions {
                 && !self.no_verify
                 && self.to == OutputFormat::Solidcraft,
             memory_stop,
+            made: (self.to == OutputFormat::Solidcraft)
+                .then(|| (input.to_path_buf(), self.mark_options(), mark_target)),
         }
+    }
+
+    /// The options of this conversion that the mark records.
+    fn mark_options(&self) -> Value {
+        json!({
+            "preset": format!("{:?}", self.preset).to_lowercase(),
+            "import_only": self.import_only,
+            "no_sketches": self.no_sketches,
+            "no_joints": self.no_joints,
+            "verify": !self.no_verify,
+            "stand_up": self.stand_up,
+            "part_positions": format!("{:?}", self.effective_part_positions()).to_lowercase(),
+            "stored_placements": self.stored_placements,
+        })
     }
 
     fn preflight(&self, input: &Path, available: Option<u64>) -> PreparedWriter {
@@ -597,6 +679,81 @@ impl ConvertOptions {
         };
         self.prepare_writer(input, note)
     }
+}
+
+/// Sends a file a conversion replaces to the trash or recycle bin with the system's own tool
+/// (`gio trash`, Finder, the Recycle Bin through PowerShell); where there is none, or it fails,
+/// keeps the file beside the new one as `name.replaced-<time>.sc`. Set `DUTCHMAN_NO_TRASH` to
+/// always keep it beside. The file is never deleted.
+fn retire_to_trash(path: &Path) -> std::io::Result<()> {
+    if std::env::var_os("DUTCHMAN_NO_TRASH").is_none() && move_to_trash(path) && !path.exists() {
+        return Ok(());
+    }
+    dutchman_core::safe_output::keep_as_replaced(path)
+}
+
+/// Whether the system's trash took `path`. The path travels in an environment variable, so no
+/// quoting can change what is moved.
+fn move_to_trash(path: &Path) -> bool {
+    use std::process::{Command, Stdio};
+    let mut command = if cfg!(target_os = "macos") {
+        let mut command = Command::new("osascript");
+        command.args([
+            "-e",
+            "tell application \"Finder\" to delete (POSIX file (system attribute \"DUTCHMAN_TRASH_PATH\") as alias)",
+        ]);
+        command
+    } else if cfg!(windows) {
+        let mut command = Command::new("powershell");
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($env:DUTCHMAN_TRASH_PATH, 'OnlyErrorDialogs', 'SendToRecycleBin')",
+        ]);
+        command
+    } else {
+        let mut command = Command::new("gio");
+        command.args(["trash", "--"]).arg(path);
+        command
+    };
+    command
+        .env("DUTCHMAN_TRASH_PATH", path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Where to write the design `output`: itself when `replace` is set or nothing is in its slot
+/// (the design and the reports beside it), else the next free `name (2).sc`. Nothing Dutchman
+/// did not write in the same slot is replaced.
+pub fn resolve_output(output: &Path, replace: bool) -> PathBuf {
+    if replace {
+        output.to_path_buf()
+    } else {
+        dutchman_core::safe_output::free_slot(output)
+    }
+}
+
+/// Where to write the log or report file `path`: itself when `replace` is set or nothing is
+/// there, else the next free numbered name.
+pub fn resolve_file(path: PathBuf, replace: bool) -> PathBuf {
+    if replace {
+        path
+    } else {
+        dutchman_core::safe_output::next_free(&path, &dutchman_core::safe_output::present)
+    }
+}
+
+/// Writes a log or report file at `path`, making its folder, without replacing a file unless
+/// `replace` is set (a taken name gets the next free number); returns where it was written.
+pub fn write_file(path: &Path, bytes: &[u8], replace: bool) -> std::io::Result<PathBuf> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    dutchman_core::safe_output::write_new(path, bytes, replace)
 }
 
 /// Convert with the shared memory policy, prepared writer, and estimate/choice report fields.
@@ -620,6 +777,13 @@ pub(crate) fn convert_options_with_observer(
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
     observer: Option<std::sync::Arc<dyn dutchman_core::MemberObserver>>,
 ) -> Value {
+    if tool_library::is_library(input) {
+        return tool_library::convert(input, output, replace);
+    }
+    // Every drawing file gets a report, even when nothing in it can be read yet.
+    if dutchman_core::Format::from_path(input).is_some_and(dutchman_core::Format::is_drawing) {
+        return drawings::convert_unread(input);
+    }
     if options.diagnostics.as_ref().is_some_and(|path| {
         path == output
             || std::fs::canonicalize(path)
@@ -657,6 +821,7 @@ fn convert_prepared(
     writer: PreparedWriter,
 ) -> Value {
     let source = link::snapshot(input, options);
+    dutchman_core::safe_output::set_retire(retire_to_trash);
     let converted = match options.part {
         Some(part) => dutchman_core::convert_part_with_progress(
             input, output, &writer, replace, search, part, progress,
@@ -670,7 +835,7 @@ fn convert_prepared(
         Err(err) => json::error(json::CONVERT, json::input(input), &err),
     };
     if options.write_replay && report.get("ok").and_then(Value::as_bool) == Some(true) {
-        write_replay_script(output, &mut report);
+        write_replay_script(output, replace, &mut report);
     }
     if let (Some(solidcraft), Some(fields)) = (writer.solidcraft, report.as_object_mut()) {
         fields.insert("solidcraft".to_owned(), solidcraft);
@@ -679,6 +844,7 @@ fn convert_prepared(
     if !options.no_link_record {
         link::write_for_report(input, output, options, source.as_ref(), &mut report);
     }
+    drawings::attach(input, options, &mut report);
     report
 }
 
@@ -686,16 +852,15 @@ fn convert_prepared(
 /// `<output>.replay.json` (the file name with `.replay.json` in place of its suffix), and
 /// names it in `report` as `replay_script`; a script that cannot be written is reported as
 /// `replay_script_error`.
-fn write_replay_script(output: &Path, report: &mut Value) {
+fn write_replay_script(output: &Path, replace: bool, report: &mut Value) {
     let result = (|| {
         let design =
             std::fs::read(output).map_err(|err| format!("cannot read the design: {err}"))?;
         let script = dutchman_solidcraft::replay_script(&design)?;
         let text = serde_json::to_string_pretty(&script).map_err(|err| err.to_string())?;
         let path = output.with_extension("replay.json");
-        std::fs::write(&path, text)
-            .map_err(|err| format!("cannot write {}: {err}", path.display()))?;
-        Ok::<_, String>(path)
+        dutchman_core::safe_output::write_new(&path, text.as_bytes(), replace)
+            .map_err(|err| format!("cannot write {}: {err}", path.display()))
     })();
     if let Some(fields) = report.as_object_mut() {
         match result {
@@ -718,6 +883,10 @@ pub fn convert(
     replace: bool,
     search: &PartSearch,
 ) -> Value {
+    if dutchman_core::Format::from_path(input).is_some_and(dutchman_core::Format::is_drawing) {
+        return drawings::convert_unread(input);
+    }
+    dutchman_core::safe_output::set_retire(retire_to_trash);
     match dutchman_core::convert_traced(input, output, writer, replace, search, &mut |_| {}) {
         Ok(report) => convert_success(input, output, &report),
         Err(err) => json::error(json::CONVERT, json::input(input), &err),
@@ -733,7 +902,11 @@ pub fn convert_with_progress(
     search: &PartSearch,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
+    dutchman_core::safe_output::set_retire(retire_to_trash);
     let progress = dutchman_core::Progress::new(on_progress);
+    if dutchman_core::Format::from_path(input).is_some_and(dutchman_core::Format::is_drawing) {
+        return drawings::convert_unread(input);
+    }
     match dutchman_core::convert_with_progress(input, output, writer, replace, search, &progress) {
         Ok(report) => convert_success(input, output, &report),
         Err(err) => json::error(json::CONVERT, json::input(input), &err),

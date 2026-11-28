@@ -1,5 +1,6 @@
 use super::*;
 use std::io::Cursor;
+use std::time::Duration;
 
 fn package(missing: bool) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -80,7 +81,7 @@ fn checksum_failure_deletes_each_download_without_changing_the_install() {
                 std::fs::read(installed.join(name)).unwrap(),
                 format!("old {name}").as_bytes()
             );
-            assert!(!installed.join(format!("{name}.old")).exists());
+            assert!(!installed.join(format!("{name}.dutchman-old")).exists());
         }
         assert_eq!(
             std::fs::read(installed.join("settings.txt")).unwrap(),
@@ -119,7 +120,7 @@ fn verified_msi_waits_for_close_and_portable_zip_swaps_all_three_programs() {
             format!("new {name}").as_bytes()
         );
         assert_eq!(
-            std::fs::read(installed.join(format!("{name}.old"))).unwrap(),
+            std::fs::read(installed.join(format!("{name}.dutchman-old"))).unwrap(),
             format!("old {name}").as_bytes()
         );
     }
@@ -130,12 +131,66 @@ fn verified_msi_waits_for_close_and_portable_zip_swaps_all_three_programs() {
     assert!(installed.join("AGENTS.md").is_file());
     cleanup(&kind);
     for name in PROGRAMS {
-        assert!(!installed.join(format!("{name}.old")).exists());
+        assert!(!installed.join(format!("{name}.dutchman-old")).exists());
     }
     assert_eq!(
         std::fs::read(installed.join("settings.txt")).unwrap(),
         b"keep"
     );
+}
+
+#[test]
+fn a_users_own_old_files_and_folders_survive_an_update_and_the_next_cleanup() {
+    let root = tempfile::tempdir().unwrap();
+    let installed = fixture(root.path());
+    std::fs::write(installed.join("notes.old"), b"mine").unwrap();
+    std::fs::write(installed.join("dutchman.exe.old"), b"mine too").unwrap();
+    std::fs::create_dir_all(installed.join("docs")).unwrap();
+    std::fs::write(installed.join("docs/my-notes.md"), b"my docs").unwrap();
+    std::fs::create_dir_all(installed.join("skills/mine")).unwrap();
+    std::fs::write(installed.join("skills/mine/SKILL.md"), b"my skill").unwrap();
+    std::fs::write(installed.join("AGENTS.md.old"), b"my agents").unwrap();
+    let bytes = package(false);
+    let kind = Install::Zip(installed.clone());
+    assert!(prepare_in(
+        &kind,
+        "v1.2.3",
+        &root.path().join("logs"),
+        &fetcher(&bytes, true)
+    )
+    .unwrap()
+    .is_none());
+    cleanup(&kind);
+    cleanup(&kind);
+    for (name, content) in [
+        ("notes.old", "mine"),
+        ("dutchman.exe.old", "mine too"),
+        ("docs/my-notes.md", "my docs"),
+        ("skills/mine/SKILL.md", "my skill"),
+        ("AGENTS.md.old", "my agents"),
+        ("settings.txt", "keep"),
+    ] {
+        assert_eq!(
+            std::fs::read(installed.join(name)).unwrap(),
+            content.as_bytes(),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        std::fs::read(installed.join("docs/guide.md")).unwrap(),
+        b"new guidance"
+    );
+    // The update's own backups are gone, and a second update works.
+    assert!(!installed.join("dutchman.exe.dutchman-old").exists());
+    assert!(!installed.join(STATE).exists());
+    assert!(prepare_in(
+        &kind,
+        "v1.2.3",
+        &root.path().join("logs"),
+        &fetcher(&bytes, true)
+    )
+    .unwrap()
+    .is_none());
 }
 
 #[test]
@@ -219,7 +274,7 @@ fn windows_portable_swap_while_gui_is_running() {
     child.wait().unwrap();
     result.unwrap();
     for name in PROGRAMS {
-        assert!(installed.join(format!("{name}.old")).exists());
+        assert!(installed.join(format!("{name}.dutchman-old")).exists());
     }
     for guide in [
         "AGENTS.md",
@@ -236,7 +291,7 @@ fn windows_portable_swap_while_gui_is_running() {
     assert!(String::from_utf8_lossy(&version.stdout).contains(env!("CARGO_PKG_VERSION")));
     cleanup(&Install::Zip(installed.clone()));
     for name in PROGRAMS {
-        assert!(!installed.join(format!("{name}.old")).exists());
+        assert!(!installed.join(format!("{name}.dutchman-old")).exists());
     }
 }
 
@@ -261,4 +316,153 @@ fn a_verified_appimage_replaces_the_running_file_and_a_bad_checksum_does_not() {
         .unwrap()
         .is_none());
     assert_eq!(std::fs::read(&target).unwrap(), bytes);
+}
+
+mod blocked_network {
+    use super::*;
+    use std::net::TcpListener;
+    use std::time::Instant;
+
+    const TIMEOUTS: Timeouts = Timeouts {
+        connect: Duration::from_secs(1),
+        stall: Duration::from_secs(1),
+        total: None,
+    };
+
+    /// How a local server treats the package request.
+    #[derive(Clone, Copy)]
+    enum Mode {
+        /// Accepts the connection and never answers.
+        Silent,
+        /// Sends headers and part of the body, then goes quiet.
+        Stalls,
+        /// Nothing listens.
+        Refuses,
+        /// Sends part of the body and closes the connection.
+        Truncates,
+    }
+
+    /// Serves a valid checksum, then treats the package as `mode` says. Returns the port.
+    fn serve(mode: Mode, bytes: Vec<u8>) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        if matches!(mode, Mode::Refuses) {
+            drop(listener);
+            return port;
+        }
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut request = [0; 2048];
+                let n = if matches!(mode, Mode::Silent) {
+                    0
+                } else {
+                    stream.read(&mut request).unwrap_or(0)
+                };
+                let head = String::from_utf8_lossy(&request[..n]).to_string();
+                let path = head.split_whitespace().nth(1).unwrap_or("").to_owned();
+                if let Some(name) = path
+                    .strip_suffix(".sha256")
+                    .map(|p| p.rsplit('/').next().unwrap_or(""))
+                {
+                    let body = format!(
+                        "{}  {name}\n",
+                        Sha256::digest(&bytes)
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<String>()
+                    );
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                } else if matches!(mode, Mode::Truncates) {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\npartial"
+                    );
+                } else if matches!(mode, Mode::Stalls) {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\npartial"
+                    );
+                    let _ = stream.flush();
+                    held.push(stream);
+                } else {
+                    held.push(stream);
+                }
+            }
+        });
+        port
+    }
+
+    /// Runs a whole update against the local server and checks it ends clearly and in time.
+    fn run(mode: Mode) {
+        let error = run_failing(mode);
+        assert_eq!(error, UNREACHABLE);
+        assert!(error.contains("unchanged"));
+    }
+
+    /// Fails an update against the local server and returns the error; checks time and files.
+    fn run_failing(mode: Mode) -> String {
+        let bytes = package(false);
+        let port = serve(mode, bytes);
+        let root = tempfile::tempdir().unwrap();
+        let installed = fixture(root.path());
+        let logs = root.path().join("logs");
+        let fetch = |url: &str, limit: u64, out: &mut dyn Write| {
+            let path = url.split("/download/").nth(1).unwrap();
+            download_with(
+                &format!("http://127.0.0.1:{port}/{path}"),
+                limit,
+                out,
+                TIMEOUTS,
+            )
+        };
+        let started = Instant::now();
+        let error = prepare_in(&Install::Zip(installed.clone()), "v1.2.3", &logs, &fetch)
+            .err()
+            .expect("a blocked network must fail");
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "took {:?}",
+            started.elapsed()
+        );
+        for name in PROGRAMS {
+            assert_eq!(
+                std::fs::read_to_string(installed.join(name)).unwrap(),
+                format!("old {name}")
+            );
+        }
+        assert_eq!(
+            std::fs::read(installed.join("settings.txt")).unwrap(),
+            b"keep"
+        );
+        error
+    }
+
+    #[test]
+    fn a_server_that_never_answers_ends_in_the_clear_message() {
+        run(Mode::Silent);
+    }
+
+    #[test]
+    fn a_download_that_stalls_midway_ends_in_the_clear_message() {
+        run(Mode::Stalls);
+    }
+
+    #[test]
+    fn a_refused_connection_ends_in_the_clear_message() {
+        run(Mode::Refuses);
+    }
+
+    #[test]
+    fn a_connection_that_drops_midway_says_so_not_firewall() {
+        let error = run_failing(Mode::Truncates);
+        assert_ne!(error, UNREACHABLE);
+        assert!(error.contains("interrupted"), "{error}");
+        assert!(error.contains("unchanged"));
+    }
 }

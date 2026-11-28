@@ -88,6 +88,9 @@ fn report_question_and_actions_stay_inside_the_wide_window() {
             egui::pos2(0.0, 80.0),
             egui::pos2(1180.0, h.get_by_label("Convert").rect().top()),
         );
+        // The left column scrolls as one page, so the report panel is reached by scrolling.
+        h.get_by_label(report_panel::QUESTION).scroll_to_me();
+        h.run_steps(12);
         for label in [
             report_panel::QUESTION,
             present::SEND_JOIN_BUTTON,
@@ -114,18 +117,21 @@ fn report_question_and_actions_stay_inside_the_wide_window() {
         assert!(window.contains_rect(question));
         h.get_by_label(report_panel::MORE).click_accesskit();
         h.run_steps(12);
-        let question = h.get_by_label(report_panel::QUESTION).rect();
-        assert!(window.contains_rect(question));
-        h.get_by_label("Anonymous report").scroll_to_me();
+        h.get_by_label(report_panel::CLOUD_REPORT_BUTTON)
+            .scroll_to_me();
         h.run_steps(12);
-        assert_eq!(h.get_by_label(report_panel::QUESTION).rect(), question);
+        let button = h.get_by_label(report_panel::CLOUD_REPORT_BUTTON).rect();
+        assert!(
+            window.contains_rect(button),
+            "{button:?} outside {window:?}"
+        );
     }
 }
 
 #[test]
 fn converted_results_with_missing_history_or_degraded_losses_use_warning_colour() {
     for p in [theme::DAY, theme::NIGHT] {
-        let degraded = json!({"ok":true,"mode":"history","losses":[{"level":"Degraded","subject":"body","message":"Colour is missing."}]});
+        let degraded = json!({"ok":true,"mode":"history","losses":[{"level":"Degraded","subject":"body","message":"Color is missing."}]});
         let info = json!({"ok":true,"mode":"history","losses":[{"level":"Info","subject":"body","message":"Converted."}]});
         for (report, expected) in [
             (report(1), p.spectre),
@@ -363,7 +369,7 @@ fn control_row_screenshots() {
 
 fn assert_separate(rects: &[(String, egui::Rect)]) {
     for (i, (name, rect)) in rects.iter().enumerate() {
-        for (other, other_rect) in &rects[i + 1..] {
+        for (other, other_rect) in rects.iter().skip(i + 1) {
             assert!(
                 !rect.shrink(0.25).intersects(other_rect.shrink(0.25)),
                 "{name} {rect:?} overlaps {other} {other_rect:?}"
@@ -374,7 +380,7 @@ fn assert_separate(rects: &[(String, egui::Rect)]) {
 
 fn assert_control_rows(rects: &[(String, egui::Rect)]) {
     for (i, (name, rect)) in rects.iter().enumerate() {
-        for (other, other_rect) in &rects[i + 1..] {
+        for (other, other_rect) in rects.iter().skip(i + 1) {
             assert!(
                 (rect.height() - other_rect.height()).abs() <= 0.5,
                 "{name} {rect:?} and {other} {other_rect:?} differ in height"
@@ -382,7 +388,7 @@ fn assert_control_rows(rects: &[(String, egui::Rect)]) {
             if rect.y_range().intersects(other_rect.y_range()) {
                 assert!(
                     (rect.center().y - other_rect.center().y).abs() <= 0.5,
-                    "{name} {rect:?} and {other} {other_rect:?} differ in centre line"
+                    "{name} {rect:?} and {other} {other_rect:?} differ in center line"
                 );
             }
         }
@@ -407,7 +413,6 @@ fn main_panel_control_rows_align_without_overlaps() {
                 "Add files…",
                 "Check a folder",
                 "Add folder…",
-                "Clear",
             ];
             let mut controls: Vec<_> = designs
                 .iter()
@@ -441,11 +446,13 @@ fn main_panel_control_rows_align_without_overlaps() {
             // Query widget roles only; exclude containers and their inline text nodes.
             let sections = [
                 (
-                    h.get_by_label("DESIGNS").rect().bottom(),
+                    h.get_by_label("1. ADD YOUR DESIGNS").rect().bottom(),
                     hint_rect.bottom(),
                 ),
                 (
-                    h.get_by_label("OUTPUT FOLDER").rect().bottom(),
+                    h.get_by_label("2. CHOOSE WHERE TO SAVE THEM")
+                        .rect()
+                        .bottom(),
                     h.get_by_label("Change…").rect().bottom(),
                 ),
                 (

@@ -3,7 +3,8 @@
 #   scripts/package-plugin.sh <dutchman_plugin.wasm> <output folder> [<version>]
 # writes <output folder>/dutchman.wasm, plugin.json, icons/ and dutchman-plugin.zip. With a version
 # (a release's X.Y.Z) the manifest says that version and the zip is dutchman-plugin-<version>.zip,
-# with a .sha256 beside it.
+# with a .sha256 beside it. Without one, the manifest says the workspace's version from Cargo.toml,
+# so a development build never reports an old release.
 #
 # SolidCraft links only craft:plugin interfaces. `zip` turns on getrandom's JavaScript
 # backend for every wasm32 target, so the core module also imports a few wasm-bindgen
@@ -68,7 +69,14 @@ with open(sys.argv[2], "w") as f:
 PY
     zip_name=dutchman-plugin-$version.zip
 else
-    cp "$root/crates/dutchman-plugin/plugin.json" "$out/plugin.json"
+    python3 - "$root/crates/dutchman-plugin/plugin.json" "$out/plugin.json" "$root/Cargo.toml" <<'PY'
+import json, sys, tomllib
+manifest = json.load(open(sys.argv[1]))
+manifest["version"] = tomllib.load(open(sys.argv[3], "rb"))["workspace"]["package"]["version"]
+with open(sys.argv[2], "w") as f:
+    json.dump(manifest, f, indent=2)
+    f.write("\n")
+PY
 fi
 rm -f "$out/$zip_name"
 mkdir -p "$out/icons"

@@ -2,6 +2,52 @@
 
 Dutchman installs as three programs: `dutchman` (the command line), `dutchman-mcp` (the MCP server), and `dutchman-gui` (the desktop app, Dutchman Convert). Release archives, the Windows installer, the macOS disk image, Homebrew, and Scoop install all three; `cargo install` and Docker leave out the desktop app.
 
+## Circuit boards: the electronics module
+
+Converting Altium circuit boards (`.PcbDoc`) requires the optional electronics module,
+a separate program named `dutchman-electronics`. Download it from the
+[electronics module releases](https://github.com/dutchman-cad/dutchman-electronics/releases).
+
+Get [version 0.1.0](https://github.com/dutchman-cad/dutchman-electronics/releases/tag/v0.1.0).
+Each asset has a matching `.sha256`:
+
+- Windows: `dutchman-electronics-0.1.0-x86_64-pc-windows-msvc.zip`. No Windows arm64 build.
+- macOS: `dutchman-electronics-0.1.0-macos-universal.tar.gz`, or the
+  `-aarch64-apple-darwin.tar.gz` and `-x86_64-apple-darwin.tar.gz` variants.
+- Linux: `dutchman-electronics-0.1.0-x86_64-unknown-linux-gnu.tar.gz` or
+  `dutchman-electronics-0.1.0-aarch64-unknown-linux-gnu.tar.gz`.
+
+Each archive holds one `dutchman-electronics-0.1.0-<target>/` folder with the program,
+`README.md`, and `INSTALL.md`. The program is named `dutchman-electronics.exe` on
+Windows and `dutchman-electronics` elsewhere. It is not signed; the macOS program
+is ad hoc signed only.
+
+Copy the program into the **recommended per-user modules folder** (create it if needed).
+This folder survives Dutchman updates, and apps opened from Finder can find it:
+
+- Windows: `%LOCALAPPDATA%\Dutchman\modules`.
+- macOS: `~/Library/Application Support/Dutchman/modules`.
+- Linux: `$XDG_DATA_HOME/dutchman/modules`, or `~/.local/share/dutchman/modules`
+  when `XDG_DATA_HOME` is unset or empty.
+
+Alternatively, put it beside the running Dutchman program or on PATH.
+For the Windows MSI, the program folder is `%LOCALAPPDATA%\Programs\Dutchman\`
+and is on the user PATH; for the ZIP, put it beside `dutchman.exe`.
+For the macOS app, the program folder is
+`/Applications/Dutchman Convert.app/Contents/MacOS/`; for the command, use
+`Contents/Helpers/` or a PATH folder such as `/usr/local/bin`.
+Finder-opened apps do not see the Terminal PATH. An update replaces the app,
+so a module copied inside it must be copied again.
+For Linux AppImage, use a PATH folder such as `~/.local/bin` (log out and in if
+that folder is new); for the tarball, beside `dutchman`; for Arch, `/usr/bin`
+or any PATH folder.
+
+On macOS, run `xattr -d com.apple.quarantine <the copied dutchman-electronics>`.
+Tar preserves the executable bit, so no chmod is needed.
+Check with `dutchman-electronics --version`, then open a `.PcbDoc` or
+`.kicad_pcb` in Dutchman. Settings shows the module's path or the places searched.
+See [Optional modules](modules.md) for the search order.
+
 ## Included guidance
 
 Every release archive (including the Windows ZIP) includes `skills/`, the `docs/` Markdown,
@@ -20,7 +66,7 @@ these guides stay beside the programs. Portable Windows updates refresh them too
 ## Windows: the installer
 
 Download `dutchman-VERSION-x86_64-pc-windows-msvc.msi` and its `.msi.sha256` from the
-[latest release](https://github.com/dutchman-cad/dutchman/releases/latest). The README links
+[latest release](https://github.com/dutchman-cad/dutchman/latest-releases/latest). The README links
 the same files under versionless names. Check the hash in PowerShell before opening it:
 
 ```powershell
@@ -49,6 +95,24 @@ first launch with **Windows protected your PC**:
 2. Click **Run anyway**.
 
 Windows remembers the approval for that download. A new version may ask again.
+
+#### Smart App Control
+
+On Windows 11 with **Smart App Control** turned on, Windows blocks unsigned programs that it
+has no reputation for. The message says it could not verify the publisher, and there is no
+**Run anyway** button. Smart App Control has no exception for a single program, and the
+portable ZIP is blocked the same way.
+
+To run Dutchman Convert there, turn Smart App Control off:
+
+1. Open **Windows Security**.
+2. Go to **App & browser control** > **Smart App Control settings**.
+3. Choose **Off**.
+
+On some Windows versions, Smart App Control cannot be turned back on after that without
+resetting Windows. Check Microsoft's
+[Smart App Control FAQ](https://support.microsoft.com/windows/smart-app-control-faq-285ea03d-fa88-4d56-882e-6698afdb7003)
+for your version before you turn it off.
 
 ## Homebrew or Scoop
 
@@ -169,10 +233,10 @@ Links named `dutchman-mcp` and `dutchman-web` work the same way.
 
 ## From a release archive
 
-Each [release](https://github.com/dutchman-cad/dutchman/releases) has archives for the
+Each [release](https://github.com/dutchman-cad/dutchman/latest-releases) has archives for the
 platforms below. Each archive holds `dutchman` (the command), `dutchman-mcp` (the
 [MCP server](mcp.md)), `dutchman-gui` (the desktop app, from 0.1.1 on), `LICENSE`, `NOTICE`,
-`README.md` and the font licences, with a `.sha256` file beside it.
+`README.md` and the font licenses, with a `.sha256` file beside it.
 
 | Platform | Archive |
 |---|---|
@@ -193,7 +257,7 @@ target for another release or machine):
 
 ```sh
 VERSION=0.2.6 TARGET=x86_64-unknown-linux-gnu
-base=https://github.com/dutchman-cad/dutchman/releases/download/v$VERSION
+base=https://github.com/dutchman-cad/dutchman/latest-releases/download/v$VERSION
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz"
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz.sha256"
 sha256sum -c dutchman-$VERSION-$TARGET.tar.gz.sha256
@@ -219,7 +283,7 @@ On macOS, download the latest universal archive and its checksum, check it, and 
 All three programs run on Apple silicon and Intel:
 
 ```sh
-base=https://github.com/dutchman-cad/dutchman/releases/latest/download
+base=https://github.com/dutchman-cad/dutchman/latest-releases/latest/download
 curl -fLO "$base/dutchman-macos-universal.tar.gz"
 curl -fLO "$base/dutchman-macos-universal.tar.gz.sha256"
 shasum -a 256 -c dutchman-macos-universal.tar.gz.sha256
@@ -261,11 +325,13 @@ Expand-Archive dutchman-VERSION-x86_64-pc-windows-msvc.zip -DestinationPath .
 
 - **Stable** releases (`v0.2.6`, …) are the ones to use. Each is built against one tested
   commit of cadmpeg, the library that reads the native files.
-- **Nightly** is one pre-release, [`nightly`](https://github.com/dutchman-cad/dutchman/releases/tag/nightly),
+- **Nightly** is one pre-release, [`nightly`](https://github.com/dutchman-cad/dutchman/latest-releases/tag/nightly),
   rebuilt each day from Dutchman's latest code against cadmpeg's latest code, and published
   only when every test passes. Its notes give both commits and the date. Its archives are
   named `dutchman-nightly-TARGET` and install the same way. Use it when an issue says a fix is
   merged but not in a release yet; go back to stable once a stable release has it.
+
+Every Dutchman download includes the electronics module. Circuit boards convert with nothing extra to install.
 
 ## From source
 
@@ -274,6 +340,13 @@ With Rust 1.88 or newer:
 ```sh
 cargo install --git https://github.com/dutchman-cad/dutchman dutchman
 ```
+
+That builds the newest code on `main`. To build the newest published release instead, add
+`--branch latest-release`: the `latest-release` branch always points at the latest release. A Nix flake or
+other package manager that follows a branch can use the same branch
+(`github:dutchman-cad/dutchman/latest-release`), or a tag such as `v0.3.0` to pin one release.
+
+Source builds need the separate [electronics module](https://github.com/dutchman-cad/dutchman-electronics/releases) for circuit boards. Put its program beside Dutchman or on `PATH`.
 
 This installs both `dutchman` and `dutchman-mcp`. Check the install:
 
@@ -318,9 +391,9 @@ it says so under the check option:
 
 Dutchman is made for the current SolidCraft (any release from the last two weeks);
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
-`convert`, `convert-all`, or `watch`. The current window is 0.40–0.46; roundtrip
+`convert`, `convert-all`, or `watch`. The current window is 0.40–0.50; roundtrip
 checks cover the 0.18.2 opens-in floor and newest release. Each design targets the found CLI's version,
-even with `--no-verify`, else the newest release known at build time (currently 0.46).
+even with `--no-verify`, else the newest release known at build time (currently 0.50).
 Versions below 0.18.2 and malformed versions are refused. Older targets remain accepted
 down to 0.18.2. Features that need a newer release block history with a named reason
 and preserve the original geometry as for other blockers.
@@ -342,3 +415,5 @@ For packagers: the std-only `dutchman-launcher` crate provides a tiny front comm
 installations that ship with Pilot alone. Install its binary as `dutchman`;
 `dutchman --version` identifies it as `dutchman launcher <version>`. Install Dutchman Convert
 for the conversion commands.
+
+Use Settings → Check for update to update the electronics module into your per-user modules folder.

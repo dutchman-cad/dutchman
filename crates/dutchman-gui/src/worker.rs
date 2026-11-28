@@ -64,6 +64,17 @@ fn sized(input: &Path) -> Message {
     }
 }
 
+/// `event` with a finished report marked as it is saved (see [`dutchman::saved_report::mark`]).
+fn marked(event: Event) -> Event {
+    match event {
+        Event::Finished(index, mut report) => {
+            dutchman::saved_report::mark(&mut report);
+            Event::Finished(index, report)
+        }
+        other => other,
+    }
+}
+
 fn save_report(output: &Path, report: &Value, send: &impl Fn(Message)) {
     if let Err(message) = dutchman::saved_report::save(output, report) {
         send(Message::ReportSaveFailed(message));
@@ -148,8 +159,12 @@ impl Run {
             // A panic here must not take the window down; it ends the run.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let batch::Plan {
-                    mut jobs, problems, ..
+                    mut jobs,
+                    mut problems,
+                    ..
                 } = batch::plan(&inputs, &out_dir);
+                // What the window shows of a report is what is saved of it.
+                problems.iter_mut().for_each(dutchman::saved_report::mark);
                 batch::prepare(&mut jobs, &options);
                 let refused: Vec<PathBuf> = problems
                     .iter()
@@ -163,7 +178,10 @@ impl Run {
                         .and_then(|path| Path::new(path).file_name())
                     {
                         save_report(
-                            &out_dir.join(name).with_extension(writer.extension()),
+                            &dutchman::resolve_output(
+                                &out_dir.join(name).with_extension(writer.extension()),
+                                options.replace,
+                            ),
                             report,
                             &send,
                         );
@@ -177,6 +195,7 @@ impl Run {
                     send(sized(input));
                 }
                 let on_event = |event: Event| {
+                    let event = marked(event);
                     if let Event::Finished(index, report) = &event {
                         if let Some(job) = jobs.get(*index) {
                             save_report(&job.output, report, &send);
@@ -210,6 +229,8 @@ impl Run {
         messages: Sender<Message>,
         ctx: egui::Context,
     ) -> Self {
+        // `job.replace` and `job.output` were settled by the window: the file this session wrote
+        // at that name is replaced only while it is unchanged, else the job has a free name.
         let stop = Arc::new(AtomicBool::new(false));
         let writer = options.writer();
         let options = options.clone();
@@ -223,6 +244,7 @@ impl Run {
             };
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let on_event = |event: Event| {
+                    let event = marked(event);
                     if let Event::Finished(_, report) = &event {
                         save_report(&output, report, &send);
                     }
@@ -308,9 +330,17 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
                         &[
                             "f3d", "f3z", "ipt", "iam", "sldprt", "sldasm", "FCStd", "fcstd",
                             "CATPart", "catpart", "prt", "pvz", "3dm", "sat", "sab", "smt", "smb",
-                            "step", "stp", "igs", "iges", "zip",
+                            "step", "stp", "igs", "iges", "zip", "idw", "slddrw", "f2d", "dft",
+                            "dwg", "dxf",
                         ],
                     )
+                    .add_filter(
+                        "Drawings",
+                        &[
+                            "idw", "slddrw", "f2d", "dft", "dwg", "dxf", "FCStd", "fcstd",
+                        ],
+                    )
+                    .add_filter("Fusion tool libraries", &["tools", "json"])
                     .pick_files()
                     .await
                     .unwrap_or_default(),
@@ -551,6 +581,7 @@ mod tests {
         }
         let options = ConvertOptions {
             verify: false,
+            replace: true,
             solidcraft_version: Some("0.44.1".parse().unwrap()),
             ..ConvertOptions::default()
         };
@@ -670,6 +701,60 @@ mod tests {
         assert_eq!(last.designs_read, 1);
         assert_eq!(last.designs_total, Some(1));
         assert_eq!(last.stage, dutchman_core::Stage::Write);
+    }
+
+    #[test]
+    fn a_run_keeps_a_design_already_in_the_output_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in");
+        let output = dir.path().join("out");
+        std::fs::create_dir_all(&input).unwrap();
+        std::fs::create_dir_all(&output).unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
+        std::fs::copy(&fixture, input.join("part.f3d")).unwrap();
+        std::fs::write(output.join("part.sc"), b"MY OWN DESIGN").unwrap();
+        std::fs::write(output.join("part.report.json"), b"MY OWN REPORT").unwrap();
+        let options = ConvertOptions {
+            verify: false,
+            ..ConvertOptions::default()
+        };
+        let (send, receive) = std::sync::mpsc::channel();
+        let _run = Run::start(
+            vec![input.clone()],
+            output.clone(),
+            &options,
+            send,
+            egui::Context::default(),
+        );
+        let mut reports = Vec::new();
+        loop {
+            match receive
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .unwrap()
+            {
+                Message::Progress(Event::Finished(_, report)) => reports.push(report),
+                Message::ReportSaveFailed(message) => panic!("{message}"),
+                Message::Done => break,
+                _ => {}
+            }
+        }
+        assert_eq!(reports.len(), 1);
+        let numbered = output.join("part (2).sc");
+        assert_eq!(
+            reports.first().unwrap().pointer("/output/path"),
+            Some(&serde_json::json!(numbered.to_str().unwrap()))
+        );
+        assert!(numbered.is_file());
+        assert_eq!(
+            std::fs::read(output.join("part.sc")).unwrap(),
+            b"MY OWN DESIGN"
+        );
+        assert_eq!(
+            std::fs::read(output.join("part.report.json")).unwrap(),
+            b"MY OWN REPORT"
+        );
+        assert_eq!(dutchman::saved_report::read(&numbered).unwrap()["ok"], true);
     }
 
     #[test]

@@ -296,6 +296,7 @@ fn reconvert(
         .join("result")
         .with_extension(design.output.extension().unwrap_or_default());
     let mut job = batch::Job {
+        requested: None,
         project_files: None,
         fallback: None,
         input: design.source.clone(),

@@ -145,7 +145,7 @@ impl Scope {
     fn id(self) -> &'static str {
         match self {
             Self::Alone => "alone",
-            Self::Neighbours => "neighbours",
+            Self::Neighbours => "neighbors",
             Self::Design => "design",
         }
     }
@@ -494,7 +494,7 @@ impl<T: Trials> Drive<'_, T> {
                 self.say(
                     2,
                     match scope {
-                        Scope::Neighbours => format!("isolating part {part} with its neighbours"),
+                        Scope::Neighbours => format!("isolating part {part} with its neighbors"),
                         _ => format!("isolating part {part}, alone"),
                     },
                 );
@@ -696,7 +696,7 @@ fn summary(found: &Value, state: &Checkpoint) -> String {
             signature.map_or("none", Signature::short)
         ),
         Some("not_repeated") => format!(
-            "{} parts failed in the ranking, but none failed again alone or with its neighbours: \
+            "{} parts failed in the ranking, but none failed again alone or with its neighbors: \
              see report.txt for the limits they ran into.",
             state.failing_parts
         ),
@@ -712,8 +712,8 @@ fn summary(found: &Value, state: &Checkpoint) -> String {
         _ => {
             let place = match (found["part"].as_u64(), found["scope"].as_str()) {
                 (None, _) => "the whole design".to_owned(),
-                (Some(part), Some("neighbours")) => {
-                    format!("part {part}, only with its neighbours")
+                (Some(part), Some("neighbors" | "neighbours")) => {
+                    format!("part {part}, only with its neighbors")
                 }
                 (Some(part), _) => format!("part {part}"),
             };
@@ -859,12 +859,12 @@ pub fn run(
     Ok(result)
 }
 
-/// Converts a numbered part (optionally with neighbours), discarding geometry. A history
+/// Converts a numbered part (optionally with neighbors), discarding geometry. A history
 /// prefix uses the same guarded worker and limits as automatic narrowing.
 pub fn trial(
     input: &Path,
     part: usize,
-    neighbours: bool,
+    neighbors: bool,
     stop_at: Option<usize>,
     settings: &NarrowSettings,
 ) -> Result<Value, String> {
@@ -877,7 +877,7 @@ pub fn trial(
     let attempt = children.attempt(
         Trial {
             part: Some(part),
-            scope: if neighbours {
+            scope: if neighbors {
                 Scope::Neighbours
             } else {
                 Scope::Alone
@@ -899,7 +899,7 @@ pub fn trial(
         .failure
         .map(|failure| Signature::new(failure.code(), shape));
     Ok(json!({"schema": wire::PART_TRIAL, "ok": true, "part": part,
-        "neighbours": neighbours, "stop_at_feature": stop_at, "features": attempt.features,
+        "neighbors": neighbors, "stop_at_feature": stop_at, "features": attempt.features,
         "converted": signature.is_none(), "signature": signature}))
 }
 
@@ -1306,7 +1306,7 @@ fn trial_model(
     };
     let alone = parts::select(model, number, false);
     let features = alone.as_ref().map_or(0, parts::history_length);
-    if scope == "neighbours" {
+    if matches!(scope, "neighbors" | "neighbours") {
         let view = parts::with_neighbours(model, number, stop_at).map_err(|e| e.to_string())?;
         return Ok((view, features));
     }

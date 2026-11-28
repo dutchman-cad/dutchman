@@ -123,6 +123,24 @@ pub fn control_height(ui: &egui::Ui) -> f32 {
         .ceil()
 }
 
+/// The height every header control shares, so the row reads as one line.
+pub const HEADER_HEIGHT: f32 = 26.0;
+
+/// A header button: one shape, height and padding for Settings, the SolidCraft version, the
+/// update pill and the Discord button.
+pub fn header_button(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
+    header_button_with(ui, egui::Button::new(text))
+}
+
+/// `header_button` for a button whose text is already styled (a colored status).
+pub fn header_button_with(ui: &mut egui::Ui, button: egui::Button<'_>) -> egui::Response {
+    ui.add(
+        button
+            .min_size(egui::vec2(0.0, HEADER_HEIGHT))
+            .corner_radius(egui::CornerRadius::same(16)),
+    )
+}
+
 /// Centres controls and reserves their full height before wrapping to another row.
 pub fn control_row<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.scope(|ui| {
@@ -266,6 +284,25 @@ fn visuals(theme: Theme, p: &Palette) -> Visuals {
     widgets.open.weak_bg_fill = p.surface_2;
     widgets.open.bg_stroke = Stroke::new(1.0_f32, p.spectre);
     v
+}
+
+/// The baseline of a one-line label in `style`, measured up from the label's bottom edge.
+pub fn descent(ui: &egui::Ui, style: &TextStyle) -> f32 {
+    let font = style.resolve(ui.style());
+    ui.fonts_mut(|fonts| {
+        let galley = fonts.layout_no_wrap("Dv".into(), font, egui::Color32::WHITE);
+        galley.rows.first().map_or(0.0, |row| {
+            row.glyphs
+                .first()
+                .map_or(0.0, |glyph| row.size.y - glyph.pos.y)
+        })
+    })
+}
+
+/// How far a label in `small` must be raised, when both labels end at the same bottom edge,
+/// for its baseline to sit on the baseline of a label in `large`.
+pub fn baseline_lift(ui: &egui::Ui, large: &TextStyle, small: &TextStyle) -> f32 {
+    (descent(ui, large) - descent(ui, small)).max(0.0)
 }
 
 #[cfg(test)]

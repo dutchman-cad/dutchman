@@ -182,7 +182,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                         "feature must be a whole number of at least 0", "feature number is beyond this part's history",
                         "time_limit must be a duration",
                         "the time limit is too large; use a smaller number of seconds", "memory_limit_mb must be a whole number of at least 1",
-                        "memory_limit_mb is too large", "neighbours must be true or false"];
+                        "memory_limit_mb is too large", "neighbors must be true or false", "neighbours must be true or false"];
                     let message = if safe.contains(&message.as_str()) { &message } else {
                         "The diagnostic step could not finish. Check the arguments and local diagnose folder, then retry; no file was sent."
                     };
@@ -225,6 +225,7 @@ fn option_properties() -> Map<String, Value> {
         "sketches": {"type": "boolean", "default": true, "description": "Keep reference sketches when the preset allows it. Sketches needed by retained history stay."},
         "joints": {"type": "boolean", "default": true, "description": "Keep assembly joints when the preset allows it; false keeps the selected placements before joint solving."},
         "part_positions": {"type": "string", "enum": ["smart", "last-shown", "first-placed"], "default": "smart", "description": "Part positions: Smart, As last shown in the original program, or As first placed."},
+        "copper": {"type": "string", "enum": ["outer", "all"], "default": "outer", "description": "Circuit boards: copper layers to read. Outer is the top and bottom faces; all adds each inner copper layer (needs an electronics module that supports it, else the outer layers are read and the report says so)."},
         "stored_placements": {"type": "boolean", "default": false, "description": "Place parts where they were first placed, ignoring later moves"},
         "no_memory_check": {"type": "boolean", "default": false, "description": "Run and check history even when estimated peak memory exceeds available memory; also disables Standard's history budget and history-check skipping."},
         "import_only": {
@@ -241,7 +242,7 @@ fn option_properties() -> Map<String, Value> {
         },
         "overwrite": {
             "type": "boolean",
-            "description": "Replace an existing .sc file at the output (default true). When false, an existing file is left alone and that file's conversion fails, saying so.",
+            "description": "Replace an existing .sc file at the output (default false). Without it an existing file is never replaced: the design is written to the next free name, `name (2).sc`, and the report says where.",
         },
         "link_record": {
             "type": "boolean",
@@ -256,8 +257,8 @@ fn option_properties() -> Map<String, Value> {
             "minimum": 1,
             "description": "Seconds each SolidCraft check may run before the history is written unverified (default 120).",
         },
-        "stand_up": {"type": "boolean", "default": false, "description": "Rotate Y-up models +90 degrees about +X so +Y becomes +Z. Cannot be combined with no_stand_up."},
-        "no_stand_up": {"type": "boolean", "default": false, "description": "Preserve source axes (the default). Cannot be combined with stand_up."},
+        "stand_up": {"type": "boolean", "default": false, "description": "Rotate the design +90 degrees about +X so +Y becomes +Z, whatever its source says. By default a design is stood up only when its source states it is Y-up. Cannot be combined with no_stand_up."},
+        "no_stand_up": {"type": "boolean", "default": false, "description": "Keep the file's axes and never rotate (the CLI's --keep-axes). Cannot be combined with stand_up."},
         "project": project_property(),
         "search": search_property(),
     });
@@ -341,14 +342,14 @@ fn onshape_fetch(args: &Map<String, Value>) -> Result<Value, String> {
 fn tools() -> Value {
     let input = json!({
         "type": "string",
-        "description": "Absolute path of a CAD file. Call formats for supported extensions, reader status and what Dutchman converts. Creo and NX parts share .prt and are distinguished by contents; NX geometry converts, reading Creo geometry is not supported yet.",
+        "description": "Absolute path of a CAD file. Call formats for supported extensions, reader status and what Dutchman converts. Creo and NX parts share .prt and are distinguished by contents; their geometry converts without feature history.",
     });
     let mut convert = option_properties();
     convert.insert("input".to_owned(), input.clone());
     convert.insert("dry_run".to_owned(), json!({"type": "boolean", "default": false, "description": "Return estimate, choices and fits from a quick pre-read, without decoding or writing. Output is optional."}));
     convert.insert(
         "output".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the .sc (legacy .solidcraft or .solvecraft) or .FCMacro file to write, matching to. An existing file there is replaced, unless overwrite is false. If supplied, diagnostics is also written at its specified path."}),
+        json!({"type": "string", "description": "Absolute path of the .sc (legacy .solidcraft or .solvecraft) or .FCMacro file to write, matching to. An existing file there is never replaced unless overwrite is true; the design is written to the next free numbered name instead. If supplied, diagnostics is also written at its specified path."}),
     );
     let mut all = option_properties();
     all.insert(
@@ -362,7 +363,7 @@ fn tools() -> Value {
     );
     all.insert(
         "out_dir".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Designs already there are replaced, unless overwrite is false. Converted designs are written only inside out_dir. If supplied, diagnostics, journal, report_anon, and report_key are also written at their specified paths."}),
+        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Designs already there are never replaced unless overwrite is true; a new design gets the next free numbered name. Converted designs are written only inside out_dir. If supplied, diagnostics, journal, report_anon, and report_key are also written at their specified paths."}),
     );
     all.insert(
         "jobs".to_owned(),
@@ -629,6 +630,11 @@ fn flag(arguments: &Arguments, key: &str, default: bool) -> Result<bool, String>
     }
 }
 
+/// `neighbors`, or its older spelling `neighbours`.
+fn neighbors(arguments: &Arguments) -> Result<bool, String> {
+    Ok(flag(arguments, "neighbors", false)? || flag(arguments, "neighbours", false)?)
+}
+
 fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, String> {
     match arguments.get(key) {
         None | Some(Value::Null) => Ok(None),
@@ -641,7 +647,7 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 22] = [
+const OPTIONS: [&str; 23] = [
     "diagnostics",
     "diagnostics_default",
     "threads",
@@ -651,6 +657,7 @@ const OPTIONS: [&str; 22] = [
     "joints",
     "stored_placements",
     "part_positions",
+    "copper",
     "no_memory_check",
     "to",
     "import_only",
@@ -665,6 +672,15 @@ const OPTIONS: [&str; 22] = [
     "project",
     "search",
 ];
+
+/// The `copper` argument: `outer` (default) or `all`.
+fn copper_layers(arguments: &Arguments) -> Result<dutchman_core::CopperLayers, String> {
+    match arguments.get("copper") {
+        None | Some(Value::Null) => Ok(dutchman_core::CopperLayers::Outer),
+        Some(Value::String(value)) => value.parse(),
+        Some(_) => Err("copper must be outer or all".to_owned()),
+    }
+}
 
 /// The `project` and `search` arguments.
 fn part_search(arguments: &Arguments) -> Result<PartSearch, String> {
@@ -688,6 +704,7 @@ fn part_search(arguments: &Arguments) -> Result<PartSearch, String> {
         part_positions: dutchman_core::PartPositions::Smart,
         project,
         also,
+        copper: copper_layers(arguments)?,
     })
 }
 
@@ -775,7 +792,8 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         no_verify: !flag(arguments, "verify", true)?,
         write_replay: false,
         no_link_record: !flag(arguments, "link_record", true)?,
-        no_clobber: !flag(arguments, "overwrite", true)?,
+        replace: flag(arguments, "overwrite", false)?,
+        no_clobber: false,
         solidcraft,
         solidcraft_version,
         stand_up,
@@ -784,6 +802,7 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
             .map_or(defaults.verify_timeout, |n| n.get() as u64),
         project: search.project,
         search: search.also,
+        copper: search.copper,
         part: None,
     })
 }
@@ -814,14 +833,15 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
             "fits": estimate.zip(available).map(|(e, free)| e.peak_bytes <= free),
         }));
     }
-    let output = path(arguments, "output")?;
+    let (output, replaces) =
+        crate::mark::place(&input, &path(arguments, "output")?, options.replace);
     // A unit test's own program is not a converter.
     #[cfg(test)]
     return Ok(crate::convert_options_with_progress(
         &input,
         &output,
         &options,
-        !options.no_clobber,
+        options.replace || replaces,
         &options.part_search(),
         &|_| {},
     ));
@@ -835,7 +855,8 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
             fallback: None,
             input,
             output,
-            replace: !options.no_clobber,
+            replace: options.replace || replaces,
+            requested: None,
             search: options.part_search(),
         };
         let limits = crate::worker::Limits {
@@ -915,7 +936,7 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
     let mut anon = match optional("report_anon")? {
         Some(path) => Some(crate::anon::Request {
             counts,
-            path,
+            path: crate::resolve_file(path, options.replace),
             salt: match arguments.get("report_salt") {
                 None | Some(Value::Null) => None,
                 Some(Value::String(hex)) => Some(
@@ -923,7 +944,7 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
                 ),
                 Some(_) => return Err("report_salt must be 32 hex digits".to_owned()),
             },
-            key: optional("report_key")?,
+            key: optional("report_key")?.map(|key| crate::resolve_file(key, options.replace)),
         }),
         None if arguments.contains_key("report_salt") || arguments.contains_key("report_key") => {
             return Err("report_salt and report_key need report_anon".to_owned())
@@ -998,7 +1019,7 @@ mod tests {
         }
         for (arguments, choice, flag) in [
             (json!({"stand_up": true}), Some(true), "--stand-up"),
-            (json!({"no_stand_up": true}), Some(false), "--no-stand-up"),
+            (json!({"no_stand_up": true}), Some(false), "--keep-axes"),
         ] {
             let parsed = options(arguments.as_object().unwrap()).unwrap();
             assert_eq!(parsed.stand_up_choice(), choice);
@@ -1054,6 +1075,18 @@ mod tests {
                 mode.name()
             );
         }
+        let all = options(json!({"copper": "all"}).as_object().unwrap()).unwrap();
+        assert_eq!(all.copper, dutchman_core::CopperLayers::All);
+        assert_eq!(all.part_search().copper, dutchman_core::CopperLayers::All);
+        assert_eq!(
+            options(json!({}).as_object().unwrap()).unwrap().copper,
+            dutchman_core::CopperLayers::Outer
+        );
+        assert!(all
+            .to_args()
+            .windows(2)
+            .any(|pair| pair[0] == "--copper" && pair[1] == "all"));
+        assert!(options(json!({"copper": "inner"}).as_object().unwrap()).is_err());
         let alias = options(json!({"stored_placements":true}).as_object().unwrap()).unwrap();
         assert_eq!(alias.effective_part_positions(), PartPositions::FirstPlaced);
         assert_eq!(
@@ -1427,7 +1460,7 @@ fn diagnostic_tools() -> Vec<Value> {
         ("verify_repro", "Replay a saved bundle locally. Returns sizes, manifest and reproduction status only.", vec!["folder"]),
         ("diagnose", "Rank numbered parts locally under time and memory limits.", vec!["input", "out"]),
         ("diagnose_narrow", "Resume automatic narrowing, returning the anonymous signature and rebuild recipe.", vec!["input", "out"]),
-        ("convert_part", "Try one numbered part, optionally with neighbours; discard the converted geometry.", vec!["input", "part"]),
+        ("convert_part", "Try one numbered part, optionally with neighbors; discard the converted geometry.", vec!["input", "part"]),
         ("stop_at_feature", "Try a numbered part through a history feature (0 means stored shape only); discard geometry.", vec!["input", "part", "feature"]),
         ("same_failure", "Check a freshly rebuilt small file against the signature in out.", vec!["input", "out"]),
         ("make_report", "Prepare a local ZIP from the checked small file. It contains geometry. Nothing is sent; ask the user to review it locally before sharing.", vec!["input", "out"]),
@@ -1439,7 +1472,8 @@ fn diagnostic_tools() -> Vec<Value> {
             } else { json!({"type": "string", "description": "Absolute local path; never returned to the assistant."}) });
         }
         if matches!(name, "convert_part" | "stop_at_feature") {
-            properties.insert("neighbours".into(), json!({"type": "boolean", "default": false}));
+            properties.insert("neighbors".into(), json!({"type": "boolean", "default": false}));
+            properties.insert("neighbours".into(), json!({"type": "boolean", "default": false, "description": "Accepted spelling of neighbors."}));
         }
         if !matches!(name, "make_report" | "verify_repro") {
             properties.insert("time_limit".into(), json!({"type": ["string", "integer"], "description": "Time per trial, such as 30s or 5m, or positive whole seconds."}));
@@ -1460,7 +1494,7 @@ fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
     use crate::diagnose::{self, narrow};
     let mut allowed = vec!["input"];
     if matches!(name, "convert_part" | "stop_at_feature") {
-        allowed.extend(["part", "neighbours"]);
+        allowed.extend(["part", "neighbors", "neighbours"]);
         if name == "stop_at_feature" {
             allowed.push("feature");
         }
@@ -1493,13 +1527,7 @@ fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
         } else {
             None
         };
-        return narrow::trial(
-            &input,
-            part,
-            flag(arguments, "neighbours", false)?,
-            feature,
-            &settings,
-        );
+        return narrow::trial(&input, part, neighbors(arguments)?, feature, &settings);
     }
     let out = path(arguments, "out")?;
     let result = match name {
