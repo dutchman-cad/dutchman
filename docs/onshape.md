@@ -228,7 +228,11 @@ convert without this field. Fetch an older bundle again if a reference is missin
 Repeated references share captured files; cycles and chains over eight levels are refused.
 The reader also caps the combined serialized neutral reference payloads at 256 MiB,
 so repeated inserts cannot expand their captured designs without a bound.
-Assembly references to other documents retain the existing `external` behavior.
+Assembly bundles capture referenced Part Studios from their immutable version under
+`references/<document>/<version>/<element>/`. Configured references retain their
+configuration and linked-document context in API requests and use a configuration-specific
+bundle subdirectory. Cross-document references remain listed in the root manifest's
+`external` entries.
 
 Select a SolidCraft 0.44 target (for example, CLI `--solidcraft-version 0.44.0`)
 to retain the link. The existing default target stays unchanged; a target
@@ -334,8 +338,10 @@ output is replaced only after a successful fetch.
   variables, the sketches, and the STEP export (request, one poll, download). A workspace link
   adds one final check. Each feature whose faces or parts the conversion needs adds one
   body-detail call, and a Derived Part Studio or an assembly adds the studios it reads. Before
-  fetching, Dutchman estimates 30 calls for each Part Studio or assembly and asks above 50; see
-  [Calls and cache](#calls-and-cache). Fetching the same version again is read from the cache and usually costs no calls.
+  fetching, Dutchman reserves 30 calls for each ordinary Part Studio or assembly; referenced
+  external studios use their configured feature history to count body-detail calls. It asks
+  above 50; see [Calls and cache](#calls-and-cache). Fetching the same version again is read
+  from the cache and usually costs no calls.
 - **Cap a fetch with `--max-calls N`** (`max_calls` in the MCP tool). The fetch stops before
   call N+1, and `--max-calls 0` reads only the cache. A stopped fetch picks up later with only
   the calls it is missing ([Continue a stopped fetch](#continue-a-stopped-fetch)).
@@ -466,7 +472,10 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
   instances, occurrences, transforms, mates, and connectors as returned by Onshape.
   Referenced elements in the same document are fetched too, including Part Studios.
   References to other documents appear in manifest `external` entries with
-  `documentId`, `elementId`, and `microversionId`; those documents are not fetched.
+  `documentId`, `elementId`, `versionId`, and `microversionId`. Dutchman captures each
+  referenced Part Studio through its immutable version, preserving the instance's
+  microversion pin. Configured references retain their configuration and linked-document
+  context in API requests and use a configuration-specific bundle subdirectory.
 
 No separate Parasolid, mass-property, FeatureScript, translation-status, or
 account metadata files are included. Dutchman follows assembly references within the document
@@ -524,11 +533,14 @@ All endpoints use API v17.
 
 Onshape's Free and Standard plans allow 2,500 API calls a year, so Dutchman tells you
 what a fetch will cost before it spends it. First it lists the document, which costs at
-most three calls (microversion, name, tab list) and is cached. From that listing it
-estimates the whole fetch: 30 calls for each Part Studio or assembly it will read (an
-assembly may use every Part Studio of the document; a Part Studio is read alone), plus the
-listing calls already made. Replies already in the cache cost no call and are not counted,
-in the estimate or in any limit.
+most three calls (microversion, name, tab list) and is cached. For assemblies it also reads
+reachable assembly definitions and external Part Studio listings. From that information it
+reserves 30 calls for each ordinary Part Studio or assembly and counts configured external
+feature histories, including their missing body-detail, configuration, variables, sketches
+and STEP calls. For local tabs with cached feature lists, it counts the missing body-detail,
+configuration, variables, sketches and STEP calls from cache. Cached replies cost no call and
+are reused by the fetch. Estimate-time discovery stops before request 51; if more information
+is needed, Dutchman asks first and reports a lower bound of at least 51 calls.
 
 - **Up to 50 estimated calls:** it prints the estimate and fetches.
 - **Above 50:** it asks first. On a terminal the command line prints the estimate and asks
@@ -537,13 +549,14 @@ in the estimate or in any limit.
 - **`--max-calls N`** is a hard ceiling that nothing goes past, and it is also your go: with
   it the fetch runs without an estimate or a question and stops before call N+1.
   `--max-calls 0` permits cache reads only.
-- **Without `--max-calls`** (after the go) the limit starts at the larger of 50 and the
-  estimate you were shown, and grows as Dutchman finds work: 30 more for each Part Studio or
-  assembly and one more for each body-detail request, up to an automatic ceiling of 2000
-  calls that no document can raise. `--yes`, the MCP tool and the app all estimate first, so
-  a document that needs 51 calls is not stopped at 50.
+- **Without `--max-calls`** (after the go) the limit starts at 50 and grows as Dutchman finds
+  work: 30 more for each Part Studio or assembly and one more for each body-detail request,
+  up to an automatic ceiling of 2000 calls, including estimate-time discovery. After approval,
+  the fetch continues from cached discovery replies. `--yes` skips the approval prompt and uses
+  the same automatic ceiling.
 - **A stop at the limit** says how many calls were spent and about how many the document
-  needs. On the command line: "Onshape call budget reached after 50 API calls; this document
+  needs. An approval estimate may be a lower bound when discovery stopped at request 50. On
+  the command line: "Onshape call budget reached after 50 API calls; this document
   needs about 51. Rerun with --max-calls 51 to finish"; the replies already fetched cost
   nothing on the rerun. With `--json` the report has `estimated_calls` beside `calls`.
 

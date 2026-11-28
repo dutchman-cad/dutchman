@@ -111,9 +111,27 @@ fn hash(bytes: &[u8]) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
+fn part_query(query: &str, configuration: Option<&str>, linked_document: Option<&str>) -> String {
+    let mut params = url::form_urlencoded::Serializer::new(String::new());
+    if !query.is_empty() {
+        for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+            params.append_pair(&key, &value);
+        }
+    }
+    if let Some(configuration) = configuration.filter(|value| !value.is_empty()) {
+        params.append_pair("configuration", configuration);
+    }
+    if let Some(document) = linked_document {
+        params.append_pair("linkDocumentId", document);
+    }
+    params.finish().replace('+', "%20")
+}
 fn id(value: &str) -> Result<String> {
     if value.len() != 24 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(Error::new(ErrorKind::Url, "Use an Onshape document URL with 24-character document, workspace/version, and element IDs."));
+        return Err(Error::new(
+            ErrorKind::Url,
+            "Use an Onshape document URL with 24-character document, workspace/version, and element IDs.",
+        ));
     }
     Ok(value.into())
 }
@@ -128,7 +146,10 @@ pub struct DocumentUrl {
 impl DocumentUrl {
     pub fn parse(input: &str, version: Option<&str>) -> Result<Self> {
         let fail = || {
-            Error::new(ErrorKind::Url, "Use https://cad.onshape.com/documents/<id>/w/<workspace>/e/<element> or a /v/<version> URL; --version takes a version ID.")
+            Error::new(
+                ErrorKind::Url,
+                "Use https://cad.onshape.com/documents/<id>/w/<workspace>/e/<element> or a /v/<version> URL; --version takes a version ID.",
+            )
         };
         let url = url::Url::parse(input).map_err(|_| fail())?;
         if url.scheme() != "https"
@@ -401,25 +422,31 @@ pub fn calls_text(calls: u32) -> String {
 /// What a fetch is expected to cost, worked out from the document's own listing.
 #[derive(Debug, Clone)]
 pub struct Estimate {
-    /// Calls the whole fetch is expected to use, including the listing already made. An
-    /// estimate: bodies and referenced studios are only known once the fetch reads them.
+    /// Calls the whole fetch is expected to use, including estimate-time listings. An
+    /// estimate: body contents and some referenced studios can only be known once fetched.
     pub calls: u32,
     /// Real requests the estimate itself made. Cached replies are not counted.
     pub listing_calls: u32,
     /// Part Studios and assemblies the fetch is expected to read.
     pub elements: u32,
     mid: String,
+    /// Whether reference discovery completed before the approval boundary.
+    discovery_complete: bool,
 }
 impl Estimate {
     pub fn needs_approval(&self) -> bool {
-        self.calls > ASK_ABOVE_CALLS
+        !self.discovery_complete || self.calls > ASK_ABOVE_CALLS
     }
 
     /// The text that asks for the user's go, without naming a command-line option.
     pub fn question(&self) -> String {
+        let estimate = if self.discovery_complete {
+            format!("about {}", calls_text(self.calls))
+        } else {
+            format!("at least {}", calls_text(self.calls))
+        };
         format!(
-            "This document needs about {} of your yearly Onshape API calls ({} on Free plans). Continue?",
-            calls_text(self.calls),
+            "This document needs {estimate} of your yearly Onshape API calls ({} on Free plans). Continue?",
             calls_text(FREE_PLAN_YEARLY_CALLS)
         )
     }
@@ -455,13 +482,23 @@ pub fn budget_stop_text(calls: u32, estimate: Option<u32>) -> String {
 }
 pub const APPROVAL_DECLINED: &str = "Fetch canceled. No more Onshape API calls were used.";
 
-/// Lists the document, which costs at most three calls and is cached, and counts what the
-/// fetch will read.
+/// Lists the document and counts what the fetch will read. For assemblies, this also reads
+/// reachable assembly definitions and the feature lists of external Part Studios.
 pub fn estimate_calls<C: HttpClient>(
     client: &mut C,
     credentials: &FetchAuth,
     source: &DocumentUrl,
     cache: &Path,
+) -> Result<Estimate> {
+    estimate_calls_with_limit(client, credentials, source, cache, ASK_ABOVE_CALLS)
+}
+
+fn estimate_calls_with_limit<C: HttpClient>(
+    client: &mut C,
+    credentials: &FetchAuth,
+    source: &DocumentUrl,
+    cache: &Path,
+    listing_limit: u32,
 ) -> Result<Estimate> {
     let credentials = credentials.as_auth();
     check_source(&credentials, source)?;
@@ -469,74 +506,484 @@ pub fn estimate_calls<C: HttpClient>(
         client,
         credentials,
         calls: 0,
-        max_calls: http::AUTO_CEILING_CALLS,
+        max_calls: listing_limit,
         auto: false,
         progress: None,
         needed: None,
     };
     let (scope, mid) = resolve(&mut session, source, cache)?;
-    let content_kind = if source.kind == "v" { "v" } else { "m" };
-    let content_id = if source.kind == "v" {
-        source.version.clone()
-    } else {
-        mid.clone()
-    };
-    let mut fetcher = Fetcher::new(&mut session, &scope, source, &mid, content_kind);
-    document_name(&mut fetcher, source)?;
-    let tabs = fetcher.json(
-        &format!(
-            "{API}/documents/d/{}/{content_kind}/{content_id}/elements",
-            source.document
-        ),
-        "",
-    )?;
-    let tabs = tabs.as_array().ok_or_else(response_error)?;
-    let kind_of = |tab: &Value| {
-        tab.get("elementType")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
-    let linked = tabs
-        .iter()
-        .find(|tab| tab.get("id").and_then(Value::as_str) == Some(&source.element))
-        .ok_or_else(response_error)?;
-    let studios = |tabs: &[Value]| {
-        tabs.iter()
-            .filter(|tab| matches!(kind_of(tab).as_deref(), Some("PARTSTUDIO" | "ASSEMBLY")))
-            .count()
-    };
-    // An assembly may use any studio of the document; a studio is read alone.
-    let elements = if kind_of(linked).as_deref() == Some("ASSEMBLY") {
-        studios(tabs)
-    } else {
-        1
-    };
-    let mut remaining = u32::try_from(elements)
-        .unwrap_or(u32::MAX)
-        .saturating_mul(http::AUTO_ELEMENT_CALLS);
-    if kind_of(linked).as_deref() == Some("PARTSTUDIO") {
-        // Replies already cached cost nothing.
-        let base = format!(
-            "{API}/partstudios/d/{}/{content_kind}/{content_id}/e/{}",
-            source.document, source.element
-        );
-        let features = format!("{base}/features");
-        let cached = [
-            fetcher.is_cached(
-                &features,
-                "rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false",
+    let mut discovered_elements = 0usize;
+    let result = (|| {
+        let content_kind = if source.kind == "v" { "v" } else { "m" };
+        let content_id = if source.kind == "v" {
+            source.version.clone()
+        } else {
+            mid.clone()
+        };
+        let mut fetcher = Fetcher::new(&mut session, &scope, source, &mid, content_kind);
+        document_name(&mut fetcher, source)?;
+        let tabs = fetcher.json(
+            &format!(
+                "{API}/documents/d/{}/{content_kind}/{content_id}/elements",
+                source.document
             ),
-            fetcher.is_cached(&format!("{base}/sketches"), ""),
-        ];
-        remaining = remaining.saturating_sub(u32::from(cached[0]) + u32::from(cached[1]));
+            "",
+        )?;
+        let tabs = tabs.as_array().ok_or_else(response_error)?;
+        let kind_of = |tab: &Value| {
+            tab.get("elementType")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        let linked = tabs
+            .iter()
+            .find(|tab| tab.get("id").and_then(Value::as_str) == Some(&source.element))
+            .ok_or_else(response_error)?;
+        let studios = |tabs: &[Value]| {
+            tabs.iter()
+                .filter(|tab| matches!(kind_of(tab).as_deref(), Some("PARTSTUDIO" | "ASSEMBLY")))
+                .count()
+        };
+        // An assembly may use any studio of the document; a studio is read alone.
+        let mut elements = if kind_of(linked).as_deref() == Some("ASSEMBLY") {
+            studios(tabs)
+        } else {
+            1
+        };
+        discovered_elements = elements;
+        let mut remaining = u32::try_from(elements)
+            .unwrap_or(u32::MAX)
+            .saturating_mul(http::AUTO_ELEMENT_CALLS);
+        for tab in tabs {
+            let Some(element) = tab.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if kind_of(linked).as_deref() != Some("ASSEMBLY") && element != source.element {
+                continue;
+            }
+            match kind_of(tab).as_deref() {
+                Some("ASSEMBLY") => {
+                    let base = format!(
+                        "{API}/assemblies/d/{}/{content_kind}/{content_id}/e/{element}/features",
+                        source.document
+                    );
+                    if fetcher.is_cached(&base, "") {
+                        remaining = remaining.saturating_sub(http::AUTO_ELEMENT_CALLS);
+                    }
+                }
+                Some("PARTSTUDIO") => {
+                    if let Some(missing) = cached_partstudio_missing(
+                        &mut fetcher,
+                        source,
+                        element,
+                        content_kind,
+                        &content_id,
+                    )? {
+                        remaining = remaining
+                            .saturating_sub(http::AUTO_ELEMENT_CALLS)
+                            .saturating_add(missing);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if kind_of(linked).as_deref() == Some("ASSEMBLY") {
+            let mut queue = VecDeque::from([source.element.clone()]);
+            let mut visited = BTreeSet::new();
+            let mut external = BTreeSet::new();
+            while let Some(element) = queue.pop_front() {
+                if !visited.insert(element.clone()) {
+                    continue;
+                }
+                if visited.len() > 1000 {
+                    return Err(Error::new(
+                        ErrorKind::Limit,
+                        "The Onshape assembly references too many assemblies to estimate; choose a smaller assembly.",
+                    ));
+                }
+                let Some(tab) = tabs
+                    .iter()
+                    .find(|tab| tab.get("id").and_then(Value::as_str) == Some(&element))
+                else {
+                    return Err(response_error());
+                };
+                if kind_of(tab).as_deref() != Some("ASSEMBLY") {
+                    continue;
+                }
+                let definition_path = format!(
+                    "{API}/assemblies/d/{}/{content_kind}/{content_id}/e/{element}",
+                    source.document
+                );
+                let definition = fetcher.json(
+                    &definition_path,
+                    "includeMateFeatures=true&includeMateConnectors=true",
+                )?;
+                references(
+                    &definition,
+                    &source.document,
+                    &mid,
+                    &mut queue,
+                    &mut external,
+                )?;
+            }
+            let mut estimated = BTreeSet::new();
+            let mut ancestry =
+                BTreeSet::from([(source.document.clone(), mid.clone(), source.element.clone())]);
+            for (
+                document,
+                element,
+                external_version,
+                external_mid,
+                configuration,
+                linked_document,
+            ) in external
+            {
+                let identity = (document.clone(), external_version.clone(), element.clone());
+                ancestry.insert(identity.clone());
+                remaining = remaining.saturating_add(estimate_external_partstudio(
+                    fetcher.session,
+                    &scope,
+                    &document,
+                    &external_version,
+                    &element,
+                    &external_mid,
+                    configuration.as_deref(),
+                    linked_document.as_deref(),
+                    &ancestry,
+                    &mut estimated,
+                    &mut elements,
+                )?);
+                discovered_elements = elements;
+                ancestry.remove(&identity);
+            }
+        }
+        let listing_calls = session.calls;
+        Ok(Estimate {
+            calls: listing_calls.saturating_add(remaining),
+            listing_calls,
+            elements: u32::try_from(elements).unwrap_or(u32::MAX),
+            mid: mid.clone(),
+            discovery_complete: true,
+        })
+    })();
+    match result {
+        Err(error)
+            if listing_limit == ASK_ABOVE_CALLS
+                && error.kind == ErrorKind::Budget
+                && session.calls >= listing_limit =>
+        {
+            Ok(Estimate {
+                calls: ASK_ABOVE_CALLS.saturating_add(1),
+                listing_calls: session.calls,
+                elements: u32::try_from(discovered_elements).unwrap_or(u32::MAX),
+                mid,
+                discovery_complete: false,
+            })
+        }
+        result => result,
     }
-    let listing_calls = session.calls;
-    Ok(Estimate {
-        calls: listing_calls.saturating_add(remaining),
-        listing_calls,
-        elements: u32::try_from(elements).unwrap_or(u32::MAX),
-        mid,
-    })
+}
+
+/// Replaces the conservative reservation when a local Part Studio's feature history is
+/// already cached, counting the remaining reads using the same rules as capture.
+fn cached_partstudio_missing<C: HttpClient>(
+    fetcher: &mut Fetcher<'_, '_, C>,
+    source: &DocumentUrl,
+    element: &str,
+    content_kind: &str,
+    content_id: &str,
+) -> Result<Option<u32>> {
+    let base = format!(
+        "{API}/partstudios/d/{}/{content_kind}/{content_id}/e/{element}",
+        source.document
+    );
+    let features_path = format!("{base}/features");
+    let features_query = "rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false";
+    if !fetcher.is_cached(&features_path, features_query) {
+        return Ok(None);
+    }
+    let features = fetcher.json(&features_path, features_query)?;
+    let list = features
+        .get("features")
+        .and_then(Value::as_array)
+        .ok_or_else(response_error)?;
+    if list.len() > 10000 {
+        return Err(Error::new(
+            ErrorKind::Limit,
+            "The Onshape Part Studio has too many features to estimate; fetch a smaller element.",
+        ));
+    }
+    let mut wanted = BTreeSet::new();
+    for (index, feature) in list.iter().enumerate() {
+        if feature.get("suppressed").and_then(Value::as_bool) != Some(true)
+            && needs_topology(feature, 0)?
+        {
+            wanted.insert(index);
+        }
+    }
+    for index in part_creators(list) {
+        wanted.insert(index);
+        wanted.insert(index.saturating_add(1));
+    }
+    let mut missing = wanted
+        .iter()
+        .map(|index| {
+            fetcher.missing(
+                &format!("{base}/bodydetails"),
+                &bodydetails_query(*index, list.len()),
+            )
+        })
+        .sum::<u32>();
+    let configuration = format!(
+        "{API}/elements/d/{}/{content_kind}/{content_id}/e/{element}/configuration",
+        source.document
+    );
+    let variables = format!(
+        "{API}/variables/d/{}/{content_kind}/{content_id}/e/{element}/variables",
+        source.document
+    );
+    missing = missing
+        .saturating_add(fetcher.missing(&configuration, ""))
+        .saturating_add(fetcher.missing(&variables, "includeValuesAndReferencedVariables=true"))
+        .saturating_add(fetcher.missing(&format!("{base}/sketches"), ""));
+    if !sketch_only(list) {
+        missing = missing.saturating_add(fetcher.step_calls_missing(source, element, None, None)?);
+    }
+    if source.kind == "w" && element == source.element {
+        missing = missing.saturating_add(1);
+    }
+    Ok(Some(missing))
+}
+
+/// Estimates the uncached calls for a referenced Part Studio without fetching its body
+/// details or STEP export. Its document name, element listing, and feature list are read as
+/// part of the estimate so the remaining work can be counted from the actual feature history.
+#[allow(clippy::too_many_arguments)]
+fn estimate_external_partstudio<C: HttpClient>(
+    session: &mut Session<'_, C>,
+    scope: &Path,
+    document: &str,
+    version: &str,
+    element: &str,
+    mid: &str,
+    configuration: Option<&str>,
+    linked_document: Option<&str>,
+    ancestry: &BTreeSet<(String, String, String)>,
+    estimated: &mut BTreeSet<(String, String, String, String)>,
+    elements: &mut usize,
+) -> Result<u32> {
+    let identity = (
+        document.to_owned(),
+        version.to_owned(),
+        element.to_owned(),
+        configuration.unwrap_or_default().to_owned(),
+    );
+    if !estimated.insert(identity) {
+        return Ok(0);
+    }
+    *elements = (*elements).saturating_add(1);
+    let source = DocumentUrl {
+        document: document.to_owned(),
+        kind: "v".into(),
+        version: version.to_owned(),
+        element: element.to_owned(),
+    };
+    let mut fetcher = Fetcher::new(session, scope, &source, mid, "v");
+    document_name(&mut fetcher, &source)?;
+    let tabs_path = format!("{API}/documents/d/{document}/v/{version}/elements");
+    let tabs = fetcher.json(&tabs_path, "")?;
+    let tabs = tabs.as_array().ok_or_else(response_error)?;
+    if tabs.len() > 10000 {
+        return Err(Error::new(
+            ErrorKind::Limit,
+            "The Onshape document has too many tabs to estimate; fetch a smaller element.",
+        ));
+    }
+    let tab = tabs
+        .iter()
+        .find(|tab| tab.get("id").and_then(Value::as_str) == Some(element))
+        .ok_or_else(response_error)?;
+    if tab.get("elementType").and_then(Value::as_str) != Some("PARTSTUDIO") {
+        return Err(Error::new(
+            ErrorKind::Unsupported,
+            "Only external Part Studio references are supported; fetch an assembly without external assemblies.",
+        ));
+    }
+    let base = format!("{API}/partstudios/d/{document}/v/{version}/e/{element}");
+    let features_path = format!("{base}/features");
+    let features_query = part_query(
+        "rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false",
+        configuration,
+        linked_document,
+    );
+    let features = fetcher.json(&features_path, &features_query)?;
+    let list = features
+        .get("features")
+        .and_then(Value::as_array)
+        .ok_or_else(response_error)?;
+    if list.len() > 10000 {
+        return Err(Error::new(
+            ErrorKind::Limit,
+            "The Onshape Part Studio has too many features to estimate; fetch a smaller element.",
+        ));
+    }
+
+    let mut wanted = BTreeSet::new();
+    for (index, feature) in list.iter().enumerate() {
+        if feature.get("suppressed").and_then(Value::as_bool) != Some(true)
+            && needs_topology(feature, 0)?
+        {
+            wanted.insert(index);
+        }
+    }
+    for index in part_creators(list) {
+        wanted.insert(index);
+        wanted.insert(index.saturating_add(1));
+    }
+    if ancestry.len() > 1 {
+        wanted.insert(list.len());
+    }
+
+    let mut remaining = 0u32;
+    for index in wanted {
+        remaining = remaining.saturating_add(fetcher.missing(
+            &format!("{base}/bodydetails"),
+            &part_query(
+                &bodydetails_query(index, list.len()),
+                configuration,
+                linked_document,
+            ),
+        ));
+    }
+    let configuration_path =
+        format!("{API}/elements/d/{document}/v/{version}/e/{element}/configuration");
+    let variables_path = format!("{API}/variables/d/{document}/v/{version}/e/{element}/variables");
+    remaining = remaining
+        .saturating_add(fetcher.missing(
+            &configuration_path,
+            &part_query("", configuration, linked_document),
+        ))
+        .saturating_add(fetcher.missing(
+            &variables_path,
+            &part_query(
+                "includeValuesAndReferencedVariables=true",
+                configuration,
+                linked_document,
+            ),
+        ))
+        .saturating_add(fetcher.missing(
+            &format!("{base}/sketches"),
+            &part_query("", configuration, linked_document),
+        ));
+    if !sketch_only(list) {
+        remaining = remaining.saturating_add(fetcher.step_calls_missing(
+            &source,
+            element,
+            configuration,
+            linked_document,
+        )?);
+    }
+
+    let derived = collect_derived_references(list)?;
+    drop(fetcher);
+    for (derived_document, derived_version, derived_element) in derived {
+        let identity = (
+            derived_document.clone(),
+            derived_version.clone(),
+            derived_element.clone(),
+        );
+        if ancestry.contains(&identity) {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "Derived Part Studios repeat a reference; fetch a Part Studio without a reference cycle.",
+            ));
+        }
+        let resolution = scope.join(format!(
+            "{}-v-{}-resolution.json",
+            derived_document, derived_version
+        ));
+        let derived_mid = if resolution.exists() {
+            String::from_utf8(read_bounded(&resolution, 128)?).map_err(|_| response_error())?
+        } else {
+            let derived_source = DocumentUrl {
+                document: derived_document.clone(),
+                kind: "v".into(),
+                version: derived_version.clone(),
+                element: derived_element.clone(),
+            };
+            let current = current_microversion(session, &derived_source)?;
+            private_write(&resolution, current.as_bytes())?;
+            current
+        };
+        let mut next_ancestry = ancestry.clone();
+        next_ancestry.insert(identity);
+        remaining = remaining.saturating_add(estimate_external_partstudio(
+            session,
+            scope,
+            &derived_document,
+            &derived_version,
+            &derived_element,
+            &derived_mid,
+            None,
+            None,
+            &next_ancestry,
+            estimated,
+            elements,
+        )?);
+    }
+    Ok(remaining)
+}
+
+fn collect_derived_references(features: &[Value]) -> Result<BTreeSet<(String, String, String)>> {
+    fn collect(
+        value: &Value,
+        depth: usize,
+        found: &mut BTreeSet<(String, String, String)>,
+    ) -> Result<()> {
+        if depth > 64 {
+            return Err(response_error());
+        }
+        if let (Some(document), Some(version), Some(element)) = (
+            value.get("documentId").and_then(Value::as_str),
+            value.get("versionId").and_then(Value::as_str),
+            value.get("elementId").and_then(Value::as_str),
+        ) {
+            found.insert((id(document)?, id(version)?, id(element)?));
+            if found.len() > 1000 {
+                return Err(response_error());
+            }
+        }
+        match value {
+            Value::Object(object) => {
+                for child in object.values() {
+                    collect(child, depth + 1, found)?;
+                }
+            }
+            Value::Array(array) if array.len() <= 10_000 => {
+                for child in array {
+                    collect(child, depth + 1, found)?;
+                }
+            }
+            Value::Array(_) => return Err(response_error()),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    let mut found = BTreeSet::new();
+    for feature in features {
+        if feature.get("suppressed").and_then(Value::as_bool) == Some(true)
+            || feature.get("parentSuppressed").and_then(Value::as_bool) == Some(true)
+            || !matches!(
+                feature.get("featureType").and_then(Value::as_str),
+                Some("derived" | "importDerived")
+            )
+        {
+            continue;
+        }
+        collect(feature, 0, &mut found)?;
+    }
+    Ok(found)
 }
 
 /// Fetches once the estimate was shown and any needed go was given. The call limit is the
@@ -1104,11 +1551,9 @@ fn fetch_inner<C: HttpClient>(
             &scope,
             &mid,
             &mut hits,
-            &BTreeSet::from([(
-                source.document.clone(),
-                source.version.clone(),
-                source.element.clone(),
-            )]),
+            &BTreeSet::from([(source.document.clone(), mid.clone(), source.element.clone())]),
+            None,
+            None,
         )?;
         match captured {
             Capture::Complete(report) => {
@@ -1172,6 +1617,8 @@ fn capture<C: HttpClient>(
     mid: &str,
     hits: &mut u32,
     ancestry: &BTreeSet<(String, String, String)>,
+    configuration: Option<&str>,
+    linked_document: Option<&str>,
 ) -> Result<Capture> {
     let content_kind = if source.kind == "v" { "v" } else { "m" };
     let content_id = if source.kind == "v" {
@@ -1241,7 +1688,11 @@ fn capture<C: HttpClient>(
                 let features = fetcher
                     .raw(
                         &format!("{base}/features"),
-                        "rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false",
+                        &part_query(
+                            "rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false",
+                            configuration,
+                            linked_document,
+                        ),
                         file.clone(),
                         false,
                     )?
@@ -1305,7 +1756,12 @@ fn capture<C: HttpClient>(
                     rest += fetcher.missing(&variables_path, VARIABLES_QUERY);
                     rest += fetcher.missing(&format!("{base}/sketches"), "");
                     if !sketch_only(list) {
-                        rest += fetcher.step_calls_missing(source, &eid)?;
+                        rest += fetcher.step_calls_missing(
+                            source,
+                            &eid,
+                            configuration,
+                            linked_document,
+                        )?;
                     }
                     if source.kind == "w" {
                         rest += 1;
@@ -1317,7 +1773,11 @@ fn capture<C: HttpClient>(
                     let file = format!("{prefix}/bodydetails/{i}.json");
                     fetcher.raw(
                         &format!("{base}/bodydetails"),
-                        &bodydetails_query(i, list.len()),
+                        &part_query(
+                            &bodydetails_query(i, list.len()),
+                            configuration,
+                            linked_document,
+                        ),
                         file,
                         false,
                     )?;
@@ -1331,25 +1791,40 @@ fn capture<C: HttpClient>(
                 paths.insert("bodydetails", index);
                 let config = format!("{prefix}/configuration.json");
                 if fetcher
-                    .raw(&configuration_path, "", config.clone(), true)?
+                    .raw(
+                        &configuration_path,
+                        &part_query("", configuration, linked_document),
+                        config.clone(),
+                        true,
+                    )?
                     .is_some()
                 {
                     paths.insert("configuration", config);
                 }
                 let variables = format!("{prefix}/variables.json");
                 if fetcher
-                    .raw(&variables_path, VARIABLES_QUERY, variables.clone(), true)?
+                    .raw(
+                        &variables_path,
+                        &part_query(VARIABLES_QUERY, configuration, linked_document),
+                        variables.clone(),
+                        true,
+                    )?
                     .is_some()
                 {
                     paths.insert("variables", variables);
                 }
                 if !sketch_only(list) {
                     let step = format!("{prefix}/export.step");
-                    fetcher.export_step(source, &eid, &step)?;
+                    fetcher.export_step(source, &eid, &step, configuration, linked_document)?;
                     paths.insert("step", step);
                 }
                 let sketches = format!("{prefix}/sketches.json");
-                fetcher.raw(&format!("{base}/sketches"), "", sketches.clone(), false)?;
+                fetcher.raw(
+                    &format!("{base}/sketches"),
+                    &part_query("", configuration, linked_document),
+                    sketches.clone(),
+                    false,
+                )?;
                 paths.insert("sketches", sketches);
             }
             "ASSEMBLY" => {
@@ -1370,14 +1845,106 @@ fn capture<C: HttpClient>(
                 let file = format!("assemblies/{eid}/features.json");
                 fetcher.raw(&format!("{base}/features"), "", file.clone(), false)?;
                 paths.insert("features", file);
-                references(&data, &source.document, mid, &mut queue, &mut external, 0)?;
+                references(&data, &source.document, mid, &mut queue, &mut external)?;
             }
-            _ => return Err(Error::new(
-                ErrorKind::Unsupported,
-                "This Onshape tab is not supported yet; choose a Part Studio or assembly element.",
-            )),
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "This Onshape tab is not supported yet; choose a Part Studio or assembly element.",
+                ));
+            }
         }
         elements.push(json!({"id": eid, "name": tab_name, "type": kind, "files": paths}));
+    }
+    // External references are pinned to immutable versions. Capture them under
+    // references/ so the assembly bundle remains self-contained.
+    let mut captured_prefixes = BTreeSet::new();
+    for (document, element, external_version, external_mid, configuration, linked_document) in
+        external.clone()
+    {
+        let config_segment = configuration
+            .as_deref()
+            .map(|value| {
+                hash(value.as_bytes())
+                    .get(..16)
+                    .map(|hash| format!("config-{hash}"))
+                    .ok_or_else(response_error)
+            })
+            .transpose()?;
+        let prefix = match config_segment {
+            Some(config) => format!("references/{document}/{external_version}/{element}/{config}/"),
+            None => format!("references/{document}/{external_version}/{element}/"),
+        };
+        if !captured_prefixes.insert(prefix.clone()) {
+            continue;
+        }
+        fetcher.session.allow(http::AUTO_ELEMENT_CALLS);
+        let identity = (document.clone(), external_mid.clone(), element.clone());
+        if ancestry.contains(&identity) || ancestry.len() >= 8 {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "External Part Studios repeat a reference or exceed eight levels; fetch an assembly without a reference cycle.",
+            ));
+        }
+        let source = DocumentUrl {
+            document: document.clone(),
+            kind: "v".into(),
+            version: external_version.clone(),
+            element: element.clone(),
+        };
+        let mut chain = ancestry.clone();
+        chain.insert(identity);
+        let directory = tempfile::tempdir_in(scope).map_err(io_error)?;
+        let output = directory.path().join("reference.onshape-bundle");
+        let mut reference_hits = 0;
+        let Capture::Complete(_) = capture(
+            fetcher.session,
+            &source,
+            &output,
+            scope,
+            &external_mid,
+            &mut reference_hits,
+            &chain,
+            configuration.as_deref(),
+            linked_document.as_deref(),
+        )?
+        else {
+            return Err(changed_error());
+        };
+        fetcher.hits += reference_hits;
+        let bytes = read_bounded(&output, MAX_TOTAL as u64)?;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(io_error)?;
+        if archive.len() > 4096 {
+            return Err(response_error());
+        }
+        let mut reference_sources = BTreeMap::new();
+        for i in 0..archive.len() {
+            let mut member = archive.by_index(i).map_err(io_error)?;
+            let mut data = Vec::new();
+            member
+                .by_ref()
+                .take(MAX_TOTAL as u64 + 1)
+                .read_to_end(&mut data)
+                .map_err(io_error)?;
+            let name = member.name().map_err(io_error)?.into_owned();
+            if name == "manifest.json" {
+                let manifest: Value =
+                    serde_json::from_slice(&data).map_err(|_| response_error())?;
+                if let Some(sources) = manifest.get("file_sources").and_then(Value::as_object) {
+                    reference_sources.extend(
+                        sources
+                            .iter()
+                            .map(|(path, source)| (path.clone(), source.clone())),
+                    );
+                }
+            }
+            fetcher.add(format!("{prefix}{name}"), data)?;
+        }
+        for (path, source) in reference_sources {
+            fetcher
+                .file_sources
+                .insert(format!("{prefix}{path}"), source);
+        }
     }
     *hits += fetcher.hits;
     if source.kind == "w" {
@@ -1392,7 +1959,7 @@ fn capture<C: HttpClient>(
         }
     }
     fetcher.record_source("manifest.json", content_kind);
-    let manifest = json!({"schema": "dutchman.onshape-bundle/1", "fetched_at": timestamp(fetcher.session.client.now()), "fetcher": format!("dutchman {}", crate::BUILD_VERSION), "api_version": "v17", "document": {"id": source.document, "name": name, "workspace_or_version": source.kind, "wvid": source.version, "microversion": mid}, "root_element": source.element, "elements": elements, "external": external.into_iter().map(|(d,e,m)| json!({"documentId":d,"elementId":e,"microversionId":m})).collect::<Vec<_>>(), "calls": fetcher.session.calls, "consistent": true, "file_sources": fetcher.file_sources});
+    let manifest = json!({"schema": "dutchman.onshape-bundle/1", "fetched_at": timestamp(fetcher.session.client.now()), "fetcher": format!("dutchman {}", crate::BUILD_VERSION), "api_version": "v17", "document": {"id": source.document, "name": name, "workspace_or_version": source.kind, "wvid": source.version, "microversion": mid}, "root_element": source.element, "elements": elements, "external": external.into_iter().map(|(d,e,v,m,configuration,link_document_id)| json!({"documentId":d,"elementId":e,"versionId":v,"microversionId":m,"configuration":configuration,"linkDocumentId":link_document_id})).collect::<Vec<_>>(), "calls": fetcher.session.calls, "consistent": true, "file_sources": fetcher.file_sources});
     privacy(&manifest)?;
     fetcher.add(
         "manifest.json".into(),
@@ -1575,19 +2142,43 @@ fn needs_topology(value: &Value, depth: usize) -> Result<bool> {
     Ok(false)
 }
 
+type ExternalReference = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
 fn references(
     value: &Value,
     did: &str,
     mid: &str,
     queue: &mut VecDeque<String>,
-    external: &mut BTreeSet<(String, String, String)>,
-    depth: usize,
+    external: &mut BTreeSet<ExternalReference>,
 ) -> Result<()> {
-    if depth > 100 {
-        return Err(response_error());
+    let root = value.get("rootAssembly").ok_or_else(response_error)?;
+    let mut instances = Vec::new();
+    instances.extend(
+        root.get("instances")
+            .and_then(Value::as_array)
+            .ok_or_else(response_error)?,
+    );
+    for subassembly in value
+        .get("subAssemblies")
+        .and_then(Value::as_array)
+        .ok_or_else(response_error)?
+    {
+        instances.extend(
+            subassembly
+                .get("instances")
+                .and_then(Value::as_array)
+                .ok_or_else(response_error)?,
+        );
     }
-    match value {
-        Value::Object(map) => {
+    for instance in instances {
+        if let Value::Object(map) = instance {
             if let (Some(d), Some(e)) = (
                 map.get("documentId").and_then(Value::as_str),
                 map.get("elementId").and_then(Value::as_str),
@@ -1601,31 +2192,64 @@ fn references(
                     .unwrap_or(mid);
                 if d == did {
                     if m != mid {
-                        return Err(Error::new(ErrorKind::Unsupported, "An assembly reference uses a different microversion; a single-microversion bundle is not supported yet for this assembly."));
+                        return Err(Error::new(
+                            ErrorKind::Unsupported,
+                            "An assembly reference uses a different microversion; a single-microversion bundle is not supported yet for this assembly.",
+                        ));
                     }
                     if queue.len() >= 10000 {
                         return Err(response_error());
                     }
                     queue.push_back(e);
                 } else {
+                    let version = map
+                        .get("documentVersion")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Unsupported,
+                                "Onshape did not provide a version for an external assembly reference; fetch an assembly with versioned references.",
+                            )
+                        })?;
                     let m = map
                         .get("documentMicroversion")
                         .or_else(|| map.get("microversionId"))
                         .and_then(Value::as_str)
                         .ok_or_else(response_error)?;
-                    external.insert((d, e, id(m).map_err(|_| response_error())?));
+                    let configuration = map
+                        .get("configuration")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                        .map(|value| {
+                            if value.len() > 16 * 1024 {
+                                Err(response_error())
+                            } else {
+                                Ok(value.to_owned())
+                            }
+                        })
+                        .transpose()?;
+                    let linked_document = map
+                        .get("linkDocumentId")
+                        .and_then(Value::as_str)
+                        .map(id)
+                        .transpose()?;
+                    if map.get("type").and_then(Value::as_str) == Some("Assembly") && d != did {
+                        return Err(Error::new(
+                            ErrorKind::Unsupported,
+                            "External assembly references are not supported yet; fetch an assembly without external assemblies.",
+                        ));
+                    }
+                    external.insert((
+                        d,
+                        e,
+                        id(version).map_err(|_| response_error())?,
+                        id(m).map_err(|_| response_error())?,
+                        configuration,
+                        linked_document,
+                    ));
                 }
             }
-            for child in map.values() {
-                references(child, did, mid, queue, external, depth + 1)?;
-            }
         }
-        Value::Array(list) => {
-            for child in list {
-                references(child, did, mid, queue, external, depth + 1)?;
-            }
-        }
-        _ => {}
     }
     Ok(())
 }
@@ -1664,7 +2288,10 @@ fn privacy(value: &Value) -> Result<()> {
                 ]
                 .contains(&key.to_ascii_lowercase().as_str())
                 {
-                    return Err(Error::new(ErrorKind::Privacy, "Onshape returned account or credential fields; this response cannot be stored verbatim in a bundle. Nothing from this response was bundled."));
+                    return Err(Error::new(
+                        ErrorKind::Privacy,
+                        "Onshape returned account or credential fields; this response cannot be stored verbatim in a bundle. Nothing from this response was bundled.",
+                    ));
                 }
                 privacy(value)?;
             }

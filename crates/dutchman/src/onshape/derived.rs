@@ -98,6 +98,8 @@ pub(super) fn capture_references<C: HttpClient>(
             &mid,
             &mut hits,
             &chain,
+            None,
+            None,
         )?
         else {
             return Err(changed_error());
