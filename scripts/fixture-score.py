@@ -86,7 +86,8 @@ def prepare(args):
     snapshot_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
     lock = tomllib.loads((args.source / 'Cargo.lock').read_text())
     revisions = {p['source'].rsplit('#', 1)[1] for p in lock['package']
-                 if p.get('source', '').startswith('git+https://github.com/cadmpeg/cadmpeg')}
+                 if p.get('name', '').startswith('cadmpeg-')
+                 and p.get('source', '').startswith('git+') and '#' in p['source']}
     if len(revisions) != 1:
         raise ValueError('Cargo.lock must contain one cadmpeg revision')
     commit = subprocess.check_output(['git', '-C', str(args.source), 'rev-parse', 'HEAD'], text=True).strip()

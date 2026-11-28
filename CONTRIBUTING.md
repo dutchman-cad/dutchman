@@ -149,9 +149,12 @@ SOLIDCRAFT_CLI=/path/to/solidcraft-cli cargo test -p dutchman-solidcraft --test 
 ### Build Dutchman against a local cadmpeg
 
 The workspace `Cargo.toml` pins every cadmpeg crate it names directly (`cadmpeg-codec-f3d`,
-`cadmpeg-core`, `cadmpeg-ir` and `cadmpeg-registry`) to one commit of cadmpeg's repository:
-`git = "https://github.com/cadmpeg/cadmpeg", rev = ...`. To try a change in a cadmpeg
-checkout without pushing it, patch that source to your checkout. Put this in
+`cadmpeg-core`, `cadmpeg-ir` and `cadmpeg-registry`) to one cadmpeg Git revision.
+The rc.7 candidate temporarily uses the fork at
+`https://github.com/raykholo/cadmpeg`; see [the release pin policy](docs/releasing.md).
+To try a change in a cadmpeg checkout without pushing it, patch that source to your checkout.
+The `[patch]` header must match the Git URL in `Cargo.toml`: replace the upstream URL
+in the example below with the fork URL while using this candidate. Put this in
 `.cargo/config.toml` in the Dutchman checkout, with cadmpeg cloned beside it (change the
 paths if yours is elsewhere). Every cadmpeg crate in `Cargo.lock` needs a line, because the
 registry pulls in the codecs too:

@@ -2242,3 +2242,8 @@ nests, Dutchman leaves out only those stored states. Each affected history step 
 number of affected steps in `message` ("N history steps' stored states left out"). These
 notes have no loss code. History checks needing those states are skipped; final-model
 check failures still refuse the design.
+
+When decoded Fusion CADIR contains CAM setups, operations or tools, conversion reports
+`f3d/cam-not-converted`: CAM setups, toolpaths and the design's tool library were not
+converted. The loss detail includes decoded record counts for each kind; these are
+record counts, not proof of complete toolpath decoding. No new JSON fields are added.

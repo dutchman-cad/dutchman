@@ -22,7 +22,9 @@ that are tool libraries) with its other inputs, writing `<name>.camtools` at the
   `dutchman library.json`, `dutchman convert library.json -o tools.camtools`, and in `convert-all`.
   A `.tools` archive with several JSON files is read as one library, in file-name order.
 - **Output:** `.camtools`, CamCraft's `camcraft-tools` file, lengths in millimeters. The tool library
-  inside a CAM design (`.f3d`) is not read yet.
+  inside a CAM design (`.f3d`/`.f3z`) is decoded into CADIR when supported, but is not
+  exported to CamCraft yet. Design conversion reports `f3d/cam-not-converted` when
+  decoded CAM records are present, with setup, operation and tool record counts.
 - **Report:** the usual `dutchman.convert/1` report. Every tool CamCraft cannot hold and every field it
   has no place for is a named loss; the rest of the library is still converted. `--json` adds
   `tools: {read, written, not_written}`.

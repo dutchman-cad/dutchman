@@ -105,25 +105,31 @@ class FixtureScoreTests(unittest.TestCase):
         self.assertIn('900 seconds', result['failure_reason'])
 
     def test_prepare_freezes_original_manifest_and_lock_revision(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            source = root / 'source'
-            source.mkdir()
-            (source / 'Cargo.lock').write_text('[[package]]\nname = "cadmpeg-core"\nsource = "git+https://github.com/cadmpeg/cadmpeg?rev=abc#abc"\n')
-            data = json.dumps(dict(files=[dict(self.row(), volunteer='DO_NOT_PUBLISH')])).encode()
-            args = argparse.Namespace(source=source, out=root / 'bundle', shards=2,
-                                      manifest_url='https://example.org/manifest.json')
-            with mock.patch.dict(score.os.environ, GITHUB_OUTPUT=str(root / 'outputs')), \
-                 mock.patch.object(score.urllib.request, 'urlopen', return_value=io.BytesIO(data)), \
-                 mock.patch.object(score.subprocess, 'check_output', return_value='commit-id\n'):
-                score.prepare(args)
-            self.assertEqual(json.loads((args.out / 'manifest.json').read_text()), dict(files=[self.row()]))
-            self.assertNotIn('DO_NOT_PUBLISH', (args.out / 'manifest.json').read_text())
-            metadata = json.loads((args.out / 'build.json').read_text())
-            self.assertEqual(metadata['dutchman']['commit'], 'commit-id')
-            self.assertEqual(metadata['cadmpeg'], 'abc')
-            self.assertEqual(metadata['manifest_sha256'], hashlib.sha256(data).hexdigest())
-            self.assertEqual(json.loads((root / 'outputs').read_text().split('=', 1)[1]), dict(shard=[0, 1]))
+        for repo in ('https://github.com/cadmpeg/cadmpeg', 'https://github.com/raykholo/cadmpeg'):
+            with self.subTest(repo=repo):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    source = root / 'source'
+                    source.mkdir()
+                    (source / 'Cargo.lock').write_text(
+                        '[[package]]\nname = "dutchman-pilot"\n'
+                        'source = "git+https://github.com/dutchman-cad/pilot?rev=other#other"\n'
+                        '[[package]]\nname = "cadmpeg-core"\n'
+                        f'source = "git+{repo}?rev=abc#abc"\n')
+                    data = json.dumps(dict(files=[dict(self.row(), volunteer='DO_NOT_PUBLISH')])).encode()
+                    args = argparse.Namespace(source=source, out=root / 'bundle', shards=2,
+                                              manifest_url='https://example.org/manifest.json')
+                    with mock.patch.dict(score.os.environ, GITHUB_OUTPUT=str(root / 'outputs')), \
+                         mock.patch.object(score.urllib.request, 'urlopen', return_value=io.BytesIO(data)), \
+                         mock.patch.object(score.subprocess, 'check_output', return_value='commit-id\n'):
+                        score.prepare(args)
+                    self.assertEqual(json.loads((args.out / 'manifest.json').read_text()), dict(files=[self.row()]))
+                    self.assertNotIn('DO_NOT_PUBLISH', (args.out / 'manifest.json').read_text())
+                    metadata = json.loads((args.out / 'build.json').read_text())
+                    self.assertEqual(metadata['dutchman']['commit'], 'commit-id')
+                    self.assertEqual(metadata['cadmpeg'], 'abc')
+                    self.assertEqual(metadata['manifest_sha256'], hashlib.sha256(data).hexdigest())
+                    self.assertEqual(json.loads((root / 'outputs').read_text().split('=', 1)[1]), dict(shard=[0, 1]))
 
     def test_public_manifest_drops_contributor_fields(self):
         row = dict(self.row(), volunteer='DO_NOT_PUBLISH')

@@ -5,7 +5,8 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`4062d266`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`d0bb18b4`, `lh-try-cam`):
+stack `dutchman-pin-2026-11-28b` plus CAM #1731.
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
@@ -958,3 +959,8 @@ The release gate rejects these positions even when the written design matches th
 imported source. Exceptions must name each part and document the reason and tracking
 issue in the gate matrix's `unplaced_allowances` map; unmatched legacy loss
 explanations also need an explicit allowance key. There are no default exceptions.
+
+When decoded Fusion CADIR contains CAM setups, operations or tools, conversion reports
+`f3d/cam-not-converted`: CAM setups, toolpaths and the design's tool library were not
+converted. The loss detail includes decoded record counts for each kind; these are
+record counts, not proof of complete toolpath decoding. No new JSON fields are added.

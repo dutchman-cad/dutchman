@@ -553,6 +553,7 @@ fn decode_unguarded(
         return Err(Error::Decode(no_geometry_message(format)));
     }
     report.extend_from_cadmpeg(&decode_report.losses);
+    crate::cam_note::record(&ir, report);
     if format == Format::FreeCadDocument {
         crate::source_errors::record(&ir, report);
     }

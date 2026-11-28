@@ -8,6 +8,7 @@
 mod assembly;
 /// The file name of a bulk export's manifest.
 pub const EXPORT_MANIFEST: &str = export_folder::MANIFEST;
+mod cam_note;
 pub mod camtools;
 mod companion;
 pub mod contents;

@@ -22589,10 +22589,10 @@ fn a_tilted_coil_profile_is_moved_with_a_note_and_an_axial_one_is_untouched() {
     assert_eq!(document["features"][0]["plane"]["type"], "custom");
 
     let mut axial = helical_history(|_| {});
-    let mut wire = serde_json::to_value(&axial.ir).unwrap();
+    let mut wire = dutchman_core::ir_wire::to_value(&axial.ir).unwrap();
     wire["model"]["sketches"][0]["placement"]["frame"]["normal"] =
         json!({"x": 0.0, "y": -1.0, "z": 0.0});
-    axial.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    axial.ir = dutchman_core::ir_wire::from_str(&wire.to_string()).unwrap();
     let (document, report) = convert(&axial, &writer);
     assert_eq!(coil_profile_notes(&report), 0, "{report:?}");
     let features = document["features"].as_array().unwrap();

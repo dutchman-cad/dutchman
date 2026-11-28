@@ -271,6 +271,12 @@ to match bit for bit first.
 
 ## Stable and nightly
 
+The rc.7 candidate pins `raykholo/cadmpeg` at `d0bb18b46218e4a9f6b85d6be23d34a7d38df1cc`
+on `lh-try-cam`: the stack named `dutchman-pin-2026-11-28b` (cadmpeg main
+`759604815a`, 11 open Fusion-history PRs, and the withheld-component note fix
+for #2144 and #2420), plus CAM #1731. The stack PRs are listed in the tag
+message. Move back to cadmpeg main when those PRs merge. This candidate is an exception to the stable-release policy below.
+
 A stable release depends on cadmpeg at one commit of its `main` branch, taken from cadmpeg's
 own repository (`https://github.com/cadmpeg/cadmpeg`) and pinned as the same `rev` for every
 cadmpeg crate in the workspace `Cargo.toml`. Move the pin after a batch of
