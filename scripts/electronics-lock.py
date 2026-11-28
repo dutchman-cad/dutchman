@@ -57,7 +57,7 @@ def main():
                     files[member.name] = archive.extractfile(member).read()
     program = 'dutchman-electronics' + ('.exe' if 'windows' in target else '')
     binaries = [name for name in files if Path(name).name == program]
-    notices = [name for name in files if Path(name).name.upper().startswith(('LICENSE', 'LICENCE', 'COPYING', 'NOTICE'))]
+    notices = [name for name in files if Path(name).name.upper().startswith(('LICENSE', 'LICENCE', 'COPYING', 'NOTICE', 'THIRD-PARTY'))]
     if len(binaries) != 1 or not notices:
         raise ValueError('Module archive must contain one program and license/notice files; ask the module maintainers to include them')
     dest = Path(dest)
