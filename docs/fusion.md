@@ -459,6 +459,13 @@ Fusion keeps some sketches with no Sketch step in the timeline; cadmpeg then lis
 alone. A feature whose profile uses such a sketch gets it written just before itself, so the
 feature finds it; any other such sketch is kept for reference after the timeline, as before.
 
+## Sketches on construction planes
+
+A Fusion sketch starts at the model origin projected onto its plane. When the decoder gives a
+sketch on a construction plane that plane's own anchor point as its origin, it is written at the
+projected origin instead, so a cut sketched on it removes material where Fusion does. A sketch moved
+in Fusion keeps its own origin.
+
 ## A design whose timeline did not decode
 
 A design that carries no feature history converts as an import, and the report says "the design

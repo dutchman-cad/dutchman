@@ -2147,6 +2147,83 @@ fn solidcraft() -> Option<PathBuf> {
     cli
 }
 
+const PLANE_CUT: &str = "f3d:model:sketch#3";
+
+/// The example cube with a 4 mm square cut from its top face, sketched on a work plane
+/// 10 mm above XY whose frame origin sits 150 mm along Y, as Fusion stores a work plane's anchor.
+fn cut_from_a_construction_plane() -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketches"].as_array_mut().unwrap().push(json!({
+        "id": PLANE_CUT,
+        "name": "On work plane",
+        "placement": {"kind": "resolved", "frame": {
+            "origin": {"x": 0.0, "y": -150.0, "z": 10.0},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+        }},
+        "profiles": [[
+            {"entity": "f3d:model:sketch-entity#11", "reversed": false},
+            {"entity": "f3d:model:sketch-entity#12", "reversed": false},
+            {"entity": "f3d:model:sketch-entity#13", "reversed": false},
+            {"entity": "f3d:model:sketch-entity#14", "reversed": false},
+        ]],
+    }));
+    let edge = |key: u32, a: [f64; 2], b: [f64; 2]| {
+        let mut row = line(key, a, b);
+        row["sketch"] = json!(PLANE_CUT);
+        row
+    };
+    let entities = m["sketch_entities"].as_array_mut().unwrap();
+    entities.extend([
+        edge(11, [3.0, 3.0], [7.0, 3.0]),
+        edge(12, [7.0, 3.0], [7.0, 7.0]),
+        edge(13, [7.0, 7.0], [3.0, 7.0]),
+        edge(14, [3.0, 7.0], [3.0, 3.0]),
+    ]);
+    let features = m["features"].as_array_mut().unwrap();
+    features.extend([
+        json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Work plane", "suppressed": false, "dependencies": [], "outputs": [], "source_properties": {}, "source_content": [], "definition": {"kind": "operation", "value": {"kind": "datum_plane", "value": {"frame": {
+            "origin": {"x": 0.0, "y": -150.0, "z": 10.0},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+        }}}}}),
+        json!({"id": "f3d:model:feature#5", "ordinal": 3, "name": "Plane sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": PLANE_CUT}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
+        json!({"id": "f3d:model:feature#6", "ordinal": 4, "name": "Pocket", "suppressed": false, "dependencies": ["f3d:model:feature#5"], "outputs": [], "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {
+            "profile": {"kind": "planar", "value": {"kind": "sketch_profiles", "value": {"sketch": PLANE_CUT, "profiles": [0]}}},
+            "direction": {"kind": "reversed_profile_normal"}, "start": {"kind": "profile_plane"},
+            "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 4.0}}},
+            "op": "cut"}}}, "source_properties": {}, "source_content": []}),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_fusion_sketch_on_an_offset_construction_plane_starts_at_the_projected_model_origin() {
+    let (document, _) = convert(
+        &cut_from_a_construction_plane(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let plane = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|feature| feature["type"] == "sketch")
+        .map(|feature| feature["plane"]["plane"]["origin"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(plane.last().unwrap(), &json!([0.0, 0.0, 10.0]), "{plane:?}");
+}
+
+#[test]
+fn solidcraft_cuts_material_with_a_sketch_on_an_offset_construction_plane() {
+    let Some(cli) = solidcraft() else { return };
+    let (bytes, _) = written(&cut_from_a_construction_plane());
+    // The 4 mm square cut 4 mm into the 10 mm cube removes 64 mm3.
+    assert_eq!(volumes(&cli, &bytes), [936.0]);
+}
+
 #[test]
 fn a_faithful_history_is_verified_in_solidcraft() {
     let Some(cli) = solidcraft() else { return };
