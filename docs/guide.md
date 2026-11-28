@@ -457,6 +457,9 @@ profiles and sweep paths select the whole chain. Constraints that cannot apply t
 are left out with an Info message; the solved geometry remains exact. A loft through such a
 chain is not mapped yet (more edges in a section would change the lofted surface).
 
+Fusion Remove features leave out a stored body only when no later active feature produces
+that body again. This preserves solids re-created under the same body identity.
+
 Fusion Split Body keeps editable history when its tool is a resolved datum plane or
 input faces whose boundaries prove they lie on one plane. The faces' plane extends through
 the target body. Curved or noncoplanar tools, incomplete input selections, and final-body
