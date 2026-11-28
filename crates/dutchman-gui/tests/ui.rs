@@ -3657,7 +3657,7 @@ fn converted_tool_library(kinds: &[&str]) -> (dutchman_gui::app::Row, PathBuf, S
     let source = work.path().join("Shop tools.json");
     std::fs::write(&source, synthetic_tool_library(kinds)).unwrap();
     let made = work.path().join("Shop tools.camtools");
-    let summary = dutchman::batch::plan(&[source.clone()], work.path()).description;
+    let summary = dutchman::batch::plan(std::slice::from_ref(&source), work.path()).description;
     let mut report = dutchman::tool_library::convert(&source, &made, true);
     let docs = PathBuf::from("/Users/demo/Documents");
     let input = docs.join("Shop tools.json");
@@ -7395,8 +7395,18 @@ fn settings_names_the_electronics_module() {
     let mut h = screenshot_harness(ThemePreference::Light);
     h.get_by_label("Settings").click_accesskit();
     h.run();
-    let text = dutchman_core::module::location_description();
-    h.get_by_label(&text);
+    h.get_by_label("Check for update");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while h.query_all_by_label_contains("Electronics module:").count() == 0
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(10));
+        h.run_steps(4);
+    }
+    assert_eq!(
+        h.query_all_by_label_contains("Electronics module:").count(),
+        1
+    );
 }
 
 #[cfg(feature = "test-support")]
@@ -7411,7 +7421,7 @@ fn electronics_settings_screenshots() {
             let module = modules.join("dutchman-electronics");
             let _ = std::fs::remove_file(&module);
             if state == "found" {
-                std::fs::write(&module, "#!/bin/sh\nexit 0\n").unwrap();
+                std::fs::write(&module, "#!/bin/sh\necho '{\"name\":\"electronics\",\"version\":\"0.1.0\",\"interface\":1}'\n").unwrap();
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -7447,8 +7457,17 @@ fn electronics_settings_screenshots() {
         h.ctx.set_theme(theme);
         h.get_by_label("Settings").click_accesskit();
         h.run();
-        let text = dutchman_core::module::location_description();
-        h.get_by_label(&text);
+        let text = if state == "found" {
+            "Electronics module: v0.1.0 (your modules folder)"
+        } else {
+            "Electronics module: not found"
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while h.query_by_label(text).is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+            h.run_steps(4);
+        }
+        h.get_by_label(text);
         shot(
             &mut h,
             &dir,
@@ -7457,5 +7476,78 @@ fn electronics_settings_screenshots() {
             name,
             "Electronics module location in Settings.",
         );
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn settings_names_the_electronics_module_controls() {
+    let mut h = harness();
+    h.state_mut().updater.preview_module(0);
+    h.run_steps(8);
+    h.get_by_label("Electronics module: v0.1.0 (included)");
+    assert_eq!(
+        egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label("Check for update")).role(),
+        egui::accesskit::Role::Button
+    );
+    h.state_mut().updater.preview_module(1);
+    h.run_steps(8);
+    h.get_by_label("Update electronics module");
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders module update screenshots"]
+fn module_update_screenshots() {
+    let demo = PathBuf::from("/tmp/demo");
+    if std::env::var_os("DUTCHMAN_MODULE_SHOTS_CHILD").is_none() {
+        std::fs::create_dir_all(&demo).unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "module_update_screenshots"])
+            .env("DUTCHMAN_MODULE_SHOTS_CHILD", "1")
+            .env("HOME", &demo)
+            .env("XDG_DATA_HOME", demo.join("data"))
+            .env("XDG_STATE_HOME", demo.join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for set in ["en", "de"] {
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            for (state, label) in [(0, "included"), (1, "available"), (2, "updated")] {
+                let mut h = Harness::builder()
+                    .with_size(egui::vec2(1280.0, 800.0))
+                    .build_eframe(|cc| test_app(cc));
+                h.ctx.set_theme(theme);
+                let work = tempfile::tempdir().unwrap();
+                let input = work.path().join(if set == "de" {
+                    "Gehäuse-Rückwand für das Mehrzweck-Fräsgerät, Fassung 2.ipt"
+                } else {
+                    "bracket.ipt"
+                });
+                std::fs::copy(fixture("synthetic_cube.ipt"), &input).unwrap();
+                h.state_mut().add_inputs([input]);
+                h.state_mut().set_checker_for_test(true);
+                h.state_mut().preview_solidcraft(Some("0.50.0"));
+                h.state_mut().set_out_dir(demo.join("out"));
+                h.state_mut().updater.preview_module(state);
+                h.run_steps(8);
+                shot(
+                    &mut h,
+                    &dir,
+                    &mut index,
+                    &format!("module-{label}-{set}"),
+                    name,
+                    "Electronics module Settings.",
+                );
+            }
+        }
     }
 }

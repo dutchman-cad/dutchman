@@ -1,7 +1,8 @@
 //! Optional modules: separate programs that read a file Dutchman does not.
 //!
 //! A module is found the way every Dutchman companion program is: `dutchman-<name>` beside the
-//! running executable, then on `PATH`. It answers `info --json` (what it reads), `detect <file>
+//! running executable, in the per-user modules folder, then on `PATH`. A newer compatible
+//! electronics program in the user folder takes precedence over the included copy. It answers `info --json` (what it reads), `detect <file>
 //! --json` (does it read this one) and `read <file> --out <dir> --json` (write a placed-parts
 //! package, see [`crate::package`]). Dutchman reads that package like any other input.
 
@@ -83,7 +84,39 @@ pub fn missing_message() -> String {
 
 /// The electronics module, when it is installed.
 pub fn find() -> Option<PathBuf> {
-    dutchman_launcher::find_tool(ELECTRONICS)
+    let bundled = dutchman_launcher::find_tool(ELECTRONICS);
+    let Some(folder) = dutchman_launcher::modules_folder() else {
+        return bundled;
+    };
+    let user = folder.join(if cfg!(windows) {
+        "dutchman-electronics.exe"
+    } else {
+        "dutchman-electronics"
+    });
+    if let Ok(candidate) = info(&user, &Limits::default()) {
+        let old = bundled
+            .as_ref()
+            .and_then(|p| info(p, &Limits::default()).ok());
+        if prefer_user(&candidate, old.as_ref()) {
+            return Some(user);
+        }
+    }
+    bundled
+}
+
+fn prefer_user(candidate: &Info, old: Option<&Info>) -> bool {
+    let parse = |v: &str| -> Option<Vec<u64>> {
+        v.trim_start_matches('v')
+            .split('.')
+            .map(str::parse)
+            .collect::<Result<Vec<u64>, _>>()
+            .ok()
+            .filter(|v| v.len() == 3)
+    };
+    candidate.interface == INTERFACE
+        && parse(&candidate.version).is_some_and(|new| {
+            old.is_none_or(|old| parse(&old.version).is_some_and(|old| new > old))
+        })
 }
 
 /// Whether the electronics module is installed.
@@ -916,5 +949,26 @@ mod location_tests {
     #[test]
     fn settings_description_names_the_module() {
         assert!(super::location_description().starts_with("Electronics module: "));
+    }
+}
+
+#[cfg(test)]
+mod update_selection_tests {
+    use super::*;
+    #[test]
+    fn newer_compatible_user_module_wins() {
+        let make = |version: &str, interface| Info {
+            name: "electronics".into(),
+            version: version.into(),
+            interface,
+            extensions: vec![],
+        };
+        let included = make("0.1.0", INTERFACE);
+        assert!(prefer_user(&make("0.2.0", INTERFACE), Some(&included)));
+        assert!(!prefer_user(&make("0.1.0", INTERFACE), Some(&included)));
+        assert!(!prefer_user(&make("0.0.9", INTERFACE), Some(&included)));
+        assert!(!prefer_user(&make("0.2.0", INTERFACE + 1), Some(&included)));
+        assert!(!prefer_user(&make("unknown", INTERFACE), None));
+        assert!(prefer_user(&make("0.2.0", INTERFACE), None));
     }
 }

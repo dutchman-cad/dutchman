@@ -411,3 +411,5 @@ For packagers: the std-only `dutchman-launcher` crate provides a tiny front comm
 installations that ship with Pilot alone. Install its binary as `dutchman`;
 `dutchman --version` identifies it as `dutchman launcher <version>`. Install Dutchman Convert
 for the conversion commands.
+
+Use Settings → Check for update to update the electronics module into your per-user modules folder.

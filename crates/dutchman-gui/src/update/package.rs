@@ -814,3 +814,6 @@ impl Job {
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use appimage::replace;
+pub(crate) use windows::{download, verify};
